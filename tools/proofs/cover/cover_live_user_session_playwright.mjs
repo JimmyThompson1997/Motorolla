@@ -749,8 +749,7 @@ async function readTaskDetailState(page) {
       String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
     ) || null;
     const peopleSection = infoSection("people");
-    const notesSection = infoSection("notes");
-    const attachedSection = infoSection("attached");
+    const connectedSection = infoSection("connected");
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
     const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
@@ -767,13 +766,15 @@ async function readTaskDetailState(page) {
         .map(node => String(node.textContent || "").trim()),
       checklist: Array.from(detail?.querySelectorAll(".light-task-checklist-label") || [])
         .map(node => String(node.textContent || "").trim()),
-      notes: Array.from(notesSection?.querySelectorAll('.light-info-row .light-text-stack strong') || [])
-        .map(node => String(node.textContent || "").trim()),
-      attachments: Array.from(attachedSection?.querySelectorAll('.light-info-row[data-task-attachment-kind] .light-text-stack strong') || [])
-        .map(node => String(node.textContent || "").trim()),
+      connected: Array.from(connectedSection?.querySelectorAll('.light-info-row[data-task-connected-kind]') || [])
+        .map(node => ({
+          kind: String(node.getAttribute("data-task-connected-kind") || ""),
+          label: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+        })),
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
         .find(node => /description/i.test(String(node.textContent || "")))?.textContent || "").trim(),
       description_is_first_section: firstSectionTitle === "description",
+      task_detail_chevron_count: Array.from(detail?.querySelectorAll(".light-info-row .light-chevron") || []).length,
       status_card_present: Boolean(statusCard),
       status_circle_present: Boolean(document.querySelector(".light-task-status-circle")),
       task_html_frame_present: Boolean(detail?.querySelector(".light-html-frame, iframe")),
@@ -1015,26 +1016,29 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
   await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
   let taskState = await readTaskDetailState(page);
-  ["description", "people", "checklist", "notes", "attached"].forEach(section => {
+  ["description", "people", "checklist", "connected"].forEach(section => {
     assert(taskState.sections.includes(section), `${mode}: task detail missing ${section} section`);
   });
+  assert(!taskState.sections.includes("notes"), `${mode}: task detail should not render a standalone Notes section`);
+  assert(!taskState.sections.includes("attached"), `${mode}: task detail should not render a standalone Attached section`);
   assert(taskState.status_card_present, `${mode}: task detail is missing the interactive status header card`);
   assert(taskState.status_circle_present, `${mode}: task detail is missing the visible status circle`);
   assert(!taskState.task_html_frame_present, `${mode}: task detail should not render a task HTML frame above Description`);
   assert(taskState.description_is_first_section, `${mode}: task detail should start with Description`);
   assert(taskState.people.includes(seed.contactTitle), `${mode}: task detail missing created-by contact`);
   assert(taskState.people.includes(seed.ownerContactTitle), `${mode}: task detail missing owner contact`);
-  assert(taskState.notes.includes(seed.noteTitle), `${mode}: task detail missing linked note section entry`);
-  assert(taskState.attachments.includes(seed.calendarEventTitle), `${mode}: task detail missing linked calendar event`);
-  assert(taskState.attachments.includes(seed.contactTitle), `${mode}: task detail missing linked contact`);
-  assert(taskState.attachments.includes(seed.projectTitle), `${mode}: task detail missing linked project`);
+  assert(taskState.connected.some(item => item.kind === "note" && item.label === seed.noteTitle), `${mode}: task detail missing connected note entry`);
+  assert(taskState.connected.some(item => item.kind === "calendar_event" && item.label === seed.calendarEventTitle), `${mode}: task detail missing connected calendar event`);
+  assert(taskState.connected.some(item => item.kind === "contact" && item.label === seed.contactTitle), `${mode}: task detail missing connected contact`);
+  assert(taskState.connected.some(item => item.kind === "project" && item.label === seed.projectTitle), `${mode}: task detail missing connected project`);
   assert(taskState.checklist.includes("Prep the room summary"), `${mode}: task detail missing expected checklist item`);
   assert(taskState.description.includes(seed.primaryDescription), `${mode}: task detail missing seeded description`);
+  assert(taskState.task_detail_chevron_count === 0, `${mode}: task detail linked rows should not render trailing chevrons`);
   await recorder.capture({
     route: taskState.route || "tasks",
     action: "Open seeded task detail",
-    expected: "The seeded primary task shows Description first, then Details, People, Checklist, Notes, and Attached with no embedded task HTML block.",
-    confirmation: "Task detail rendered the cleaned structured sections.",
+    expected: "The seeded primary task shows Description first, then Details, People, Checklist, and Connected with no embedded task HTML block. Task detail linked rows render without trailing chevrons.",
+    confirmation: "Task detail rendered the cleaned structured sections and chevron-free linked rows.",
     observed: taskState,
   });
 
@@ -1095,6 +1099,7 @@ async function runRouteTour(page, config, mode, seed) {
   assert(taskRecord.status === "done", `${mode}: task API did not persist Done after reload`);
   assert(!taskState.task_html_frame_present, `${mode}: task detail should stay free of embedded HTML after reload`);
   assert(taskState.description_is_first_section, `${mode}: task detail should still start with Description after reload`);
+  assert(taskState.task_detail_chevron_count === 0, `${mode}: task detail linked rows should stay chevron-free after reload`);
   await recorder.capture({
     route: taskState.route || expectedTaskReturnRoute(mode),
     action: "Persist Done status after reload",
@@ -1121,9 +1126,7 @@ async function runRouteTour(page, config, mode, seed) {
   for (const link of TASK_LINKS) {
     const targetId = seed[link.idKey];
     const targetTitle = seed[link.titleKey];
-    const selector = link.kind === "note"
-      ? `.light-info-row[data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
-      : `.light-info-row[data-task-attachment-kind][data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`;
+    const selector = `.light-info-row[data-task-connected-kind][data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`;
     const locator = page.locator(selector).first();
     await locator.waitFor({ state: "visible", timeout: config.timeoutMs });
     await locator.click();

@@ -231,10 +231,12 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
         "hasDescriptionSection": True,
         "hasPeopleSection": True,
         "hasChecklistSection": True,
-        "hasAttachedSection": True,
-        "attachedRowCount": 4,
+        "hasNotesSection": False,
+        "hasConnectedSection": True,
+        "hasAttachedSection": False,
+        "connectedRowCount": 4,
         "hasTaskPersonChips": False,
-        "hasTaskAttachmentChips": False,
+        "hasTaskConnectedChips": False,
         "statusHeaderPresent": True,
         "statusCirclePresent": True,
         "title": "Task Proof Primary",
@@ -242,11 +244,11 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
             created_by_person,
             owner_person,
         ],
-        "attached": [
-            {"kind": "calendar_event", "hasIcon": True, "uses_small_icon": True},
-            {"kind": "contact", "hasIcon": True, "uses_small_icon": True},
-            {"kind": "project", "hasIcon": True, "uses_small_icon": True},
-            {"kind": "meeting_note", "hasIcon": True, "uses_small_icon": True},
+        "connected": [
+            {"kind": "note", "hasIcon": True, "uses_small_icon": True, "recency_ms": 400},
+            {"kind": "calendar_event", "hasIcon": True, "uses_small_icon": True, "recency_ms": 300},
+            {"kind": "contact", "hasIcon": True, "uses_small_icon": True, "recency_ms": 200},
+            {"kind": "project", "hasIcon": True, "uses_small_icon": True, "recency_ms": 100},
         ],
     }
 
@@ -261,5 +263,16 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
             "people": [
                 {**created_by_person, "icon_background": "rgb(244, 63, 104)"},
                 owner_person,
+            ],
+        }, seed)
+
+    with pytest.raises(phone_proof.TaskPhoneProofError, match="Connected rows were not sorted by recency descending"):
+        phone_proof.verify_primary_detail_state({
+            **state,
+            "connected": [
+                {"kind": "note", "hasIcon": True, "uses_small_icon": True, "recency_ms": 100},
+                {"kind": "calendar_event", "hasIcon": True, "uses_small_icon": True, "recency_ms": 300},
+                {"kind": "contact", "hasIcon": True, "uses_small_icon": True, "recency_ms": 200},
+                {"kind": "project", "hasIcon": True, "uses_small_icon": True, "recency_ms": 50},
             ],
         }, seed)

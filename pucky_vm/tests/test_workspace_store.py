@@ -945,6 +945,68 @@ def test_workspace_store_cleans_persisted_proof_records_assets_and_links(tmp_pat
     assert cleaned.get_record("contacts", "maya") is not None
 
 
+def test_workspace_store_cleans_task_proof_records_assets_and_links(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store.upsert_record(
+        "contacts",
+        {
+            "id": "task-proof-liveuser-contact",
+            "title": "Task Proof Contact",
+            "summary": "Should be removed",
+        },
+    )
+    store.upsert_record(
+        "contacts",
+        {
+            "id": "task-proof-liveuser-owner-contact",
+            "title": "Task Proof Owner",
+            "summary": "Should be removed",
+        },
+    )
+    store.upsert_record(
+        "tasks",
+        {
+            "id": "task-proof-liveuser-task",
+            "title": "Task Proof Task",
+            "summary": "Should be removed",
+        },
+    )
+    store.create_asset(
+        {
+            "id": "task-proof-liveuser-asset",
+            "title": "Task proof asset",
+            "mime_type": "text/plain; charset=utf-8",
+            "text": "Should be removed",
+        }
+    )
+    store.upsert_link(
+        {
+            "id": "task-proof-liveuser-link",
+            "source_kind": "task",
+            "source_id": "task-proof-liveuser-task",
+            "target_kind": "contact",
+            "target_id": "task-proof-liveuser-contact",
+            "label": "Proof contact",
+        }
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'task_proof_cleanup_v1'")
+    store._conn.commit()
+    store._conn.close()
+
+    cleaned = WorkspaceStore(str(db_path), clock_ms=clock)
+    assert cleaned.get_record("contacts", "task-proof-liveuser-contact", include_deleted=True) is None
+    assert cleaned.get_record("contacts", "task-proof-liveuser-owner-contact", include_deleted=True) is None
+    assert cleaned.get_record("tasks", "task-proof-liveuser-task", include_deleted=True) is None
+    assert cleaned.get_asset("task-proof-liveuser-asset") is None
+    assert cleaned._conn.execute("SELECT COUNT(*) FROM workspace_links WHERE link_id = 'task-proof-liveuser-link'").fetchone()[0] == 0
+    meta = cleaned._conn.execute("SELECT value FROM workspace_meta WHERE key = 'task_proof_cleanup_v1'").fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
+    assert cleaned.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID) is not None
+
+
 def test_calendar_multi_day_and_feed_archive_visibility(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
     store.upsert_record("calendar-events", {"id": "d1", "title": "Day one", "date": "2026-06-10", "start_at_ms": 1000})

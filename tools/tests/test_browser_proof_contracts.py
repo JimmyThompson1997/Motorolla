@@ -277,6 +277,16 @@ def test_live_user_session_proof_checks_task_focus_ring_is_gone() -> None:
     assert "Task detail header selector opened in place without a blue focus rectangle." in source
 
 
+def test_live_user_session_proof_requires_chevron_free_task_detail_rows() -> None:
+    source = read_source("cover_live_user_session_playwright.mjs")
+
+    assert "task_detail_chevron_count" in source
+    assert 'querySelectorAll(".light-info-row .light-chevron")' in source
+    assert 'assert(taskState.task_detail_chevron_count === 0' in source
+    assert "Task detail linked rows render without trailing chevrons" in source
+    assert "for (const link of TASK_LINKS)" in source
+
+
 def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
     source = read_source("cover_home_app_labels_playwright.mjs")
     package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")

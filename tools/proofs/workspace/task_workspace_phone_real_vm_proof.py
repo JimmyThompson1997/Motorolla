@@ -305,8 +305,8 @@ def checklist_selector(item_id: str) -> str:
     return f'.light-task-checklist-row[data-checklist-item-id="{item_id}"]'
 
 
-def attachment_selector(kind: str) -> str:
-    return f'.light-info-row[data-task-attachment-kind="{kind}"]'
+def connected_selector(kind: str) -> str:
+    return f'.light-info-row[data-task-connected-kind="{kind}"]'
 
 
 def screenshot_operation(path: Path) -> dict[str, Any]:
@@ -369,22 +369,35 @@ def verify_people_icon_visual(person: dict[str, Any], *, label: str) -> None:
     assert_or_fail(icon_color != icon_background, "phone_task_detail_render_failed", f"{label} icon lost contrast against its background")
 
 
+def verify_connected_rows_sorted(entries: list[dict[str, Any]]) -> None:
+    for index in range(1, len(entries)):
+        previous = int(entries[index - 1].get("recency_ms") or 0)
+        current = int(entries[index].get("recency_ms") or 0)
+        assert_or_fail(previous >= current, "phone_task_detail_render_failed", "Connected rows were not sorted by recency descending")
+
+
 def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> None:
     assert_or_fail(state.get("taskDetailId") == seed["primaryTaskId"], "phone_task_detail_render_failed", "Primary task detail did not open")
     assert_or_fail(not state.get("hasTaskHtmlFrame"), "phone_task_detail_render_failed", "Primary task still renders legacy task HTML")
     assert_or_fail(bool(state.get("hasDescriptionSection")), "phone_task_detail_render_failed", "Primary task is missing Description")
     assert_or_fail(bool(state.get("hasPeopleSection")), "phone_task_detail_render_failed", "Primary task is missing People")
     assert_or_fail(bool(state.get("hasChecklistSection")), "phone_task_detail_render_failed", "Primary task is missing Checklist")
-    assert_or_fail(bool(state.get("hasAttachedSection")), "phone_task_detail_render_failed", "Primary task is missing Attached")
-    assert_or_fail(int(state.get("attachedRowCount") or 0) >= 4, "phone_task_detail_render_failed", "Primary task is missing attached linked rows")
+    assert_or_fail(not state.get("hasNotesSection"), "phone_task_detail_render_failed", "Primary task still renders a standalone Notes section")
+    assert_or_fail(bool(state.get("hasConnectedSection")), "phone_task_detail_render_failed", "Primary task is missing Connected")
+    assert_or_fail(not state.get("hasAttachedSection"), "phone_task_detail_render_failed", "Primary task still renders a standalone Attached section")
+    assert_or_fail(int(state.get("connectedRowCount") or 0) >= 4, "phone_task_detail_render_failed", "Primary task is missing connected linked rows")
     assert_or_fail(not bool(state.get("hasTaskPersonChips")), "phone_task_detail_render_failed", "Primary task still renders People as task chips")
-    assert_or_fail(not bool(state.get("hasTaskAttachmentChips")), "phone_task_detail_render_failed", "Primary task still renders Attached as task chips")
+    assert_or_fail(not bool(state.get("hasTaskConnectedChips")), "phone_task_detail_render_failed", "Primary task still renders Connected as task chips")
     assert_or_fail(bool(state.get("statusHeaderPresent")), "phone_task_detail_render_failed", "Primary task is missing the interactive status header card")
     assert_or_fail(bool(state.get("statusCirclePresent")), "phone_task_detail_render_failed", "Primary task is missing the visible status circle")
     assert_or_fail(str(state.get("title") or "") == str(seed["primaryTaskTitle"]), "phone_task_detail_render_failed", "Primary task title did not render correctly")
     people = [item for item in list(state.get("people") or []) if isinstance(item, dict)]
-    attached = [item for item in list(state.get("attached") or []) if isinstance(item, dict)]
-    assert_or_fail(all(bool(item.get("hasIcon")) and bool(item.get("uses_small_icon")) for item in attached), "phone_task_detail_render_failed", "Attached linked rows did not use the standard icons")
+    connected = [item for item in list(state.get("connected") or []) if isinstance(item, dict)]
+    assert_or_fail(all(bool(item.get("hasIcon")) and bool(item.get("uses_small_icon")) for item in connected), "phone_task_detail_render_failed", "Connected linked rows did not use the standard icons")
+    verify_connected_rows_sorted(connected)
+    connected_kinds = {str(item.get("kind") or "") for item in connected}
+    for kind in ("note", "calendar_event", "contact", "project"):
+        assert_or_fail(kind in connected_kinds, "phone_task_detail_render_failed", f"Primary task is missing connected {kind} rows")
     created_by = next((item for item in people if str(item.get("role") or "") == "created_by"), {})
     owner = next((item for item in people if str(item.get("role") or "") == "owner"), {})
     assert_or_fail(str(created_by.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Created by chip is not linked to contact detail")
@@ -399,6 +412,8 @@ def verify_empty_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> No
     assert_or_fail(not state.get("hasTaskHtmlFrame"), "phone_task_detail_render_failed", "Empty task rendered legacy task HTML")
     assert_or_fail(not state.get("hasDescriptionSection"), "phone_task_detail_render_failed", "Empty task rendered a fake Description section")
     assert_or_fail(not state.get("hasChecklistSection"), "phone_task_detail_render_failed", "Empty task rendered a fake Checklist section")
+    assert_or_fail(not state.get("hasNotesSection"), "phone_task_detail_render_failed", "Empty task rendered a fake Notes section")
+    assert_or_fail(not state.get("hasConnectedSection"), "phone_task_detail_render_failed", "Empty task rendered a fake Connected section")
     assert_or_fail(not state.get("hasAttachedSection"), "phone_task_detail_render_failed", "Empty task rendered a fake Attached section")
 
 
@@ -640,7 +655,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 scenario_dir=scenario_dir,
                 name=f"{index:02d}-linked-{spec['kind']}",
                 operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / f"{index:02d}-linked-{spec['kind']}-task-browser.png") + [
-                    {"kind": "click_selector", "selector": attachment_selector(spec["kind"])},
+                    {"kind": "click_selector", "selector": connected_selector(spec["kind"])},
                     {"kind": "wait_for_route", "route": spec["route"]},
                     {"kind": "wait_for_text", "selector": ".light-profile-card h1, .light-record-detail-title, .light-detail-header h1, .light-page-header h1", "text": spec["title"]},
                     screenshot_operation(scenario_dir / f"{index:02d}-linked-{spec['kind']}-open-browser.png"),

@@ -628,6 +628,15 @@ function assertTaskPersonIconContrast(person, mode, label) {
   assert(iconColor !== iconBackground, `${mode}: ${label} icon lost contrast against its background`);
 }
 
+function assertTaskConnectedRowsSorted(entries, mode) {
+  const connected = Array.isArray(entries) ? entries : [];
+  for (let index = 1; index < connected.length; index += 1) {
+    const previous = Number(connected[index - 1]?.recency_ms || 0);
+    const current = Number(connected[index]?.recency_ms || 0);
+    assert(previous >= current, `${mode}: Connected rows were not sorted by recency descending`);
+  }
+}
+
 async function recordViewState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
@@ -637,7 +646,7 @@ async function recordViewState(page) {
       String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
     ) || null;
     const peopleSection = infoSection("people");
-    const attachedSection = infoSection("attached");
+    const connectedSection = infoSection("connected");
     const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
       .map(node => String(node.textContent || "").trim().toLowerCase());
     const people = peopleSection
@@ -659,8 +668,8 @@ async function recordViewState(page) {
           };
         })
       : [];
-    const attached = attachedSection
-      ? Array.from(attachedSection.querySelectorAll('.light-info-row[data-workspace-target-kind]')).map(row => ({
+    const connected = connectedSection
+      ? Array.from(connectedSection.querySelectorAll('.light-info-row[data-workspace-target-kind]')).map(row => ({
           kind: String(row.getAttribute("data-workspace-target-kind") || ""),
           id: String(row.getAttribute("data-workspace-target-id") || ""),
           route: String(row.getAttribute("data-workspace-target-route") || ""),
@@ -668,6 +677,7 @@ async function recordViewState(page) {
           value: String(row.querySelector(".light-text-stack span")?.textContent || "").trim(),
           hasIcon: Boolean(row.querySelector(".light-small-icon svg")),
           uses_small_icon: Boolean(row.querySelector(".light-small-icon")),
+          recency_ms: Number(row.getAttribute("data-task-connected-recency-ms") || 0),
         }))
       : [];
     return {
@@ -678,14 +688,16 @@ async function recordViewState(page) {
       hasDescriptionSection: sectionTitles.includes("description"),
       hasPeopleSection: sectionTitles.includes("people"),
       hasChecklistSection: sectionTitles.includes("checklist"),
+      hasNotesSection: sectionTitles.includes("notes"),
+      hasConnectedSection: sectionTitles.includes("connected"),
       hasAttachedSection: sectionTitles.includes("attached"),
       hasTaskPersonChips: Boolean(peopleSection?.querySelector(".light-record-chip")),
-      hasTaskAttachmentChips: Boolean(attachedSection?.querySelector(".light-record-chip")),
-      attachedRowCount: attached.length,
+      hasTaskConnectedChips: Boolean(connectedSection?.querySelector(".light-record-chip")),
+      connectedRowCount: connected.length,
       statusHeaderPresent: Boolean(detail?.querySelector(".light-task-detail-card")),
       statusCirclePresent: Boolean(detail?.querySelector(".light-task-status-circle")),
       people,
-      attached,
+      connected,
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
     };
   });
@@ -1024,11 +1036,14 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(state.hasDescriptionSection, `${mode}: primary task is missing Description`);
   assert(state.hasPeopleSection, `${mode}: primary task is missing People`);
   assert(state.hasChecklistSection, `${mode}: primary task is missing Checklist`);
-  assert(state.hasAttachedSection, `${mode}: primary task is missing Attached`);
+  assert(state.hasConnectedSection, `${mode}: primary task is missing Connected`);
+  assert(state.hasNotesSection === false, `${mode}: primary task should not render a standalone Notes section`);
+  assert(state.hasAttachedSection === false, `${mode}: primary task should not render a standalone Attached section`);
   assert(state.hasTaskPersonChips === false, `${mode}: primary task should not render People as task chips`);
-  assert(state.hasTaskAttachmentChips === false, `${mode}: primary task should not render Attached as task chips`);
-  assert(state.attachedRowCount >= 4, `${mode}: primary task should render linked rows for attached records`);
-  assert(state.attached.every(entry => entry.hasIcon && entry.uses_small_icon), `${mode}: attached linked rows should use standard icons`);
+  assert(state.hasTaskConnectedChips === false, `${mode}: primary task should not render Connected as task chips`);
+  assert(state.connectedRowCount >= 4, `${mode}: primary task should render linked rows for connected records`);
+  assert(state.connected.every(entry => entry.hasIcon && entry.uses_small_icon), `${mode}: connected linked rows should use standard icons`);
+  assertTaskConnectedRowsSorted(state.connected, mode);
   assert(state.statusHeaderPresent, `${mode}: primary task is missing the interactive status header card`);
   assert(state.statusCirclePresent, `${mode}: primary task is missing the visible status circle`);
   const createdByChip = state.people.find(person => person.role === "created_by");
@@ -1038,16 +1053,20 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   const ownerChip = state.people.find(person => person.role === "owner");
   assert(ownerChip?.route === "contact-detail", `${mode}: Owner chip should open the linked owner contact`);
   assert(ownerChip?.id === seed.ownerContactId, `${mode}: Owner chip did not point at the expected owner contact`);
+  const connectedKinds = new Set(state.connected.map(entry => String(entry.kind || "")));
+  ["note", "calendar_event", "contact", "project"].forEach(kind => {
+    assert(connectedKinds.has(kind), `${mode}: primary task is missing connected ${kind} rows`);
+  });
   await pageTextIncludes(page, seed.primaryTaskTitle, config.timeoutMs);
   screenshots[`${mode}_task_detail_primary`] = await saveScreenshot(page, config.reportDir, `${mode}-02-task-detail-primary`);
-  screenshots[`${mode}_task_detail_attached`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-attachment-kind]', config.reportDir, `${mode}-02b-task-attached`);
+  screenshots[`${mode}_task_detail_connected`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-connected-kind]', config.reportDir, `${mode}-02b-task-connected`);
   checks.push({
     type: "structured_primary_detail",
     mode,
     state,
     screenshots: {
       detail: screenshots[`${mode}_task_detail_primary`],
-      attached: screenshots[`${mode}_task_detail_attached`],
+      connected: screenshots[`${mode}_task_detail_connected`],
     },
   });
 
@@ -1057,6 +1076,8 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(emptyState.hasTaskHtmlFrame === false, `${mode}: empty task detail rendered legacy HTML`);
   assert(emptyState.hasDescriptionSection === false, `${mode}: empty task should not render Description`);
   assert(emptyState.hasChecklistSection === false, `${mode}: empty task should not render Checklist`);
+  assert(emptyState.hasNotesSection === false, `${mode}: empty task should not render Notes`);
+  assert(emptyState.hasConnectedSection === false, `${mode}: empty task should not render Connected`);
   assert(emptyState.hasAttachedSection === false, `${mode}: empty task should not render Attached`);
   screenshots[`${mode}_task_detail_empty`] = await saveScreenshot(page, config.reportDir, `${mode}-03-task-detail-empty`);
   checks.push({
@@ -1273,8 +1294,8 @@ async function verifyChecklistPersistence(page, seed, mode, config, checks) {
   });
 }
 
-async function clickChipForKind(page, kind, timeoutMs) {
-  const locator = page.locator(`.light-info-row[data-task-attachment-kind="${kind}"]`).first();
+async function clickConnectedRowForKind(page, kind, timeoutMs) {
+  const locator = page.locator(`.light-info-row[data-task-connected-kind="${kind}"]`).first();
   await locator.waitFor({ state: "visible", timeout: timeoutMs });
   const payload = await locator.evaluate(node => ({
     label: String(node.querySelector(".light-text-stack strong")?.textContent || node.textContent || "").replace(/\s+/g, " ").trim(),
@@ -1289,8 +1310,8 @@ async function clickChipForKind(page, kind, timeoutMs) {
 async function verifyNavigationLoop(page, seed, mode, config, screenshots, checks) {
   await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
   for (const target of TASK_PROOF_TARGETS) {
-    const chip = await clickChipForKind(page, target.kind, config.timeoutMs);
-    assert(chip.route === target.expectedRoute, `${mode}: ${target.kind} chip routed to ${chip.route}, expected ${target.expectedRoute}`);
+    const chip = await clickConnectedRowForKind(page, target.kind, config.timeoutMs);
+    assert(chip.route === target.expectedRoute, `${mode}: ${target.kind} connected row routed to ${chip.route}, expected ${target.expectedRoute}`);
     await waitForRoute(page, target.expectedRoute, config.timeoutMs);
     await pageTextIncludes(page, seed[target.titleKey], config.timeoutMs);
     const openedRoute = await currentRoute(page);

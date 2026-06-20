@@ -5577,8 +5577,8 @@
     });
   }
 
-  function workspaceLinkedRows(record, options = {}) {
-    const currentKind = String(record?.kind || "");
+  function workspaceLinkedEntries(record, options = {}) {
+    const currentKind = String(options.currentKind || record?.kind || "");
     const currentId = String(record?.id || record?.record_id || "");
     const links = Array.isArray(record?.links) ? record.links : [];
     const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
@@ -5599,18 +5599,32 @@
       const related = workspaceRecordByKind(relatedKind, relatedId);
       const label = related?.title || link.label || relatedId || graphKindLabel(relatedKind);
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
-      const resolvedValue = typeof options.valueResolver === "function"
-        ? options.valueResolver({ link, related, relatedKind: normalizedKind, relatedId, label, relation })
-        : relation;
       rows.push({
-        icon: graphKindIcon(relatedKind),
-        accentKey: graphKindAccentKey(relatedKind),
+        link,
+        related,
+        relatedKind: normalizedKind,
+        relatedId,
         label,
-        value: String(resolvedValue || relation || graphKindLabel(relatedKind)),
-        target: workspaceTargetForKind(relatedKind, related?.id || relatedId)
+        relation,
+        target: workspaceTargetForKind(relatedKind, related?.id || relatedId),
       });
     });
     return rows;
+  }
+
+  function workspaceLinkedRows(record, options = {}) {
+    return workspaceLinkedEntries(record, options).map(entry => {
+      const resolvedValue = typeof options.valueResolver === "function"
+        ? options.valueResolver(entry)
+        : entry.relation;
+      return {
+        icon: graphKindIcon(entry.relatedKind),
+        accentKey: graphKindAccentKey(entry.relatedKind),
+        label: entry.label,
+        value: String(resolvedValue || entry.relation || graphKindLabel(entry.relatedKind)),
+        target: entry.target
+      };
+    });
   }
 
   function lightLinkedRecordRows(record, options = {}) {
@@ -5625,7 +5639,7 @@
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection(options.title || "Notes", rows);
+    return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
   }
 
   function noteContentUpdatedAtMs(note) {
@@ -5662,6 +5676,30 @@
       source: noteSourceLabel(note),
       timestamp: noteTimestampLabel(note),
     };
+  }
+
+  function linkedRecordRecencyMs(relatedKind, related) {
+    const kind = String(relatedKind || "").trim();
+    if (!related || typeof related !== "object") {
+      return 0;
+    }
+    if (kind === "note") {
+      return noteContentUpdatedAtMs(related);
+    }
+    const candidates = [
+      related?.updated_at_ms,
+      related?.created_at_ms,
+      related?.event_at_ms,
+      related?.start_at_ms,
+      related?.due_at_ms,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+    return 0;
   }
 
   function noteRecordId(note) {
@@ -6365,51 +6403,54 @@
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection("People", rows);
+    return lightInfoSection("People", rows, { showTrailingChevron: false });
   }
 
-  function taskAttachmentRows(task) {
-    const links = Array.isArray(task?.links) ? task.links : [];
+  function taskConnectedRows(task) {
     const seen = new Set();
-    const allowedKinds = new Set(["calendar_event", "contact", "project", "meeting_note", "reminder"]);
     const rows = [];
-    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
-    links.forEach(link => {
-      const isSource = String(link.source_kind) === "task" && String(link.source_id) === String(task?.id || task?.record_id || "");
-      const relatedKind = String(isSource ? link.target_kind : link.source_kind);
-      if (!allowedKinds.has(relatedKind)) {
-        return;
-      }
-      const relatedId = String(isSource ? link.target_id : link.source_id);
-      const related = workspaceRecordByKind(relatedKind, relatedId);
-      const target = workspaceTargetForKind(relatedKind, related?.id || relatedId);
-      const key = target?.kind && target?.id ? `${target.kind}:${target.id}` : `${relatedKind}:${relatedId}`;
+    const origin = { taskId: taskRecordId(task), route: taskDetailReturnRoute() };
+    workspaceLinkedEntries(task, { currentKind: "task" }).forEach(entry => {
+      const target = entry.target;
+      const key = target?.kind && target?.id
+        ? `${target.kind}:${target.id}`
+        : `${entry.relatedKind}:${entry.relatedId}`;
       if (!target || seen.has(key)) {
         return;
       }
       seen.add(key);
-      const relation = link.label && link.label !== related?.title
-        ? `${graphKindLabel(relatedKind)}${DOT}${link.label}`
-        : graphKindLabel(relatedKind);
+      const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);
+      const value = entry.relatedKind === "note"
+        ? String(entry.related?.summary || entry.relation || "Note").trim() || "Note"
+        : String(entry.related?.summary || entry.relation || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind);
       rows.push({
-        icon: graphKindIcon(relatedKind),
-        accentKey: graphKindAccentKey(relatedKind),
-        label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
-        value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        icon: graphKindIcon(entry.relatedKind),
+        accentKey: graphKindAccentKey(entry.relatedKind),
+        label: String(entry.label || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),
+        value,
         target,
-        kind: relatedKind,
+        kind: entry.relatedKind,
+        recencyMs,
         fromRoute: origin.route,
         openOptions: { taskOrigin: origin },
-        dataset: { taskAttachmentKind: relatedKind },
+        dataset: {
+          taskConnectedKind: entry.relatedKind,
+          taskConnectedRecencyMs: String(recencyMs || 0),
+        },
       });
     });
-    const order = ["calendar_event", "contact", "project", "meeting_note", "reminder"];
-    rows.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
+    rows.sort((left, right) => {
+      const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);
+      if (recencyDelta !== 0) {
+        return recencyDelta;
+      }
+      const kindDelta = String(left.kind || "").localeCompare(String(right.kind || ""));
+      if (kindDelta !== 0) {
+        return kindDelta;
+      }
+      return String(left.label || "").localeCompare(String(right.label || ""));
+    });
     return rows;
-  }
-
-  function lightTaskNotesSection(task) {
-    return lightLinkedNotesSection(task);
   }
 
   function lightTaskChecklistSection(task) {
@@ -6433,12 +6474,12 @@
     return section;
   }
 
-  function lightTaskAttachmentsSection(task) {
-    const rows = taskAttachmentRows(task);
+  function lightTaskConnectedSection(task) {
+    const rows = taskConnectedRows(task);
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection("Attached", rows);
+    return lightInfoSection("Connected", rows, { showTrailingChevron: false });
   }
 
   function lightChipIcon(icon, accentKey = "") {
@@ -6519,13 +6560,9 @@
     if (checklist) {
       surface.append(checklist);
     }
-    const notes = lightTaskNotesSection(task);
-    if (notes) {
-      surface.append(notes);
-    }
-    const attachments = lightTaskAttachmentsSection(task);
-    if (attachments) {
-      surface.append(attachments);
+    const connected = lightTaskConnectedSection(task);
+    if (connected) {
+      surface.append(connected);
     }
     return surface;
   }
@@ -7274,12 +7311,13 @@
     return section;
   }
 
-  function lightInfoSection(title, rows) {
+  function lightInfoSection(title, rows, options = {}) {
     const section = el("section", "light-info-section");
     section.append(lightSectionTitle(title));
     const card = el("div", "light-card light-info-card");
     const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";
-    rows.forEach(row => card.append(lightInfoRow(row, { showChevron: !suppressInteractiveChevron })));
+    const showTrailingChevron = options.showTrailingChevron !== false && !suppressInteractiveChevron;
+    rows.forEach(row => card.append(lightInfoRow(row, { showChevron: showTrailingChevron })));
     section.append(card);
     return section;
   }
