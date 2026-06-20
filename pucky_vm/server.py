@@ -398,6 +398,7 @@ class Config:
     meeting_developer_instructions: str | None = None
     self_email: str = ""
     self_phone_number: str = ""
+    pucky_web_ui_token: str = ""
     public_base_url: str | None = None
 
     @classmethod
@@ -406,6 +407,7 @@ class Config:
             host=os.environ.get("PUCKY_HOST", "0.0.0.0"),
             port=int(os.environ.get("PORT", os.environ.get("PUCKY_PORT", "8080"))),
             pucky_api_token=os.environ.get("PUCKY_API_TOKEN", ""),
+            pucky_web_ui_token=os.environ.get("PUCKY_WEB_UI_TOKEN", "").strip(),
             deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", ""),
             deepinfra_api_key=os.environ.get("DEEPINFRA_API_KEY", ""),
             max_audio_bytes=int(os.environ.get("PUCKY_MAX_AUDIO_BYTES", str(32 * 1024 * 1024))),
