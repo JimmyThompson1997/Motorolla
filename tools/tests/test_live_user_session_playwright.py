@@ -86,5 +86,7 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert "for attempt in range(1, 4):" in source
     assert 'append_refresh_param(' in source
     assert '"_pucky_refresh"' in source
+    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1"' in source
+    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1"' in source
     assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
     assert 'live_root / "light-native-ports" / browser_name / run_name' in source

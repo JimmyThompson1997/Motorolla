@@ -334,6 +334,10 @@ def run_live_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     refresh_seed = current_git_head() or str(int(time.time()))
     live_root = (ROOT / ".tmp" / "proof-live-web").resolve()
+    light_home_url = append_refresh_param(
+        "https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1",
+        refresh_seed,
+    )
     light_url = append_refresh_param(
         "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
         refresh_seed,
@@ -381,7 +385,7 @@ def run_live_web_proof(extra_args: list[str]) -> int:
                         "--browser",
                         browser_name,
                         "--light-url",
-                        light_url,
+                        light_home_url,
                         "--dark-feed-url",
                         dark_feed_url,
                         "--dark-meetings-url",
