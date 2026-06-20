@@ -1464,6 +1464,43 @@ async function assertFlatContactProfileCard(page, label) {
   return cardState;
 }
 
+async function assertNoLinkedRecordChevrons(page, label, options = {}) {
+  const state = await page.evaluate(() => {
+    const sections = Array.from(document.querySelectorAll(".light-info-section"));
+    const section = sections.find(node => {
+      const title = String(node.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
+      return title === "linked records";
+    });
+    if (!section) {
+      return { exists: false, rowCount: 0, clickableCount: 0, chevronCount: 0, chevronTexts: [] };
+    }
+    const rows = Array.from(section.querySelectorAll(".light-info-row"));
+    const clickableRows = rows.filter(row => row.matches("button") && row.hasAttribute("data-workspace-target-route"));
+    const chevrons = Array.from(section.querySelectorAll(".light-chevron"));
+    return {
+      exists: true,
+      rowCount: rows.length,
+      clickableCount: clickableRows.length,
+      chevronCount: chevrons.length,
+      chevronTexts: chevrons.map(node => String(node.textContent || "").trim()).filter(Boolean),
+      targets: clickableRows.map(row => ({
+        route: row.getAttribute("data-workspace-target-route") || "",
+        id: row.getAttribute("data-workspace-target-id") || ""
+      }))
+    };
+  });
+  if (options.requireRows) {
+    assert(state.exists, `${label} should render a Linked records section`);
+    assert(state.rowCount > 0, `${label} should render Linked records rows`);
+  }
+  if (!state.exists) {
+    return state;
+  }
+  assert(state.clickableCount === state.rowCount, `${label} Linked records rows should stay clickable, got ${state.clickableCount}/${state.rowCount}`);
+  assert(state.chevronCount === 0, `${label} Linked records should not render side chevrons, got ${JSON.stringify(state.chevronTexts)}`);
+  return state;
+}
+
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
@@ -1496,6 +1533,9 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, "Proof Contact One detail");
     await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
+    const linkedRecordChevrons = await assertNoLinkedRecordChevrons(page, "Proof Contact One detail", { requireRows: true });
+    summary.linkedRecordChevrons = summary.linkedRecordChevrons || [];
+    summary.linkedRecordChevrons.push({ theme, contact: `${seed.runId}-contact-one`, state: linkedRecordChevrons });
     summary.contactProfileCards.push({ theme, contact: `${seed.runId}-contact-one`, profile: contactProfileCard });
   } else {
     const firstContact = contacts[0];
@@ -1503,6 +1543,9 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await expectFrameHeading(page, firstContact.title, config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, `${firstContact.title} detail`);
     await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
+    const linkedRecordChevrons = await assertNoLinkedRecordChevrons(page, `${firstContact.title} detail`);
+    summary.linkedRecordChevrons = summary.linkedRecordChevrons || [];
+    summary.linkedRecordChevrons.push({ theme, contact: firstContact.id, state: linkedRecordChevrons });
     summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
   const detailState = await readGraphDetailState(page);

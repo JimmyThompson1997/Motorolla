@@ -1107,3 +1107,14 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "border: 0;" in contact_profile_card
     assert "box-shadow: none;" in contact_profile_card
     assert "border-radius: 0;" in contact_profile_card
+
+
+def test_linked_records_keep_click_targets_but_drop_trailing_chevrons() -> None:
+    app = read("app.js")
+    light_info_section = function_block(app, "lightInfoSection")
+
+    assert 'const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";' in light_info_section
+    assert "item.dataset.workspaceTargetRoute = row.target.route;" in light_info_section
+    assert "item.dataset.workspaceTargetId = row.target.id;" in light_info_section
+    assert "item.addEventListener(\"click\", () => openWorkspaceTarget(row.target, state.route));" in light_info_section
+    assert 'isInteractive && !suppressInteractiveChevron ? el("span", "light-chevron", ">") : el("span", "")' in light_info_section

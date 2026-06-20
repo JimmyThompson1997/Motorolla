@@ -135,6 +135,18 @@ def test_workspace_apps_browser_proof_flattens_contact_profile_card_contract() -
     assert "contactProfileCards" in source
 
 
+def test_workspace_apps_browser_proof_drops_linked_record_chevrons_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "assertNoLinkedRecordChevrons" in source
+    assert '".light-section-title"' in source
+    assert 'title === "linked records"' in source
+    assert '".light-chevron"' in source
+    assert "Linked records rows should stay clickable" in source
+    assert "Linked records should not render side chevrons" in source
+    assert "linkedRecordChevrons" in source
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

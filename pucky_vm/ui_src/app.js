@@ -6712,6 +6712,7 @@
     const section = el("section", "light-info-section");
     section.append(lightSectionTitle(title));
     const card = el("div", "light-card light-info-card");
+    const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";
     rows.forEach(row => {
       const isInteractive = Boolean(row?.target?.route && row?.target?.id && row?.target?.selectedKey);
       const item = el(isInteractive ? "button" : "div", isInteractive ? "light-info-row is-clickable" : "light-info-row");
@@ -6722,7 +6723,7 @@
         item.dataset.workspaceTargetKind = row.target.kind || "";
         item.addEventListener("click", () => openWorkspaceTarget(row.target, state.route));
       }
-      item.append(lightSmallIcon(row.icon, row.accentKey || row.accent || ""), lightTextStack(row.label, row.value), isInteractive ? el("span", "light-chevron", ">") : el("span", ""));
+      item.append(lightSmallIcon(row.icon, row.accentKey || row.accent || ""), lightTextStack(row.label, row.value), isInteractive && !suppressInteractiveChevron ? el("span", "light-chevron", ">") : el("span", ""));
       card.append(item);
     });
     section.append(card);
