@@ -1019,7 +1019,7 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
             """
         ).fetchall()
     }
-    assert not any(kind == "contact" for kind, _ in clinic_links)
+    assert ("contact", "clinic-front-desk") in clinic_links
     assert ("note", "clinic-prep-note") in clinic_links
     assert ("reminder", "demo-reminder-health-call") in clinic_links
 

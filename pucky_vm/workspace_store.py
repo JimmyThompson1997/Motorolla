@@ -804,6 +804,7 @@ class WorkspaceStore:
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
             demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
         now = self.now_ms()
+        newly_seeded = not seeded
         if not seeded:
             defaults, default_links = seeded_workspace_snapshot(
                 default_workspace_records(now),
@@ -847,14 +848,20 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
+        if not contact_html_removed:
+            if newly_seeded:
+                self._mark_workspace_meta("contact_html_removed_v1", now)
+            else:
+                self._remove_contact_html_v1(now)
         if not contact_cleanup_photos:
-            self._cleanup_contacts_and_photos_v1(now)
+            if newly_seeded:
+                self._cleanup_contacts_and_photos_v1(now, remove_links=False)
+            else:
+                self._cleanup_contacts_and_photos_v1(now)
         if not notes_only_html_seeded:
             self._migrate_notes_only_html_v1(now)
         if not metadata_cleanup_seeded:
             self._cleanup_workspace_metadata_v1(now)
-        if not contact_html_removed:
-            self._remove_contact_html_v1(now)
         if not contact_jimmy_thompson:
             self._seed_jimmy_thompson_contact_v1(now)
         if not contact_jimmy_photo:
@@ -889,6 +896,14 @@ class WorkspaceStore:
             },
         }
         return self.upsert_record("contacts", payload)
+
+    def _mark_workspace_meta(self, key: str, now_ms: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                (key, "1", now_ms),
+            )
+            self._conn.commit()
 
     def _remove_contact_endpoints_v1(self, now_ms: int) -> None:
         with self._lock:
@@ -949,15 +964,16 @@ class WorkspaceStore:
             )
             self._conn.commit()
 
-    def _cleanup_contacts_and_photos_v1(self, now_ms: int) -> None:
+    def _cleanup_contacts_and_photos_v1(self, now_ms: int, *, remove_links: bool = True) -> None:
         with self._lock:
-            self._conn.execute(
-                """
-                DELETE FROM workspace_links
-                WHERE (source_kind = 'contact' AND source_id = 'clinic-front-desk')
-                   OR (target_kind = 'contact' AND target_id = 'clinic-front-desk')
-                """
-            )
+            if remove_links:
+                self._conn.execute(
+                    """
+                    DELETE FROM workspace_links
+                    WHERE (source_kind = 'contact' AND source_id = 'clinic-front-desk')
+                       OR (target_kind = 'contact' AND target_id = 'clinic-front-desk')
+                    """
+                )
             self._conn.execute(
                 """
                 UPDATE workspace_records

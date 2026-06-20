@@ -228,6 +228,7 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       `${runId}-alpha-calendar`,
       `${runId}-alpha-feed`,
       `${runId}-alpha-contact`,
+      `${runId}-future-task-note`,
       `${runId}-beta-task`,
       `${runId}-beta-calendar`,
       `${runId}-beta-feed`,
@@ -312,17 +313,18 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   try {
     await cleanupWorkspaceSeed(config, { runId, writeEnabled: true });
-    const asset = await apiRequest(config, "POST", "/api/workspace/assets", {
+    const pinnedNoteHtml = "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>";
+    await apiRequest(config, "POST", "/api/workspace/assets", {
       id: manifest.assetIds[0],
       title: "Proof pinned note HTML",
-      html: "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>"
+      html: pinnedNoteHtml
     });
     await apiRequest(config, "POST", "/api/workspace/notes", {
       id: `${runId}-pinned-note`,
       title: "Proof Pinned Note",
       summary: "Pinned note created through workspace API.",
       pinned: true,
-      html_asset_id: asset.asset_id,
+      html: pinnedNoteHtml,
       metadata: { context: "Browser proof", icon: "pin" }
     });
     await apiRequest(config, "POST", "/api/workspace/notes", {
@@ -567,6 +569,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     }
 
     for (const link of [
+      ["future-task-note", "task", `${runId}-future-task`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["meeting-contact", "meeting_note", `${runId}-graph-meeting`, "contact", `${runId}-contact-one`, "Proof Contact One"],
       ["meeting-calendar", "meeting_note", `${runId}-graph-meeting`, "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
       ["meeting-note", "meeting_note", `${runId}-graph-meeting`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
@@ -741,13 +744,19 @@ async function readTaskDetailState(page) {
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
     const statusCard = document.querySelector(".light-task-detail-card");
-    const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || "";
     const statusValue = statusCard?.getAttribute("data-task-status") || detail?.getAttribute("data-task-status") || "";
-    const hasNotes = /\bNOTES\b/.test(pageText);
-    const hasRelated = /\bRELATED\b/.test(pageText);
-    const hasGeneratedPage = /\bGENERATED PAGE\b/.test(pageText);
+    const statusLabels = {
+      do: "To do",
+      in_progress: "In progress",
+      waiting: "Waiting",
+      done: "Done"
+    };
+    const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || statusLabels[statusValue] || "";
     const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
       .map(node => String(node.textContent || "").trim().toLowerCase());
+    const hasNotes = sectionTitles.includes("notes") || /\bnotes\b/i.test(pageText);
+    const hasRelated = sectionTitles.includes("related") || /\brelated\b/i.test(pageText);
+    const hasGeneratedPage = sectionTitles.includes("generated page") || /\bgenerated page\b/i.test(pageText);
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
     const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
@@ -912,6 +921,24 @@ function assertDetailFrameMetrics(metrics, label, theme) {
   assert(String(metrics.theme || "") === theme, `Expected ${label} embedded theme ${theme}, got ${metrics?.theme}`);
 }
 
+async function assertNoWorkspaceHtmlDocument(page, label) {
+  const htmlState = await page.evaluate(() => {
+    const root = document.querySelector(".light-shell");
+    const text = String(root?.textContent || "");
+    return {
+      hasHtmlBody: Boolean(root?.querySelector(".light-detail-html-body")),
+      hasHtmlCard: Boolean(root?.querySelector(".light-html-card")),
+      hasHtmlFrame: Boolean(root?.querySelector(".light-html-frame")),
+      hasGeneratedFallback: text.includes("Generated page") || /No generated .* page yet\./i.test(text)
+    };
+  });
+  assert(!htmlState.hasHtmlBody, `${label} should not render a rich HTML document panel`);
+  assert(!htmlState.hasHtmlCard, `${label} should not render a rich HTML card`);
+  assert(!htmlState.hasHtmlFrame, `${label} should not render a rich HTML iframe`);
+  assert(!htmlState.hasGeneratedFallback, `${label} should not render generated-page fallback text`);
+  return htmlState;
+}
+
 function countTaskRequestEvents(networkLog, startMs, endMs) {
   return networkLog.filter(event => (
     event.type === "request" &&
@@ -969,6 +996,8 @@ async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
   await page.locator(rowSelector).click();
+  await waitForLightRoute(page, "note-detail", config.timeoutMs);
+  await page.locator(".light-html-frame").first().waitFor({ state: "attached", timeout: config.timeoutMs });
   await expectFrameHeading(page, note.title, config.timeoutMs);
   const layout = await readDetailHtmlBodyMetrics(page);
   const frameMetrics = await readDetailFrameDocumentMetrics(page);
@@ -1449,14 +1478,9 @@ async function proveFeed(page, config, seed, theme, screenshots, summary) {
     const item = feedItems.find((entry) => String(entry.id) === `${seed.runId}-project-decision`) || feedItems[0];
     await expectFrameHeading(page, item?.title || "Inbox item", config.timeoutMs);
   }
-  const layout = await readDetailHtmlBodyMetrics(page);
-  const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assert(layout.body && layout.page, "Expected inbox detail to expose a measurable HTML body");
-  assert(layout.body.left <= layout.page.left + 2, `Expected inbox HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected inbox HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
-  assertDetailFrameMetrics(frameMetrics, "inbox detail", theme);
-  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
-  summary.detailHtmlMetrics.push({ theme, route: "inbox-detail", layout, frame: frameMetrics });
+  const htmlState = await assertNoWorkspaceHtmlDocument(page, "Inbox detail");
+  summary.noHtmlDetails = summary.noHtmlDetails || [];
+  summary.noHtmlDetails.push({ theme, route: "inbox-detail", htmlState });
   screenshots[`${theme}_inbox_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-detail`);
   if (seed.writeEnabled) {
     await page.locator(`[data-workspace-target-route="project-detail"][data-workspace-target-id="${seed.runId}-alpha-project"]`).first().click();
@@ -1493,14 +1517,9 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
     await page.locator(`[data-project-id="${firstProject.id}"]`).click();
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
-  const layout = await readDetailHtmlBodyMetrics(page);
-  const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assert(layout.body && layout.page, "Expected project detail to expose a measurable HTML body");
-  assert(layout.body.left <= layout.page.left + 2, `Expected project HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected project HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
-  assertDetailFrameMetrics(frameMetrics, "project detail", theme);
-  summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
-  summary.detailHtmlMetrics.push({ theme, route: "project-detail", layout, frame: frameMetrics });
+  const htmlState = await assertNoWorkspaceHtmlDocument(page, "Project detail");
+  summary.noHtmlDetails = summary.noHtmlDetails || [];
+  summary.noHtmlDetails.push({ theme, route: "project-detail", htmlState });
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   if (seed.writeEnabled) {
     for (const [route, id, text] of [
@@ -1912,7 +1931,10 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   }
   graphState = await readGraphDetailState(page);
   assert(graphState.route === "meeting-note-detail", `Expected meeting-note-detail route, got ${graphState.route}`);
-  assert(graphState.hasHtmlFrame, "Expected meeting note detail to render generated HTML iframe");
+  assert(!graphState.hasHtmlFrame, "Meeting note detail should stay a structured graph document, not a generated HTML iframe");
+  const meetingHtmlState = await assertNoWorkspaceHtmlDocument(page, "Meeting note detail");
+  summary.noHtmlDetails = summary.noHtmlDetails || [];
+  summary.noHtmlDetails.push({ theme, route: "meeting-note-detail", htmlState: meetingHtmlState });
   screenshots[`${theme}_graph_meeting_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-detail`);
   for (const [route, id, text, shot] of [
     ["contact-detail", `${seed.runId}-contact-one`, "Proof Contact One", "graph-meeting-linked-contact"],
@@ -2061,7 +2083,7 @@ async function main() {
     };
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
-    summary.assertions.push("generated HTML iframes rendered for document-bearing workspace apps");
+    summary.assertions.push("generated HTML iframes rendered for notes while non-note workspace details stayed structured");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");
     summary.finished_at = new Date().toISOString();

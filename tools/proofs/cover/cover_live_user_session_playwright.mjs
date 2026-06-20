@@ -639,7 +639,8 @@ async function readTaskDetailFocusState(page) {
 }
 
 function assertNoVisibleTaskFocusRing(state, context) {
-  const rowHidden = String(state.task_row_outline_style || "").toLowerCase() === "none"
+  const rowHidden = !("task_row_outline_style" in state)
+    || String(state.task_row_outline_style || "").toLowerCase() === "none"
     || String(state.task_row_outline_width || "") === "0px";
   const statusHidden = !("row_status_outline_style" in state)
     || String(state.row_status_outline_style || "").toLowerCase() === "none"
@@ -740,6 +741,7 @@ async function readTaskDetailState(page) {
       String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
     ) || null;
     const peopleSection = infoSection("people");
+    const notesSection = infoSection("notes");
     const attachedSection = infoSection("attached");
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
@@ -756,6 +758,8 @@ async function readTaskDetailState(page) {
       people: Array.from(peopleSection?.querySelectorAll('.light-info-row[data-task-person-role] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       checklist: Array.from(detail?.querySelectorAll(".light-task-checklist-label") || [])
+        .map(node => String(node.textContent || "").trim()),
+      notes: Array.from(notesSection?.querySelectorAll('.light-info-row .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       attachments: Array.from(attachedSection?.querySelectorAll('.light-info-row[data-task-attachment-kind] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
@@ -1109,9 +1113,10 @@ async function runRouteTour(page, config, mode, seed) {
   for (const link of TASK_LINKS) {
     const targetId = seed[link.idKey];
     const targetTitle = seed[link.titleKey];
-    const locator = page.locator(
-      `.light-task-chip-cloud [data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
-    ).first();
+    const selector = link.kind === "note"
+      ? `.light-info-row[data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
+      : `.light-info-row[data-task-attachment-kind][data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`;
+    const locator = page.locator(selector).first();
     await locator.waitFor({ state: "visible", timeout: config.timeoutMs });
     await locator.click();
     await waitForRoute(page, link.route, config.timeoutMs);

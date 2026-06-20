@@ -91,7 +91,8 @@ def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() 
 def test_live_notes_centering_proof_seeds_saved_browser_token_and_verifies_patch_auth() -> None:
     source = read_source("cover_notes_feed_centering_real_vm_playwright.mjs")
 
-    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert "PUCKY_API_TOKEN" in source
+    assert LEGACY_WEB_TOKEN_ENV not in source
     assert LEGACY_LOCK_TITLE not in source
     assert LEGACY_UNLOCK_LABEL not in source
     assert 'localStorage.setItem("pucky.cover.browser_api_token.v1", String(apiToken || "").trim());' in source
@@ -266,6 +267,25 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     assert '"--skip-canonical-check"' in source
     assert "isLocalProofUrl" in source
     assert "isLocalProof" in source
+    assert "allowAutoplayBypass" in source
+    assert 'config.browserName = browserName === "webkit" ? "webkit" : "chromium";' in source
+    assert 'if (browserName === "webkit") {' in source
+    assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
+    assert 'recordVideo: { dir: videoDir, size: VIEWPORT }' in source
+    assert 'writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);' in source
+    assert 'writeJsonFile(path.join(config.reportDir, "console.json"), consoleMessages);' in source
+    assert 'fs.writeFileSync(path.join(config.reportDir, "final-dom.html"), await page.content(), "utf8");' in source
+    assert 'immediate_feedback: immediateFeedbackResult(startStop),' in source
+    assert 'playing_stability: playingStabilityResult(startStop),' in source
+    assert 'cross_card: crossCard ? crossCardResult(crossCard) : { pass: false, reason: "No secondary audio card found." },' in source
+    assert 'assert(summary.results.immediate_feedback.pass' in source
+    assert 'assert(summary.results.playing_stability.pass' in source
+    assert 'assert(summary.results.cross_card.pass' in source
+    assert "observed_start_ms: observedStartMs" in source
+    assert "max_position_ms: maxPositionMs" in source
+    assert 'assert(summary.results.injected_failure.pass' in source
+    assert 'assert(summary.results.injected_early_stop.pass' in source
+    assert 'summary.evidence.video_path = pageVideo ? await pageVideo.path().catch(() => "") : "";' in source
     assert package["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
 
 
@@ -275,6 +295,11 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "assertMeaningfulRows(" in source
     assert "readScrollReachability(" in source
     assert "reached_bottom" in source
+    assert "maxPositionMs" in source
+    assert "function requiredAudioProgressDelta(" in source
+    assert "required_delta_ms: requiredDeltaMs" in source
+    assert "return 2000;" in source
+    assert "player_delta_ms >= 500" in source
     assert "Open audio controls" in source
     assert "openAudioControls(" in source
     assert "inbox_audio_controls" in source

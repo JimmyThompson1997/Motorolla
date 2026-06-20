@@ -24,10 +24,6 @@ const viewports = [
 ];
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   return String(process.env.PUCKY_API_TOKEN || "").trim();
 }
 
@@ -314,7 +310,7 @@ async function reloadIntoNotes(page, timeoutMs) {
 async function runViewportScenario(browser, config, repo, viewport, index) {
   const viewportDir = path.join(config.reportDir, viewport.label);
   ensureDir(viewportDir);
-  assert(String(config.apiToken || "").trim(), "Expected PUCKY_WEB_UI_TOKEN or PUCKY_API_TOKEN for live Notes write proof");
+  assert(String(config.apiToken || "").trim(), "Expected PUCKY_API_TOKEN for live Notes write proof");
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     isMobile: viewport.width <= 768,
