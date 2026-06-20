@@ -180,9 +180,10 @@ def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
 def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
-    assert 'document.querySelector(".light-task-status-trigger")' in source
-    assert 'querySelector(".light-task-status-trigger-label")' in source
-    assert 'document.querySelector(".light-task-status-circle-trigger")' in source
+    assert 'document.querySelector(".light-task-detail-card")' in source
+    assert 'document.querySelector(".light-task-status-circle")' in source
+    assert 'document.querySelector(".light-task-status-trigger")' not in source
+    assert 'document.querySelector(".light-task-status-circle-trigger")' not in source
     assert '".light-task-row-status-trigger"' in source
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source

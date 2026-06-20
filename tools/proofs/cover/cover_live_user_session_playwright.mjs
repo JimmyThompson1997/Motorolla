@@ -583,12 +583,12 @@ async function waitForTaskDetailStatus(page, status, timeoutMs) {
   await page.waitForFunction(
     expectedStatus => {
       const detail = document.querySelector(".light-task-detail-surface");
-      const button = document.querySelector(".light-task-status-trigger");
+      const card = document.querySelector(".light-task-detail-card");
       return Boolean(
         detail
         && detail.getAttribute("data-task-status") === expectedStatus
-        && button
-        && button.getAttribute("data-task-status") === expectedStatus
+        && card
+        && card.getAttribute("data-task-status") === expectedStatus
       );
     },
     String(status || ""),
@@ -678,12 +678,12 @@ async function readTaskDetailState(page) {
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
     const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
-    const statusTrigger = document.querySelector(".light-task-status-trigger");
+    const statusCard = document.querySelector(".light-task-detail-card");
     return {
       route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       task_detail_id: detail?.getAttribute("data-task-detail-id") || "",
       task_status: detail?.getAttribute("data-task-status") || "",
-      status_label: String(statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent || statusTrigger?.textContent || "").trim(),
+      status_label: String(statusCard?.getAttribute("data-task-status-label") || "").trim(),
       title: String(detail?.querySelector(".light-task-detail-title")?.textContent || "").trim(),
       sections: Array.from(document.querySelectorAll(".light-section-title"))
         .map(node => String(node.textContent || "").trim().toLowerCase()),
@@ -696,8 +696,8 @@ async function readTaskDetailState(page) {
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
         .find(node => /description/i.test(String(node.textContent || "")))?.textContent || "").trim(),
       description_is_first_section: firstSectionTitle === "description",
-      status_trigger_present: Boolean(document.querySelector(".light-task-status-trigger")),
-      status_circle_trigger_present: Boolean(document.querySelector(".light-task-status-circle-trigger")),
+      status_card_present: Boolean(statusCard),
+      status_circle_present: Boolean(document.querySelector(".light-task-status-circle")),
       task_html_frame_present: Boolean(detail?.querySelector(".light-html-frame, iframe")),
     };
   });
@@ -937,8 +937,8 @@ async function runRouteTour(page, config, mode, seed) {
   ["description", "people", "checklist", "attached"].forEach(section => {
     assert(taskState.sections.includes(section), `${mode}: task detail missing ${section} section`);
   });
-  assert(taskState.status_trigger_present, `${mode}: task detail is missing the status pill trigger`);
-  assert(taskState.status_circle_trigger_present, `${mode}: task detail is missing the top-left status trigger`);
+  assert(taskState.status_card_present, `${mode}: task detail is missing the interactive status header card`);
+  assert(taskState.status_circle_present, `${mode}: task detail is missing the visible status circle`);
   assert(!taskState.task_html_frame_present, `${mode}: task detail should not render a task HTML frame above Description`);
   assert(taskState.description_is_first_section, `${mode}: task detail should start with Description`);
   assert(taskState.people.includes(seed.contactTitle), `${mode}: task detail missing created-by contact`);
@@ -957,14 +957,14 @@ async function runRouteTour(page, config, mode, seed) {
     observed: taskState,
   });
 
-  await page.locator(".light-task-status-trigger").first().click();
+  await page.locator(".light-task-detail-card").first().click({ position: { x: 16, y: 16 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail pill selector should keep the current route stable`);
+  assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail header selector should keep the current route stable`);
   await recorder.capture({
     route: taskState.route || expectedTaskReturnRoute(mode),
-    action: "Open task detail pill status selector",
-    expected: "Clicking the task detail status pill opens the shared status selector without leaving task detail.",
-    confirmation: "Task detail pill selector opened in place.",
+    action: "Open task detail header status selector near circle",
+    expected: "Clicking the task detail header near the status circle opens the shared status selector without leaving task detail.",
+    confirmation: "Task detail header selector opened from the circle side in place.",
     observed: {
       route: await currentRoute(page),
       task_id: seed.primaryTaskId,
@@ -975,16 +975,16 @@ async function runRouteTour(page, config, mode, seed) {
   await page.locator('.settings-selector-option[data-selector-value="waiting"]').first().click();
   await waitForTaskDetailStatus(page, "waiting", config.timeoutMs);
   taskState = await readTaskDetailState(page);
-  assert(taskState.task_status === "waiting", `${mode}: task detail pill did not persist Waiting in the DOM`);
+  assert(taskState.task_status === "waiting", `${mode}: task detail header did not persist Waiting in the DOM`);
 
-  await page.locator(".light-task-status-circle-trigger").first().click();
+  await page.locator(".light-task-detail-card").first().click({ position: { x: 132, y: 20 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail top-left selector should keep the current route stable`);
+  assert((await currentRoute(page)) === expectedTaskReturnRoute(mode), `${mode}: task detail header selector should keep the current route stable`);
   await recorder.capture({
     route: taskState.route || expectedTaskReturnRoute(mode),
-    action: "Open task detail top-left status selector",
-    expected: "Clicking the top-left task status icon opens the shared status selector without leaving task detail.",
-    confirmation: "Task detail top-left status selector opened in place.",
+    action: "Open task detail header status selector on title area",
+    expected: "Clicking the task detail header on the title area opens the shared status selector without leaving task detail.",
+    confirmation: "Task detail header selector opened from the title area in place.",
     observed: {
       route: await currentRoute(page),
       task_id: seed.primaryTaskId,

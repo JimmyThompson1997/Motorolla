@@ -293,12 +293,8 @@ def task_row_status_trigger_selector(task_id: str) -> str:
     return f'.light-task-row[data-task-id="{task_id}"] .light-task-row-status-trigger'
 
 
-def detail_status_trigger_selector() -> str:
-    return ".light-task-status-trigger"
-
-
-def detail_status_circle_selector() -> str:
-    return ".light-task-status-circle-trigger"
+def detail_status_header_selector() -> str:
+    return ".light-task-detail-card"
 
 
 def person_chip_selector(role: str) -> str:
@@ -372,8 +368,8 @@ def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> 
     assert_or_fail(bool(state.get("hasAttachedSection")), "phone_task_detail_render_failed", "Primary task is missing Attached")
     assert_or_fail(int(state.get("attachedChipIconCount") or 0) >= 4, "phone_task_detail_render_failed", "Primary task chips are missing icons")
     assert_or_fail(not bool(state.get("hasLegacyCreatedByRow")), "phone_task_detail_render_failed", "Primary task still renders the legacy Created by info row")
-    assert_or_fail(bool(state.get("statusTriggerPresent")), "phone_task_detail_render_failed", "Primary task is missing the status pill trigger")
-    assert_or_fail(bool(state.get("statusCircleTriggerPresent")), "phone_task_detail_render_failed", "Primary task is missing the status circle trigger")
+    assert_or_fail(bool(state.get("statusHeaderPresent")), "phone_task_detail_render_failed", "Primary task is missing the interactive status header card")
+    assert_or_fail(bool(state.get("statusCirclePresent")), "phone_task_detail_render_failed", "Primary task is missing the visible status circle")
     assert_or_fail(str(state.get("title") or "") == str(seed["primaryTaskTitle"]), "phone_task_detail_render_failed", "Primary task title did not render correctly")
     people = [item for item in list(state.get("people") or []) if isinstance(item, dict)]
     created_by = next((item for item in people if str(item.get("role") or "") == "created_by"), {})
@@ -605,21 +601,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 {"kind": "click_selector", "selector": status_selector("todo")},
                 {"kind": "click_selector", "selector": task_row_selector(str(seed["primaryTaskId"]))},
                 {"kind": "wait_for_task_detail", "task_id": str(seed["primaryTaskId"])},
-                {"kind": "click_selector", "selector": detail_status_trigger_selector()},
+                {"kind": "click_selector", "selector": detail_status_header_selector()},
                 {"kind": "task_state"},
-                screenshot_operation(scenario_dir / "09b-status-selector-pill-browser.png"),
+                screenshot_operation(scenario_dir / "09b-status-selector-header-a-browser.png"),
                 {"kind": "click_selector", "selector": status_selector("todo")},
-                {"kind": "click_selector", "selector": detail_status_circle_selector()},
+                {"kind": "click_selector", "selector": detail_status_header_selector()},
                 {"kind": "task_state"},
-                screenshot_operation(scenario_dir / "09b-status-selector-circle-browser.png"),
+                screenshot_operation(scenario_dir / "09b-status-selector-header-b-browser.png"),
                 {"kind": "click_selector", "selector": status_selector("todo")},
             ],
         )
         trigger_states = [item.get("state") for item in list(status_trigger_phase.get("operations") or []) if isinstance(item, dict) and item.get("kind") == "task_state" and isinstance(item.get("state"), dict)]
         assert_or_fail(len(trigger_states) >= 3, "phone_task_detail_render_failed", "Status trigger proof did not capture enough state snapshots")
         assert_or_fail(str(trigger_states[0].get("route") or "") == "tasks", "phone_task_detail_render_failed", "List-row status trigger should keep the phone proof on tasks")
-        assert_or_fail(str(trigger_states[1].get("route") or "") == "task-detail", "phone_task_detail_render_failed", "Detail status pill should keep the phone proof on task detail")
-        assert_or_fail(str(trigger_states[2].get("route") or "") == "task-detail", "phone_task_detail_render_failed", "Detail status circle should keep the phone proof on task detail")
+        assert_or_fail(str(trigger_states[1].get("route") or "") == "task-detail", "phone_task_detail_render_failed", "Detail status header should keep the phone proof on task detail")
+        assert_or_fail(str(trigger_states[2].get("route") or "") == "task-detail", "phone_task_detail_render_failed", "Repeated detail status header open should keep the phone proof on task detail")
         status_checks.append({"type": "status_trigger_routes", "routes": [str(state.get("route") or "") for state in trigger_states[:3]]})
 
         for index, spec in enumerate(expected_link_specs(seed), start=10):
@@ -681,13 +677,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         checklist_checks.append({"toggled_all_done": True, "status_after_toggle": task_after_checklist.get("status")})
 
         transitions = [
-            {"status": "in_progress", "group": "do", "trigger": "pill"},
-            {"status": "waiting", "group": "do", "trigger": "circle"},
-            {"status": "done", "group": "done", "trigger": "pill"},
+            {"status": "in_progress", "group": "do"},
+            {"status": "waiting", "group": "do"},
+            {"status": "done", "group": "done"},
         ]
         current_primary_status = "todo"
         for index, transition in enumerate(transitions, start=15):
-            trigger_selector = detail_status_circle_selector() if transition["trigger"] == "circle" else detail_status_trigger_selector()
             phase = run_phase(
                 args,
                 serial=serial,
@@ -695,7 +690,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 scenario_dir=scenario_dir,
                 name=f"{index:02d}-status-{transition['status']}",
                 operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / f"{index:02d}-status-{transition['status']}-task-browser.png") + [
-                    {"kind": "click_selector", "selector": trigger_selector},
+                    {"kind": "click_selector", "selector": detail_status_header_selector()},
                     {"kind": "click_selector", "selector": status_selector(str(transition["status"]))},
                     {"kind": "wait_for_task_status", "status": str(transition["status"])},
                     {"kind": "task_state"},

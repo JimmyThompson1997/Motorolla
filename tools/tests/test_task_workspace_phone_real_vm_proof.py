@@ -216,8 +216,8 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
         "hasAttachedSection": True,
         "attachedChipIconCount": 4,
         "hasLegacyCreatedByRow": False,
-        "statusTriggerPresent": True,
-        "statusCircleTriggerPresent": True,
+        "statusHeaderPresent": True,
+        "statusCirclePresent": True,
         "title": "Task Proof Primary",
         "people": [
             {"role": "created_by", "route": "contact-detail", "id": "contact-1"},

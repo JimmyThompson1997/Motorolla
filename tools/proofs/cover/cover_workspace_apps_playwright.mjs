@@ -740,11 +740,9 @@ async function readTaskDetailState(page) {
     const pageText = document.querySelector(".light-shell")?.textContent || "";
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
-    const statusTrigger = document.querySelector(".light-task-status-trigger");
-    const statusLabel = statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent?.trim()
-      || statusTrigger?.textContent?.trim()
-      || "";
-    const statusValue = statusTrigger?.getAttribute("data-task-status") || "";
+    const statusCard = document.querySelector(".light-task-detail-card");
+    const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || "";
+    const statusValue = statusCard?.getAttribute("data-task-status") || detail?.getAttribute("data-task-status") || "";
     const hasNotes = /\bNOTES\b/.test(pageText);
     const hasRelated = /\bRELATED\b/.test(pageText);
     const hasGeneratedPage = /\bGENERATED PAGE\b/.test(pageText);
@@ -765,7 +763,8 @@ async function readTaskDetailState(page) {
       sections: sectionTitles,
       descriptionIsFirstSection: firstSectionTitle === "description",
       taskHtmlFramePresent: Boolean(detail?.querySelector(".light-html-frame, iframe")),
-      statusCircleTriggerPresent: Boolean(document.querySelector(".light-task-status-circle-trigger")),
+      statusCardPresent: Boolean(document.querySelector(".light-task-detail-card")),
+      statusCirclePresent: Boolean(document.querySelector(".light-task-status-circle")),
     };
   });
 }
@@ -804,12 +803,12 @@ async function waitForTaskDetailStatus(page, status, timeoutMs) {
   await page.waitForFunction(
     expectedStatus => {
       const detail = document.querySelector(".light-task-detail-surface");
-      const trigger = document.querySelector(".light-task-status-trigger");
+      const card = document.querySelector(".light-task-detail-card");
       return Boolean(
         detail
         && detail.getAttribute("data-task-status") === expectedStatus
-        && trigger
-        && trigger.getAttribute("data-task-status") === expectedStatus
+        && card
+        && card.getAttribute("data-task-status") === expectedStatus
       );
     },
     String(status || ""),
@@ -1188,7 +1187,8 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
   assert(detailState.sections.includes("details"), "Expected inline task detail to include a Details section");
   assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
-  assert(detailState.statusCircleTriggerPresent, "Expected inline task detail to render the top-left status trigger");
+  assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
+  assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");
   assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");
   assert(!detailState.hasNotes, "Did not expect NOTES section on task detail");
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");

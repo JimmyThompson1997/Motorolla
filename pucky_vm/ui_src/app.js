@@ -5840,28 +5840,6 @@
     return lightLinkedNotesSection(task);
   }
 
-  function lightTaskStatusControl(task) {
-    const control = el("div", "light-task-status-control");
-    const current = normalizedTaskStatus(task);
-    const button = el("button", "light-pill is-active light-task-status-trigger");
-    button.type = "button";
-    button.dataset.taskStatus = current;
-    button.setAttribute("aria-haspopup", "dialog");
-    button.setAttribute("aria-label", `Task status: ${taskStatusLabel(current)}`);
-    const icon = el("span", "light-task-status-trigger-icon");
-    icon.append(el("span", taskStatusCircleClass(current)));
-    const copy = el("span", "light-task-status-trigger-copy");
-    copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
-    button.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTaskStatusSelector(task, "detail-pill");
-    });
-    button.append(icon, copy);
-    control.append(button);
-    return control;
-  }
-
   function lightTaskChecklistSection(task) {
     const items = taskChecklist(task);
     if (!items.length) {
@@ -5938,23 +5916,28 @@
   }
 
   function lightTaskDetailCard(task) {
-    const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
-    const statusTrigger = el("button", "light-task-status-circle-trigger");
-    statusTrigger.type = "button";
-    statusTrigger.dataset.taskStatusTrigger = "true";
-    statusTrigger.setAttribute("aria-label", `Change task status for ${task.title || "task"}`);
-    statusTrigger.append(el("span", taskCheckCircleClass(task)));
-    statusTrigger.addEventListener("click", event => {
+    const current = normalizedTaskStatus(task);
+    const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);
+    card.type = "button";
+    card.dataset.taskStatusTrigger = "true";
+    card.dataset.taskStatus = current;
+    card.dataset.taskStatusLabel = taskStatusLabel(current);
+    card.setAttribute("aria-haspopup", "dialog");
+    card.setAttribute("aria-label", `Change task status for ${task.title || "task"}. Current status ${taskStatusLabel(current)}.`);
+    card.addEventListener("click", event => {
       event.preventDefault();
       event.stopPropagation();
-      openTaskStatusSelector(task, "detail-circle");
+      openTaskStatusSelector(task, "detail-header");
     });
+    const statusCircle = el("span", "light-task-status-circle");
+    statusCircle.setAttribute("aria-hidden", "true");
+    statusCircle.append(el("span", taskCheckCircleClass(task)));
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
-    card.append(statusTrigger, copy, lightTaskStatusControl(task));
+    card.append(statusCircle, copy);
     return card;
   }
 

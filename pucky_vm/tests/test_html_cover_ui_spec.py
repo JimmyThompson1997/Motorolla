@@ -899,7 +899,6 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     task_notes_section = function_block(app, "lightTaskNotesSection")
     task_people_section = function_block(app, "lightTaskPeopleSection")
     task_people_loader = function_block(app, "ensureTaskPeopleContactsLoaded")
-    task_status_control = function_block(app, "lightTaskStatusControl")
     task_filters = function_block(app, "lightTaskFilters")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
@@ -939,19 +938,21 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'const notes = lightTaskNotesSection(task);' in task_detail_surface
     assert "surface.append(notes);" in task_detail_surface
     assert "lightHtmlDocument(task" not in task_detail_surface
-    assert 'const button = el("button", "light-pill is-active light-task-status-trigger");' in task_status_control
-    assert 'button.type = "button";' in task_status_control
-    assert 'openTaskStatusSelector(task, "detail-pill");' in task_status_control
-    assert 'button.append(icon, copy);' in task_status_control
-    assert 'iconSvg("expand_more", { filled: true })' not in task_status_control
-    assert 'iconSvg("navigate_next")' not in task_status_control
     assert "function updateTaskStatus(taskId, nextStatus)" in app
     assert "function toggleTaskChecklistItem" not in app
     assert "function openTaskStatusSelector(task, source)" in app
     task_detail_card = function_block(app, "lightTaskDetailCard")
-    assert 'const statusTrigger = el("button", "light-task-status-circle-trigger");' in task_detail_card
-    assert 'statusTrigger.type = "button";' in task_detail_card
-    assert 'openTaskStatusSelector(task, "detail-circle");' in task_detail_card
+    assert "function lightTaskStatusControl" not in app
+    assert 'const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
+    assert 'card.type = "button";' in task_detail_card
+    assert 'card.dataset.taskStatusTrigger = "true";' in task_detail_card
+    assert 'card.setAttribute("aria-haspopup", "dialog");' in task_detail_card
+    assert 'card.setAttribute("aria-label", `Change task status for ${task.title || "task"}. Current status ${taskStatusLabel(current)}.`);' in task_detail_card
+    assert 'card.addEventListener("click", event => {' in task_detail_card
+    assert 'openTaskStatusSelector(task, "detail-header");' in task_detail_card
+    assert 'const statusCircle = el("span", "light-task-status-circle");' in task_detail_card
+    assert 'statusCircle.append(el("span", taskCheckCircleClass(task)));' in task_detail_card
+    assert "lightTaskStatusControl(task)" not in task_detail_card
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
@@ -967,11 +968,14 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert ".light-task-detail-surface > .light-task-detail-body" not in styles
     assert ".light-record-chip-icon" in styles
     assert ".light-task-row-status-trigger" in styles
-    assert ".light-task-status-circle-trigger" in styles
-    assert ".light-task-status-trigger" in styles
+    assert ".light-task-status-circle" in styles
+    assert ".light-task-status-circle-trigger" not in styles
+    assert ".light-task-status-control" not in styles
+    assert ".light-task-status-trigger" not in styles
     assert ".light-task-person-row" in styles
     assert ".light-task-filter-button-icon" in styles
-    assert ".light-task-status-trigger-icon" in styles
+    assert ".light-task-detail-card" in styles
+    assert ".light-task-detail-card:focus-visible" in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles

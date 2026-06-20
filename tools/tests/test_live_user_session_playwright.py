@@ -59,17 +59,21 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-status-trigger' in source
     assert '.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main' in source
     assert '.settings-selector-option[data-selector-value="in_progress"]' in source
-    assert '.settings-selector-option[data-selector-value="waiting"]' in source
     assert '.settings-selector-option[data-selector-value="done"]' in source
-    assert '".light-task-status-trigger"' in source
-    assert '".light-task-status-circle-trigger"' in source
+    assert '.settings-selector-option[data-selector-value="waiting"]' in source
+    assert '".light-task-detail-card"' in source
+    assert '".light-task-status-circle"' in source
+    assert '".light-task-status-trigger"' not in source
+    assert '".light-task-status-circle-trigger"' not in source
     assert 'description_is_first_section' in source
     assert 'task_html_frame_present' in source
     assert 'assert(!taskState.task_html_frame_present' in source
     assert 'assert(taskState.description_is_first_section' in source
     assert "Open task list status selector" in source
-    assert "Open task detail pill status selector" in source
-    assert "Open task detail top-left status selector" in source
+    assert "Open task detail header status selector near circle" in source
+    assert "Open task detail header status selector on title area" in source
+    assert "Open task detail pill status selector" not in source
+    assert "Open task detail top-left status selector" not in source
     assert "Persist Done status after reload" in source
 
 
