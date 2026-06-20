@@ -130,16 +130,40 @@ def test_meeting_notes_rows_drop_leading_icon_and_trailing_chevron_only_for_that
     app = read("app.js")
     styles = read("styles.css")
     meeting_notes_page = function_block(app, "lightMeetingNotesPage")
+    light_graph_list_page = function_block(app, "lightGraphListPage")
+    render_universal_tile = function_block(app, "renderUniversalFeedTile")
     light_graph_row = function_block(app, "lightGraphRow")
 
+    assert "function normalizeUniversalFeedTileDescriptor(" in app
+    assert "function normalizeUniversalFeedSectionDescriptor(" in app
+    assert "function renderUniversalFeedPage(" in app
+    assert "function renderUniversalFeedSection(" in app
+    assert "function renderUniversalFeedTile(" in app
     assert 'rowClassName: "light-graph-row-meeting-notes",' in meeting_notes_page
+    assert 'surface: "meeting-notes",' in meeting_notes_page
     assert "showLeadingIcon: false," in meeting_notes_page
     assert "showTrailingChevron: false" in meeting_notes_page
+    assert "return renderUniversalFeedPage({" in light_graph_list_page
+    assert 'surface: String(options.surface || options.collection || "workspace"),' in light_graph_list_page
+    assert 'surfaceClassName: "light-list-surface",' in light_graph_list_page
+    assert "items: workspaceItems(options.collection).map(record => universalGraphFeedTileDescriptor(record, options))" in light_graph_list_page
+    assert 'return lightGraphRow(record, {' in render_universal_tile
+    assert "rowClassName: descriptor.meta?.rowClassName || \"\"," in render_universal_tile
+    assert "showLeadingIcon: descriptor.leading?.show !== false," in render_universal_tile
+    assert "showTrailingChevron: descriptor.trailing?.show !== false" in render_universal_tile
     assert 'const rowClassName = String(options.rowClassName || "").trim();' in light_graph_row
     assert 'const leadingIcon = options.showLeadingIcon === false' in light_graph_row
     assert 'const trailingChevron = options.showTrailingChevron === false' in light_graph_row
     assert "if (leadingIcon) {" in light_graph_row
     assert "if (trailingChevron) {" in light_graph_row
+    assert 'const row = el("button", `light-card light-feed-row light-graph-row ${rowClassName}`.trim());' in light_graph_row
+    assert ".light-feed-page {" in styles
+    assert ".light-feed-surface {" in styles
+    assert ".light-feed-section {" in styles
+    assert ".light-feed-section-header {" in styles
+    assert ".light-feed-section-body {" in styles
+    assert ".light-feed-list {" in styles
+    assert ".light-feed-row {" in styles
     assert ".light-graph-row.light-graph-row-meeting-notes {" in styles
     assert "grid-template-columns: minmax(0, 1fr) auto;" in styles
 
@@ -198,11 +222,19 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'page.append(lightCopySection("Description", meeting.summary));' in light_meeting_detail
     assert light_meeting_detail.index("lightCalendarEventDetailsSection(meeting, attendees)") < light_meeting_detail.index('lightCopySection("Description", meeting.summary)')
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' in light_meeting_detail
+    assert 'card.classList.add("is-single");' in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
     assert 'who.dataset.detailRow = "who";' in app
     assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
     assert 'light-attendee-chip-cloud' in app
+    assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' in app
+    assert 'light-calendar-detail-guest-list' not in app
+    assert 'function lightGuestAttendeeChip(label) {' in app
+    assert 'return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());' in app
+    assert "function disambiguateCalendarChipLabels(chips) {" in app
+    assert 'return disambiguateCalendarChipLabels(chips);' in app
+    assert 'label: `${label}${DOT}${graphKindLabel(kind)}`' in app
     assert "calendarEventTypeFiltersCard()" in app
     assert 'const sheet = el("section", "settings-selector-sheet calendar-settings-panel");' in app
     assert "trace-sheet settings-sheet calendar-settings-sheet" not in app
@@ -255,6 +287,11 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".calendar-settings-panel" in styles
     assert ".calendar-type-filter-row" in styles
     assert ".light-calendar-detail-card" in styles
+    assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip.is-link" in styles
+    assert ".light-attendee-chip-guest" in styles
+    assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip-guest" in styles
+    assert ".light-event-connected-card.is-single" in styles
+    assert ".app-shell[data-theme=\"dark\"] .light-event-connected-card.is-single" in styles
 
 
 def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
@@ -698,6 +735,9 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
 
     light_notes = function_block(app, "lightNotesPage")
     light_notes_section = function_block(app, "lightNotesSection")
+    render_universal_page = function_block(app, "renderUniversalFeedPage")
+    render_universal_section = function_block(app, "renderUniversalFeedSection")
+    render_universal_tile = function_block(app, "renderUniversalFeedTile")
     light_notes_section_header = function_block(app, "lightNotesSectionHeader")
     note_timestamp = function_block(app, "noteContentUpdatedAtMs")
     note_timestamp_label = function_block(app, "noteTimestampLabel")
@@ -737,20 +777,27 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
     assert "notesSectionsExpanded: { pinned: true, recent: true }," in app
-    assert 'page.classList.add("light-notes-page");' in light_notes
-    assert 'const feedWrap = el("div", "light-notes-feed");' in light_notes
-    assert 'feedWrap.append(lightNotesSection("Pinned", "pinned", pinned));' in light_notes
-    assert 'feedWrap.append(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));' in light_notes
-    assert 'page.append(feedWrap);' in light_notes
-    assert 'const section = el("section", "light-notes-section");' in light_notes_section
-    assert "section.dataset.notesSection = sectionKey;" in light_notes_section
-    assert "const expanded = noteSectionExpanded(sectionKey);" in light_notes_section
-    assert 'const body = el("div", "light-notes-section-body");' in light_notes_section
-    assert "body.hidden = !expanded;" in light_notes_section
-    assert "section.append(lightNotesSectionHeader(title, sectionKey, notes.length, expanded, bodyId));" in light_notes_section
-    assert "if (expanded) {" in light_notes_section
-    assert "notes.forEach(note => body.append(lightNoteRow(note)));" in light_notes_section
-    assert 'const button = el("button", "light-notes-section-header");' in light_notes_section_header
+    assert "return renderUniversalFeedPage({" in light_notes
+    assert 'surface: "notes",' in light_notes
+    assert 'pageClassName: "light-notes-page",' in light_notes
+    assert 'surfaceClassName: "light-notes-feed",' in light_notes
+    assert "const sections = [];" in light_notes
+    assert 'sections.push(lightNotesSection("Pinned", "pinned", pinned));' in light_notes
+    assert 'sections.push(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));' in light_notes
+    assert "return {" in light_notes_section
+    assert "key: sectionKey," in light_notes_section
+    assert "label: title," in light_notes_section
+    assert "count: notes.length," in light_notes_section
+    assert "collapsible: true," in light_notes_section
+    assert "expanded: noteSectionExpanded(sectionKey)," in light_notes_section
+    assert "emptyState: null," in light_notes_section
+    assert "items: notes.map(note => universalNoteFeedTileDescriptor(note, sectionKey))" in light_notes_section
+    assert 'if (descriptor.collapsible && descriptor.surface === "notes") {' in render_universal_section
+    assert "const body = el(\"div\", `${listClassName} light-feed-section-body light-feed-list`.trim());" in render_universal_section
+    assert "body.hidden = descriptor.collapsible && !descriptor.expanded;" in render_universal_section
+    assert 'body.append(...descriptor.items.map(item => renderUniversalFeedTile(item)));' in render_universal_section
+    assert 'return lightNoteRow(descriptor.meta?.note || null);' in render_universal_tile
+    assert 'const button = el("button", "light-feed-section-header light-notes-section-header");' in light_notes_section_header
     assert "button.type = \"button\";" in light_notes_section_header
     assert "button.dataset.notesSection = sectionKey;" in light_notes_section_header
     assert 'button.setAttribute("aria-expanded", String(expanded));' in light_notes_section_header
@@ -765,7 +812,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'return {' in note_meta
     assert "source: noteSourceLabel(note)" in note_meta
     assert "timestamp: noteTimestampLabel(note)" in note_meta
-    assert 'const row = el("div", "light-note-row");' in note_row
+    assert 'const row = el("div", "light-feed-row light-note-row");' in note_row
     assert 'row.setAttribute("role", "button");' in note_row
     assert "row.tabIndex = 0;" in note_row
     assert 'row.dataset.notePinned = String(Boolean(note.pinned));' in note_row
@@ -1139,6 +1186,8 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     app = read("app.js")
     styles = read("styles.css")
     reminders_page = function_block(app, "lightRemindersPage")
+    reminder_section = function_block(app, "lightReminderListSection")
+    render_universal_tile = function_block(app, "renderUniversalFeedTile")
     reminder_active = function_block(app, "reminderIsActive")
     reminder_row = function_block(app, "lightReminderRow")
     reminder_detail = function_block(app, "lightReminderDetailPage")
@@ -1150,12 +1199,24 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "const active = reminders.filter(reminder => reminderIsActive(reminder));" in reminders_page
     assert "const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));" in reminders_page
-    assert 'page.append(lightReminderListSection("", active, "active"));' in reminders_page
-    assert 'page.append(lightReminderListSection("Snoozed", snoozed, "snoozed"));' in reminders_page
+    assert "return renderUniversalFeedPage({" in reminders_page
+    assert 'surface: "reminders",' in reminders_page
+    assert 'pageClassName: "light-graph-page light-reminders-page",' in reminders_page
+    assert "const sections = [];" in reminders_page
+    assert 'sections.push(lightReminderListSection("", active, "active"));' in reminders_page
+    assert 'sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));' in reminders_page
+    assert "return {" in reminder_section
+    assert "key: String(sectionKey || \"\").trim().toLowerCase()," in reminder_section
+    assert "label: title," in reminder_section
+    assert "count: reminders.length," in reminder_section
+    assert "collapsible: false," in reminder_section
+    assert "items: reminders.map(reminder => universalReminderFeedTileDescriptor(reminder, sectionKey))" in reminder_section
     assert "light-reminder-history" not in reminders_page
     assert "&& !reminderIsSnoozed(reminder)" in reminder_active
+    assert 'return lightReminderRow(descriptor.meta?.reminder || null);' in render_universal_tile
     assert "lightSmallIcon(\"bell\", \"reminders\")" in reminder_row
     assert "light-graph-chip-row" not in reminder_row
+    assert 'const row = el("button", `light-card light-feed-row light-reminder-row ${group || ""} ${deliveryClass}`.trim());' in reminder_row
     assert 'const page = lightPage("Reminder", { detail: true });' in reminder_detail
     assert "page.append(lightReminderDetailCard(reminder));" in reminder_detail
     assert 'page.append(lightReminderActionRow(reminder));' not in reminder_detail
@@ -1175,6 +1236,45 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID' in recipient_rows
     assert ".light-reminder-detail-card" in styles
     assert ".light-reminder-channels-section" in styles
+
+
+def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewriting_canonical_cards() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    projects_page = function_block(app, "lightProjectsPage")
+    project_row = function_block(app, "lightProjectRow")
+    inbox_page = function_block(app, "lightInboxPage")
+    meetings_page = function_block(app, "lightMeetingsPage")
+    render_universal_tile = function_block(app, "renderUniversalFeedTile")
+
+    assert "function lightProjectRow(" in app
+    assert "function lightInboxSection(" in app
+    assert "function lightMeetingsSection(" in app
+    assert "return renderUniversalFeedPage({" in projects_page
+    assert 'surface: "projects",' in projects_page
+    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))' in projects_page
+    assert 'const row = el("button", "light-card light-feed-row light-project-row");' in project_row
+    assert 'const chips = el("span", "light-project-chip-row");' in project_row
+    assert "return renderUniversalFeedPage({" in inbox_page
+    assert 'surface: "inbox",' in inbox_page
+    assert 'surfaceTag: "section",' in inbox_page
+    assert 'surfaceClassName: "light-canonical-port-surface light-inbox-surface",' in inbox_page
+    assert "sections: [lightInboxSection()]" in inbox_page
+    assert "return renderUniversalFeedPage({" in meetings_page
+    assert 'surface: "meetings",' in meetings_page
+    assert 'surfaceTag: "section",' in meetings_page
+    assert 'surfaceClassName: "light-canonical-port-surface light-meetings-surface",' in meetings_page
+    assert 'contentClassName: "meetings-page is-embedded-light",' in meetings_page
+    assert "const beforeSections = [meetingsEmbeddedToolbar()];" in meetings_page
+    assert "sections: [lightMeetingsSection()]" in meetings_page
+    assert "const card = descriptor.meta?.card;" in render_universal_tile
+    assert "return cardView(card);" in render_universal_tile
+    assert "const meeting = descriptor.meta?.meeting;" in render_universal_tile
+    assert "return cardView(meetingCardFromRecord(meeting));" in render_universal_tile
+    assert ".light-canonical-port-surface {" in styles
+    assert ".card {" in styles
+    assert ".card.card-meeting-list {" in styles
 
 
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:

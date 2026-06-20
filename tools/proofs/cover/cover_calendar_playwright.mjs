@@ -173,6 +173,13 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     html: "<!doctype html><h1>Proof review outline</h1><p>Note linked from the proof calendar event.</p>",
     metadata: { tags: ["Calendar", "Proof"] }
   });
+  await rememberRecord("notes", {
+    id: `${runId}-late-note`,
+    title: "Late-call follow-up",
+    summary: "Single linked note to keep the sparse connected card intentional.",
+    html: "<!doctype html><h1>Late-call follow-up</h1><p>Standalone note linked from the late proof event.</p>",
+    metadata: { tags: ["Calendar", "Follow-up"] }
+  });
   await rememberRecord("tasks", {
     id: `${runId}-task`,
     title: "Send proof review notes",
@@ -199,11 +206,11 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
   });
   await rememberRecord("reminders", {
     id: `${runId}-reminder`,
-    title: "Send proof HTML before call",
-    summary: "Small nudge tied directly to the review event.",
+    title: "Send proof review notes",
+    summary: "Reminder sibling for the linked task title.",
     status: "open",
     due_at_ms: dayAt(0, 8, 30),
-    html: "<!doctype html><h1>Send proof HTML before call</h1><p>Reminder linked back to the proof review event and task.</p>",
+    html: "<!doctype html><h1>Send proof review notes</h1><p>Reminder linked back to the proof review event and task.</p>",
     metadata: { source_kind: "calendar_event", source_id: `${runId}-freelance-review`, snooze_state: "ready" }
   });
   await rememberRecord("calendar-events", {
@@ -214,7 +221,7 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     start_at_ms: dayAt(0, 9, 30),
     end_at_ms: dayAt(0, 10, 15),
     html: "<!doctype html><h1>Proof freelance review call</h1><p>Graph-linked proof event for attendee chips and cross-app navigation.</p>",
-    metadata: { place: "Kitchen table", type: "freelance", attendees: ["Jimmy Torres", "Jeff Bennett"] }
+    metadata: { place: "Kitchen table", type: "freelance", attendees: ["Jimmy Torres", "Jeff Bennett", "Outside counsel"] }
   });
   await rememberRecord("calendar-events", {
     id: `${runId}-katy-handoff`,
@@ -321,7 +328,15 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     source_id: `${runId}-freelance-review`,
     target_kind: "reminder",
     target_id: `${runId}-reminder`,
-    label: "Send proof HTML before call"
+    label: "Send proof review notes"
+  });
+  await rememberLink({
+    id: `${runId}-link-late-note`,
+    source_kind: "calendar_event",
+    source_id: `${runId}-late-call`,
+    target_kind: "note",
+    target_id: `${runId}-late-note`,
+    label: "Late-call follow-up"
   });
   return seed;
 }
@@ -598,7 +613,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     }
     assert(agendaChipTexts.length === 2, `Expected agenda cards to show only recognized contacts, got ${agendaChipTexts.join(", ")}.`);
     assert(!agendaChipTexts.includes("Kitchen table"), "Expected place to stay out of calendar agenda chips.");
-    for (const label of ["Proof freelance follow-up", "Send proof review notes", "Proof review outline", "Proof freelance prep", "Send proof HTML before call"]) {
+    for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(!agendaChipTexts.includes(label), `Expected agenda cards to hide non-contact graph chips like ${label}.`);
     }
     const firstGap = await gapMetrics(page);
@@ -635,16 +650,20 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(detailSectionTitles.includes("DESCRIPTION"), `Expected event detail section titles to include Description, got ${detailSectionTitles.join(", ")}.`);
     assert(detailSectionTitles.indexOf("DETAILS") < detailSectionTitles.indexOf("DESCRIPTION"), `Expected Details to appear before Description, got ${detailSectionTitles.join(", ")}.`);
     assert(!detailText.includes("Linked records"), "Expected event detail to collapse Linked records into Connected chips.");
+    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected Who to render guests as chips instead of paragraph copy.");
+    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected Who to include at least one neutral guest chip.");
     const whoChipTexts = await allText(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip');
-    for (const label of ["Jimmy T.", "Jeff B."]) {
+    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(whoChipTexts.includes(label), `Expected Who to include ${label}, got ${whoChipTexts.join(", ")}.`);
     }
+    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
     const connectedChipTexts = await allText(page, ".light-event-connected-card .light-attendee-chip");
-    for (const label of ["Proof freelance follow-up", "Send proof review notes", "Proof review outline", "Proof freelance prep", "Send proof HTML before call"]) {
+    for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(connectedChipTexts.includes(label), `Expected Connected to include ${label}, got ${connectedChipTexts.join(", ")}.`);
     }
     assert(!connectedChipTexts.includes("Jimmy T."), "Expected contact chips to stay in Who, not Connected.");
     assert(!connectedChipTexts.includes("Jeff B."), "Expected contact chips to stay in Who, not Connected.");
+    assert(!connectedChipTexts.includes("Outside counsel"), "Expected unmatched attendees to stay in Who, not Connected.");
     assert(!connectedChipTexts.includes("Kitchen table"), "Expected place to stay out of Connected chips on detail.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="place"] .light-attendee-chip').count() === 0, "Expected Place to stay plain text only.");
     await assertChipContrast(page, ".light-event-connected-card .light-attendee-chip.is-link");
@@ -657,10 +676,10 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await waitForHeaderText(page, "Proof freelance review call");
     for (const target of [
       { label: "Proof freelance follow-up", route: "project-detail", expectedText: "Proof freelance follow-up" },
-      { label: "Send proof review notes", route: "task-detail", expectedText: "Send proof review notes" },
+      { label: "Send proof review notes · Task", route: "task-detail", expectedText: "Send proof review notes" },
       { label: "Proof review outline", route: "note-detail", expectedText: "Proof review outline" },
       { label: "Proof freelance prep", route: "meeting-note-detail", expectedText: "Proof freelance prep" },
-      { label: "Send proof HTML before call", route: "reminder-detail", expectedText: "Send proof HTML before call" }
+      { label: "Send proof review notes · Reminder", route: "reminder-detail", expectedText: "Send proof review notes" }
     ]) {
       await selectCalendarDetailTarget(page, target.label, target.route, target.expectedText);
       await saveShot(page, reportDir, `calendar-desktop-${theme}-${target.route}.png`, summary);
@@ -772,7 +791,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     }
     assert(mobileChipTexts.length === 2, `Expected mobile agenda cards to stay contacts-only, got ${mobileChipTexts.join(", ")}.`);
     assert(!mobileChipTexts.includes("Kitchen table"), "Expected place to stay out of mobile agenda chips.");
-    for (const label of ["Proof freelance follow-up", "Send proof review notes", "Proof review outline", "Proof freelance prep", "Send proof HTML before call"]) {
+    for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(!mobileChipTexts.includes(label), `Expected mobile agenda cards to hide non-contact graph chips like ${label}.`);
     }
     const mobileGap = await gapMetrics(page);
@@ -792,9 +811,15 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileSectionTitles.indexOf("DETAILS") < mobileSectionTitles.indexOf("DESCRIPTION"), `Expected mobile Details to appear before Description, got ${mobileSectionTitles.join(", ")}.`);
     assert(!mobileDetailText.includes("Linked records"), "Expected mobile event detail to collapse Linked records into Connected chips.");
     const mobileWhoChipTexts = await allText(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip');
-    assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B."), `Expected mobile Who row to carry contact chips, got ${mobileWhoChipTexts.join(", ")}.`);
+    assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B.") && mobileWhoChipTexts.includes("Outside counsel"), `Expected mobile Who row to carry contact and guest chips, got ${mobileWhoChipTexts.join(", ")}.`);
+    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected mobile Who row to avoid guest paragraphs.");
+    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected mobile Who row to include at least one guest chip.");
+    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
     const mobileConnectedChipTexts = await allText(page, ".light-event-connected-card .light-attendee-chip");
     assert(!mobileConnectedChipTexts.includes("Jimmy T.") && !mobileConnectedChipTexts.includes("Jeff B."), `Expected mobile Connected chips to exclude contacts, got ${mobileConnectedChipTexts.join(", ")}.`);
+    for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
+      assert(mobileConnectedChipTexts.includes(label), `Expected mobile Connected to include ${label}, got ${mobileConnectedChipTexts.join(", ")}.`);
+    }
     await assertChipContrast(page, ".light-event-connected-card .light-attendee-chip.is-link");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
@@ -828,6 +853,15 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     });
     assert(detailTop.headerTop <= 1, `Expected deep-scroll event taps to land with the header visible, got ${JSON.stringify(detailTop)}.`);
     assert(detailTop.feedScrollTop <= 24, `Expected deep-scroll event detail to open near the top, got ${JSON.stringify(detailTop)}.`);
+    assert(await page.locator(".light-event-connected-card.is-single").count() === 1, "Expected the late-call detail to use the compact single-chip Connected card.");
+    const lateCallConnected = await allText(page, ".light-event-connected-card .light-attendee-chip");
+    assert(lateCallConnected.length === 1 && lateCallConnected[0] === "Late-call follow-up", `Expected the late-call detail to expose one linked note chip, got ${lateCallConnected.join(", ")}.`);
+    await selectConnectedChip(page, "Late-call follow-up");
+    await waitForHeaderText(page, "Late-call follow-up");
+    assert(await currentLightRoute(page) === "note-detail", `Expected late-call chip tap to open note-detail, got ${await currentLightRoute(page)}.`);
+    await page.getByRole("button", { name: "Back" }).click();
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from late-call linked note to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    await waitForHeaderText(page, "Proof late call");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-late-call-detail.png`, summary);
     summary.assertions.push(`mobile ${theme} sticky header, full chips, and lean event detail stayed readable`);
   } finally {

@@ -49,6 +49,7 @@ def config(tmp_path: Path) -> Config:
         host="127.0.0.1",
         port=0,
         pucky_api_token="test-token",
+        pucky_web_ui_token="web-token",
         deepgram_api_key="",
         deepinfra_api_key="",
         max_audio_bytes=1024,
@@ -208,6 +209,29 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
                 body={"pinned": True},
             )
         assert caught.value.code == 401
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_accepts_web_ui_token_for_note_writes(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        note = request_json(
+            base_url,
+            "/api/workspace/notes",
+            method="POST",
+            token="test-token",
+            body={"id": "web-token-note", "title": "Web Token Note", "pinned": False},
+        )
+
+        patched = request_json(
+            base_url,
+            f"/api/workspace/notes/{note['id']}",
+            method="PATCH",
+            token="web-token",
+            body={"pinned": True},
+        )
+        assert patched["pinned"] is True
     finally:
         server.shutdown()
 

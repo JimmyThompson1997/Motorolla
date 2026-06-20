@@ -28,6 +28,8 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert "--keep-seed" in source
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
+    assert "const UNIVERSAL_FEED_TILE_ROUTES = [" in source
+    assert '"projects"' in source
     assert 'url.searchParams.set("api_token"' not in source
     assert "Authorization: `Bearer ${config.apiToken}`" not in source
 
@@ -99,6 +101,7 @@ def test_tools_package_exposes_live_user_session_script() -> None:
     payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
 
     assert payload["scripts"]["test:cover-live-user-session"] == "node ./proofs/cover/cover_live_user_session_playwright.mjs"
+    assert payload["scripts"]["test:cover-universal-feed-tiles"] == "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs"
 
 
 def test_tools_package_exposes_inbox_related_proofs() -> None:
@@ -127,3 +130,6 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1"' in source
     assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
     assert 'live_root / "light-native-ports" / browser_name / run_name' in source
+    assert "cover_universal_feed_tiles_playwright.mjs" in source
+    assert 'proof-local-universal-tiles' in source
+    assert 'proof-live-universal-tiles' in source

@@ -579,15 +579,18 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
     classes: String(button.className || "").trim(),
     aria_label: String(button.getAttribute("aria-label") || "").trim()
   }));
-  await clickSelector(page, targetSelector, timeoutMs);
-  await page.waitForFunction(
-    selectorValue => {
-      const button = document.querySelector(selectorValue);
-      return !!button && !button.classList.contains("is-playing");
-    },
-    targetSelector,
-    { timeout: timeoutMs }
-  );
+  assert(!playing.classes.split(/\s+/).includes("is-failed"), `Audio control showed failed state after successful playback (${playing.classes})`);
+  if (playing.classes.split(/\s+/).some(className => className === "is-playing" || className === "is-busy")) {
+    await clickSelector(page, targetSelector, timeoutMs);
+    await page.waitForFunction(
+      selectorValue => {
+        const button = document.querySelector(selectorValue);
+        return !!button && !button.classList.contains("is-playing");
+      },
+      targetSelector,
+      { timeout: timeoutMs }
+    );
+  }
   return {
     ...target,
     ...playing,

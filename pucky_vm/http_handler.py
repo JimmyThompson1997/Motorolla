@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .http_surface import (
     cors_header_items,
     inline_content_disposition,
-    is_bearer_authorized,
+    is_any_bearer_authorized,
     json_body,
     parse_content_length,
     request_base_url,
@@ -839,7 +839,13 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             return data
 
         def _is_authorized(self) -> bool:
-            return is_bearer_authorized(service.config.pucky_api_token, self.headers.get("Authorization", ""))
+            return is_any_bearer_authorized(
+                (
+                    service.config.pucky_api_token,
+                    service.config.pucky_web_ui_token,
+                ),
+                self.headers.get("Authorization", ""),
+            )
 
         def _request_base_url(self) -> str:
             return request_base_url(

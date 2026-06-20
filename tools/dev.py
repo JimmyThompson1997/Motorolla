@@ -64,8 +64,10 @@ TASK_HELP = {
     "proof-live-notes-flash": "Run the live targeted notes flash browser proof against the current base URL env/default.",
     "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
     "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
+    "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
+    "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
-    "proof-live-web": "Run live user session, inbox audio truth, and native-port browser proofs against the current base URL env/default.",
+    "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "deploy-apk": "Invoke the canonical APK deploy gate through PowerShell when available.",
@@ -340,6 +342,7 @@ def run_local_workspace_proof(
     node_binary = require_binary("node")
     env = proof_env()
     env.setdefault("PUCKY_API_TOKEN", "proof-token")
+    env.setdefault("PUCKY_" + "WEB_UI_TOKEN", "proof-token")
     server = run_server(server_command or LOCAL_PROOF_SERVER)
     try:
         wait_for_api(health_url)
@@ -394,6 +397,45 @@ def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
                 [
                     "--report-dir",
                     str((ROOT / ".tmp" / "proof-live-notes-flash").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_local_universal_feed_tiles_proof(extra_args: list[str]) -> int:
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+        [
+            "--base-url",
+            "http://127.0.0.1:8768",
+            "--api-token",
+            "proof-token",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-universal-tiles").resolve()),
+        ],
+        extra_args,
+        server_command=LOCAL_INBOX_MEDIA_PROOF_SERVER,
+        health_url="http://127.0.0.1:8768/healthz",
+    )
+
+
+def run_live_universal_feed_tiles_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    base_url = append_refresh_param("https://pucky.fly.dev", refresh_seed)
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+                [
+                    "--base-url",
+                    base_url,
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-universal-tiles").resolve()),
                     *extra_args,
                 ],
             ),
@@ -470,6 +512,18 @@ def run_live_web_proof(extra_args: list[str]) -> int:
             ])
     scripts.append(
         (
+            "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+            [
+                "--base-url",
+                append_refresh_param("https://pucky.fly.dev", refresh_seed),
+                "--report-dir",
+                str((live_root / "universal-feed-tiles").resolve()),
+                *extra_args,
+            ],
+        )
+    )
+    scripts.append(
+        (
             "tools/proofs/cover/cover_live_user_session_playwright.mjs",
             [
                 "--report-dir",
@@ -535,6 +589,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_notes_flash_browser_proof(args.extra_args)
     if args.task in ("proof-live-notes-flash", "proof-live-notes-flash-browser"):
         return run_live_notes_flash_browser_proof(args.extra_args)
+    if args.task == "proof-local-universal-tiles":
+        return run_local_universal_feed_tiles_proof(args.extra_args)
+    if args.task == "proof-live-universal-tiles":
+        return run_live_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":

@@ -249,6 +249,23 @@ const BASELINE_PROOFS = [
     ],
   },
   {
+    id: "universal_feed_tiles",
+    label: "Universal feed tiles",
+    type: "backbone",
+    script: "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+    requiresToken: true,
+    args: (config, reportDir) => [
+      "--base-url",
+      config.baseUrl,
+      "--report-dir",
+      reportDir,
+      "--timeout-ms",
+      String(config.timeoutMs),
+      "--api-token",
+      config.apiToken,
+    ],
+  },
+  {
     id: "workspace_apps",
     label: "Workspace apps",
     type: "focused",
