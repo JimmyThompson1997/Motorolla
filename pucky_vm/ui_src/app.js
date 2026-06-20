@@ -982,9 +982,21 @@
       if (!nextPath) {
         throw new Error("No audio source available.");
       }
-      audio.src = nextPath;
+      const currentElementSource = String(audio.currentSrc || audio.src || "").trim();
+      const switchingSource = Boolean(currentElementSource) && !samePath(currentElementSource, nextPath);
+      if (switchingSource) {
+        audio.pause();
+      }
+      if (switchingSource || !samePath(String(audio.src || ""), nextPath)) {
+        audio.src = nextPath;
+        audio.load();
+      }
       audio.playbackRate = speed;
-      audio.currentTime = Math.max(0, start / 1000);
+      try {
+        audio.currentTime = Math.max(0, start / 1000);
+      } catch (_) {
+        // Some WebKit builds reject seeks before metadata is available; playback can still begin at 0.
+      }
       state.activePath = nextSource || nextPath;
       await audio.play();
       return syncSharedBrowserPlayerState({

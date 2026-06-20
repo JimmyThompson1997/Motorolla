@@ -221,7 +221,6 @@ async function waitForReminderRecord(config, reminderId, predicate, description,
 function buildSeedManifest(runId = PROOF_RUN_ID) {
   return {
     runId,
-    assetIds: [`${runId}-note-html`, `${runId}-task-asset-html`],
     linkIds: [
       `${runId}-alpha-note`,
       `${runId}-alpha-task`,
@@ -314,11 +313,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
   try {
     await cleanupWorkspaceSeed(config, { runId, writeEnabled: true });
     const pinnedNoteHtml = "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>";
-    await apiRequest(config, "POST", "/api/workspace/assets", {
-      id: manifest.assetIds[0],
-      title: "Proof pinned note HTML",
-      html: pinnedNoteHtml
-    });
     await apiRequest(config, "POST", "/api/workspace/notes", {
       id: `${runId}-pinned-note`,
       title: "Proof Pinned Note",
@@ -333,19 +327,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Recent unpinned note.",
       html: "<!doctype html><h1>Proof Recent Note</h1><p>Recent note HTML page.</p>",
       metadata: { context: "Browser proof", icon: "note" }
-    });
-
-    const taskAsset = await apiRequest(config, "POST", "/api/workspace/assets", {
-      id: manifest.assetIds[1],
-      title: "Proof task asset HTML",
-      html: [
-        "<!doctype html><html><body>",
-        "<h1>Asset-backed task page</h1>",
-        "<p>This task uses an HTML asset instead of inline record HTML.</p>",
-        "<ul><li>Review the latest legal edits</li><li>Sync with procurement</li><li>Send the signed version</li></ul>",
-        "<p>Open questions: redlines, final signer, delivery timing.</p>",
-        "</body></html>"
-      ].join("")
     });
 
     await apiRequest(config, "POST", "/api/workspace/tasks", {
@@ -395,10 +376,9 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-asset-task`,
       title: "Proof Asset Task",
-      summary: "Uses html_asset_id instead of inline html.",
+      summary: "Structured task without generated HTML.",
       status: "open",
-      due_at_ms: Date.now() + 24 * 60 * 60 * 1000,
-      html_asset_id: taskAsset.asset_id
+      due_at_ms: Date.now() + 24 * 60 * 60 * 1000
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-empty-task`,
