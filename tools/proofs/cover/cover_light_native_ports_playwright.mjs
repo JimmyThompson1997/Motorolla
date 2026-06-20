@@ -950,7 +950,7 @@ async function main() {
 
       logAction(actions, "open_light_meetings");
       await clickLightTile(lightPage, "meetings", config.timeoutMs);
-      await waitForLightRoute(lightPage, "meetings", ".meetings-page", config.timeoutMs);
+      await waitForLightRoute(lightPage, "meetings", ".meetings-page .card-wrap article.card", config.timeoutMs);
       assert(await readLightHeaderTitle(lightPage) === "Meetings", "Light Meetings did not render the normal light header title");
       assert(await lightPage.locator(".light-back-button").count() === 1, "Light Meetings should expose the normal back button");
       assert(await lightPage.locator("#voiceStatus").count() === 1, "Light Meetings should keep the real voice status indicator");
