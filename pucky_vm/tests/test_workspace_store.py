@@ -287,7 +287,7 @@ def test_jimmy_thompson_contact_is_seeded_with_requested_fields(tmp_path: Path) 
     assert contact["metadata"]["avatar"] == "JT"
     assert contact["metadata"]["email"] == "jimmythompson323@gmail.com"
     assert contact["metadata"]["phone"] == "4074969882"
-    assert contact["metadata"]["photo"] == "fixtures/contact_photos/proof-contact.webp"
+    assert contact["metadata"]["photo"] == "fixtures/contact_photos/jimmy.jpg"
 
 
 def test_jimmy_thompson_contact_migration_adds_contact_to_existing_workspace(tmp_path: Path) -> None:
@@ -309,7 +309,7 @@ def test_jimmy_thompson_contact_migration_adds_contact_to_existing_workspace(tmp
     assert contact["archived"] is False
     assert contact["metadata"]["email"] == "jimmythompson323@gmail.com"
     assert contact["metadata"]["phone"] == "4074969882"
-    assert contact["metadata"]["photo"] == "fixtures/contact_photos/proof-contact.webp"
+    assert contact["metadata"]["photo"] == "fixtures/contact_photos/jimmy.jpg"
 
     meta = migrated._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_jimmy_thompson_v1'").fetchone()
     assert meta is not None
