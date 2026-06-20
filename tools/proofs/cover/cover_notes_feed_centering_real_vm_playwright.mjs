@@ -24,6 +24,10 @@ const viewports = [
 ];
 
 function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
   return String(process.env.PUCKY_API_TOKEN || "").trim();
 }
 
@@ -112,6 +116,15 @@ async function fetchManifest(pageUrl) {
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
+  }
+}
+
+function notePatchUrlMatches(requestUrl, noteId) {
+  const targetPath = `/api/workspace/notes/${encodeURIComponent(String(noteId || "").trim())}`;
+  try {
+    return new URL(requestUrl).pathname === targetPath;
+  } catch (_) {
+    return String(requestUrl || "").includes(targetPath);
   }
 }
 
@@ -262,6 +275,32 @@ async function waitForNotes(page, timeoutMs) {
   await page.locator(".light-note-row").first().waitFor({ state: "visible", timeout: timeoutMs });
 }
 
+async function waitForNotePatch(page, noteId, timeoutMs) {
+  const response = await page.waitForResponse(candidate => {
+    const request = candidate.request();
+    return request.method() === "PATCH" && notePatchUrlMatches(request.url(), noteId);
+  }, { timeout: timeoutMs });
+  const request = response.request();
+  const headers = typeof request.allHeaders === "function"
+    ? await request.allHeaders()
+    : request.headers();
+  let body = "";
+  try {
+    body = await response.text();
+  } catch (_) {
+    body = "";
+  }
+  const authorization = String(headers?.authorization || headers?.Authorization || "").trim();
+  return {
+    url: request.url(),
+    status: response.status(),
+    ok: response.ok(),
+    hasAuthorization: Boolean(authorization),
+    authorizationLength: authorization.length,
+    body: body.slice(0, 200)
+  };
+}
+
 async function reloadIntoNotes(page, timeoutMs) {
   await page.reload({ waitUntil: "domcontentloaded" });
   const route = await page.evaluate(() => document.querySelector(".light-shell")?.getAttribute("data-light-route") || "");
@@ -275,11 +314,20 @@ async function reloadIntoNotes(page, timeoutMs) {
 async function runViewportScenario(browser, config, repo, viewport, index) {
   const viewportDir = path.join(config.reportDir, viewport.label);
   ensureDir(viewportDir);
+  assert(String(config.apiToken || "").trim(), "Expected PUCKY_WEB_UI_TOKEN or PUCKY_API_TOKEN for live Notes write proof");
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     isMobile: viewport.width <= 768,
     hasTouch: viewport.width <= 768
   });
+  await context.addInitScript(apiToken => {
+    try {
+      localStorage.setItem("pucky.cover.browser_api_token.v1", String(apiToken || "").trim());
+      localStorage.removeItem("pucky.cover.browser_device_id.v1");
+    } catch (_error) {
+      // Ignore localStorage bootstrap failures in proof mode.
+    }
+  }, config.apiToken);
   const consoleLogPath = path.join(viewportDir, "console.log");
   try {
     const page = await context.newPage();
@@ -335,7 +383,12 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
           const detailShot = await saveScreenshot(page, viewportDir, "03-note-detail-clean");
           await page.locator('button[aria-label="Back"]').click();
           await waitForNotes(page, config.timeoutMs);
+          const firstPatchPromise = waitForNotePatch(page, candidate.id, config.timeoutMs);
           await page.locator(`.light-note-row[data-note-id="${candidate.id}"] .light-note-pin-button`).click();
+          const firstPatch = await firstPatchPromise;
+          assert(firstPatch.hasAuthorization, `${viewport.label}: live Notes first PATCH omitted Authorization`);
+          assert(firstPatch.status !== 401, `${viewport.label}: live Notes first PATCH returned 401`);
+          assert(firstPatch.ok, `${viewport.label}: live Notes first PATCH failed (${firstPatch.status}): ${firstPatch.body}`);
           await page.waitForFunction(
             ({ noteId, nextPinned }) => {
               const row = document.querySelector(`.light-note-row[data-note-id="${noteId}"] .light-note-pin-button`);
@@ -346,7 +399,12 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
           );
           const afterFirst = await readNotesView(page);
           const afterPinShot = await saveScreenshot(page, viewportDir, "04-notes-after-pin");
+          const secondPatchPromise = waitForNotePatch(page, candidate.id, config.timeoutMs);
           await page.locator(`.light-note-row[data-note-id="${candidate.id}"] .light-note-pin-button`).click();
+          const secondPatch = await secondPatchPromise;
+          assert(secondPatch.hasAuthorization, `${viewport.label}: live Notes second PATCH omitted Authorization`);
+          assert(secondPatch.status !== 401, `${viewport.label}: live Notes second PATCH returned 401`);
+          assert(secondPatch.ok, `${viewport.label}: live Notes second PATCH failed (${secondPatch.status}): ${secondPatch.body}`);
           await page.waitForFunction(
             ({ noteId, originalPinned }) => {
               const row = document.querySelector(`.light-note-row[data-note-id="${noteId}"] .light-note-pin-button`);
@@ -367,6 +425,10 @@ async function runViewportScenario(browser, config, repo, viewport, index) {
             after_first_toggle: afterFirst,
             after_second_toggle: afterSecond,
             reloaded,
+            patch_events: {
+              first_toggle: firstPatch,
+              second_toggle: secondPatch
+            },
             candidate_id: candidate.id,
             candidate_title: candidate.title,
             original_pinned: originalPinned,

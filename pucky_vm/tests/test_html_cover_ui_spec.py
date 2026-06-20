@@ -348,6 +348,36 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (!bucket.loaded) {' in light_calendar_page
 
 
+def test_hosted_workspace_writes_refresh_saved_browser_auth_state() -> None:
+    app = read("app.js")
+    ui_state = read("pucky-ui-state.js")
+
+    initial_links = function_block(app, "initialLinksState")
+    resolve_hosted_browser_token = function_block(app, "resolveHostedBrowserApiToken")
+    resolve_browser_token = function_block(ui_state, "resolveBrowserApiToken")
+    refresh_hosted_auth = function_block(app, "refreshHostedBrowserAuthState")
+    ensure_links = function_block(app, "ensureLinksApiConfig")
+    protected_headers = function_block(app, "protectedApiAuthorizationHeaders")
+
+    assert 'apiToken: "",' in initial_links
+    assert 'const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"' in resolve_hosted_browser_token
+    assert 'return String(uiState.resolveBrowserApiToken({ tokenStateKey: BROWSER_API_TOKEN_STATE_KEY }) || "").trim();' in resolve_hosted_browser_token
+    assert 'const tokenStateKey = String(options.tokenStateKey || "pucky.cover.browser_api_token.v1");' in resolve_browser_token
+    assert 'const queryToken = String(params.get("api_token") || "").trim();' in resolve_browser_token
+    assert "localStorage.setItem(tokenStateKey, queryToken);" in resolve_browser_token
+    assert 'return String(localStorage.getItem(tokenStateKey) || "").trim();' in resolve_browser_token
+    assert 'state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\\/$/, "");' in refresh_hosted_auth
+    assert "state.links.apiToken = resolveHostedBrowserApiToken();" in refresh_hosted_auth
+    assert "state.links.deviceId = resolveHostedBrowserDeviceId();" in refresh_hosted_auth
+    assert "refreshHostedBrowserAuthState();" in ensure_links
+    assert 'state.links.apiToken = "";' in ensure_links
+    assert "if (!needsAuthorization) {" in protected_headers
+    assert "refreshHostedBrowserAuthState();" in protected_headers
+    assert "if (!state.links.apiToken) {" in protected_headers
+    assert 'return { Authorization: `Bearer ${state.links.apiToken}` };' in protected_headers
+    assert 'const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });' in protected_headers
+
+
 def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flow() -> None:
     app = read("app.js")
     settings_page = function_block(app, "settingsPageView")

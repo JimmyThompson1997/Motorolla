@@ -5,6 +5,8 @@
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
   const THEME_STATE_KEY = "pucky.cover.theme.v1";
+  const BROWSER_API_TOKEN_STATE_KEY = "pucky.cover.browser_api_token.v1";
+  const BROWSER_DEVICE_STATE_KEY = "pucky.cover.browser_device_id.v1";
   const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
   const SELF_CONTACT_ID = "contact-me";
   const COMPLETE_EPSILON_MS = 500;
@@ -2175,21 +2177,71 @@
     return DEFAULT_LINKS_API_BASE;
   }
 
-  async function ensureLinksApiConfig() {
-    if (state.links.apiBaseUrl) {
+  function resolveHostedBrowserApiToken() {
+    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
+      ? window.PUCKY_UI_STATE
+      : null;
+    if (uiState && typeof uiState.resolveBrowserApiToken === "function") {
+      return String(uiState.resolveBrowserApiToken({ tokenStateKey: BROWSER_API_TOKEN_STATE_KEY }) || "").trim();
+    }
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const queryToken = String(params.get("api_token") || "").trim();
+      if (queryToken) {
+        localStorage.setItem(BROWSER_API_TOKEN_STATE_KEY, queryToken);
+        return queryToken;
+      }
+      return String(localStorage.getItem(BROWSER_API_TOKEN_STATE_KEY) || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function resolveHostedBrowserDeviceId() {
+    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
+      ? window.PUCKY_UI_STATE
+      : null;
+    if (uiState && typeof uiState.resolveBrowserDeviceId === "function") {
+      return String(uiState.resolveBrowserDeviceId({ deviceStateKey: BROWSER_DEVICE_STATE_KEY }) || "").trim();
+    }
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const queryDeviceId = String(params.get("device_id") || "").trim();
+      if (queryDeviceId) {
+        localStorage.setItem(BROWSER_DEVICE_STATE_KEY, queryDeviceId);
+        return queryDeviceId;
+      }
+      return String(localStorage.getItem(BROWSER_DEVICE_STATE_KEY) || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function refreshHostedBrowserAuthState() {
+    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       return;
     }
+    state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+    state.links.apiToken = resolveHostedBrowserApiToken();
+    state.links.deviceId = resolveHostedBrowserDeviceId();
+  }
+
+  async function ensureLinksApiConfig() {
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-      state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
-      state.links.deviceId = "";
+      refreshHostedBrowserAuthState();
+      return;
+    }
+    if (state.links.apiBaseUrl) {
       return;
     }
     try {
       const config = await Pucky.request({ command: "pucky.config.get", args: {} });
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
+      state.links.apiToken = "";
       state.links.deviceId = "";
     } catch (_) {
       state.links.apiBaseUrl = "";
+      state.links.apiToken = "";
       state.links.deviceId = "";
     }
   }
@@ -2197,8 +2249,15 @@
   async function protectedApiAuthorizationHeaders(options = {}) {
     const method = String(options.method || "GET").toUpperCase();
     const needsAuthorization = Boolean(options.authorized) || method !== "GET";
-    if (!needsAuthorization || !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+    if (!needsAuthorization) {
       return {};
+    }
+    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
+      refreshHostedBrowserAuthState();
+      if (!state.links.apiToken) {
+        return {};
+      }
+      return { Authorization: `Bearer ${state.links.apiToken}` };
     }
     if (nativeProtectedAuthorization) {
       return { Authorization: nativeProtectedAuthorization };
@@ -3029,6 +3088,7 @@
       portal_url: "",
       token: "",
       apiBaseUrl: "",
+      apiToken: "",
       deviceId: "",
       userId: "",
       auth_mode: "browser",
