@@ -88,13 +88,19 @@ def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() 
     assert "Notes pin write failed" in source
 
 
-def test_live_notes_centering_proof_loads_without_preview_unlock() -> None:
+def test_live_notes_centering_proof_seeds_saved_browser_token_and_verifies_patch_auth() -> None:
     source = read_source("cover_notes_feed_centering_real_vm_playwright.mjs")
 
-    assert LEGACY_WEB_TOKEN_ENV not in source
+    assert "PUCKY_WEB_UI_TOKEN" in source
     assert LEGACY_LOCK_TITLE not in source
     assert LEGACY_UNLOCK_LABEL not in source
+    assert 'localStorage.setItem("pucky.cover.browser_api_token.v1", String(apiToken || "").trim());' in source
     assert ".light-note-pin-button" in source
+    assert "hasAuthorization" in source
+    assert "first PATCH omitted Authorization" in source
+    assert "first PATCH returned 401" in source
+    assert "second PATCH omitted Authorization" in source
+    assert "second PATCH returned 401" in source
 
 
 def test_notes_flash_browser_proof_tracks_theme_transition_and_dev_tasks() -> None:
