@@ -3822,6 +3822,7 @@
     }
     ensureLinkedCollections(contact);
     const page = lightPage("Contact", { detail: true });
+    page.classList.add("light-contact-detail-page");
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);

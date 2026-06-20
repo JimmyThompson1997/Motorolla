@@ -1423,6 +1423,47 @@ async function assertNoContactEndpoints(page, config, contactId, label) {
   return detailState;
 }
 
+async function assertFlatContactProfileCard(page, label) {
+  const cardState = await page.evaluate(() => {
+    const card = document.querySelector(".light-contact-detail-page .light-profile-card");
+    if (!card) {
+      return { exists: false };
+    }
+    const styles = getComputedStyle(card);
+    const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
+    return {
+      exists: true,
+      heading: String(card.querySelector("h1")?.textContent || "").trim(),
+      summary: String(card.querySelector("p")?.textContent || "").trim(),
+      backgroundColor: styles.backgroundColor,
+      borderRadius: styles.borderRadius,
+      borderTopColor: styles.borderTopColor,
+      borderTopStyle: styles.borderTopStyle,
+      borderTopWidth: styles.borderTopWidth,
+      boxShadow: styles.boxShadow,
+      sectionTitles,
+      hasHtmlBody: Boolean(document.querySelector(".light-detail-html-body")),
+      hasHtmlCard: Boolean(document.querySelector(".light-html-card")),
+      hasHtmlFrame: Boolean(document.querySelector(".light-html-frame")),
+      hasGeneratedContactFallback: String(document.querySelector(".light-contact-detail-page")?.textContent || "").includes("No generated contact page yet.")
+    };
+  });
+  assert(cardState.exists, `${label} should render a scoped flat contact profile card`);
+  assert(cardState.heading, `${label} should keep a visible profile heading`);
+  assert(cardState.summary, `${label} should keep visible descriptor text`);
+  assert(cardState.backgroundColor === "rgba(0, 0, 0, 0)" || cardState.backgroundColor === "transparent", `${label} profile card should have a transparent background, got ${cardState.backgroundColor}`);
+  assert(cardState.boxShadow === "none", `${label} profile card should not have a shadow, got ${cardState.boxShadow}`);
+  assert(cardState.borderRadius === "0px", `${label} profile card should not have a card radius, got ${cardState.borderRadius}`);
+  assert(cardState.borderTopWidth === "0px" || cardState.borderTopStyle === "none" || cardState.borderTopColor === "rgba(0, 0, 0, 0)", `${label} profile card should not have a visible border, got ${cardState.borderTopWidth} ${cardState.borderTopStyle} ${cardState.borderTopColor}`);
+  assert(cardState.sectionTitles.some(title => title.toLowerCase() === "contact"), `${label} should keep the Contact section`);
+  assert(cardState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should keep the Activity section`);
+  assert(!cardState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
+  assert(!cardState.hasHtmlBody && !cardState.hasHtmlCard && !cardState.hasHtmlFrame && !cardState.hasGeneratedContactFallback, `${label} should not render a contact HTML document surface`);
+  return cardState;
+}
+
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
@@ -1433,7 +1474,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
+  const meProfileCard = await assertFlatContactProfileCard(page, "Me contact detail");
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
+  summary.contactProfileCards = summary.contactProfileCards || [];
+  summary.contactProfileCards.push({ theme, contact: "contact-me", profile: meProfileCard });
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
   assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
@@ -1450,12 +1494,16 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
+    const contactProfileCard = await assertFlatContactProfileCard(page, "Proof Contact One detail");
     await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
+    summary.contactProfileCards.push({ theme, contact: `${seed.runId}-contact-one`, profile: contactProfileCard });
   } else {
     const firstContact = contacts[0];
     await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
     await expectFrameHeading(page, firstContact.title, config.timeoutMs);
+    const contactProfileCard = await assertFlatContactProfileCard(page, `${firstContact.title} detail`);
     await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
+    summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
   const detailState = await readGraphDetailState(page);
   assert(detailState.route === "contact-detail", `Expected contact-detail route, got ${detailState.route}`);
