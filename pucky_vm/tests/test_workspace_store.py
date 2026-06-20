@@ -316,6 +316,36 @@ def test_jimmy_thompson_contact_migration_adds_contact_to_existing_workspace(tmp
     assert meta["value"] == "1"
 
 
+def test_jimmy_thompson_photo_migration_updates_existing_contact(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    contact = store.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID)
+    assert contact is not None
+    metadata = dict(contact["metadata"])
+    metadata["photo"] = "fixtures/contact_photos/proof-contact.webp"
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'contact' AND record_id = ?",
+        (json.dumps(metadata), JIMMY_THOMPSON_CONTACT_ID),
+    )
+    store._conn.execute(
+        "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+        ("contact_jimmy_thompson_v1", "1", clock.value),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'contact_jimmy_photo_fixture_v1'")
+    store._conn.commit()
+    store.close()
+
+    migrated = WorkspaceStore(str(db_path), clock_ms=clock)
+    contact = migrated.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID)
+    assert contact is not None
+    assert contact["metadata"]["photo"] == "fixtures/contact_photos/jimmy.jpg"
+
+    meta = migrated._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_jimmy_photo_fixture_v1'").fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
+
+
 def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)

@@ -799,6 +799,7 @@ class WorkspaceStore:
             contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
             contact_jimmy_thompson = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_jimmy_thompson_v1'").fetchone()
+            contact_jimmy_photo = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_jimmy_photo_fixture_v1'").fetchone()
             notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
             demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
@@ -856,6 +857,8 @@ class WorkspaceStore:
             self._remove_contact_html_v1(now)
         if not contact_jimmy_thompson:
             self._seed_jimmy_thompson_contact_v1(now)
+        if not contact_jimmy_photo:
+            self._refresh_jimmy_thompson_photo_v1(now)
         if not demo_time_refresh_seeded:
             self._refresh_seeded_demo_time_v1(now)
         self.ensure_self_contact()
@@ -1022,6 +1025,32 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("contact_jimmy_thompson_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _refresh_jimmy_thompson_photo_v1(self, now_ms: int) -> None:
+        current = self.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID, include_deleted=True)
+        if current is None:
+            self._seed_jimmy_thompson_contact_v1(now_ms)
+            current = self.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID, include_deleted=True)
+        if current is not None:
+            metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+            self.patch_record(
+                "contacts",
+                JIMMY_THOMPSON_CONTACT_ID,
+                {
+                    "archived": False,
+                    "deleted": False,
+                    "metadata": {
+                        **metadata,
+                        "photo": CONTACT_PHOTO_BY_ID[JIMMY_THOMPSON_CONTACT_ID],
+                    },
+                },
+            )
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_jimmy_photo_fixture_v1", "1", now_ms),
             )
             self._conn.commit()
 
