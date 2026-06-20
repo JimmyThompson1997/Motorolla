@@ -75,10 +75,6 @@ function logStep(config, message) {
 }
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
-  if (webToken) {
-    return webToken;
-  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -363,10 +359,14 @@ async function expectPreviewApiTokenLock(page, timeoutMs) {
 }
 
 async function unlockBrowserPreview(page, apiToken, timeoutMs) {
-  assert(String(apiToken || "").trim(), "Expected PUCKY_WEB_UI_TOKEN or --api-token to unlock Notes preview");
+  assert(
+    String(apiToken || "").trim(),
+    "Expected --api-token or PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN to unlock Notes preview",
+  );
   await page.getByRole("button", { name: "Unlock web preview" }).click();
-  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").waitFor({ state: "visible", timeout: timeoutMs });
-  await page.getByPlaceholder("Paste PUCKY_WEB_UI_TOKEN").fill(String(apiToken || "").trim());
+  const tokenField = page.locator('input[placeholder*="api_token"], input[placeholder*="API token"], input[placeholder*="api token"]').first();
+  await tokenField.waitFor({ state: "visible", timeout: timeoutMs });
+  await tokenField.fill(String(apiToken || "").trim());
   await page.getByRole("button", { name: "Save token" }).click();
   await page.waitForFunction(() => !document.querySelector(".browser-unlock-sheet"), undefined, { timeout: timeoutMs });
   await page.waitForFunction(() => Boolean(localStorage.getItem("pucky.cover.browser_api_token.v1")), undefined, { timeout: timeoutMs });
@@ -1033,7 +1033,7 @@ function writeReport(config, summary) {
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   if (!String(config.apiToken || "").trim()) {
-    throw new Error("Notes detail flash browser proof requires --api-token or PUCKY_WEB_UI_TOKEN/PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_API_TOKEN");
+    throw new Error("Notes detail flash browser proof requires --api-token or PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN");
   }
   ensureDir(config.reportDir);
   const localGit = localGitState();

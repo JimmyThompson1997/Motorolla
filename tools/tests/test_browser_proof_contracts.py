@@ -104,25 +104,28 @@ def test_notes_flash_browser_proof_tracks_theme_transition_and_dev_tasks() -> No
 
     assert LEGACY_WEB_TOKEN_ENV not in source
     assert "PUCKY_WORKSPACE_PROOF_TOKEN" in source
+    assert "PUCKY_LIVE_USER_SESSION_TOKEN" in source
+    assert "PUCKY_OPERATOR_TOKEN" in source
     assert "PUCKY_API_TOKEN" in source
-    assert 'const RESULT_SCHEMA = "pucky.notes_detail_flash_browser_proof.v1";' in source
-    assert 'const TRANSITION_DELAY_MS = 450;' in source
-    assert 'const FAIL_OPEN_MS = 1500;' in source
-    assert 'frame.addEventListener("load", markReady, { once: true });' not in source
-    assert 'window.setTimeout(() => descriptor.set.call(this, value), delayMs);' not in source
-    assert 'window.setTimeout(() => descriptor.set.call(frame, value), delayMs);' in source
-    assert 'wrapperState === "loading"' in source
-    assert 'background === "rgb(8, 17, 28)"' in source
-    assert 'background === "rgb(255, 255, 255)"' in source
+    assert "NOTES_DETAIL_FLASH_RESULT_SCHEMA_V2" in source
+    assert "NOTES_DETAIL_FLASH_IFRAME_DELAY_MS" in source
+    assert "NOTES_DETAIL_FLASH_FAIL_OPEN_MS" in source
+    assert 'window.__puckyNoteFlashTimelinePromise = new Promise((resolve) => {' in source
+    assert 'visible_surface_source' in source
+    assert 'visible_surface_rgb' in source
+    assert 'visible_surface_luma' in source
     assert '"summary.json"' in source
     assert '"report.md"' in source
     assert 'path.join(config.reportDir, "report.md")' in source
-    assert "saveScreenshot(page, config.reportDir, `${theme}-transition`)" in source
-    assert "saveScreenshot(page, config.reportDir, `${theme}-settled`)" in source
+    assert 'buildAttemptName(theme, lane, "preclick")' in source
+    assert 'buildAttemptName(theme, lane, "settled")' in source
     assert '"proof-local-notes-flash"' in dev
     assert '"proof-live-notes-flash"' in dev
+    assert '"proof-local-notes-flash-browser"' in dev
+    assert '"proof-live-notes-flash-browser"' in dev
     assert '"tools/proofs/cover/cover_notes_detail_flash_playwright.mjs"' in dev
     assert '"test:cover-notes-detail-flash": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"' in package
+    assert '"test:cover-notes-detail-flash-browser": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"' in package
 
 
 def test_workspace_apps_browser_proof_removes_contact_endpoints_contract() -> None:
