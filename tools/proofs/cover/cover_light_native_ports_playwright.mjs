@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { chromium, webkit } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -11,6 +12,7 @@ import {
   writeJsonFile
 } from "../../support/cover_shared.mjs";
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_LIGHT_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=light&reset_nav=1";
 const DEFAULT_DARK_FEED_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=dark&route=inbox&reset_nav=1";
 const DEFAULT_DARK_MEETINGS_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=dark&route=meetings&reset_nav=1";
@@ -54,8 +56,69 @@ function assert(condition, message) {
   }
 }
 
+let playwrightBrowsersPromise = null;
+
+function expandNodeModuleCandidates(basePath) {
+  const candidates = [basePath];
+  const pnpmRoot = path.join(basePath, ".pnpm");
+  if (!fs.existsSync(pnpmRoot)) {
+    return candidates;
+  }
+  for (const entry of fs.readdirSync(pnpmRoot)) {
+    if (!String(entry || "").startsWith("playwright")) {
+      continue;
+    }
+    candidates.push(path.join(pnpmRoot, entry, "node_modules"));
+  }
+  return candidates;
+}
+
+async function loadPlaywrightBrowsers() {
+  if (playwrightBrowsersPromise) {
+    return playwrightBrowsersPromise;
+  }
+  playwrightBrowsersPromise = (async () => {
+    const require = createRequire(import.meta.url);
+    const candidates = [];
+    if (process.env.CODEX_NODE_MODULES) {
+      candidates.push(process.env.CODEX_NODE_MODULES);
+    }
+    if (process.env.USERPROFILE) {
+      candidates.push(path.join(
+        process.env.USERPROFILE,
+        ".cache",
+        "codex-runtimes",
+        "codex-primary-runtime",
+        "dependencies",
+        "node",
+        "node_modules"
+      ));
+    }
+    candidates.push(path.join(ROOT, "tools", "node_modules"));
+    candidates.push(path.join(ROOT, "node_modules"));
+    for (const candidateRoot of candidates) {
+      for (const candidate of expandNodeModuleCandidates(candidateRoot)) {
+        try {
+          const resolved = require.resolve("playwright-core", { paths: [candidate] });
+          const mod = await import(pathToFileURL(resolved).href);
+          const chromium = mod?.chromium || mod?.default?.chromium;
+          const webkit = mod?.webkit || mod?.default?.webkit;
+          if (chromium && webkit) {
+            return { chromium, webkit };
+          }
+        } catch (_error) {
+          // Try the next candidate.
+        }
+      }
+    }
+    throw new Error("Could not resolve playwright-core from bundled or local node_modules");
+  })();
+  return playwrightBrowsersPromise;
+}
+
 async function launchConfiguredBrowser(config) {
   const browserName = String(config.browserName || "chromium").trim().toLowerCase();
+  const { chromium, webkit } = await loadPlaywrightBrowsers();
   if (browserName === "webkit") {
     return webkit.launch({ headless: config.headless });
   }

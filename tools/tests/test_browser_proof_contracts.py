@@ -210,7 +210,10 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
 def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> None:
     source = read_source("cover_light_native_ports_playwright.mjs")
 
-    assert 'import { chromium, webkit } from "playwright-core";' in source
+    assert 'import { createRequire } from "node:module";' in source
+    assert 'if (process.env.CODEX_NODE_MODULES) {' in source
+    assert 'const pnpmRoot = path.join(basePath, ".pnpm");' in source
+    assert 'Could not resolve playwright-core from bundled or local node_modules' in source
     assert 'config.browserName = browserName === "webkit" ? "webkit" : "chromium";' in source
     assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
     assert 'recordVideo: { dir: videoDir, size: VIEWPORT }' in source
