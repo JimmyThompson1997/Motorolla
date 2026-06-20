@@ -4151,12 +4151,29 @@ button {
   margin-top: 0;
 }
 
+.light-note-detail-page {
+  --light-note-detail-document-bg: #ffffff;
+  background: var(--light-note-detail-document-bg);
+}
+
+.app-shell[data-theme="dark"] .light-note-detail-page {
+  --light-note-detail-document-bg: #08111c;
+}
+
 .light-note-detail-page .light-detail-html-body.light-card {
   padding: 0;
   background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.light-note-detail-page .light-note-detail-html-body[data-html-frame-state="loading"] {
+  background: var(--light-note-detail-document-bg);
+}
+
+.light-note-detail-page .light-note-detail-html-body .light-html-frame {
+  background: var(--light-note-detail-document-bg);
 }
 
 .light-graph-row .light-text-stack span {

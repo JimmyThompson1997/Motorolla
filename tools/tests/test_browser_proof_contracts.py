@@ -259,3 +259,80 @@ def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:
     assert 'parsed.path == "/ui/pucky/fixtures/reply_cards.json"' in source
     assert 'mock_artifact_prefix="fixtures/artifacts"' in source
     assert '"/ui/pucky/fixtures/reply_cards.json"' in source
+
+
+def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:
+    source = read_source("cover_notes_detail_flash_playwright.mjs")
+    scoring = read_source("notes_detail_flash_scoring.mjs")
+    package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+    assert "pucky.notes_detail_flash_browser_proof.v2" in scoring
+    assert 'schema: NOTES_DETAIL_FLASH_RESULT_SCHEMA_V2,' in source
+    assert 'build_verified: false,' in source
+    assert 'build_dirty: false,' in source
+    assert 'remote_manifest: null,' in source
+    assert 'target_kind: targetKindForBaseUrl(config.baseUrl),' in source
+    assert 'debug_note_flash: true,' in source
+    assert 'route_delay_ms: NOTES_DETAIL_FLASH_ROUTE_DELAY_MS,' in source
+    assert 'iframe_delay_ms: NOTES_DETAIL_FLASH_IFRAME_DELAY_MS,' in source
+    assert 'offsets_ms: NOTES_DETAIL_FLASH_OFFSETS_MS.slice(),' in source
+    assert 'required_phases: NOTES_DETAIL_FLASH_REQUIRED_PHASES.slice(),' in source
+    assert 'failure_categories: NOTES_DETAIL_FLASH_FAILURE_CATEGORIES.slice(),' in source
+    assert 'natural_click: lanes.natural_click,' in source
+    assert 'route_delay: lanes.route_delay,' in source
+    assert 'iframe_delay: lanes.iframe_delay,' in source
+    assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
+    assert 'recordVideo: { dir: path.join(laneDir, "video"), size: VIEWPORT },' in source
+    assert 'window.__puckyNoteFlashTimelinePromise = new Promise((resolve) => {' in source
+    assert 'window.__puckyNoteFlashDebug' in source
+    assert 'url.searchParams.set("debug_note_flash", "1");' in source
+    assert 'url.searchParams.set("debug_note_flash_delay_route_ms", String(laneConfig.routeDelayMs || 0));' in source
+    assert 'url.searchParams.set("debug_note_flash_delay_iframe_ms", String(laneConfig.iframeDelayMs || 0));' in source
+    assert 'document.querySelector(".light-detail-html-body")' in source
+    assert 'const frame = wrapper?.querySelector(".light-html-frame");' in source
+    assert 'body_text: bodyText,' in source
+    assert 'shell?.getAttribute("data-light-route") !== "note-detail"' in source
+    assert 'text.includes(title) && text.includes(bodyText)' in source
+    assert '}, undefined, { timeout: timeoutMs });' in source
+    assert '}, undefined, { timeout: 1200 }).then(() => true).catch(() => false);' in source
+    assert "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set." in source
+    assert "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set." in source
+    assert 'buildAttemptName(theme, lane, "preclick")' in source
+    assert 'buildAttemptName(theme, lane, "first-route-frame")' in source
+    assert 'buildAttemptName(theme, lane, "settled")' in source
+    assert 'const stem = `${theme}-${lane}-offset-${String(offsetMs).padStart(3, "0")}ms`;' in source
+    assert '`${theme}-${lane}-worst-frame.png`' in source
+    assert "build_mismatch" in scoring
+    assert "theme_cross_flash" in scoring
+    assert "route_transition_flash" in scoring
+    assert "iframe_transition_flash" in scoring
+    assert "note_never_ready" in scoring
+    assert "seed_note_missing" in scoring
+    assert "instrumentation_gap" in scoring
+    assert "console_error_during_transition" in scoring
+    assert 'export const NOTES_DETAIL_FLASH_OFFSETS_MS = Object.freeze([0, 12, 24, 36, 48, 72, 96, 132, 180, 260]);' in scoring
+    assert 'export const NOTES_DETAIL_FLASH_LANES = Object.freeze(["natural_click", "route_delay", "iframe_delay"]);' in scoring
+    assert "mean_luma>" in scoring
+    assert "bright_pixel_ratio>" in scoring
+    assert "mean_luma<" in scoring
+    assert "dark_pixel_ratio>" in scoring
+    assert package["scripts"]["test:cover-notes-detail-flash-browser"] == "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs"
+    assert '"proof-local-notes-flash": "Boot the local workspace proof server, then run the targeted notes flash browser proof."' in dev_source
+    assert '"proof-live-notes-flash": "Run the live targeted notes flash browser proof against the current base URL env/default."' in dev_source
+    assert '"proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification."' in dev_source
+    assert "def find_free_localhost_port() -> int:" in dev_source
+    assert 'sock.bind(("127.0.0.1", 0))' in dev_source
+    assert "def build_local_workspace_proof_server_command(port: int, *, state_dir: Path | None = None) -> list[str]:" in dev_source
+    assert 'base_url = f"http://127.0.0.1:{port}"' in dev_source
+    assert 'server_command=build_local_workspace_proof_server_command(' in dev_source
+    assert 'health_url=f"{base_url}/healthz"' in dev_source
+    assert 'if args.task in ("proof-local-notes-flash", "proof-local-notes-flash-browser"):' in dev_source
+    assert 'if args.task in ("proof-live-notes-flash", "proof-live-notes-flash-browser"):' in dev_source
+    assert "python -m tools.dev proof-local-notes-flash-browser" in readme
+    assert "python -m tools.dev proof-live-notes-flash-browser" in readme
+    assert "Notes flash browser proof (local): `python -m tools.dev proof-local-notes-flash-browser`" in docs_readme
+    assert "Notes flash browser proof (live): `python -m tools.dev proof-live-notes-flash-browser`" in docs_readme

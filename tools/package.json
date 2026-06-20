@@ -15,6 +15,7 @@
     "test:session-model-defaults": "node ./proofs/cover/session_model_defaults_playwright.mjs",
     "test:cover-links-scroll-probe": "node ./proofs/cover/cover_links_scroll_probe.mjs",
     "test:cover-notes-detail-flash": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs",
+    "test:cover-notes-detail-flash-browser": "node ./proofs/cover/cover_notes_detail_flash_playwright.mjs",
     "test:meeting-mode-real-vm": "node ./proofs/meeting/meeting_mode_agent_real_vm_playwright.mjs",
     "test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs",
     "test:cover-settings-quiet-list": "node ./proofs/cover/cover_settings_quiet_list_playwright.mjs",

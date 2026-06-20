@@ -5512,8 +5512,9 @@
     });
     page.append(lightHtmlDocument(note, "No generated note page yet.", {
       untitledFallback: true,
-      className: "light-detail-html-body",
+      className: "light-detail-html-body light-note-detail-html-body",
       fullBleed: true,
+      revealOnLoad: "note",
       noteFlashDebug: true
     }));
     return page;
@@ -7724,6 +7725,8 @@
     const untitledFallback = Boolean(options && options.untitledFallback);
     const extraClassName = String(options && options.className || "").trim();
     const fullBleed = Boolean(options && options.fullBleed);
+    const revealOnLoad = String(options && options.revealOnLoad || "").trim().toLowerCase();
+    const noteRevealOnLoad = revealOnLoad === "note";
     const noteFlashDebug = Boolean(options && options.noteFlashDebug && noteFlashDebugEnabled());
     if (!html) {
       if (untitledFallback) {
@@ -7736,9 +7739,12 @@
     frame.setAttribute("scrolling", "no");
     frame.setAttribute("title", String(record?.title || "Generated page"));
     const wrap = el("section", `${fullBleed ? "light-html-card light-html-stage" : "light-card light-html-card"} ${extraClassName}`.trim());
-    if (noteFlashDebug) {
+    if (noteRevealOnLoad) {
       wrap.setAttribute("data-html-frame-state", "loading");
       wrap.setAttribute("aria-busy", "true");
+      frame.style.visibility = "hidden";
+    }
+    if (noteFlashDebug) {
       noteFlashDebugRecord("note_detail_wrapper_created", {
         selected_note_id: noteRecordId(record),
         reason: "lightHtmlDocument"
@@ -7746,7 +7752,7 @@
     }
     wrap.append(frame);
     installHtmlDetailFrameSizing(frame);
-    if (!noteFlashDebug) {
+    if (!noteRevealOnLoad) {
       frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
       return wrap;
     }
@@ -7764,19 +7770,23 @@
       wrap.setAttribute("data-html-frame-state", "ready");
       wrap.setAttribute("aria-busy", "false");
       frame.style.visibility = "visible";
-      noteFlashDebugRecord(phase, {
-        selected_note_id: noteRecordId(record),
-        reason
-      });
+      if (noteFlashDebug) {
+        noteFlashDebugRecord(phase, {
+          selected_note_id: noteRecordId(record),
+          reason
+        });
+      }
     };
     const onLoad = () => {
       if (!srcdocAssigned) {
         return;
       }
-      noteFlashDebugRecord("note_iframe_load", {
-        selected_note_id: noteRecordId(record),
-        reason: "load_event"
-      });
+      if (noteFlashDebug) {
+        noteFlashDebugRecord("note_iframe_load", {
+          selected_note_id: noteRecordId(record),
+          reason: "load_event"
+        });
+      }
       let embeddedBodyReady = false;
       try {
         embeddedBodyReady = frame.contentDocument?.body?.getAttribute("data-pucky-embedded-body") === "true";
@@ -7788,20 +7798,19 @@
       }
     };
     frame.addEventListener("load", onLoad);
-    const iframeDelayMs = noteFlashDebugIframeDelayMs();
-    if (iframeDelayMs > 0) {
-      frame.style.visibility = "hidden";
-    }
+    const iframeDelayMs = noteFlashDebug ? noteFlashDebugIframeDelayMs() : 0;
     failOpenTimerId = window.setTimeout(() => {
       markReady("note_iframe_fail_open", "fail_open_timeout");
     }, NOTE_FLASH_DEBUG_FAIL_OPEN_MS);
     const assignSrcdoc = () => {
       srcdocAssigned = true;
       frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
-      noteFlashDebugRecord("note_iframe_srcdoc_assigned", {
-        selected_note_id: noteRecordId(record),
-        reason: iframeDelayMs > 0 ? "delayed_srcdoc" : "srcdoc"
-      });
+      if (noteFlashDebug) {
+        noteFlashDebugRecord("note_iframe_srcdoc_assigned", {
+          selected_note_id: noteRecordId(record),
+          reason: iframeDelayMs > 0 ? "delayed_srcdoc" : "srcdoc"
+        });
+      }
     };
     if (iframeDelayMs > 0) {
       window.setTimeout(assignSrcdoc, iframeDelayMs);

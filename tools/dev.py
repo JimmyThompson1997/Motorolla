@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -61,6 +62,8 @@ TASK_HELP = {
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
     "proof-local-notes-flash": "Boot the local workspace proof server, then run the targeted notes flash browser proof.",
     "proof-live-notes-flash": "Run the live targeted notes flash browser proof against the current base URL env/default.",
+    "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
+    "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
     "proof-live-web": "Run live user session, inbox audio truth, and native-port browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
@@ -137,6 +140,12 @@ def wait_for_api(url: str) -> None:
     wait_for_http(url)
 
 
+def find_free_localhost_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def run_command(argv: list[str], *, env: dict[str, str] | None = None) -> int:
     completed = subprocess.run(argv, cwd=ROOT, env=env)
     return int(completed.returncode)
@@ -209,6 +218,22 @@ def ensure_cover_playwright_shims() -> None:
         if link_path.exists() or link_path.is_symlink():
             continue
         link_path.symlink_to(target, target_is_directory=True)
+
+
+def build_local_workspace_proof_server_command(port: int, *, state_dir: Path | None = None) -> list[str]:
+    command = [
+        PYTHON,
+        "tools/proofs/workspace/workspace_apps_proof_server.py",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--api-token",
+        "proof-token",
+    ]
+    if state_dir is not None:
+        command.extend(["--state-dir", str(state_dir.resolve())])
+    return command
 
 
 def run_local_web_proof(extra_args: list[str]) -> int:
@@ -304,13 +329,20 @@ def run_local_web_proof(extra_args: list[str]) -> int:
                 server.wait(timeout=5)
 
 
-def run_local_workspace_proof(script: str, script_args: list[str], extra_args: list[str]) -> int:
+def run_local_workspace_proof(
+    script: str,
+    script_args: list[str],
+    extra_args: list[str],
+    *,
+    server_command: list[str] | None = None,
+    health_url: str = "http://127.0.0.1:8767/healthz",
+) -> int:
     node_binary = require_binary("node")
     env = proof_env()
     env.setdefault("PUCKY_API_TOKEN", "proof-token")
-    server = run_server(LOCAL_PROOF_SERVER)
+    server = run_server(server_command or LOCAL_PROOF_SERVER)
     try:
-        wait_for_api("http://127.0.0.1:8767/healthz")
+        wait_for_api(health_url)
         return run_node_proofs(
             node_binary,
             [
@@ -331,17 +363,24 @@ def run_local_workspace_proof(script: str, script_args: list[str], extra_args: l
 
 
 def run_local_notes_flash_browser_proof(extra_args: list[str]) -> int:
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
     return run_local_workspace_proof(
         "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
         [
             "--base-url",
-            "http://127.0.0.1:8767",
+            base_url,
             "--api-token",
             "proof-token",
             "--report-dir",
             str((ROOT / ".tmp" / "proof-local-notes-flash").resolve()),
         ],
         extra_args,
+        server_command=build_local_workspace_proof_server_command(
+            port,
+            state_dir=ROOT / ".tmp" / "proof-local-notes-flash-browser-state",
+        ),
+        health_url=f"{base_url}/healthz",
     )
 
 
@@ -492,9 +531,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    if args.task == "proof-local-notes-flash":
+    if args.task in ("proof-local-notes-flash", "proof-local-notes-flash-browser"):
         return run_local_notes_flash_browser_proof(args.extra_args)
-    if args.task == "proof-live-notes-flash":
+    if args.task in ("proof-live-notes-flash", "proof-live-notes-flash-browser"):
         return run_live_notes_flash_browser_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)

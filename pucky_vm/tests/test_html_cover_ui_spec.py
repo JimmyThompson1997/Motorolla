@@ -753,8 +753,9 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'el("p", "light-note-body", note.summary || "")' not in note_detail
     assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", {' in note_detail
     assert "untitledFallback: true," in note_detail
-    assert 'className: "light-detail-html-body",' in note_detail
+    assert 'className: "light-detail-html-body light-note-detail-html-body",' in note_detail
     assert "fullBleed: true," in note_detail
+    assert 'revealOnLoad: "note",' in note_detail
     assert "noteFlashDebug: true" in note_detail
     assert "if (options.htmlDetail) {" in light_page
     assert 'page.classList.add("light-html-detail-page");' in light_page
@@ -767,7 +768,12 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'frame.setAttribute("sandbox", "allow-same-origin");' in light_html_document
     assert "installHtmlDetailFrameSizing(frame);" in light_html_document
     assert "const fullBleed = Boolean(options && options.fullBleed);" in light_html_document
+    assert 'const revealOnLoad = String(options && options.revealOnLoad || "").trim().toLowerCase();' in light_html_document
+    assert 'const noteRevealOnLoad = revealOnLoad === "note";' in light_html_document
     assert "light-html-stage" in light_html_document
+    assert 'wrap.setAttribute("data-html-frame-state", "loading");' in light_html_document
+    assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
+    assert 'frame.style.visibility = "hidden";' in light_html_document
 
     assert 'return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`,' in patch_workspace_record
     assert 'method: "PATCH",' in patch_workspace_record
@@ -809,6 +815,13 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "calc(100% + 40px)" not in detail_html_shared_block
     assert "margin-left: -20px;" not in detail_html_shared_block
     assert "width: 100%;" in detail_html_empty_block
+    assert "--light-note-detail-document-bg: #ffffff;" in styles
+    assert '.app-shell[data-theme="dark"] .light-note-detail-page {' in styles
+    assert "--light-note-detail-document-bg: #08111c;" in styles
+    assert ".light-note-detail-page {" in styles
+    assert "background: var(--light-note-detail-document-bg);" in styles
+    assert '.light-note-detail-html-body[data-html-frame-state="loading"] {' in styles
+    assert '.light-note-detail-html-body .light-html-frame {' in styles
     assert "padding-left: 0;" in styles
     assert "padding-right: 0;" in styles
     assert "gap: 0;" in html_detail_page_block
@@ -907,8 +920,6 @@ def test_note_flash_debug_surface_and_browser_delay_contracts_stay_notes_only() 
     assert 'const routeDelayMs = noteFlashDebugEnabled() && nextRoute === "note-detail"' in light_navigate
     assert 'window.setTimeout(() => commitNavigation("light_app_click"), routeDelayMs);' in light_navigate
     assert 'const noteFlashDebug = Boolean(options && options.noteFlashDebug && noteFlashDebugEnabled());' in light_html_document
-    assert 'wrap.setAttribute("data-html-frame-state", "loading");' in light_html_document
-    assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
     assert 'noteFlashDebugRecord("note_detail_wrapper_created",' in light_html_document
     assert 'noteFlashDebugRecord("note_iframe_srcdoc_assigned",' in light_html_document
     assert 'noteFlashDebugRecord("note_iframe_load",' in light_html_document
@@ -917,7 +928,6 @@ def test_note_flash_debug_surface_and_browser_delay_contracts_stay_notes_only() 
     assert "let srcdocAssigned = false;" in light_html_document
     assert "if (!srcdocAssigned) {" in light_html_document
     assert "srcdocAssigned = true;" in light_html_document
-    assert 'frame.style.visibility = "hidden";' in light_html_document
     assert 'window.setTimeout(assignSrcdoc, iframeDelayMs);' in light_html_document
     assert 'frame.srcdoc = normalizedWorkspaceHtmlDocument(html);' in light_html_document
     assert 'required_phases: NOTE_FLASH_DEBUG_REQUIRED_PHASES.slice()' in debug_snapshot
