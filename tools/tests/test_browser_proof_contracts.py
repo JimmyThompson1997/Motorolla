@@ -220,6 +220,8 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert 'fs.writeFileSync(finalDomPaths.light, await lightPage.content(), "utf8");' in source
     assert "assertMeaningfulRows(" in source
     assert "readScrollReachability(" in source
+    assert 'addCandidate(document.scrollingElement, "document.scrollingElement");' in source
+    assert "measurements.find(candidate => candidate.can_scroll) || measurements[0]" in source
     assert "reached_bottom" in source
     assert "Open audio controls" in source
     assert "openAudioControls(" in source

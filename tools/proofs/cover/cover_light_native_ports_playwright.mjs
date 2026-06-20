@@ -200,37 +200,74 @@ function assertMeaningfulRows(label, rows) {
   );
 }
 
-async function readScrollReachability(page, containerSelector, rowsSelector) {
-  return page.evaluate(({ containerSel, rowSel }) => {
-    const container = document.querySelector(containerSel);
-    if (!(container instanceof HTMLElement)) {
+async function readScrollReachability(page, rowsSelector, preferredContainerSelectors = []) {
+  return page.evaluate(({ rowSel, preferredSelectors }) => {
+    const rows = Array.from(document.querySelectorAll(rowSel || "*")).filter(node => node instanceof HTMLElement);
+    if (!rows.length) {
       return {
         found: false,
-        reason: `Missing container ${containerSel}`
+        reason: `Missing rows ${rowSel}`
       };
     }
-    const rows = Array.from(container.querySelectorAll(rowSel || "*"));
-    container.scrollTop = 0;
-    const scrollHeight = Number(container.scrollHeight.toFixed(2));
-    const clientHeight = Number(container.clientHeight.toFixed(2));
-    const canScroll = scrollHeight > clientHeight + 1;
-    container.scrollTo(0, container.scrollHeight);
-    const bottomTop = Number(container.scrollTop.toFixed(2));
-    const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
-    const reachedBottom = canScroll ? Math.abs(bottomTop - maxScrollTop) <= 1 : true;
-    container.scrollTo(0, 0);
-    const returnedTop = Number(container.scrollTop.toFixed(2));
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (node, source) => {
+      if (!(node instanceof HTMLElement) || seen.has(node)) {
+        return;
+      }
+      seen.add(node);
+      candidates.push({ node, source });
+    };
+    for (const selector of preferredSelectors || []) {
+      addCandidate(document.querySelector(selector), `selector:${selector}`);
+    }
+    let ancestor = rows[0].parentElement;
+    while (ancestor) {
+      addCandidate(ancestor, `ancestor:${ancestor.tagName.toLowerCase()}${ancestor.id ? `#${ancestor.id}` : ""}`);
+      ancestor = ancestor.parentElement;
+    }
+    addCandidate(document.scrollingElement, "document.scrollingElement");
+    const measurements = candidates
+      .map(candidate => {
+        const containerRows = Array.from(candidate.node.querySelectorAll(rowSel || "*"));
+        const scrollHeight = Number(candidate.node.scrollHeight.toFixed(2));
+        const clientHeight = Number(candidate.node.clientHeight.toFixed(2));
+        return {
+          container: candidate.node,
+          source: candidate.source,
+          row_count: containerRows.length,
+          scroll_height: scrollHeight,
+          client_height: clientHeight,
+          can_scroll: scrollHeight > clientHeight + 1
+        };
+      })
+      .filter(candidate => candidate.row_count > 0);
+    const selected = measurements.find(candidate => candidate.can_scroll) || measurements[0];
+    if (!selected) {
+      return {
+        found: false,
+        reason: `No container held rows for ${rowSel}`
+      };
+    }
+    selected.container.scrollTop = 0;
+    selected.container.scrollTo(0, selected.container.scrollHeight);
+    const bottomTop = Number(selected.container.scrollTop.toFixed(2));
+    const maxScrollTop = Math.max(0, selected.scroll_height - selected.client_height);
+    const reachedBottom = selected.can_scroll ? Math.abs(bottomTop - maxScrollTop) <= 1 : true;
+    selected.container.scrollTo(0, 0);
+    const returnedTop = Number(selected.container.scrollTop.toFixed(2));
     return {
       found: true,
-      row_count: rows.length,
-      scroll_height: scrollHeight,
-      client_height: clientHeight,
-      can_scroll: canScroll,
+      source: selected.source,
+      row_count: selected.row_count,
+      scroll_height: selected.scroll_height,
+      client_height: selected.client_height,
+      can_scroll: selected.can_scroll,
       reached_bottom: reachedBottom,
       returned_top: returnedTop,
       max_scroll_top: maxScrollTop
     };
-  }, { containerSel: containerSelector, rowSel: rowsSelector });
+  }, { rowSel: rowsSelector, preferredSelectors: preferredContainerSelectors });
 }
 
 async function readUnreadMarkerStyle(page) {
@@ -661,8 +698,8 @@ async function main() {
     assertMeaningfulRows("Dark Feed", darkFeedRows);
     const darkFeedScroll = await readScrollReachability(
       darkFeedPage,
-      ".app-shell .card-wrap, .card-wrap",
-      ".card-wrap article.card"
+      ".card-wrap article.card",
+      ["#feed", ".feed", ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface"]
     );
     assert(darkFeedScroll.found, "Dark Feed scroll container was not found");
     assert(darkFeedScroll.can_scroll || darkFeedRows.length <= 3, "Dark Feed did not expose enough content to scroll end-to-end");
@@ -684,8 +721,8 @@ async function main() {
     assert(lightInboxCardStyle.backgroundColor !== darkFeedCardStyle.backgroundColor, "Light Inbox cards did not switch to a light surface style");
     const lightInboxScroll = await readScrollReachability(
       lightPage,
-      ".light-shell[data-light-route=\"inbox\"] .card-wrap",
-      ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card"
+      ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card",
+      ["#feed", ".feed", ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface"]
     );
     assert(lightInboxScroll.found, "Light Inbox scroll container was not found");
     assert(lightInboxScroll.can_scroll || inboxRows.length <= 3, "Light Inbox did not expose enough content to scroll end-to-end");
@@ -767,8 +804,8 @@ async function main() {
       assertMeaningfulRows("Dark Meetings", darkMeetingsRows);
       darkMeetingsScroll = await readScrollReachability(
         darkMeetingsPage,
-        ".app-shell .card-wrap, .meetings-page .card-wrap",
-        ".meetings-page .card-wrap article.card"
+        ".meetings-page .card-wrap article.card",
+        ["#feed", ".feed", ".meetings-page"]
       );
       assert(darkMeetingsScroll.found, "Dark Meetings scroll container was not found");
       assert(darkMeetingsScroll.can_scroll, "Dark Meetings did not expose enough content to scroll end-to-end");
