@@ -4270,9 +4270,311 @@
     return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());
   }
 
+  function normalizeUniversalFeedTileDescriptor(descriptor = {}) {
+    return {
+      id: String(descriptor.id || "").trim(),
+      surface: String(descriptor.surface || "").trim().toLowerCase(),
+      variant: String(descriptor.variant || "").trim().toLowerCase(),
+      sectionKey: String(descriptor.sectionKey || "").trim().toLowerCase(),
+      title: String(descriptor.title || "").trim(),
+      meta: descriptor.meta && typeof descriptor.meta === "object" ? descriptor.meta : descriptor.meta ?? null,
+      summary: String(descriptor.summary || "").trim(),
+      chips: Array.isArray(descriptor.chips) ? descriptor.chips.slice() : [],
+      leading: descriptor.leading && typeof descriptor.leading === "object" ? descriptor.leading : null,
+      trailing: descriptor.trailing && typeof descriptor.trailing === "object" ? descriptor.trailing : null,
+      interactive: descriptor.interactive !== false,
+      open: typeof descriptor.open === "function" ? descriptor.open : null,
+      renderMode: String(descriptor.renderMode || "light").trim().toLowerCase() || "light",
+    };
+  }
+
+  function normalizeUniversalFeedSectionDescriptor(descriptor = {}) {
+    const items = Array.isArray(descriptor.items) ? descriptor.items.map(normalizeUniversalFeedTileDescriptor) : [];
+    const count = Number.isFinite(Number(descriptor.count)) ? Number(descriptor.count) : items.length;
+    return {
+      key: String(descriptor.key || "").trim().toLowerCase(),
+      label: String(descriptor.label || "").trim(),
+      count,
+      collapsible: Boolean(descriptor.collapsible),
+      expanded: descriptor.expanded !== false,
+      emptyState: descriptor.emptyState || null,
+      items,
+    };
+  }
+
+  function universalFeedSectionClassName(surface) {
+    if (surface === "notes") {
+      return "light-notes-section";
+    }
+    if (surface === "reminders") {
+      return "light-reminder-list-section";
+    }
+    return "";
+  }
+
+  function universalFeedListClassName(surface) {
+    if (surface === "notes") {
+      return "light-notes-section-body";
+    }
+    if (surface === "meeting-notes") {
+      return "light-list light-graph-list";
+    }
+    if (surface === "reminders") {
+      return "light-list light-graph-list";
+    }
+    if (surface === "projects") {
+      return "light-list";
+    }
+    if (surface === "meetings") {
+      return "meetings-list-card";
+    }
+    return "";
+  }
+
+  function renderUniversalFeedPage(options = {}) {
+    const page = typeof options.createPage === "function"
+      ? options.createPage()
+      : lightPage(options.title || "Workspace", options.pageOptions || {});
+    const pageClassName = String(options.pageClassName || "").trim();
+    page.classList.add("light-feed-page");
+    if (pageClassName) {
+      page.classList.add(...pageClassName.split(/\s+/).filter(Boolean));
+    }
+    page.dataset.feedSurface = String(options.surface || "").trim().toLowerCase();
+    if (options.status instanceof Node) {
+      page.append(options.status);
+      return page;
+    }
+    const surfaceTag = String(options.surfaceTag || "div").trim().toLowerCase() || "div";
+    const surfaceClassName = `light-feed-surface ${String(options.surfaceClassName || "").trim()}`.trim();
+    const surface = el(surfaceTag, surfaceClassName);
+    surface.dataset.feedSurface = String(options.surface || "").trim().toLowerCase();
+    const contentClassName = String(options.contentClassName || "").trim();
+    const content = contentClassName ? el("div", contentClassName) : surface;
+    if (content !== surface) {
+      surface.append(content);
+    }
+    const beforeSections = Array.isArray(options.beforeSections)
+      ? options.beforeSections.filter(node => node instanceof Node)
+      : [];
+    const afterSections = Array.isArray(options.afterSections)
+      ? options.afterSections.filter(node => node instanceof Node)
+      : [];
+    const sections = Array.isArray(options.sections) ? options.sections.map(normalizeUniversalFeedSectionDescriptor) : [];
+    beforeSections.forEach(node => content.append(node));
+    sections.forEach(section => content.append(renderUniversalFeedSection(section, { surface: options.surface })));
+    if (!sections.length && options.emptyState instanceof Node) {
+      content.append(options.emptyState);
+    }
+    afterSections.forEach(node => content.append(node));
+    page.append(surface);
+    return page;
+  }
+
+  function renderUniversalFeedSection(sectionDescriptor, options = {}) {
+    const descriptor = {
+      ...normalizeUniversalFeedSectionDescriptor(sectionDescriptor),
+      surface: String(options.surface || "").trim().toLowerCase(),
+    };
+    const sectionClassName = universalFeedSectionClassName(descriptor.surface);
+    const section = el("section", `${sectionClassName} light-feed-section`.trim());
+    if (descriptor.key) {
+      section.dataset.feedSection = descriptor.key;
+    }
+    if (descriptor.surface === "notes" && descriptor.key) {
+      section.dataset.notesSection = descriptor.key;
+    }
+    const bodyId = descriptor.key ? `light-${descriptor.surface || "feed"}-section-${descriptor.key}` : "";
+    if (descriptor.collapsible && descriptor.surface === "notes") {
+      section.append(lightNotesSectionHeader(descriptor.label, descriptor.key, descriptor.count, descriptor.expanded, bodyId));
+    } else if (descriptor.label) {
+      const header = el("div", "light-feed-section-header");
+      header.append(lightSectionTitle(descriptor.label));
+      section.append(header);
+    }
+    const listClassName = universalFeedListClassName(descriptor.surface);
+    const body = el("div", `${listClassName} light-feed-section-body light-feed-list`.trim());
+    if (bodyId) {
+      body.id = bodyId;
+    }
+    body.hidden = descriptor.collapsible && !descriptor.expanded;
+    if (descriptor.emptyState && descriptor.items.length === 0) {
+      body.append(descriptor.emptyState);
+    } else if (!descriptor.collapsible || descriptor.expanded) {
+      body.append(...descriptor.items.map(item => renderUniversalFeedTile(item)));
+    }
+    section.append(body);
+    return section;
+  }
+
+  function renderUniversalFeedTile(tileDescriptor) {
+    const descriptor = normalizeUniversalFeedTileDescriptor(tileDescriptor);
+    if (descriptor.variant === "notes") {
+      return lightNoteRow(descriptor.meta?.note || null);
+    }
+    if (descriptor.variant === "graph") {
+      const record = descriptor.meta?.record || null;
+      return lightGraphRow(record, {
+        rowClassName: descriptor.meta?.rowClassName || "",
+        showLeadingIcon: descriptor.leading?.show !== false,
+        showTrailingChevron: descriptor.trailing?.show !== false,
+        icon: descriptor.leading?.icon || graphKindIcon(record?.kind),
+        detailRoute: descriptor.meta?.detailRoute || "",
+        selectedKey: descriptor.meta?.selectedKey || "",
+        collection: descriptor.meta?.collection || ""
+      });
+    }
+    if (descriptor.variant === "reminder") {
+      return lightReminderRow(descriptor.meta?.reminder || null);
+    }
+    if (descriptor.variant === "project") {
+      return lightProjectRow(descriptor.meta?.project || null);
+    }
+    if (descriptor.variant === "canonical_reply") {
+      const card = descriptor.meta?.card;
+      return cardView(card);
+    }
+    if (descriptor.variant === "canonical_meeting") {
+      const meeting = descriptor.meta?.meeting;
+      return cardView(meetingCardFromRecord(meeting));
+    }
+    return el("div", "light-feed-row");
+  }
+
+  function universalNoteFeedTileDescriptor(note, sectionKey = "") {
+    const noteId = noteRecordId(note);
+    const meta = noteMetaLine(note);
+    return normalizeUniversalFeedTileDescriptor({
+      id: noteId,
+      surface: "notes",
+      variant: "notes",
+      sectionKey,
+      title: note.title || "Untitled note",
+      meta: { note, source: meta.source, timestamp: meta.timestamp },
+      summary: String(note?.summary || "").trim(),
+      chips: [],
+      leading: null,
+      trailing: { kind: "pin", pending: notePinPending(noteId), pinned: Boolean(note?.pinned) },
+      interactive: true,
+      open: () => {
+        state.selectedNoteId = noteId;
+        lightNavigate("note-detail", { from: "notes" });
+      },
+      renderMode: "light",
+    });
+  }
+
+  function universalGraphFeedTileDescriptor(record, options = {}) {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(record?.id || record?.record_id || "").trim(),
+      surface: String(options.surface || options.collection || "workspace").trim().toLowerCase(),
+      variant: "graph",
+      sectionKey: String(options.sectionKey || options.collection || "").trim().toLowerCase(),
+      title: record?.title || "Untitled record",
+      meta: {
+        record,
+        rowClassName: String(options.rowClassName || "").trim(),
+        detailRoute: String(options.detailRoute || "").trim(),
+        selectedKey: String(options.selectedKey || "").trim(),
+        collection: String(options.collection || "").trim()
+      },
+      summary: graphListLabel(record),
+      chips: graphObjectChipValues(record),
+      leading: { icon: options.icon || graphKindIcon(record?.kind), show: options.showLeadingIcon !== false },
+      trailing: { show: options.showTrailingChevron !== false },
+      interactive: true,
+      open: () => {
+        state[options.selectedKey] = record.id;
+        lightNavigate(options.detailRoute, { from: options.collection });
+      },
+      renderMode: "light",
+    });
+  }
+
+  function universalReminderFeedTileDescriptor(reminder, sectionKey = "") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(reminder?.id || "").trim(),
+      surface: "reminders",
+      variant: "reminder",
+      sectionKey: String(sectionKey || "").trim().toLowerCase(),
+      title: reminder?.title || "Untitled reminder",
+      meta: { reminder },
+      summary: String(reminder?.summary || "").trim(),
+      chips: [],
+      leading: { icon: "bell", show: true },
+      trailing: { show: true, label: reminderRowLabel(reminder) },
+      interactive: true,
+      open: () => {
+        state.selectedReminderId = reminder.id;
+        lightNavigate("reminder-detail", { from: "reminders" });
+      },
+      renderMode: "light",
+    });
+  }
+
+  function universalProjectFeedTileDescriptor(project, sectionKey = "") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(project?.id || "").trim(),
+      surface: "projects",
+      variant: "project",
+      sectionKey: String(sectionKey || "").trim().toLowerCase(),
+      title: project?.title || "Untitled project",
+      meta: { project },
+      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
+      chips: projectChips(project),
+      leading: { icon: "folder", show: true },
+      trailing: null,
+      interactive: true,
+      open: () => {
+        state.selectedProjectId = project.id;
+        lightNavigate("project-detail", { from: "projects" });
+      },
+      renderMode: "light",
+    });
+  }
+
+  function universalCanonicalReplyFeedTileDescriptor(card, sectionKey = "inbox") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(card?.card_id || card?.session_id || "").trim(),
+      surface: "inbox",
+      variant: "canonical_reply",
+      sectionKey,
+      title: card?.title || "Pucky",
+      meta: { card },
+      summary: String(card?.summary || "").trim(),
+      chips: [],
+      leading: null,
+      trailing: null,
+      interactive: true,
+      open: () => showTranscript(card),
+      renderMode: "canonical",
+    });
+  }
+
+  function universalCanonicalMeetingFeedTileDescriptor(meeting, sectionKey = "meetings") {
+    return normalizeUniversalFeedTileDescriptor({
+      id: String(meeting?.meeting_id || meeting?.id || "").trim(),
+      surface: "meetings",
+      variant: "canonical_meeting",
+      sectionKey,
+      title: meeting?.title || "Meeting",
+      meta: { meeting },
+      summary: String(meeting?.summary || "").trim(),
+      chips: [],
+      leading: null,
+      trailing: null,
+      interactive: true,
+      open: () => {
+        void showMeetingDetail(meeting);
+      },
+      renderMode: "canonical",
+    });
+  }
+
   function lightMeetingNotesPage() {
     return lightGraphListPage({
       title: "Meeting Notes",
+      surface: "meeting-notes",
       collection: "meeting-notes",
       icon: "record_voice_over",
       detailRoute: "meeting-note-detail",
@@ -4296,39 +4598,37 @@
   }
 
   function lightRemindersPage() {
-    const page = lightPage("Reminders");
-    page.classList.add("light-graph-page", "light-reminders-page");
     const status = lightWorkspaceStatus("reminders", "bell", "No reminders yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
     const reminders = chronologicalReminders();
     const active = reminders.filter(reminder => reminderIsActive(reminder));
     const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));
-    if (!active.length && !snoozed.length) {
-      page.append(lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."));
-      return page;
-    }
+    const sections = [];
     if (active.length) {
-      page.append(lightReminderListSection("", active, "active"));
+      sections.push(lightReminderListSection("", active, "active"));
     }
     if (snoozed.length) {
-      page.append(lightReminderListSection("Snoozed", snoozed, "snoozed"));
+      sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));
     }
-    return page;
+    return renderUniversalFeedPage({
+      title: "Reminders",
+      surface: "reminders",
+      pageClassName: "light-graph-page light-reminders-page",
+      status,
+      emptyState: lightEmptyState("bell", "No reminders yet", "Scheduled reminders will appear here."),
+      sections,
+    });
   }
 
   function lightReminderListSection(title, reminders, sectionKey = "") {
-    const section = el("section", "light-reminder-list-section");
-    section.dataset.reminderSection = String(sectionKey || "").trim().toLowerCase();
-    if (title) {
-      section.append(lightSectionTitle(title));
-    }
-    const list = el("div", "light-list light-graph-list");
-    reminders.forEach(reminder => list.append(lightReminderRow(reminder)));
-    section.append(list);
-    return section;
+    return {
+      key: String(sectionKey || "").trim().toLowerCase(),
+      label: title,
+      count: reminders.length,
+      collapsible: false,
+      expanded: true,
+      emptyState: null,
+      items: reminders.map(reminder => universalReminderFeedTileDescriptor(reminder, sectionKey))
+    };
   }
 
   function lightReminderDetailPage() {
@@ -4363,22 +4663,28 @@
   }
 
   function lightGraphListPage(options = {}) {
-    const page = lightPage(options.title || "Workspace");
-    page.classList.add("light-graph-page");
     const status = lightWorkspaceStatus(options.collection, options.icon || "apps", options.emptyTitle || "No records yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
-    const list = el("div", "light-list light-graph-list");
-    list.append(...workspaceItems(options.collection).map(record => lightGraphRow(record, options)));
-    page.append(list);
-    return page;
+    return renderUniversalFeedPage({
+      title: options.title || "Workspace",
+      surface: String(options.surface || options.collection || "workspace"),
+      pageClassName: "light-graph-page",
+      surfaceClassName: "light-list-surface",
+      status,
+      sections: [{
+        key: String(options.sectionKey || options.collection || "records").trim().toLowerCase(),
+        label: String(options.sectionLabel || "").trim(),
+        count: workspaceItems(options.collection).length,
+        collapsible: false,
+        expanded: true,
+        emptyState: null,
+        items: workspaceItems(options.collection).map(record => universalGraphFeedTileDescriptor(record, options))
+      }],
+    });
   }
 
   function lightGraphRow(record, options = {}) {
     const rowClassName = String(options.rowClassName || "").trim();
-    const row = el("button", `light-card light-graph-row ${rowClassName}`.trim());
+    const row = el("button", `light-card light-feed-row light-graph-row ${rowClassName}`.trim());
     const leadingIcon = options.showLeadingIcon === false
       ? null
       : lightSmallIcon(options.icon || graphKindIcon(record.kind));
@@ -4404,7 +4710,7 @@
   function lightReminderRow(reminder) {
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
-    const row = el("button", `light-card light-reminder-row ${group || ""} ${deliveryClass}`.trim());
+    const row = el("button", `light-card light-feed-row light-reminder-row ${group || ""} ${deliveryClass}`.trim());
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     row.type = "button";
@@ -4646,6 +4952,11 @@
 
   function graphObjectChips(record) {
     const chips = el("span", "light-graph-chip-row");
+    graphObjectChipValues(record).forEach(value => chips.append(el("span", "light-graph-chip", value)));
+    return chips;
+  }
+
+  function graphObjectChipValues(record) {
     const meta = record?.metadata || {};
     const linkCount = Array.isArray(record?.links) ? record.links.length : 0;
     const values = [];
@@ -4658,8 +4969,7 @@
     if (meta.channel) {
       values.push(meta.channel);
     }
-    values.slice(0, 3).forEach(value => chips.append(el("span", "light-graph-chip", value)));
-    return chips;
+    return values.slice(0, 3);
   }
 
   function graphListLabel(record) {
@@ -5442,26 +5752,26 @@
   }
 
   function lightNotesPage() {
-    const page = lightPage("Notes");
-    page.classList.add("light-notes-page");
     const status = lightWorkspaceStatus("notes", "note", "No notes yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
     const notes = workspaceItems("notes");
     const pinned = notes.filter(note => note.pinned);
-    const feedWrap = el("div", "light-notes-feed");
+    const sections = [];
     if (pinned.length) {
-      feedWrap.append(lightNotesSection("Pinned", "pinned", pinned));
+      sections.push(lightNotesSection("Pinned", "pinned", pinned));
     }
-    feedWrap.append(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));
-    page.append(feedWrap);
-    return page;
+    sections.push(lightNotesSection("Recent", "recent", notes.filter(note => !note.pinned)));
+    return renderUniversalFeedPage({
+      title: "Notes",
+      surface: "notes",
+      pageClassName: "light-notes-page",
+      surfaceClassName: "light-notes-feed",
+      status,
+      sections,
+    });
   }
 
   function lightNotesSectionHeader(title, sectionKey, count, expanded, controlsId) {
-    const button = el("button", "light-notes-section-header");
+    const button = el("button", "light-feed-section-header light-notes-section-header");
     button.type = "button";
     button.dataset.notesSection = sectionKey;
     button.setAttribute("aria-expanded", String(expanded));
@@ -5483,23 +5793,19 @@
   }
 
   function lightNotesSection(title, sectionKey, notes) {
-    const section = el("section", "light-notes-section");
-    section.dataset.notesSection = sectionKey;
-    const expanded = noteSectionExpanded(sectionKey);
-    const bodyId = `light-notes-section-${sectionKey}`;
-    section.append(lightNotesSectionHeader(title, sectionKey, notes.length, expanded, bodyId));
-    const body = el("div", "light-notes-section-body");
-    body.id = bodyId;
-    body.hidden = !expanded;
-    if (expanded) {
-      notes.forEach(note => body.append(lightNoteRow(note)));
-    }
-    section.append(body);
-    return section;
+    return {
+      key: sectionKey,
+      label: title,
+      count: notes.length,
+      collapsible: true,
+      expanded: noteSectionExpanded(sectionKey),
+      emptyState: null,
+      items: notes.map(note => universalNoteFeedTileDescriptor(note, sectionKey))
+    };
   }
 
   function lightNoteRow(note) {
-    const row = el("div", "light-note-row");
+    const row = el("div", "light-feed-row light-note-row");
     const noteId = noteRecordId(note);
     row.setAttribute("role", "button");
     row.tabIndex = 0;
@@ -6314,28 +6620,39 @@
   }
 
   function lightProjectsPage() {
-    const page = lightPage("Projects");
-    const list = el("div", "light-list");
     const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
-    if (status) {
-      page.append(status);
-      return page;
-    }
-    list.append(...allProjects().map(project => {
-      const row = el("button", "light-card light-project-row");
-      row.type = "button";
-      row.dataset.projectId = project.id;
-      row.addEventListener("click", () => {
-        state.selectedProjectId = project.id;
-        lightNavigate("project-detail", { from: "projects" });
-      });
-      const chips = el("span", "light-project-chip-row");
-      projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
-      row.append(lightSmallIcon("folder"), lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`), chips);
-      return row;
-    }));
-    page.append(list);
-    return page;
+    return renderUniversalFeedPage({
+      title: "Projects",
+      surface: "projects",
+      status,
+      sections: [{
+        key: "projects",
+        label: "",
+        count: allProjects().length,
+        collapsible: false,
+        expanded: true,
+        emptyState: null,
+        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))
+      }],
+    });
+  }
+
+  function lightProjectRow(project) {
+    const row = el("button", "light-card light-feed-row light-project-row");
+    row.type = "button";
+    row.dataset.projectId = project.id;
+    row.addEventListener("click", () => {
+      state.selectedProjectId = project.id;
+      lightNavigate("project-detail", { from: "projects" });
+    });
+    const chips = el("span", "light-project-chip-row");
+    projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
+    row.append(
+      lightSmallIcon("folder"),
+      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`),
+      chips
+    );
+    return row;
   }
 
   function lightProjectDetailPage() {
@@ -6404,21 +6721,112 @@
   }
 
   function lightInboxPage() {
-    const page = el("section", "light-page light-canonical-port-page light-inbox-page");
-    page.append(lightHeader("Inbox"));
-    const surface = el("section", "light-canonical-port-surface light-inbox-surface");
-    surface.append(...homeFeedContentNodes());
-    page.append(surface);
-    return page;
+    return renderUniversalFeedPage({
+      title: "Inbox",
+      surface: "inbox",
+      createPage: () => {
+        const page = lightPage("Inbox");
+        page.classList.add("light-canonical-port-page", "light-inbox-page");
+        return page;
+      },
+      surfaceTag: "section",
+      surfaceClassName: "light-canonical-port-surface light-inbox-surface",
+      sections: [lightInboxSection()]
+    });
   }
 
   function lightMeetingsPage() {
-    const page = el("section", "light-page light-canonical-port-page light-meetings-page");
-    page.append(lightHeader("Meetings"));
-    const surface = el("section", "light-canonical-port-surface light-meetings-surface");
-    surface.append(meetingsPageView({ embedded: true }));
-    page.append(surface);
-    return page;
+    const beforeSections = [meetingsEmbeddedToolbar()];
+    if (state.meetings.loading && state.meetings.records.length) {
+      beforeSections.push(el("div", "meetings-refreshing", "Refreshing..."));
+    }
+    return renderUniversalFeedPage({
+      title: "Meetings",
+      surface: "meetings",
+      createPage: () => {
+        const page = lightPage("Meetings");
+        page.classList.add("light-canonical-port-page", "light-meetings-page");
+        return page;
+      },
+      surfaceTag: "section",
+      surfaceClassName: "light-canonical-port-surface light-meetings-surface",
+      contentClassName: "meetings-page is-embedded-light",
+      beforeSections,
+      sections: [lightMeetingsSection()]
+    });
+  }
+
+  function lightInboxSection() {
+    const displayCards = feedDisplayCards();
+    if (state.feedLoadError && !displayCards.length) {
+      const empty = el("div", "empty feed-load-error");
+      empty.append(
+        el("strong", "", "Could not load the Home feed."),
+        el("span", "", state.feedLoadError)
+      );
+      return {
+        key: "inbox",
+        label: "",
+        count: 0,
+        collapsible: false,
+        expanded: true,
+        emptyState: empty,
+        items: []
+      };
+    }
+    if (!displayCards.length) {
+      const empty = el("div", "empty");
+      empty.append("No replies yet.", document.createElement("br"), "Pucky will place agent replies here.");
+      return {
+        key: "inbox",
+        label: "",
+        count: 0,
+        collapsible: false,
+        expanded: true,
+        emptyState: empty,
+        items: []
+      };
+    }
+    const cards = filteredFeedCards(displayCards);
+    return {
+      key: "inbox",
+      label: "",
+      count: cards.length,
+      collapsible: false,
+      expanded: true,
+      emptyState: cards.length ? null : filteredFeedEmptyView(),
+      items: cards.map(card => universalCanonicalReplyFeedTileDescriptor(card, "inbox"))
+    };
+  }
+
+  function meetingsEmbeddedToolbar() {
+    const refresh = el("button", "meetings-refresh", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => loadMeetings({ render: true }));
+    const toolbar = el("div", "meetings-embedded-toolbar");
+    toolbar.append(refresh);
+    return toolbar;
+  }
+
+  function lightMeetingsSection() {
+    const records = visibleMeetingRecords().slice().reverse();
+    let emptyState = null;
+    if (state.meetings.loading && !state.meetings.records.length) {
+      emptyState = el("div", "meetings-empty", "Loading meetings...");
+    } else if (state.meetings.error && !state.meetings.records.length) {
+      emptyState = el("div", "meetings-empty is-error", state.meetings.error);
+    } else if (!state.meetings.records.length) {
+      emptyState = el("div", "meetings-empty", "No meeting recordings yet.");
+    }
+    return {
+      key: "meetings",
+      label: "",
+      count: records.length,
+      collapsible: false,
+      expanded: true,
+      emptyState,
+      items: records.map(meeting => universalCanonicalMeetingFeedTileDescriptor(meeting, "meetings"))
+    };
   }
 
   function lightPage(title, options = {}) {
@@ -7041,6 +7449,13 @@
       });
     }
     return chip;
+  }
+
+  function lightChipIcon(icon, accentKey = "") {
+    const wrap = el("span", "light-record-chip-icon");
+    applySemanticIconAccent(wrap, accentKey, { propertyName: "color", allowEmpty: true });
+    wrap.innerHTML = iconSvg(icon, { filled: false });
+    return wrap;
   }
 
   function lightAttendeeRow(name) {
@@ -9813,6 +10228,7 @@
     const sourceInfo = describeAudioSourceForCard(card);
     const startSpeed = resolvedStartSpeedForCard(card);
     const audioUrl = String(card?.audio_url || "").trim();
+    const controlKey = audioControlKey(card) || audioUrl;
     if (same && current.is_playing) {
       setAudioProbePhase(card, "pause_pending", {
         reason: "pause_requested",
@@ -9836,16 +10252,16 @@
     }
     const start = same && !sameCompleted
       ? savedPositionFor(current.source || current.path)
-      : savedPositionFor(audioUrl);
+      : savedPositionFor(controlKey);
     if (!same || sameCompleted) {
-      forgetCompleted(audioUrl);
+      forgetCompleted(controlKey);
     }
     setAudioProbePhase(card, "starting", {
       reason: same && !sameCompleted ? "resume_requested" : "play_requested",
       clear_error: true,
       ...sourceInfo
     });
-    state.activePath = audioControlKey(card);
+    state.activePath = controlKey;
     recordAudioProbeEvent("source_resolved", {
       target_key: busyKey,
       ...sourceInfo
@@ -9862,7 +10278,7 @@
       command: "player.play",
       args: {
         path: audioUrl,
-        source: audioControlKey(card) || audioUrl,
+        source: controlKey,
         title: card.title,
         start_at_ms: start,
         speed: startSpeed
@@ -12280,7 +12696,7 @@
         const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
+          args: { path: audioPath, source: audioControlKey(card) || audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
         });
       }
       state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
@@ -12495,7 +12911,7 @@
         const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: positionMs }
+          args: { path: audioPath, source: audioControlKey(card) || audioPath, title: card.title, start_at_ms: positionMs }
         });
       }
       state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
@@ -13897,13 +14313,55 @@
       return card.audio_playlist_path;
     }
     if (!hasNativeAudioBridge() && card.audio_url) {
-      return card.audio_url;
+      return hostedAudioSessionKey(card) || card.audio_url;
     }
     return card.audio_path || card.audio_media_id || card.audio_url || card.session_id || card.title || "";
   }
 
   function audioStateKey(card) {
     return normalizePath(audioControlKey(card));
+  }
+
+  function hostedAudioSessionKey(card) {
+    if (!card || typeof card !== "object") {
+      return "";
+    }
+    const explicit = String(card.audio_media_id || card.media_id || "").trim();
+    if (explicit) {
+      return `media:${explicit}`;
+    }
+    const cardId = String(card.card_id || "").trim();
+    if (cardId) {
+      return `card:${cardId}:audio`;
+    }
+    const sessionId = cardSessionId(card);
+    if (sessionId) {
+      return `session:${sessionId}:audio`;
+    }
+    const threadId = cardThreadId(card);
+    if (threadId) {
+      return `thread:${threadId}:audio`;
+    }
+    const audioUrl = canonicalHostedAudioUrlIdentity(card.audio_url);
+    return audioUrl ? `url:${audioUrl}` : "";
+  }
+
+  function canonicalHostedAudioUrlIdentity(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+    try {
+      const base = window.location && window.location.origin
+        ? window.location.origin
+        : DEFAULT_LINKS_API_BASE;
+      const url = new URL(raw, base);
+      url.hash = "";
+      url.search = "";
+      return url.toString();
+    } catch (_) {
+      return raw.replace(/[?#].*$/, "");
+    }
   }
 
   function playerStateKey(player) {
@@ -14216,8 +14674,12 @@
     if (!playerHasAudioIdentity(player) || !hasAudio(card)) {
       return false;
     }
+    if (samePath(playerStateKey(player), audioStateKey(card))) {
+      return true;
+    }
     return samePath(player.path, card.audio_path)
       || samePath(player.path, card.audio_url)
+      || samePath(player.source, audioControlKey(card))
       || samePath(player.source, card.audio_playlist_path)
       || samePath(player.source, card.audio_url);
   }
@@ -14293,7 +14755,9 @@
     if (!targetKey) {
       return false;
     }
-    const phase = currentTileAudioPhase({ audio_path: targetKey, audio_url: targetKey, title: state.audioProbe.target_card?.title || "" });
+    const phase = isAudioTilePhase(state.audioProbe.current_tile_audio_phase)
+      ? state.audioProbe.current_tile_audio_phase
+      : "idle";
     const nextKey = playerStateKey(nextPlayer);
     const matchesTarget = samePath(nextKey, targetKey);
     const isPlaying = Boolean(nextPlayer?.is_playing && matchesTarget);
@@ -14351,6 +14815,19 @@
     if (!samePath(playerStateKey(player), state.activePath)) {
       state.activePath = "";
     }
+  }
+
+  function findCardByAudioLookupKey(key) {
+    const target = normalizePath(key);
+    if (!target) {
+      return null;
+    }
+    return feedDisplayCards().find(card => (
+      samePath(audioControlKey(card), target)
+        || samePath(card.audio_url, target)
+        || samePath(card.audio_path, target)
+        || samePath(card.audio_playlist_path, target)
+    )) || null;
   }
 
   function samePath(left, right) {

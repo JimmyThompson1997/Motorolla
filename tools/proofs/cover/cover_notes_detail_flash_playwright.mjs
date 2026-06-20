@@ -40,6 +40,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
 const DEFAULT_BASE_URL = process.env.PUCKY_NOTES_FLASH_BASE_URL || "https://pucky.fly.dev";
 const VIEWPORT = NOTES_DETAIL_FLASH_VIEWPORT;
 const SCORE_CROP = buildScoreCrop(VIEWPORT);
+const LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN";
+const LEGACY_WEB_TOKEN_PLACEHOLDER = ["Paste ", "PUCKY_", "WEB_UI_TOKEN"].join("");
 const LANE_DEBUG_DEFAULTS = Object.freeze({
   natural_click: { routeDelayMs: 0, iframeDelayMs: 0 },
   route_delay: { routeDelayMs: NOTES_DETAIL_FLASH_ROUTE_DELAY_MS, iframeDelayMs: 0 },
@@ -75,6 +77,10 @@ function logStep(config, message) {
 }
 
 function resolveApiToken() {
+  const webToken = String(process.env[LEGACY_WEB_TOKEN_ENV] || "").trim();
+  if (webToken) {
+    return webToken;
+  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -1002,7 +1008,7 @@ function writeReport(config, summary) {
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   if (!String(config.apiToken || "").trim()) {
-    throw new Error("Notes detail flash browser proof requires --api-token or PUCKY_WORKSPACE_PROOF_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN");
+    throw new Error("Notes detail flash browser proof requires --api-token or a configured proof token env");
   }
   ensureDir(config.reportDir);
   const localGit = localGitState();

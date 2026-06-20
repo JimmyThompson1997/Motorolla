@@ -35,6 +35,14 @@ const REQUIRED_HOME_ROUTES = [
   "projects",
   "contacts",
 ];
+const UNIVERSAL_FEED_TILE_ROUTES = [
+  "inbox",
+  "meetings",
+  "meeting-notes",
+  "reminders",
+  "notes",
+  "projects",
+];
 const LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"];
 const TASK_LINKS = [
   {
@@ -757,6 +765,8 @@ async function readTaskDetailState(page) {
         .map(node => String(node.textContent || "").trim()),
       checklist: Array.from(detail?.querySelectorAll(".light-task-checklist-label") || [])
         .map(node => String(node.textContent || "").trim()),
+      notes: Array.from(detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong') || [])
+        .map(node => String(node.textContent || "").trim()),
       attachments: Array.from(attachedSection?.querySelectorAll('.light-info-row[data-task-attachment-kind] .light-text-stack strong') || [])
         .map(node => String(node.textContent || "").trim()),
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
@@ -1235,6 +1245,7 @@ function renderReport(summary) {
     `- Source commit: ${summary.source_commit_full}`,
     `- UI version: ${summary.ui_version}`,
     `- Cleanup ok: ${summary.cleanup_ok}`,
+    `- Universal feed tile acceptance routes: ${summary.universal_feed_tile_routes.join(", ")}`,
   ];
   if (summary.cleanup_error) {
     lines.push(`- Cleanup error: ${summary.cleanup_error}`);
@@ -1325,6 +1336,7 @@ async function main() {
     cleanup_ok: config.keepSeed ? true : cleanupOk,
     cleanup_error: cleanupError || "",
     cleanup_skipped: Boolean(config.keepSeed),
+    universal_feed_tile_routes: UNIVERSAL_FEED_TILE_ROUTES.slice(),
     mobile,
     desktop,
   };

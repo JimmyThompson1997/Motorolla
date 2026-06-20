@@ -3915,6 +3915,45 @@ button {
   overflow: hidden;
 }
 
+.light-feed-page {
+  width: 100%;
+}
+
+.light-feed-surface {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.light-feed-section {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.light-feed-section-header {
+  width: 100%;
+  min-width: 0;
+}
+
+.light-feed-section-body {
+  width: 100%;
+  min-width: 0;
+}
+
+.light-feed-list {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.light-feed-row {
+  width: 100%;
+}
+
 .light-list {
   display: flex;
   flex-direction: column;

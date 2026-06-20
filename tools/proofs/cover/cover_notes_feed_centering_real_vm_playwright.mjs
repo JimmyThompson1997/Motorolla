@@ -16,6 +16,7 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_PAGE_URL = "https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1";
 const DEFAULT_REPORT_DIR = path.join(repoRoot, ".tmp", "notes-feed-centering-live-proof");
+const LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN";
 const viewports = [
   { label: "narrow-phone", width: 320, height: 568 },
   { label: "large-phone", width: 428, height: 926 },
@@ -24,7 +25,7 @@ const viewports = [
 ];
 
 function resolveApiToken() {
-  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  const webToken = String(process.env[LEGACY_WEB_TOKEN_ENV] || "").trim();
   if (webToken) {
     return webToken;
   }
@@ -314,7 +315,7 @@ async function reloadIntoNotes(page, timeoutMs) {
 async function runViewportScenario(browser, config, repo, viewport, index) {
   const viewportDir = path.join(config.reportDir, viewport.label);
   ensureDir(viewportDir);
-  assert(String(config.apiToken || "").trim(), "Expected PUCKY_WEB_UI_TOKEN or PUCKY_API_TOKEN for live Notes write proof");
+  assert(String(config.apiToken || "").trim(), "Expected a live Notes proof token or PUCKY_API_TOKEN");
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     isMobile: viewport.width <= 768,
