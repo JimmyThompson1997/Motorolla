@@ -1,6 +1,7 @@
+import fs from "node:fs";
 import path from "node:path";
 
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -21,7 +22,9 @@ function parseArgs(argv) {
     darkFeedUrl: process.env.PUCKY_DARK_FEED_URL || DEFAULT_DARK_FEED_URL,
     darkMeetingsUrl: process.env.PUCKY_DARK_MEETINGS_URL || DEFAULT_DARK_MEETINGS_URL,
     reportDir: path.resolve("artifacts", "light-native-ports"),
-    timeoutMs: 30000
+    timeoutMs: 30000,
+    browserName: "chromium",
+    headless: true
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -35,6 +38,11 @@ function parseArgs(argv) {
       config.reportDir = String(argv[++index] || config.reportDir);
     } else if (arg === "--timeout-ms" && argv[index + 1]) {
       config.timeoutMs = Math.max(1000, Number(argv[++index] || config.timeoutMs) || config.timeoutMs);
+    } else if (arg === "--browser" && argv[index + 1]) {
+      const browserName = String(argv[++index] || config.browserName).trim().toLowerCase();
+      config.browserName = browserName === "webkit" ? "webkit" : "chromium";
+    } else if (arg === "--headed") {
+      config.headless = false;
     }
   }
   return config;
@@ -44,6 +52,25 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+async function launchConfiguredBrowser(config) {
+  const browserName = String(config.browserName || "chromium").trim().toLowerCase();
+  if (browserName === "webkit") {
+    return webkit.launch({ headless: config.headless });
+  }
+  return chromium.launch({
+    executablePath: resolveChromePath(),
+    headless: config.headless,
+  });
+}
+
+function logAction(actions, name, details = {}) {
+  actions.push({
+    at: new Date().toISOString(),
+    action: name,
+    ...details
+  });
 }
 
 function normalizeText(value) {
@@ -175,27 +202,14 @@ function assertMeaningfulRows(label, rows) {
 
 async function readScrollReachability(page, containerSelector, rowsSelector) {
   return page.evaluate(({ containerSel, rowSel }) => {
-    const explicitContainer = document.querySelector(containerSel);
-    const scrollingElement = document.scrollingElement instanceof HTMLElement
-      ? document.scrollingElement
-      : document.documentElement instanceof HTMLElement
-        ? document.documentElement
-        : null;
-    const explicitScrollable = explicitContainer instanceof HTMLElement
-      ? explicitContainer.scrollHeight > explicitContainer.clientHeight + 1
-      : false;
-    const container = explicitContainer instanceof HTMLElement
-      ? explicitScrollable
-        ? explicitContainer
-        : scrollingElement || explicitContainer
-      : scrollingElement;
+    const container = document.querySelector(containerSel);
     if (!(container instanceof HTMLElement)) {
       return {
         found: false,
         reason: `Missing container ${containerSel}`
       };
     }
-    const rows = Array.from(document.querySelectorAll(rowSel || "*"));
+    const rows = Array.from(container.querySelectorAll(rowSel || "*"));
     container.scrollTop = 0;
     const scrollHeight = Number(container.scrollHeight.toFixed(2));
     const clientHeight = Number(container.clientHeight.toFixed(2));
@@ -280,6 +294,30 @@ async function closeDetail(page, timeoutMs) {
   await page.locator(".detail-panel.is-open").waitFor({ state: "hidden", timeout: timeoutMs });
 }
 
+async function readPlayerState(page) {
+  return page.evaluate(async () => await window.Pucky.request({ command: "player.state", args: {} }));
+}
+
+async function waitForPlayerAdvance(page, timeoutMs, minimumDeltaMs = 400) {
+  const before = await readPlayerState(page);
+  await page.waitForFunction(
+    ({ minimumDelta }) => window.Pucky.request({ command: "player.state", args: {} }).then((player) => {
+      const current = Number(player?.position_ms || 0);
+      const duration = Number(player?.duration_ms || 0);
+      const playing = Boolean(player?.is_playing);
+      return current >= minimumDelta || (duration > 0 && current >= duration) || !playing;
+    }),
+    { minimumDelta: Math.max(50, Number(minimumDeltaMs || 400)) },
+    { timeout: timeoutMs }
+  );
+  const after = await readPlayerState(page);
+  return {
+    before,
+    after,
+    delta_ms: Number(after?.position_ms || 0) - Number(before?.position_ms || 0)
+  };
+}
+
 async function openAudioControls(page, selector, timeoutMs) {
   const trigger = page.locator(selector).first();
   await trigger.waitFor({ state: "visible", timeout: timeoutMs });
@@ -292,8 +330,8 @@ async function openAudioControls(page, selector, timeoutMs) {
   });
   assert(target.card_id || target.session_id, "Audio controls target did not resolve to a canonical card identity");
   const detailSelector = target.session_id
-    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] .card-body`
-    : `article.card[data-card-id="${cssString(target.card_id)}"] .card-body`;
+    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="transcript_title"]`
+    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="transcript_title"]`;
   await clickSelector(page, detailSelector, timeoutMs);
   await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: timeoutMs });
   const before = await readDetailState(page);
@@ -380,6 +418,7 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
     targetSelector,
     { timeout: timeoutMs }
   );
+  const progress = await waitForPlayerAdvance(page, timeoutMs, 250);
   const playing = await page.locator(targetSelector).evaluate(button => ({
     classes: String(button.className || "").trim(),
     aria_label: String(button.getAttribute("aria-label") || "").trim()
@@ -396,8 +435,70 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
   return {
     ...target,
     ...playing,
-    playing: true
+    playing: true,
+    progress
   };
+}
+
+async function openInlineAudioDetail(page, selector, timeoutMs) {
+  const trigger = page.locator(selector).first();
+  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
+  const target = await trigger.evaluate(node => {
+    const article = node.closest("article.card");
+    return {
+      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
+      card_id: String(article?.getAttribute("data-card-id") || "").trim()
+    };
+  });
+  assert(target.card_id || target.session_id, "Inline audio target did not resolve to a canonical card identity");
+  const audioSelector = target.session_id
+    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="audio"]`
+    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="audio"]`;
+  await clickSelector(page, audioSelector, timeoutMs);
+  await page.waitForFunction(
+    selectorValue => Boolean(document.querySelector(selectorValue)?.classList.contains("is-playing")),
+    audioSelector,
+    { timeout: timeoutMs }
+  );
+  const inlineSelector = target.session_id
+    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="audio_controls_inline"]`
+    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="audio_controls_inline"]`;
+  await clickSelector(page, inlineSelector, timeoutMs);
+  await page.waitForFunction(() => {
+    const detail = document.getElementById("detail");
+    return String(detail?.getAttribute("data-detail-type") || "") === "audio";
+  }, { timeout: timeoutMs });
+  const before = await readPlayerState(page);
+  await page.waitForTimeout(900);
+  const after = await readPlayerState(page);
+  const detail = await readDetailState(page);
+  await closeDetail(page, timeoutMs);
+  return {
+    target,
+    detail,
+    player_delta_ms: Number(after?.position_ms || 0) - Number(before?.position_ms || 0)
+  };
+}
+
+async function readRichPageFrameState(page) {
+  return page.locator("#detail .rich-frame").evaluate((iframe) => {
+    const doc = iframe.contentDocument;
+    const body = doc?.body;
+    const root = doc?.documentElement;
+    const topText = String(body?.innerText || "").trim().slice(0, 200);
+    const totalHeight = Math.max(Number(body?.scrollHeight || 0), Number(root?.scrollHeight || 0));
+    const clientHeight = Number(iframe.clientHeight || 0);
+    iframe.contentWindow?.scrollTo(0, totalHeight);
+    return {
+      top_text: topText,
+      bottom_text: String(body?.innerText || "").trim().slice(-200),
+      iframe_client_height: clientHeight,
+      scroll_height: totalHeight,
+      max_scroll_top: Math.max(0, totalHeight - clientHeight),
+      root_scroll_top: Number(root?.scrollTop || 0),
+      body_scroll_top: Number(body?.scrollTop || 0)
+    };
+  });
 }
 
 async function clickLightTile(page, route, timeoutMs) {
@@ -417,42 +518,126 @@ async function backToLightHome(page, timeoutMs) {
   await page.locator(".light-shell[data-light-route=\"home\"]").waitFor({ state: "visible", timeout: timeoutMs });
 }
 
-async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs) {
-  const selector = "[data-card-action=\"page\"], [data-card-action=\"attachment\"]";
+async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs, reportDir) {
+  const selector = "[data-card-action=\"page\"]";
   const darkCount = await darkPage.locator(selector).count();
   const lightCount = await lightPage.locator(selector).count();
   if (!darkCount || !lightCount) {
-    return { checked: false, reason: "No page or attachment action was available in the current feed sample." };
+    return { checked: false, reason: "No page action was available in the current feed sample." };
   }
   const darkDetail = await openAndInspectDetail(darkPage, selector, timeoutMs);
   const lightDetail = await openAndInspectDetail(lightPage, selector, timeoutMs);
+  const topShots = {
+    dark: await saveScreenshot(darkPage, reportDir, "07-dark-inbox-page-top"),
+    light: await saveScreenshot(lightPage, reportDir, "08-light-inbox-page-top")
+  };
+  const darkFrame = await readRichPageFrameState(darkPage);
+  const lightFrame = await readRichPageFrameState(lightPage);
+  const bottomShots = {
+    dark: await saveScreenshot(darkPage, reportDir, "09-dark-inbox-page-bottom"),
+    light: await saveScreenshot(lightPage, reportDir, "10-light-inbox-page-bottom")
+  };
   assertDetailParity("Inbox page/attachment", darkDetail.state, lightDetail.state);
+  assert(darkDetail.state.detail_type === "page", "Dark Feed page action did not open page detail");
+  assert(lightDetail.state.detail_type === "page", "Light Inbox page action did not open page detail");
   assert(lightDetail.visual.backgroundColor !== darkDetail.visual.backgroundColor, "Inbox page or attachment detail did not switch to light styling");
+  assert(!/\/mock\//i.test(darkFrame.top_text), "Dark Feed page detail still rendered mock placeholder content");
+  assert(!/\/mock\//i.test(lightFrame.top_text), "Light Inbox page detail still rendered mock placeholder content");
+  assert(darkFrame.scroll_height > darkFrame.iframe_client_height, "Dark Feed rich page did not exceed the viewport height");
+  assert(lightFrame.scroll_height > lightFrame.iframe_client_height, "Light Inbox rich page did not exceed the viewport height");
+  assert(darkFrame.root_scroll_top >= darkFrame.max_scroll_top, "Dark Feed rich page did not reach the bottom");
+  assert(lightFrame.root_scroll_top >= lightFrame.max_scroll_top, "Light Inbox rich page did not reach the bottom");
   await closeDetail(darkPage, timeoutMs);
   await closeDetail(lightPage, timeoutMs);
   return {
     checked: true,
     dark: darkDetail,
-    light: lightDetail
+    dark_frame: darkFrame,
+    light: lightDetail,
+    light_frame: lightFrame,
+    screenshots: {
+      top: topShots,
+      bottom: bottomShots
+    }
   };
 }
 
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
+  const tracePath = path.join(config.reportDir, "trace.zip");
+  const consoleJsonPath = path.join(config.reportDir, "console.json");
+  const networkJsonPath = path.join(config.reportDir, "network.json");
+  const actionsJsonPath = path.join(config.reportDir, "actions.json");
+  const finalDomPaths = {
+    light: path.join(config.reportDir, "light-final-dom.html"),
+    dark_feed: path.join(config.reportDir, "dark-feed-final-dom.html"),
+    dark_meetings: path.join(config.reportDir, "dark-meetings-final-dom.html")
+  };
+  const videoDir = path.join(config.reportDir, "video");
+  ensureDir(videoDir);
 
-  const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
-  const context = await browser.newContext({ viewport: VIEWPORT, screen: VIEWPORT, hasTouch: true, isMobile: true });
+  const actions = [];
+  const consoleEvents = [];
+  const networkEvents = [];
+  const browser = await launchConfiguredBrowser(config);
+  const context = await browser.newContext({
+    viewport: VIEWPORT,
+    screen: VIEWPORT,
+    hasTouch: true,
+    isMobile: true,
+    recordVideo: { dir: videoDir, size: VIEWPORT }
+  });
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   const lightPage = await context.newPage();
   const darkFeedPage = await context.newPage();
   const darkMeetingsPage = await context.newPage();
+  const lightVideo = lightPage.video();
+  const darkFeedVideo = darkFeedPage.video();
+  const darkMeetingsVideo = darkMeetingsPage.video();
 
-  attachPageLogging(lightPage, path.join(config.reportDir, "light-page-console.log"));
-  attachPageLogging(darkFeedPage, path.join(config.reportDir, "dark-feed-console.log"));
-  attachPageLogging(darkMeetingsPage, path.join(config.reportDir, "dark-meetings-console.log"));
+  const pageEntries = [
+    { name: "light", page: lightPage, consoleLogPath: path.join(config.reportDir, "light-page-console.log") },
+    { name: "dark_feed", page: darkFeedPage, consoleLogPath: path.join(config.reportDir, "dark-feed-console.log") },
+    { name: "dark_meetings", page: darkMeetingsPage, consoleLogPath: path.join(config.reportDir, "dark-meetings-console.log") }
+  ];
+
+  for (const entry of pageEntries) {
+    attachPageLogging(entry.page, entry.consoleLogPath);
+    entry.page.on("console", (message) => {
+      consoleEvents.push({
+        page: entry.name,
+        type: message.type(),
+        text: message.text()
+      });
+    });
+    entry.page.on("pageerror", (error) => {
+      consoleEvents.push({
+        page: entry.name,
+        type: "pageerror",
+        text: String(error?.message || error || "")
+      });
+    });
+    entry.page.on("response", async (response) => {
+      const headers = await response.allHeaders().catch(() => ({}));
+      networkEvents.push({
+        page: entry.name,
+        url: response.url(),
+        status: response.status(),
+        resource_type: response.request().resourceType(),
+        content_type: String(headers["content-type"] || "")
+      });
+    });
+  }
 
   const screenshots = {};
   try {
+    logAction(actions, "navigate_initial_routes", {
+      browser_name: config.browserName,
+      light_url: config.lightUrl,
+      dark_feed_url: config.darkFeedUrl,
+      dark_meetings_url: config.darkMeetingsUrl
+    });
     await Promise.all([
       lightPage.goto(config.lightUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs }),
       darkFeedPage.goto(config.darkFeedUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs }),
@@ -476,7 +661,7 @@ async function main() {
     assertMeaningfulRows("Dark Feed", darkFeedRows);
     const darkFeedScroll = await readScrollReachability(
       darkFeedPage,
-      ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface",
+      ".app-shell .card-wrap, .card-wrap",
       ".card-wrap article.card"
     );
     assert(darkFeedScroll.found, "Dark Feed scroll container was not found");
@@ -484,6 +669,7 @@ async function main() {
     assert(darkFeedScroll.reached_bottom, "Dark Feed could not reach the card list bottom");
     assert(darkFeedScroll.returned_top === 0, "Dark Feed did not return to the top of the list after resetting");
 
+    logAction(actions, "open_light_inbox");
     await clickLightTile(lightPage, "inbox", config.timeoutMs);
     await waitForLightRoute(lightPage, "inbox", ".card-wrap article.card", config.timeoutMs);
     assert(await readLightHeaderTitle(lightPage) === "Inbox", "Light Inbox did not render the normal light header title");
@@ -498,7 +684,7 @@ async function main() {
     assert(lightInboxCardStyle.backgroundColor !== darkFeedCardStyle.backgroundColor, "Light Inbox cards did not switch to a light surface style");
     const lightInboxScroll = await readScrollReachability(
       lightPage,
-      ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface",
+      ".light-shell[data-light-route=\"inbox\"] .card-wrap",
       ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card"
     );
     assert(lightInboxScroll.found, "Light Inbox scroll container was not found");
@@ -512,18 +698,47 @@ async function main() {
     }
     screenshots.inboxList = await saveScreenshot(lightPage, config.reportDir, "04-light-inbox-list");
 
-    const darkFeedDetail = await openAndInspectDetail(darkFeedPage, ".card-wrap article.card .card-body", config.timeoutMs);
-    const lightInboxDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card .card-body", config.timeoutMs);
-    assertDetailParity("Inbox transcript/detail", darkFeedDetail.state, lightInboxDetail.state);
-    assert(lightInboxDetail.visual.backgroundColor !== darkFeedDetail.visual.backgroundColor, "Light Inbox detail did not switch to light styling");
-    screenshots.inboxDetail = await saveScreenshot(lightPage, config.reportDir, "05-light-inbox-detail");
+    logAction(actions, "open_transcript_title_detail");
+    const darkFeedTitleDetail = await openAndInspectDetail(darkFeedPage, ".card-wrap article.card [data-card-action=\"transcript_title\"]", config.timeoutMs);
+    const lightInboxTitleDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card [data-card-action=\"transcript_title\"]", config.timeoutMs);
+    assertDetailParity("Inbox transcript/title detail", darkFeedTitleDetail.state, lightInboxTitleDetail.state);
+    assert(lightInboxTitleDetail.visual.backgroundColor !== darkFeedTitleDetail.visual.backgroundColor, "Light Inbox title detail did not switch to light styling");
+    screenshots.inboxTitleDetail = await saveScreenshot(lightPage, config.reportDir, "05-light-inbox-title-detail");
     await closeDetail(darkFeedPage, config.timeoutMs);
     await closeDetail(lightPage, config.timeoutMs);
 
-    const inboxAttachmentDetail = await compareOptionalAttachmentDetail(lightPage, darkFeedPage, config.timeoutMs);
+    logAction(actions, "open_transcript_summary_detail");
+    const darkFeedSummaryDetail = await openAndInspectDetail(darkFeedPage, ".card-wrap article.card [data-card-action=\"transcript_body\"]", config.timeoutMs);
+    const lightInboxSummaryDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card [data-card-action=\"transcript_body\"]", config.timeoutMs);
+    assertDetailParity("Inbox transcript/summary detail", darkFeedSummaryDetail.state, lightInboxSummaryDetail.state);
+    screenshots.inboxSummaryDetail = await saveScreenshot(lightPage, config.reportDir, "06-light-inbox-summary-detail");
+    await closeDetail(darkFeedPage, config.timeoutMs);
+    await closeDetail(lightPage, config.timeoutMs);
+
+    logAction(actions, "open_page_detail_and_scroll_bottom");
+    const inboxAttachmentDetail = await compareOptionalAttachmentDetail(lightPage, darkFeedPage, config.timeoutMs, config.reportDir);
+    logAction(actions, "toggle_inbox_audio_playback");
     const darkFeedAudioState = await toggleAndReadAudioState(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
     const lightInboxAudioState = await toggleAndReadAudioState(lightPage, ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]", config.timeoutMs);
-    assert(JSON.stringify(lightInboxAudioState) === JSON.stringify(darkFeedAudioState), "Light Inbox audio playback behavior diverged from the canonical dark Home feed");
+    assert(lightInboxAudioState.title === darkFeedAudioState.title, "Light Inbox audio title diverged from the canonical dark Home feed");
+    assert(lightInboxAudioState.session_id === darkFeedAudioState.session_id, "Light Inbox audio session diverged from the canonical dark Home feed");
+    assert(lightInboxAudioState.aria_label === darkFeedAudioState.aria_label, "Light Inbox audio control label diverged from the canonical dark Home feed");
+    assert(lightInboxAudioState.progress.delta_ms >= 0, "Light Inbox audio did not advance or complete after starting playback");
+    assert(darkFeedAudioState.progress.delta_ms >= 0, "Dark Feed audio did not advance or complete after starting playback");
+    logAction(actions, "open_inline_audio_detail");
+    const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
+    const lightInboxInlineAudioDetail = await openInlineAudioDetail(
+      lightPage,
+      ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]",
+      config.timeoutMs
+    );
+    assert(darkFeedInlineAudioDetail.detail.detail_type === "audio", "Dark Feed inline audio strip did not open audio detail");
+    assert(lightInboxInlineAudioDetail.detail.detail_type === "audio", "Light Inbox inline audio strip did not open audio detail");
+    assert(
+      darkFeedInlineAudioDetail.player_delta_ms >= 0 && lightInboxInlineAudioDetail.player_delta_ms >= 0,
+      "Inline audio detail did not preserve the active player session"
+    );
+    logAction(actions, "open_audio_controls_navigation");
     const darkFeedAudioControls = await openAudioControls(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
     const lightInboxAudioControls = await openAudioControls(
       lightPage,
@@ -536,6 +751,7 @@ async function main() {
       JSON.stringify(lightInboxAudioControls.before) === JSON.stringify(darkFeedAudioControls.before),
       "Audio controls source card differed between dark Feed and light Inbox"
     );
+    screenshots.inboxAudioDetail = await saveScreenshot(lightPage, config.reportDir, "07-light-inbox-audio-detail");
 
     await backToLightHome(lightPage, config.timeoutMs);
 
@@ -549,24 +765,17 @@ async function main() {
       const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
       const darkMeetingsCardStyle = await readCardStyle(darkMeetingsPage, ".meetings-page .card-wrap article.card");
       assertMeaningfulRows("Dark Meetings", darkMeetingsRows);
-      const rawDarkMeetingsScroll = await readScrollReachability(
+      darkMeetingsScroll = await readScrollReachability(
         darkMeetingsPage,
-        ".light-shell[data-light-route=\"meetings\"] .light-canonical-port-surface",
+        ".app-shell .card-wrap, .meetings-page .card-wrap",
         ".meetings-page .card-wrap article.card"
       );
-      assert(rawDarkMeetingsScroll.found, "Dark Meetings scroll container was not found");
-      if (rawDarkMeetingsScroll.can_scroll) {
-        darkMeetingsScroll = { checked: true, ...rawDarkMeetingsScroll };
-        assert(darkMeetingsScroll.reached_bottom, "Dark Meetings could not reach the meeting list bottom");
-        assert(darkMeetingsScroll.returned_top === 0, "Dark Meetings did not return to the top of the list after resetting");
-      } else {
-        darkMeetingsScroll = {
-          checked: false,
-          reason: "Dark Meetings did not expose enough content to scroll end-to-end",
-          ...rawDarkMeetingsScroll
-        };
-      }
+      assert(darkMeetingsScroll.found, "Dark Meetings scroll container was not found");
+      assert(darkMeetingsScroll.can_scroll, "Dark Meetings did not expose enough content to scroll end-to-end");
+      assert(darkMeetingsScroll.reached_bottom, "Dark Meetings could not reach the meeting list bottom");
+      assert(darkMeetingsScroll.returned_top === 0, "Dark Meetings did not return to the top of the list after resetting");
 
+      logAction(actions, "open_light_meetings");
       await clickLightTile(lightPage, "meetings", config.timeoutMs);
       await waitForLightRoute(lightPage, "meetings", ".meetings-page", config.timeoutMs);
       assert(await readLightHeaderTitle(lightPage) === "Meetings", "Light Meetings did not render the normal light header title");
@@ -575,24 +784,19 @@ async function main() {
       await assertHidden(lightPage, "#pageTabs", "Light Meetings should hide the canonical top tabs");
       await assertHidden(lightPage, "#routeTray", "Light Meetings should hide the canonical route tray");
       assert(await lightPage.locator(".light-shell[data-light-route=\"meetings\"] .meetings-header").count() === 0, "Light Meetings should not render a duplicate canonical meetings header");
-      await lightPage.waitForFunction(
-        selector => document.querySelectorAll(selector).length > 0,
-        ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card",
-        { timeout: config.timeoutMs }
-      );
       lightMeetingsRows = await extractCardRows(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
       assertMeaningfulRows("Light Meetings", lightMeetingsRows);
       meetingsRowsMatch = rowsMatch(darkMeetingsRows, lightMeetingsRows);
       assert(meetingsRowsMatch, "Light Meetings rows did not match the canonical dark meetings list");
       const lightMeetingsCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
       assert(lightMeetingsCardStyle.backgroundColor !== darkMeetingsCardStyle.backgroundColor, "Light Meetings cards did not switch to a light surface style");
-      screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "06-light-meetings-list");
+      screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-list");
 
       const darkMeetingsDetail = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list .card-body", config.timeoutMs);
       lightMeetingsDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list .card-body", config.timeoutMs);
       assertDetailParity("Meetings detail", darkMeetingsDetail.state, lightMeetingsDetail.state);
       assert(lightMeetingsDetail.visual.backgroundColor !== darkMeetingsDetail.visual.backgroundColor, "Light Meetings detail did not switch to light styling");
-      screenshots.meetingsDetail = await saveScreenshot(lightPage, config.reportDir, "07-light-meetings-detail");
+      screenshots.meetingsDetail = await saveScreenshot(lightPage, config.reportDir, "09-light-meetings-detail");
       await closeDetail(darkMeetingsPage, config.timeoutMs);
       await closeDetail(lightPage, config.timeoutMs);
 
@@ -602,17 +806,26 @@ async function main() {
       lightMeetingsAudio = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list [data-card-action=\"audio\"]", config.timeoutMs);
       assertDetailParity("Meetings audio", darkMeetingsAudio.state, lightMeetingsAudio.state);
       assert(lightMeetingsAudio.visual.backgroundColor !== darkMeetingsAudio.visual.backgroundColor, "Light Meetings audio detail did not switch to light styling");
-      screenshots.meetingsAudio = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-audio");
+      screenshots.meetingsAudio = await saveScreenshot(lightPage, config.reportDir, "10-light-meetings-audio");
       await closeDetail(darkMeetingsPage, config.timeoutMs);
       await closeDetail(lightPage, config.timeoutMs);
     }
 
     await backToLightHome(lightPage, config.timeoutMs);
-    screenshots.backHome = await saveScreenshot(lightPage, config.reportDir, "09-back-home");
+    screenshots.backHome = await saveScreenshot(lightPage, config.reportDir, "11-back-home");
+    logAction(actions, "capture_final_dom");
+    fs.writeFileSync(finalDomPaths.light, await lightPage.content(), "utf8");
+    fs.writeFileSync(finalDomPaths.dark_feed, await darkFeedPage.content(), "utf8");
+    fs.writeFileSync(finalDomPaths.dark_meetings, await darkMeetingsPage.content(), "utf8");
+    writeJsonFile(consoleJsonPath, consoleEvents);
+    writeJsonFile(networkJsonPath, networkEvents);
+    writeJsonFile(actionsJsonPath, actions);
+    await context.tracing.stop({ path: tracePath });
 
     const summary = {
       schema: "pucky.light_native_ports_proof.v1",
       ok: true,
+      browser_name: config.browserName,
       light_url: config.lightUrl,
       dark_feed_url: config.darkFeedUrl,
       dark_meetings_url: config.darkMeetingsUrl,
@@ -627,9 +840,14 @@ async function main() {
       comparisons: {
         inbox_rows_match_dark_feed: true,
         meetings_rows_match_dark_meetings: meetingsRowsMatch,
-        inbox_detail: lightInboxDetail,
+        inbox_title_detail: lightInboxTitleDetail,
+        inbox_summary_detail: lightInboxSummaryDetail,
         inbox_attachment_detail: inboxAttachmentDetail,
         inbox_audio_state: lightInboxAudioState,
+        inbox_inline_audio_detail: {
+          dark_feed: darkFeedInlineAudioDetail,
+          light_inbox: lightInboxInlineAudioDetail
+        },
         inbox_audio_controls: {
           dark_feed: darkFeedAudioControls,
           light_inbox: lightInboxAudioControls
@@ -637,11 +855,38 @@ async function main() {
         meetings_detail: lightMeetingsDetail,
         meetings_audio: lightMeetingsAudio
       },
-      screenshots
+      screenshots,
+      actions,
+      evidence: {
+        trace: tracePath,
+        console_json: consoleJsonPath,
+        network_json: networkJsonPath,
+        actions_json: actionsJsonPath,
+        final_dom: finalDomPaths,
+        video_dir: videoDir,
+        videos: {
+          light: "",
+          dark_feed: "",
+          dark_meetings: ""
+        }
+      }
     };
+    await context.close().catch(() => {});
+    summary.evidence.videos.light = lightVideo ? await lightVideo.path().catch(() => "") : "";
+    summary.evidence.videos.dark_feed = darkFeedVideo ? await darkFeedVideo.path().catch(() => "") : "";
+    summary.evidence.videos.dark_meetings = darkMeetingsVideo ? await darkMeetingsVideo.path().catch(() => "") : "";
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     console.log(JSON.stringify(summary, null, 2));
   } catch (error) {
+    await context.tracing.stop({ path: tracePath }).catch(() => {});
+    writeJsonFile(consoleJsonPath, consoleEvents);
+    writeJsonFile(networkJsonPath, networkEvents);
+    writeJsonFile(actionsJsonPath, actions);
+    await Promise.all([
+      lightPage.content().then((html) => fs.writeFileSync(finalDomPaths.light, html, "utf8")).catch(() => {}),
+      darkFeedPage.content().then((html) => fs.writeFileSync(finalDomPaths.dark_feed, html, "utf8")).catch(() => {}),
+      darkMeetingsPage.content().then((html) => fs.writeFileSync(finalDomPaths.dark_meetings, html, "utf8")).catch(() => {})
+    ]);
     writeAutomationError(config.reportDir, error);
     throw error;
   } finally {

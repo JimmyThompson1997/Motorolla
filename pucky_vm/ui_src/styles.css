@@ -21,7 +21,6 @@
   --surface-media-tile: rgba(245, 249, 255, 0.06);
   --surface-document-fallback: #02060a;
   --surface-viewer: #02060a;
-  --note-document-surface: #08111c;
   --surface-video-controls: rgba(0, 0, 0, 0.66);
   --surface-video-track: rgba(245, 249, 255, 0.28);
   --surface-audio-primary: rgba(245, 249, 255, 0.96);
@@ -1270,7 +1269,9 @@ button {
   grid-row: 1 / span 2;
   min-width: 0;
   width: 100%;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   padding: 0 6px 0 12px;
   text-align: left;
 }
@@ -1295,6 +1296,28 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.card-title-trigger,
+.card-summary-trigger,
+.card-inline-audio-trigger {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+}
+
+.card-title-trigger {
+  display: block;
+}
+
+.card-summary-trigger,
+.card-inline-audio-trigger {
+  display: block;
 }
 
 .preview {
@@ -3557,7 +3580,6 @@ button {
   --surface-media-tile: rgba(17, 24, 39, 0.04);
   --surface-document-fallback: #fbfcff;
   --surface-viewer: #fbfcff;
-  --note-document-surface: #ffffff;
   --surface-video-controls: rgba(255, 255, 255, 0.92);
   --surface-video-track: rgba(17, 24, 39, 0.12);
   --surface-audio-primary: var(--accent-primary);
@@ -3811,6 +3833,7 @@ button {
   margin: 0;
   padding-inline: 0;
 }
+
 .light-page-title {
   margin: 0;
   min-width: 0;
@@ -4475,14 +4498,6 @@ button {
   color: var(--home-shell-text);
   border: 1px solid var(--home-shell-border);
   box-shadow: var(--home-shell-shadow);
-}
-
-.light-contact-detail-page .light-profile-card {
-  padding: 18px 10px 8px;
-  border-radius: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
 }
 
 .light-profile-card h1,
@@ -6077,32 +6092,6 @@ button {
   min-height: min(68vh, 720px);
 }
 
-.light-html-detail-page .light-detail-html-body.light-html-card,
-.light-html-detail-page .light-detail-html-body.light-html-empty {
-  margin-top: 0;
-}
-
-.light-html-detail-page .light-note-detail-html-body.light-html-card .light-html-frame {
-  min-height: calc(var(--viewport-h) - var(--light-page-header-offset) - var(--safe-area-bottom));
-  overflow: hidden;
-}
-
-.light-note-detail-html-body.light-html-card {
-  background: var(--note-document-surface);
-}
-
-.light-note-detail-page .light-note-detail-html-body.light-html-card {
-  background: var(--note-document-surface);
-}
-
-.light-note-detail-html-body.light-html-card .light-html-frame {
-  background: var(--note-document-surface);
-}
-
-.light-note-detail-html-body.light-html-card[data-html-frame-state="loading"] .light-html-frame {
-  visibility: hidden;
-}
-
 .light-html-detail-page .light-detail-html-body.light-html-card .light-html-frame {
   min-height: calc(var(--viewport-h) - var(--light-page-header-offset) - var(--safe-area-bottom));
   overflow: hidden;
@@ -6478,7 +6467,6 @@ button {
 
 .light-canonical-port-page {
   min-height: calc(var(--viewport-h) - 42px);
-  height: calc(var(--viewport-h) - 42px);
   padding-bottom: 28px;
 }
 
@@ -6488,14 +6476,9 @@ button {
 
 .light-canonical-port-surface {
   display: flex;
-  flex: 1 1 auto;
   flex-direction: column;
-  min-height: 0;
   gap: 0;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
   padding-bottom: 92px;
-  -webkit-overflow-scrolling: touch;
 }
 
 .light-settings-surface {

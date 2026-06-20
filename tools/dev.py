@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import urlopen
 
 
@@ -58,10 +59,11 @@ BUNDLED_NODE_MODULES_CANDIDATES = [
 TASK_HELP = {
     "test-fast": "Run the fast unit and contract suite plus canonical tool tests.",
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
+    "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
+    "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
-    "proof-local-notes-flash": "Boot the local workspace proof server, then run the targeted notes flash browser proof.",
     "proof-live-web": "Run live user session, inbox audio truth, and native-port browser proofs against the current base URL env/default.",
-    "proof-live-notes-flash": "Run the live targeted notes flash browser proof against the current base URL env/default.",
+    "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "deploy-apk": "Invoke the canonical APK deploy gate through PowerShell when available.",
     "refresh-links-catalog": "Refresh the generated links catalog fixture used by the hosted UI bundle.",
@@ -79,39 +81,39 @@ def maybe_with_default(args: list[str], option: str, default_value: str) -> list
     return args + [option, default_value]
 
 
-def ensure_bundled_node_modules_link(env: dict[str, str]) -> Path | None:
-    node_modules = str(env.get("CODEX_NODE_MODULES") or "").strip()
-    if not node_modules:
-        return None
-    target = Path(node_modules)
-    link_path = ROOT / "node_modules"
-    if link_path.exists() or not target.exists():
-        return None
-    link_path.symlink_to(target, target_is_directory=True)
-    return link_path
+def append_refresh_param(url: str, refresh_value: str) -> str:
+    if not str(refresh_value or "").strip():
+        return url
+    parsed = urlsplit(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["_pucky_refresh"] = str(refresh_value).strip()
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+def current_git_head() -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return str(completed.stdout or "").strip()
 
 
 def run_node_proofs(node_binary: str, scripts: list[tuple[str, list[str]]], env: dict[str, str]) -> int:
-    link_path = ensure_bundled_node_modules_link(env)
-    try:
-        for script, extra_args in scripts:
-            status = run_command(
-                [
-                    node_binary,
-                    script,
-                    *extra_args,
-                ],
-                env=env,
-            )
-            if status:
-                return status
-        return 0
-    finally:
-        if link_path is not None:
-            try:
-                link_path.unlink()
-            except FileNotFoundError:  # pragma: no cover - defensive cleanup
-                pass
+    for script, extra_args in scripts:
+        status = run_command(
+            [
+                node_binary,
+                script,
+                *extra_args,
+            ],
+            env=env,
+        )
+        if status:
+            return status
+    return 0
 
 
 def stop_servers(servers: list[subprocess.Popen[bytes]]) -> None:
@@ -172,100 +174,91 @@ def proof_env() -> dict[str, str]:
             if candidate.is_dir():
                 env["CODEX_NODE_MODULES"] = str(candidate)
                 break
-    if not str(env.get("NODE_PATH") or "").strip():
-        env["NODE_PATH"] = str(env.get("CODEX_NODE_MODULES") or "").strip()
     return env
 
 
-def run_local_workspace_proof(script_path: str, extra_args: list[str], *, include_inbox_media: bool = False) -> int:
+def run_local_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
     env.setdefault("PUCKY_WEB_UI_TOKEN", "proof-token")
     local_light_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&reset_nav=1"
     local_dark_feed_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1"
     local_dark_meetings_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1"
-    servers = [run_server(LOCAL_PROOF_SERVER)]
-    if include_inbox_media:
-        servers.append(run_server(LOCAL_INBOX_MEDIA_PROOF_SERVER))
+    servers = [
+        run_server(LOCAL_PROOF_SERVER),
+        run_server(LOCAL_INBOX_MEDIA_PROOF_SERVER),
+    ]
     try:
         wait_for_api("http://127.0.0.1:8767/healthz")
-        if include_inbox_media:
-            wait_for_api("http://127.0.0.1:8768/healthz")
-        scripts: list[tuple[str, list[str]]] = []
-        if include_inbox_media:
-            scripts.extend(
-                [
-                    (
-                        "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
-                        maybe_with_default(
-                            [
-                                "--page-url",
-                                "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
-                                "--report-dir",
-                                str((ROOT / ".tmp" / "proof-local-web" / "inbox-audio-light").resolve()),
-                                "--skip-canonical-check",
-                                *extra_args,
-                            ],
+        wait_for_api("http://127.0.0.1:8768/healthz")
+        return run_node_proofs(
+            node_binary,
+            [
+                (
+                    "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
+                    maybe_with_default(
+                        [
                             "--page-url",
                             "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
-                        ),
+                            "--report-dir",
+                            str((ROOT / ".tmp" / "proof-local-web" / "inbox-audio-light").resolve()),
+                            "--skip-canonical-check",
+                            *extra_args,
+                        ],
+                        "--page-url",
+                        "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
                     ),
-                    (
-                        "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
-                        maybe_with_default(
-                            [
-                                "--page-url",
-                                "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
-                                "--report-dir",
-                                str((ROOT / ".tmp" / "proof-local-web" / "inbox-audio-dark").resolve()),
-                                "--skip-canonical-check",
-                                *extra_args,
-                            ],
+                ),
+                (
+                    "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
+                    maybe_with_default(
+                        [
                             "--page-url",
                             "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
-                        ),
+                            "--report-dir",
+                            str((ROOT / ".tmp" / "proof-local-web" / "inbox-audio-dark").resolve()),
+                            "--skip-canonical-check",
+                            *extra_args,
+                        ],
+                        "--page-url",
+                        "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
                     ),
-                    (
-                        "tools/proofs/cover/cover_light_native_ports_playwright.mjs",
+                ),
+                (
+                    "tools/proofs/cover/cover_light_native_ports_playwright.mjs",
+                    maybe_with_default(
                         maybe_with_default(
                             maybe_with_default(
                                 maybe_with_default(
-                                    maybe_with_default(
-                                        [
-                                            "--report-dir",
-                                            str((ROOT / ".tmp" / "proof-local-web" / "light-native-ports").resolve()),
-                                            *extra_args,
-                                        ],
-                                        "--light-url",
-                                        local_light_url,
-                                    ),
-                                    "--dark-feed-url",
-                                    local_dark_feed_url,
+                                    [
+                                        "--report-dir",
+                                        str((ROOT / ".tmp" / "proof-local-web" / "light-native-ports").resolve()),
+                                        *extra_args,
+                                    ],
+                                    "--light-url",
+                                    local_light_url,
                                 ),
-                                "--dark-meetings-url",
-                                local_dark_meetings_url,
+                                "--dark-feed-url",
+                                local_dark_feed_url,
                             ),
-                            "--timeout-ms",
-                            "30000",
+                            "--dark-meetings-url",
+                            local_dark_meetings_url,
                         ),
+                        "--timeout-ms",
+                        "30000",
                     ),
-                ]
-            )
-        scripts.append(
-            (
-                script_path,
-                [
-                    "--base-url",
-                    "http://127.0.0.1:8767",
-                    "--api-token",
-                    "proof-token",
-                    *extra_args,
-                ],
-            )
-        )
-        return run_node_proofs(
-            node_binary,
-            scripts,
+                ),
+                (
+                    "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
+                    [
+                        "--base-url",
+                        "http://127.0.0.1:8767",
+                        "--api-token",
+                        "proof-token",
+                        *extra_args,
+                    ],
+                ),
+            ],
             env=env,
         )
     finally:
@@ -278,57 +271,153 @@ def run_local_workspace_proof(script_path: str, extra_args: list[str], *, includ
                 server.wait(timeout=5)
 
 
-def run_local_web_proof(extra_args: list[str]) -> int:
+def run_local_workspace_proof(script: str, script_args: list[str], extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    env = proof_env()
+    env.setdefault("PUCKY_WEB_UI_TOKEN", "proof-token")
+    server = run_server(LOCAL_PROOF_SERVER)
+    try:
+        wait_for_api("http://127.0.0.1:8767/healthz")
+        return run_node_proofs(
+            node_binary,
+            [
+                (
+                    script,
+                    script_args + extra_args,
+                ),
+            ],
+            env=env,
+        )
+    finally:
+        stop_servers([server])
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - defensive cleanup
+            server.kill()
+            server.wait(timeout=5)
+
+
+def run_local_notes_flash_browser_proof(extra_args: list[str]) -> int:
     return run_local_workspace_proof(
-        "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
+        "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
+        [
+            "--base-url",
+            "http://127.0.0.1:8767",
+            "--api-token",
+            "proof-token",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-notes-flash-browser").resolve()),
+        ],
         extra_args,
-        include_inbox_media=True,
     )
 
 
-def run_local_notes_flash_proof(extra_args: list[str]) -> int:
-    return run_local_workspace_proof("tools/proofs/cover/cover_notes_detail_flash_playwright.mjs", extra_args)
-
-
-def run_live_web_proof(extra_args: list[str]) -> int:
+def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_node_proofs(
         node_binary,
         [
             (
-                "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
-                maybe_with_default(
-                    [
-                        "--report-dir",
-                        str((ROOT / ".tmp" / "proof-live-web" / "inbox-audio-light").resolve()),
-                        *extra_args,
-                    ],
-                    "--page-url",
-                    "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
-                ),
+                "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
+                [
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-notes-flash-browser").resolve()),
+                    *extra_args,
+                ],
             ),
-            (
-                "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
-                maybe_with_default(
-                    [
-                        "--report-dir",
-                        str((ROOT / ".tmp" / "proof-live-web" / "inbox-audio-dark").resolve()),
-                        *extra_args,
-                    ],
-                    "--page-url",
-                    "https://pucky.fly.dev/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
-                ),
-            ),
-            ("tools/proofs/cover/cover_light_native_ports_playwright.mjs", extra_args),
-            ("tools/proofs/cover/cover_live_user_session_playwright.mjs", extra_args),
         ],
         env=proof_env(),
     )
 
 
-def run_live_notes_flash_proof(extra_args: list[str]) -> int:
+def run_live_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
-    return run_command([node_binary, "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs", *extra_args], env=proof_env())
+    refresh_seed = current_git_head() or str(int(time.time()))
+    live_root = (ROOT / ".tmp" / "proof-live-web").resolve()
+    light_url = append_refresh_param(
+        "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+        refresh_seed,
+    )
+    dark_feed_url = append_refresh_param(
+        "https://pucky.fly.dev/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
+        refresh_seed,
+    )
+    dark_meetings_url = append_refresh_param(
+        "https://pucky.fly.dev/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1",
+        refresh_seed,
+    )
+    scripts: list[tuple[str, list[str]]] = []
+    for browser_name in ("chromium", "webkit"):
+        for attempt in range(1, 4):
+            run_name = f"run-{attempt}"
+            scripts.extend([
+                (
+                    "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
+                    [
+                        "--browser",
+                        browser_name,
+                        "--page-url",
+                        light_url,
+                        "--report-dir",
+                        str((live_root / "inbox-audio-light" / browser_name / run_name).resolve()),
+                        *extra_args,
+                    ],
+                ),
+                (
+                    "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
+                    [
+                        "--browser",
+                        browser_name,
+                        "--page-url",
+                        dark_feed_url,
+                        "--report-dir",
+                        str((live_root / "inbox-audio-dark" / browser_name / run_name).resolve()),
+                        *extra_args,
+                    ],
+                ),
+                (
+                    "tools/proofs/cover/cover_light_native_ports_playwright.mjs",
+                    [
+                        "--browser",
+                        browser_name,
+                        "--light-url",
+                        light_url,
+                        "--dark-feed-url",
+                        dark_feed_url,
+                        "--dark-meetings-url",
+                        dark_meetings_url,
+                        "--report-dir",
+                        str((live_root / "light-native-ports" / browser_name / run_name).resolve()),
+                        *extra_args,
+                    ],
+                ),
+            ])
+    scripts.append(
+        (
+            "tools/proofs/cover/cover_live_user_session_playwright.mjs",
+            [
+                "--report-dir",
+                str((live_root / "live-user-session").resolve()),
+                *extra_args,
+            ],
+        )
+    )
+    return run_node_proofs(
+        node_binary,
+        scripts,
+        env=proof_env(),
+    )
+
+
+def run_hosted_bug_hunt(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    return run_node_proofs(
+        node_binary,
+        [
+            ("tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs", extra_args),
+        ],
+        env=proof_env(),
+    )
 
 
 def powershell_command() -> list[str]:
@@ -366,14 +455,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    if args.task == "proof-local-notes-flash-browser":
+        return run_local_notes_flash_browser_proof(args.extra_args)
+    if args.task == "proof-live-notes-flash-browser":
+        return run_live_notes_flash_browser_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
-    if args.task == "proof-local-notes-flash":
-        return run_local_notes_flash_proof(args.extra_args)
     if args.task == "proof-live-web":
         return run_live_web_proof(args.extra_args)
-    if args.task == "proof-live-notes-flash":
-        return run_live_notes_flash_proof(args.extra_args)
+    if args.task == "qa-hosted-web":
+        return run_hosted_bug_hunt(args.extra_args)
     return run_command(build_task_command(args.task) + args.extra_args)
 
 

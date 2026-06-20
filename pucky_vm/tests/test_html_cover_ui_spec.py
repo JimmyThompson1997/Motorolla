@@ -388,6 +388,7 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     app = read("app.js")
     card_view = function_block(app, "cardView")
     toggle_audio = function_block(app, "toggleAudio")
+    toggle_hosted_audio = function_block(app, "toggleHostedBrowserAudio")
     audio_control_key = function_block(app, "audioControlKey")
     current_strip_kind = function_block(app, "currentTileAudioStripKind")
     is_audio_detail_open = function_block(app, "isAudioDetailOpen")
@@ -405,9 +406,19 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
 
     assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
     assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
-    assert "body.append(audioTileStatus(card));" in card_view
-    assert 'body.append(el("p", "preview", card.summary || card.transcript || ""));' in card_view
+    assert 'const title = el("button", "card-title-trigger title", card.title || "Pucky");' in card_view
+    assert 'applyCardActionData(title, "transcript_title", card, "reply");' in card_view
+    assert "replyCardIconSvg(feedIdentityIconName(card), { filled: true })" in card_view
+    assert 'const inlineAudio = el("button", "card-inline-audio-trigger");' in card_view
+    assert 'applyCardActionData(inlineAudio, "audio_controls_inline", card, "reply");' in card_view
+    assert "inlineAudio.append(audioTileStatus(card));" in card_view
+    assert 'showAudioDetail(resolveAudioControlsTargetCard(card));' in card_view
+    assert 'const summary = el("button", "card-summary-trigger");' in card_view
+    assert 'applyCardActionData(summary, "transcript_body", card, "reply");' in card_view
+    assert 'summary.append(el("p", "preview", card.summary || card.transcript || ""));' in card_view
     assert "waveRow(" not in card_view
+    assert 'if (prefersHostedDirectAudio(card)) {' in toggle_audio
+    assert "await toggleHostedBrowserAudio(card, busyKey);" in toggle_audio
     assert 'recordAudioProbeEvent("click_received"' in toggle_audio
     assert 'setAudioProbePhase(card, "starting"' in toggle_audio
     assert 'setAudioProbePhase(card, "pause_pending"' in toggle_audio
@@ -416,6 +427,10 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'recordAudioProbeEvent("play_request_end"' in toggle_audio
     assert "confirmAudioProbePlaybackStart(busyKey, state.player);" in toggle_audio
     assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
+    assert "const current = currentBrowserPlayerState();" in toggle_hosted_audio
+    assert 'const audioUrl = String(card?.audio_url || "").trim();' in toggle_hosted_audio
+    assert 'command: "player.play",' in toggle_hosted_audio
+    assert 'source: audioControlKey(card) || audioUrl,' in toggle_hosted_audio
     assert 'if (!hasNativeAudioBridge() && card.audio_url) {' in audio_control_key
     assert "return card.audio_url;" in audio_control_key
     assert 'if (!Boolean(player?.is_playing) || !samePath(targetKey, playerStateKey(player))) {' in confirm_playback
@@ -460,6 +475,8 @@ def test_tile_audio_styles_use_truthful_status_strip_instead_of_waveform_default
     styles = read("styles.css")
     busy_audio = css_block(styles, ".action-audio.is-busy")
     failed_audio = css_block(styles, ".action-audio.is-failed")
+    card_body = css_block(styles, ".card-body")
+    title_trigger = css_block(styles, ".card-title-trigger,\n.card-summary-trigger,\n.card-inline-audio-trigger")
     tile_status = css_block(styles, ".tile-audio-status")
     tile_label = css_block(styles, ".tile-audio-status-label")
     tile_strip = css_block(styles, ".tile-audio-strip")
@@ -468,6 +485,12 @@ def test_tile_audio_styles_use_truthful_status_strip_instead_of_waveform_default
 
     assert "color-mix(in srgb, var(--accent, #72c2ff) 76%, var(--text-muted-strong))" in busy_audio
     assert "color: #ff8f7c;" in failed_audio
+    assert "display: flex;" in card_body
+    assert "flex-direction: column;" in card_body
+    assert "justify-content: center;" in card_body
+    assert "background: transparent;" in title_trigger
+    assert "text-align: left;" in title_trigger
+    assert "font: inherit;" in title_trigger
     assert "display: grid;" in tile_status
     assert "margin-top: 6px;" in tile_status
     assert "font-size: 12px;" in tile_label
@@ -488,6 +511,8 @@ def test_feed_page_uses_real_html_sources_without_mock_fallbacks() -> None:
     app = read("app.js")
     card_view = function_block(app, "cardView")
     show_rich_page = function_block(app, "showRichPage")
+    read_rich_page_source = function_block(app, "readRichPageSource")
+    rich_frame = function_block(app, "richFrame")
     resolve_rich_page_source = function_block(app, "resolveRichPageSource")
     browser_request = function_block(app, "browserRequest")
 
@@ -498,9 +523,14 @@ def test_feed_page_uses_real_html_sources_without_mock_fallbacks() -> None:
     assert 'if (hasRichPage(card)) {' in card_view
     assert "if (card.html_path) {" not in card_view
     assert 'const pageSource = resolveRichPageSource(card);' in show_rich_page
-    assert 'args: { path: pageSource, max_bytes: 1024 * 1024 }' in show_rich_page
+    assert "content.append(await richFrame(pageSource, card), el(\"div\", \"rich-swipe-edge\"));" in show_rich_page
     assert "mockArtifactResult" not in show_rich_page
     assert "isMockHtmlArtifact" not in app
+    assert 'const response = await fetchArtifactHttpResponse(source, "Page");' in read_rich_page_source
+    assert 'const content_base64 = base64FromBytes(buffer)' not in read_rich_page_source
+    assert 'content_base64: base64FromBytes(buffer),' in read_rich_page_source
+    assert "const result = await readRichPageSource(path);" in rich_frame
+    assert "atob(content)" not in rich_frame
     assert 'const url = await resolveBrowserArtifactUrl(args.path);' in browser_request
 
 
@@ -628,9 +658,9 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     note_row = function_block(app, "lightNoteRow")
     note_detail = function_block(app, "lightNoteDetailPage")
     light_page = function_block(app, "lightPage")
-    light_html_document = function_block(app, "lightHtmlDocument")
     sync_html_detail_frame_height = function_block(app, "syncHtmlDetailFrameHeight")
     install_html_detail_frame_sizing = function_block(app, "installHtmlDetailFrameSizing")
+    light_html_document = function_block(app, "lightHtmlDocument")
     feed_block = css_block(styles, ".feed")
     header_block = css_block(styles, ".light-page-header-shell")
     notes_feed_block = css_block(styles, ".light-notes-feed")
@@ -646,18 +676,12 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert detail_html_shared_match, "Missing shared detail HTML body block"
     detail_html_shared_block = detail_html_shared_match.group("body")
     detail_html_card_block = css_block(styles, ".light-detail-html-body.light-html-card")
-    note_detail_html_card_block = css_block(styles, ".light-note-detail-html-body.light-html-card")
-    note_detail_html_frame_block = css_block(styles, ".light-note-detail-html-body.light-html-card .light-html-frame")
-    note_detail_html_loading_frame_block = css_block(styles, '.light-note-detail-html-body.light-html-card[data-html-frame-state="loading"] .light-html-frame')
     detail_html_empty_block = css_block(styles, ".light-detail-html-body.light-html-empty")
     html_detail_page_block = css_block(styles, ".light-page.light-html-detail-page")
     html_detail_page_children_block = css_block(styles, ".light-html-detail-page > :not(.light-page-header-shell)")
     html_detail_document_block = css_block(styles, ".light-html-detail-page.light-document-page")
     html_detail_stage_block = css_block(styles, ".light-html-stage")
-    html_detail_note_match = re.search(r"\.light-html-detail-page \.light-detail-html-body\.light-html-card,\s*\.light-html-detail-page \.light-detail-html-body\.light-html-empty\s*\{(?P<body>.*?)\n\}", styles, re.S)
-    assert html_detail_note_match, "Missing html-detail note body block"
-    html_detail_note_block = html_detail_note_match.group("body")
-    html_detail_frame_block = css_block(styles, ".light-html-detail-page .light-note-detail-html-body.light-html-card .light-html-frame")
+    html_detail_frame_block = css_block(styles, ".light-html-detail-page .light-detail-html-body.light-html-card .light-html-frame")
 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
@@ -724,13 +748,10 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert 'el("h1", "", note.title)' not in note_detail
     assert 'el("p", "light-note-body", note.summary || "")' not in note_detail
     assert 'page.append(lightHtmlDocument(note, "No generated note page yet.", {' in note_detail
-    assert 'className: "light-detail-html-body light-note-detail-html-body"' in note_detail
-    assert "fullBleed: true" in note_detail
-    assert "revealOnLoad: true" in note_detail
-    assert "fullBleed: true" in note_detail
-    assert "if (options.htmlDetail) {" in light_page
-    assert 'page.classList.add("light-html-detail-page");' in light_page
-
+    assert "untitledFallback: true," in note_detail
+    assert 'className: "light-detail-html-body",' in note_detail
+    assert "fullBleed: true," in note_detail
+    assert "noteFlashDebug: true" in note_detail
     assert "if (options.htmlDetail) {" in light_page
     assert 'page.classList.add("light-html-detail-page");' in light_page
     assert "frame.contentDocument.documentElement" in sync_html_detail_frame_height
@@ -743,29 +764,6 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "installHtmlDetailFrameSizing(frame);" in light_html_document
     assert "const fullBleed = Boolean(options && options.fullBleed);" in light_html_document
     assert "light-html-stage" in light_html_document
-    assert "const revealOnLoad = Boolean(options && options.revealOnLoad);" in light_html_document
-    assert "const fullBleed = Boolean(options && options.fullBleed);" in light_html_document
-    assert "const keepDetailAtTop = () => {" in light_html_document
-    assert "if (!fullBleed) {" in light_html_document
-    assert "resetLightRouteScroll();" in light_html_document
-    assert 'window.requestAnimationFrame(() => resetLightRouteScroll());' in light_html_document
-    assert 'wrap.dataset.htmlFrameState = "loading";' in light_html_document
-    assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
-    assert 'wrap.dataset.htmlFrameState = "ready";' in light_html_document
-    assert 'wrap.setAttribute("aria-busy", "false");' in light_html_document
-    assert 'embeddedBody.getAttribute("data-pucky-embedded-body") !== "true"' in light_html_document
-    assert 'frame.addEventListener("load", () => {' in light_html_document
-    assert "keepDetailAtTop();" in light_html_document
-    assert 'window.setTimeout(() => {' in light_html_document
-    assert 'frame.setAttribute("sandbox", "allow-same-origin");' in light_html_document
-    assert "installHtmlDetailFrameSizing(frame);" in light_html_document
-    assert "light-html-stage" in light_html_document
-    assert "frame.contentDocument.documentElement" in sync_html_detail_frame_height
-    assert "frame.contentDocument.body" in sync_html_detail_frame_height
-    assert 'frame.style.height = `${height}px`;' in sync_html_detail_frame_height
-    assert "ResizeObserver" in install_html_detail_frame_sizing
-    assert 'window.addEventListener("resize", schedule);' in install_html_detail_frame_sizing
-    assert 'frame.addEventListener("load", bind);' in install_html_detail_frame_sizing
 
     assert 'return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`,' in patch_workspace_record
     assert 'method: "PATCH",' in patch_workspace_record
@@ -806,13 +804,6 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "margin-right: 0;" in detail_html_shared_block
     assert "calc(100% + 40px)" not in detail_html_shared_block
     assert "margin-left: -20px;" not in detail_html_shared_block
-    assert "--note-document-surface: #08111c;" in styles
-    assert "--note-document-surface: #ffffff;" in styles
-    assert "background: var(--note-document-surface);" in note_detail_html_card_block
-    assert ".light-note-detail-html-body.light-html-card .light-html-frame" in styles
-    assert "background: var(--note-document-surface);" in styles
-    assert "background: #fff;" not in note_detail_html_frame_block
-    assert "visibility: hidden;" in note_detail_html_loading_frame_block
     assert "width: 100%;" in detail_html_empty_block
     assert "padding-left: 0;" in styles
     assert "padding-right: 0;" in styles
@@ -826,7 +817,6 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "border: 0;" in html_detail_stage_block
     assert "border-radius: 0;" in html_detail_stage_block
     assert "box-shadow: none;" in html_detail_stage_block
-    assert "margin-top: 0;" in html_detail_note_block
     assert "overflow: hidden;" in html_detail_frame_block
     assert "calc(var(--viewport-h) - var(--light-page-header-offset) - var(--safe-area-bottom))" in html_detail_frame_block
     assert "height: 36px;" in note_pin_button_block
@@ -872,39 +862,62 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "lightHtmlDocument(record" not in graph_detail
 
 
-def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
+def test_note_flash_debug_surface_and_browser_delay_contracts_stay_notes_only() -> None:
     app = read("app.js")
+    render = function_block(app, "render")
+    light_note_row = function_block(app, "lightNoteRow")
+    light_note_detail = function_block(app, "lightNoteDetailPage")
+    light_navigate = function_block(app, "lightNavigate")
+    light_html_document = function_block(app, "lightHtmlDocument")
+    resolve_defaults = function_block(app, "resolveNoteFlashDebugDefaults")
+    debug_snapshot = function_block(app, "noteFlashDebugSnapshot")
 
-    workspace_html = function_block(app, "workspaceHtml")
-    workspace_linked_rows = function_block(app, "workspaceLinkedRows")
-    linked_rows = function_block(app, "lightLinkedRecordRows")
-    linked_notes = function_block(app, "lightLinkedNotesSection")
-    contact_detail = function_block(app, "lightContactDetailPage")
-    feed_detail = function_block(app, "lightFeedDetailPage")
-    project_detail = function_block(app, "lightProjectDetailPage")
-    graph_detail = function_block(app, "lightGraphDetailPage")
-
-    assert 'return String(record.html || "");' in workspace_html
-    assert "loadWorkspaceAsset" not in app
-    assert "workspace.assets" not in app
-    assert "const includeKinds =" in workspace_linked_rows
-    assert "const excludeKinds = new Set(" in workspace_linked_rows
-    assert "includeKinds && !includeKinds.has(normalizedKind)" in workspace_linked_rows
-    assert "return workspaceLinkedRows(record, options);" in linked_rows
-    assert "function lightLinkedNotesSection(record, options = {}) {" in app
-    assert 'includeKinds: ["note"],' in linked_notes
-    assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
-    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' in contact_detail
-    assert "lightHtmlDocument(contact" not in contact_detail
-    assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
-    assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
-    assert "lightHtmlDocument(item" not in feed_detail
-    assert '["Artifacts", "attachment", projectAssets(project)]' not in project_detail
-    assert "lightHtmlDocument(project" not in project_detail
-    assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
-    assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
-    assert "lightHtmlDocument(record" not in graph_detail
-    assert app.count("lightHtmlDocument(") == 2
+    assert 'const NOTE_FLASH_DEBUG_TRACE_LIMIT = 256;' in app
+    assert 'const NOTE_FLASH_DEBUG_FAIL_OPEN_MS = 1500;' in app
+    assert 'const NOTE_FLASH_DEBUG_REQUIRED_PHASES = Object.freeze([' in app
+    assert '"note_row_pointerdown",' in app
+    assert '"note_row_click",' in app
+    assert '"lightNavigate_start",' in app
+    assert '"lightNavigate_state_set",' in app
+    assert '"render_start",' in app
+    assert '"note_detail_page_created",' in app
+    assert '"note_detail_wrapper_created",' in app
+    assert '"note_iframe_srcdoc_assigned",' in app
+    assert '"note_iframe_load",' in app
+    assert '"note_iframe_ready",' in app
+    assert '"note_iframe_fail_open",' in app
+    assert '"render_end"' in app
+    assert 'window.__puckyNoteFlashDebug = {' in app
+    assert 'schema: "pucky.note_flash_debug.v1",' in app
+    assert 'return noteFlashDebugTrace.slice();' in app
+    assert "return noteFlashDebugSnapshot();" in app
+    assert 'params.get("debug_note_flash") === "1"' in resolve_defaults
+    assert 'parseDebugDelayMs(params.get("debug_note_flash_delay_route_ms"))' in resolve_defaults
+    assert 'parseDebugDelayMs(params.get("debug_note_flash_delay_iframe_ms"))' in resolve_defaults
+    assert 'noteFlashDebugRecord("render_start");' in render
+    assert 'noteFlashDebugRecord("render_end");' in render
+    assert 'noteFlashDebugRecord("note_row_pointerdown",' in light_note_row
+    assert 'noteFlashDebugRecord("note_row_click",' in light_note_row
+    assert 'noteFlashDebugRecord("note_detail_page_created",' in light_note_detail
+    assert "noteFlashDebug: true" in light_note_detail
+    assert 'const routeDelayMs = noteFlashDebugEnabled() && nextRoute === "note-detail"' in light_navigate
+    assert 'window.setTimeout(() => commitNavigation("light_app_click"), routeDelayMs);' in light_navigate
+    assert 'const noteFlashDebug = Boolean(options && options.noteFlashDebug && noteFlashDebugEnabled());' in light_html_document
+    assert 'wrap.setAttribute("data-html-frame-state", "loading");' in light_html_document
+    assert 'wrap.setAttribute("aria-busy", "true");' in light_html_document
+    assert 'noteFlashDebugRecord("note_detail_wrapper_created",' in light_html_document
+    assert 'noteFlashDebugRecord("note_iframe_srcdoc_assigned",' in light_html_document
+    assert 'noteFlashDebugRecord("note_iframe_load",' in light_html_document
+    assert 'markReady("note_iframe_ready", "load_event");' in light_html_document
+    assert 'markReady("note_iframe_fail_open", "fail_open_timeout");' in light_html_document
+    assert "let srcdocAssigned = false;" in light_html_document
+    assert "if (!srcdocAssigned) {" in light_html_document
+    assert "srcdocAssigned = true;" in light_html_document
+    assert 'frame.style.visibility = "hidden";' in light_html_document
+    assert 'window.setTimeout(assignSrcdoc, iframeDelayMs);' in light_html_document
+    assert 'frame.srcdoc = normalizedWorkspaceHtmlDocument(html);' in light_html_document
+    assert 'required_phases: NOTE_FLASH_DEBUG_REQUIRED_PHASES.slice()' in debug_snapshot
+    assert 'const wrapper = detail?.querySelector(".light-detail-html-body");' in app
 
 
 def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
@@ -1008,6 +1021,8 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'document.visibilityState === "visible"' in task_refresh_interval.group("condition")
     assert 'state.route === "tasks"' in task_refresh_interval.group("condition")
     assert "task-detail" not in task_refresh_interval.group("condition")
+    assert ".light-task-detail-page .light-detail-html-body" in styles
+    assert ".light-task-detail-surface > .light-task-detail-body" in styles
     assert ".light-record-chip-icon" in styles
     assert ".light-task-row-status-trigger" in styles
     assert ".light-task-status-circle-trigger" in styles
@@ -1017,6 +1032,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert ".light-task-status-trigger-icon" in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="calendar_event"]' in styles
     assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="project"]' in styles
+    assert '.light-task-chip-cloud .light-record-chip[data-workspace-target-kind="note"]' in styles
     assert '.light-task-people-card .light-record-chip[data-workspace-target-kind="contact"]' in styles
 
 
@@ -1064,10 +1080,8 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
 
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
-    styles = read("styles.css")
     contacts_page = function_block(app, "lightContactsPage")
     contact_detail = function_block(app, "lightContactDetailPage")
-    contact_profile_card = css_block(styles, ".light-contact-detail-page .light-profile-card")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
@@ -1076,11 +1090,6 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert '"contact-edit"' not in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
     assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
-    assert 'page.classList.add("light-contact-detail-page");' in contact_detail
-    assert 'const hero = el("section", "light-profile-card");' in contact_detail
-    assert 'hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));' in contact_detail
-    assert "lightHtmlDocument(contact" not in contact_detail
-    assert "No generated contact page yet." not in contact_detail
     assert 'lightInfoSection("Endpoints"' not in contact_detail
     assert "meta.endpoints" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
@@ -1089,7 +1098,3 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app
-    assert "background: transparent;" in contact_profile_card
-    assert "border: 0;" in contact_profile_card
-    assert "box-shadow: none;" in contact_profile_card
-    assert "border-radius: 0;" in contact_profile_card

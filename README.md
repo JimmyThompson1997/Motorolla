@@ -24,9 +24,9 @@ Use the Python task runner first:
 ```bash
 python -m tools.dev test-fast
 python -m tools.dev test-full
-python -m tools.dev proof-local-notes-flash
+python -m tools.dev proof-local-notes-flash-browser
 python -m tools.dev proof-local-web
-python -m tools.dev proof-live-notes-flash
+python -m tools.dev proof-live-notes-flash-browser
 python -m tools.dev proof-live-web
 python -m tools.dev deploy-vm
 python -m tools.dev deploy-apk
@@ -40,7 +40,7 @@ Generated inputs:
 ## Safe Change Rules
 
 - VM or hosted UI changes: run `python -m tools.dev test-fast`, then `python -m tools.dev test-full`.
-- Note detail rendering changes: also run `python -m tools.dev proof-local-notes-flash`.
+- Notes detail transition or flash work: also run `python -m tools.dev proof-local-notes-flash-browser`, then rerun it against the deployed VM with `python -m tools.dev proof-live-notes-flash-browser`.
 - Behavior-adjacent VM or hosted UI changes: also run `python -m tools.dev proof-local-web`.
 - Live behavior changes: push, deploy with `python -m tools.dev deploy-vm`, then verify the served manifest and real browser session on [pucky.fly.dev](https://pucky.fly.dev).
 - APK deploys stay gated through `tools/deploy-canonical-apk.ps1` or `python -m tools.dev deploy-apk`.

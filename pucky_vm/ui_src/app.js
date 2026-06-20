@@ -17,6 +17,22 @@
   const ARCHIVE_REVEAL_DEBUG_STORAGE_KEY = "pucky.cover.archive_reveal_debug.v1";
   const ARCHIVE_REVEAL_DEBUG_TRACE_LIMIT = 160;
   const ARCHIVE_REVEAL_DEBUG_BADGE_RENDERING_ENABLED = false;
+  const NOTE_FLASH_DEBUG_TRACE_LIMIT = 256;
+  const NOTE_FLASH_DEBUG_FAIL_OPEN_MS = 1500;
+  const NOTE_FLASH_DEBUG_REQUIRED_PHASES = Object.freeze([
+    "note_row_pointerdown",
+    "note_row_click",
+    "lightNavigate_start",
+    "lightNavigate_state_set",
+    "render_start",
+    "note_detail_page_created",
+    "note_detail_wrapper_created",
+    "note_iframe_srcdoc_assigned",
+    "note_iframe_load",
+    "note_iframe_ready",
+    "note_iframe_fail_open",
+    "render_end"
+  ]);
   const ARCHIVE_REVEAL_CLOSE_REASONS = Object.freeze([
     "threshold_not_met",
     "outside_dismiss",
@@ -115,6 +131,7 @@
     NO_AUTH: "No auth"
   };
 
+  const noteFlashDebugDefaults = resolveNoteFlashDebugDefaults();
   const initialTheme = resolveInitialTheme();
   const persistedAudioState = loadAudioState();
   const persistedNavState = loadNavState();
@@ -228,6 +245,25 @@
     context: "",
     trace_count: 0
   };
+  const noteFlashDebugTrace = [];
+  const noteFlashDebugState = {
+    enabled: Boolean(noteFlashDebugDefaults.enabled),
+    route_delay_ms: noteFlashDebugDefaults.route_delay_ms,
+    iframe_delay_ms: noteFlashDebugDefaults.iframe_delay_ms,
+    fail_open_ms: NOTE_FLASH_DEBUG_FAIL_OPEN_MS,
+    phase: "",
+    route: "",
+    theme: initialTheme,
+    selected_note_id: "",
+    previous_route: "",
+    wrapper_state: "",
+    iframe_visibility: "",
+    shell_surface: "",
+    detail_surface: "",
+    note_surface: "",
+    reason: "",
+    trace_count: 0
+  };
   window.__puckyArchiveRevealDebug = {
     schema: "pucky.archive_reveal_debug.v1",
     push(entry) {
@@ -270,6 +306,30 @@
       }
       syncArchiveRevealDebugBadge();
       return archiveRevealDebugState.enabled;
+    }
+  };
+  window.__puckyNoteFlashDebug = {
+    schema: "pucky.note_flash_debug.v1",
+    getTrace() {
+      return noteFlashDebugTrace.slice();
+    },
+    clearTrace() {
+      noteFlashDebugTrace.length = 0;
+      noteFlashDebugState.phase = "";
+      noteFlashDebugState.route = "";
+      noteFlashDebugState.selected_note_id = "";
+      noteFlashDebugState.previous_route = "";
+      noteFlashDebugState.wrapper_state = "";
+      noteFlashDebugState.iframe_visibility = "";
+      noteFlashDebugState.shell_surface = "";
+      noteFlashDebugState.detail_surface = "";
+      noteFlashDebugState.note_surface = "";
+      noteFlashDebugState.reason = "";
+      noteFlashDebugState.trace_count = 0;
+      return true;
+    },
+    getState() {
+      return noteFlashDebugSnapshot();
     }
   };
 
@@ -400,6 +460,114 @@
     return next;
   }
 
+  function noteFlashDebugEnabled() {
+    return Boolean(noteFlashDebugState.enabled);
+  }
+
+  function noteFlashDebugRouteDelayMs() {
+    return Math.max(0, Number(noteFlashDebugState.route_delay_ms || 0));
+  }
+
+  function noteFlashDebugIframeDelayMs() {
+    return Math.max(0, Number(noteFlashDebugState.iframe_delay_ms || 0));
+  }
+
+  function noteFlashDebugComputedValue(node, propertyName) {
+    if (!(node instanceof Element)) {
+      return "";
+    }
+    try {
+      return String(window.getComputedStyle(node).getPropertyValue(propertyName) || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function noteFlashDebugBackground(node) {
+    return noteFlashDebugComputedValue(node, "background-color");
+  }
+
+  function noteFlashDebugSnapshot(overrides = {}) {
+    const shell = document.querySelector(".app-shell");
+    const detail = document.querySelector(".light-note-detail-page");
+    const wrapper = detail?.querySelector(".light-detail-html-body");
+    const frame = wrapper?.querySelector(".light-html-frame");
+    let frameBodyBackground = "";
+    try {
+      frameBodyBackground = frame?.contentDocument?.body ? noteFlashDebugBackground(frame.contentDocument.body) : "";
+    } catch (_) {
+      frameBodyBackground = "";
+    }
+    const noteSurface = String(
+      overrides.note_surface
+      || frameBodyBackground
+      || noteFlashDebugBackground(frame)
+      || noteFlashDebugBackground(wrapper)
+      || noteFlashDebugBackground(detail)
+      || ""
+    ).trim();
+    return {
+      schema: "pucky.note_flash_debug.v1",
+      enabled: Boolean(noteFlashDebugState.enabled),
+      route_delay_ms: noteFlashDebugRouteDelayMs(),
+      iframe_delay_ms: noteFlashDebugIframeDelayMs(),
+      fail_open_ms: NOTE_FLASH_DEBUG_FAIL_OPEN_MS,
+      phase: String(overrides.phase || noteFlashDebugState.phase || "").trim(),
+      route: String(overrides.route || state.route || "").trim(),
+      theme: String(overrides.theme || state.theme || "").trim(),
+      selected_note_id: String(overrides.selected_note_id || state.selectedNoteId || "").trim(),
+      previous_route: String(overrides.previous_route || state.previousLightRoute || "").trim(),
+      wrapper_state: String(overrides.wrapper_state || wrapper?.getAttribute("data-html-frame-state") || "").trim(),
+      iframe_visibility: String(overrides.iframe_visibility || (frame ? noteFlashDebugComputedValue(frame, "visibility") : "") || "").trim(),
+      shell_surface: String(overrides.shell_surface || noteFlashDebugBackground(shell) || "").trim(),
+      detail_surface: String(overrides.detail_surface || noteFlashDebugBackground(detail) || "").trim(),
+      note_surface: noteSurface,
+      reason: String(overrides.reason || noteFlashDebugState.reason || "").trim(),
+      trace_count: noteFlashDebugTrace.length,
+      required_phases: NOTE_FLASH_DEBUG_REQUIRED_PHASES.slice()
+    };
+  }
+
+  function noteFlashDebugRecord(phase, entry = {}) {
+    if (!noteFlashDebugEnabled()) {
+      return null;
+    }
+    const snapshot = noteFlashDebugSnapshot({ ...entry, phase });
+    const next = {
+      schema: "pucky.note_flash_debug_entry.v1",
+      seq: noteFlashDebugTrace.length + 1,
+      ts_ms: Date.now(),
+      phase: snapshot.phase,
+      route: snapshot.route,
+      theme: snapshot.theme,
+      selected_note_id: snapshot.selected_note_id,
+      previous_route: snapshot.previous_route,
+      wrapper_state: snapshot.wrapper_state,
+      iframe_visibility: snapshot.iframe_visibility,
+      shell_surface: snapshot.shell_surface,
+      detail_surface: snapshot.detail_surface,
+      note_surface: snapshot.note_surface,
+      reason: snapshot.reason
+    };
+    noteFlashDebugTrace.push(next);
+    if (noteFlashDebugTrace.length > NOTE_FLASH_DEBUG_TRACE_LIMIT) {
+      noteFlashDebugTrace.splice(0, noteFlashDebugTrace.length - NOTE_FLASH_DEBUG_TRACE_LIMIT);
+    }
+    noteFlashDebugState.phase = next.phase;
+    noteFlashDebugState.route = next.route;
+    noteFlashDebugState.theme = next.theme;
+    noteFlashDebugState.selected_note_id = next.selected_note_id;
+    noteFlashDebugState.previous_route = next.previous_route;
+    noteFlashDebugState.wrapper_state = next.wrapper_state;
+    noteFlashDebugState.iframe_visibility = next.iframe_visibility;
+    noteFlashDebugState.shell_surface = next.shell_surface;
+    noteFlashDebugState.detail_surface = next.detail_surface;
+    noteFlashDebugState.note_surface = next.note_surface;
+    noteFlashDebugState.reason = next.reason;
+    noteFlashDebugState.trace_count = noteFlashDebugTrace.length;
+    return next;
+  }
+
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
@@ -496,6 +664,7 @@
       loaded: true,
       state: String(overrides.state || "").trim() || (isPlaying ? "playing" : (audio.ended ? "completed" : "paused")),
       is_playing: isPlaying,
+      title: String("title" in overrides ? overrides.title : previousPlayer?.title || ""),
       path: String("path" in overrides ? overrides.path : previousPlayer?.path || ""),
       source: String("source" in overrides ? overrides.source : previousPlayer?.source || ""),
       position_ms: Math.max(0, Math.round("position_ms" in overrides ? audioPlayerNumberValue(overrides.position_ms) : positionSource * 1000)),
@@ -815,6 +984,7 @@
       state.activePath = nextSource || nextPath;
       await audio.play();
       return syncSharedBrowserPlayerState({
+        title: String(args.title || selectedPlayer?.title || ""),
         path: nextPath,
         source: nextSource,
         queue_index: selectedPlayer?.queue_index ?? -1,
@@ -841,6 +1011,7 @@
       }
       state.activePath = nextSource || nextPath || state.activePath;
       return syncSharedBrowserPlayerState({
+        title: String(args.title || selectedPlayer?.title || ""),
         path: nextPath || selectedPlayer?.path || "",
         source: nextSource || selectedPlayer?.source || "",
         state: "loaded",
@@ -2138,11 +2309,13 @@
 
 
   function render() {
+    noteFlashDebugRecord("render_start");
     renderVoiceStatus();
     renderThreadScopeBadge();
     renderFeed();
     renderAudioDetail();
     renderDetailAudioContinuity();
+    noteFlashDebugRecord("render_end");
   }
 
   function renderVoiceStatus() {
@@ -3649,7 +3822,6 @@
     }
     ensureLinkedCollections(contact);
     const page = lightPage("Contact", { detail: true });
-    page.classList.add("light-contact-detail-page");
     const hero = el("section", "light-profile-card");
     hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
     page.append(hero);
@@ -5045,8 +5217,7 @@
   }
 
   function lightLinkedNotesSection(record, options = {}) {
-    const rows = lightLinkedRecordRows(record, {
-      ...options,
+    const rows = workspaceLinkedRows(record, {
       includeKinds: ["note"],
       valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"
     });
@@ -5257,10 +5428,20 @@
     row.setAttribute("aria-label", note.title || "Open note");
     row.dataset.noteId = noteId;
     row.dataset.notePinned = String(Boolean(note.pinned));
+    row.addEventListener("pointerdown", () => {
+      noteFlashDebugRecord("note_row_pointerdown", {
+        selected_note_id: noteId,
+        reason: "pointerdown"
+      });
+    });
     const openNote = () => {
       if (!noteId) {
         return;
       }
+      noteFlashDebugRecord("note_row_click", {
+        selected_note_id: noteId,
+        reason: "open_note"
+      });
       state.selectedNoteId = noteId;
       lightNavigate("note-detail", { from: "notes" });
     };
@@ -5310,12 +5491,15 @@
     }
     const page = lightPage(note.title || "Untitled note", { detail: true, htmlDetail: true });
     page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");
+    noteFlashDebugRecord("note_detail_page_created", {
+      selected_note_id: noteRecordId(note),
+      reason: "lightNoteDetailPage"
+    });
     page.append(lightHtmlDocument(note, "No generated note page yet.", {
       untitledFallback: true,
-      className: "light-detail-html-body light-note-detail-html-body",
+      className: "light-detail-html-body",
       fullBleed: true,
-      revealOnLoad: true,
-      fullBleed: true,
+      noteFlashDebug: true
     }));
     return page;
   }
@@ -6346,13 +6530,33 @@
     } else {
       state.previousLightRoute = "home";
     }
-    applyLightRouteSelectionPatch(selectionPatch || {});
-    state.route = nextRoute;
-    state.lightReturnRoute = state.route === "home" ? "" : "home";
-    persistNavState();
-    render();
-    resetLightRouteScroll();
-    runLightRouteSideEffects("light_app_click");
+    noteFlashDebugRecord("lightNavigate_start", {
+      route: nextRoute,
+      previous_route: currentSnapshot?.route || state.route || "",
+      reason: options.from || "light_app_click"
+    });
+    const commitNavigation = (reason = "light_app_click") => {
+      applyLightRouteSelectionPatch(selectionPatch || {});
+      state.route = nextRoute;
+      state.lightReturnRoute = state.route === "home" ? "" : "home";
+      noteFlashDebugRecord("lightNavigate_state_set", {
+        route: nextRoute,
+        previous_route: state.previousLightRoute,
+        reason
+      });
+      persistNavState();
+      render();
+      resetLightRouteScroll();
+      runLightRouteSideEffects(reason);
+    };
+    const routeDelayMs = noteFlashDebugEnabled() && nextRoute === "note-detail"
+      ? noteFlashDebugRouteDelayMs()
+      : 0;
+    if (routeDelayMs > 0) {
+      window.setTimeout(() => commitNavigation("light_app_click"), routeDelayMs);
+      return;
+    }
+    commitNavigation("light_app_click");
   }
 
   function lightBack() {
@@ -7426,7 +7630,7 @@
     const untitledFallback = Boolean(options && options.untitledFallback);
     const extraClassName = String(options && options.className || "").trim();
     const fullBleed = Boolean(options && options.fullBleed);
-    const revealOnLoad = Boolean(options && options.revealOnLoad);
+    const noteFlashDebug = Boolean(options && options.noteFlashDebug && noteFlashDebugEnabled());
     if (!html) {
       if (untitledFallback) {
         return el("section", `light-html-empty ${fullBleed ? "light-html-stage" : ""} ${extraClassName}`.trim(), fallbackText);
@@ -7437,149 +7641,80 @@
     frame.setAttribute("sandbox", "allow-same-origin");
     frame.setAttribute("scrolling", "no");
     frame.setAttribute("title", String(record?.title || "Generated page"));
-    installHtmlDetailFrameSizing(frame);
     const wrap = el("section", `${fullBleed ? "light-html-card light-html-stage" : "light-card light-html-card"} ${extraClassName}`.trim());
-    let revealTimerId = 0;
-    if (revealOnLoad) {
-      const keepDetailAtTop = () => {
-        if (!fullBleed) {
-          return;
-        }
-        resetLightRouteScroll();
-        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-          window.requestAnimationFrame(() => resetLightRouteScroll());
-        }
-        window.setTimeout(() => resetLightRouteScroll(), 0);
-      };
-      const markReady = (force = false) => {
-        if (!force) {
-          const embeddedBody = frame.contentDocument?.body;
-          if (!embeddedBody || embeddedBody.getAttribute("data-pucky-embedded-body") !== "true") {
-            return;
-          }
-        }
-        if (wrap.dataset.htmlFrameState === "ready") {
-          return;
-        }
-        wrap.dataset.htmlFrameState = "ready";
-        wrap.setAttribute("aria-busy", "false");
-        if (revealTimerId) {
-          window.clearTimeout(revealTimerId);
-          revealTimerId = 0;
-        }
-      };
-      wrap.dataset.htmlFrameState = "loading";
+    if (noteFlashDebug) {
+      wrap.setAttribute("data-html-frame-state", "loading");
       wrap.setAttribute("aria-busy", "true");
-      frame.addEventListener("load", () => {
-        markReady(false);
-        keepDetailAtTop();
+      noteFlashDebugRecord("note_detail_wrapper_created", {
+        selected_note_id: noteRecordId(record),
+        reason: "lightHtmlDocument"
       });
-      revealTimerId = window.setTimeout(() => {
-        markReady(true);
-        keepDetailAtTop();
-      }, 1500);
     }
-    installHtmlDetailFrameSizing(frame);
-    frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
     wrap.append(frame);
-    return wrap;
-  }
-
-  function syncHtmlDetailFrameHeight(frame) {
-    if (!(frame instanceof HTMLIFrameElement)) {
-      return 0;
+    installHtmlDetailFrameSizing(frame);
+    if (!noteFlashDebug) {
+      frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
+      return wrap;
     }
-    try {
-      const root = frame.contentDocument.documentElement;
-      const body = frame.contentDocument.body;
-      const height = Math.max(
-        Number(root?.scrollHeight || 0),
-        Number(root?.offsetHeight || 0),
-        Number(root?.clientHeight || 0),
-        Number(body?.scrollHeight || 0),
-        Number(body?.offsetHeight || 0),
-        Number(body?.clientHeight || 0)
-      );
-      if (!Number.isFinite(height) || height <= 0) {
-        return 0;
-      }
-      frame.style.height = `${height}px`;
-      return height;
-    } catch (error) {
-      return 0;
-    }
-  }
-
-  function installHtmlDetailFrameSizing(frame) {
-    if (!(frame instanceof HTMLIFrameElement)) {
-      return;
-    }
-    if (typeof frame.__puckyHtmlDetailFrameCleanup === "function") {
-      frame.__puckyHtmlDetailFrameCleanup();
-    }
-    let rafId = 0;
-    const schedule = () => {
-      if (rafId) {
+    let settled = false;
+    let failOpenTimerId = 0;
+    let srcdocAssigned = false;
+    const markReady = (phase, reason) => {
+      if (settled) {
         return;
       }
-      const run = () => {
-        rafId = 0;
-        syncHtmlDetailFrameHeight(frame);
-      };
-      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-        rafId = window.requestAnimationFrame(run);
-        return;
+      settled = true;
+      if (failOpenTimerId) {
+        window.clearTimeout(failOpenTimerId);
       }
-      rafId = window.setTimeout(run, 0);
-    };
-    const cleanup = [];
-    const bind = () => {
-      schedule();
-      let doc = null;
-      try {
-        doc = frame.contentDocument;
-      } catch (error) {
-        doc = null;
-      }
-      if (!doc || !doc.body || doc.__puckyHtmlDetailFrameSizingBound) {
-        return;
-      }
-      doc.__puckyHtmlDetailFrameSizingBound = true;
-      if (typeof ResizeObserver === "function") {
-        const observer = new ResizeObserver(() => schedule());
-        observer.observe(doc.documentElement);
-        observer.observe(doc.body);
-        cleanup.push(() => observer.disconnect());
-      }
-      const docChange = () => schedule();
-      doc.addEventListener("load", docChange, true);
-      doc.addEventListener("toggle", docChange, true);
-      cleanup.push(() => doc.removeEventListener("load", docChange, true));
-      cleanup.push(() => doc.removeEventListener("toggle", docChange, true));
-      if (doc.fonts && typeof doc.fonts.addEventListener === "function") {
-        doc.fonts.addEventListener("loadingdone", docChange);
-        cleanup.push(() => doc.fonts.removeEventListener("loadingdone", docChange));
-      }
-    };
-    window.addEventListener("resize", schedule);
-    cleanup.push(() => window.removeEventListener("resize", schedule));
-    frame.addEventListener("load", bind);
-    cleanup.push(() => frame.removeEventListener("load", bind));
-    frame.__puckyHtmlDetailFrameCleanup = () => {
-      cleanup.splice(0).forEach(fn => {
-        try {
-          fn();
-        } catch (error) {
-          // Best-effort cleanup for detached detail frames.
-        }
+      wrap.setAttribute("data-html-frame-state", "ready");
+      wrap.setAttribute("aria-busy", "false");
+      frame.style.visibility = "visible";
+      noteFlashDebugRecord(phase, {
+        selected_note_id: noteRecordId(record),
+        reason
       });
-      if (rafId && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
-        window.cancelAnimationFrame(rafId);
-      }
-      rafId = 0;
     };
-    bind();
-    schedule();
+    const onLoad = () => {
+      if (!srcdocAssigned) {
+        return;
+      }
+      noteFlashDebugRecord("note_iframe_load", {
+        selected_note_id: noteRecordId(record),
+        reason: "load_event"
+      });
+      let embeddedBodyReady = false;
+      try {
+        embeddedBodyReady = frame.contentDocument?.body?.getAttribute("data-pucky-embedded-body") === "true";
+      } catch (_) {
+        embeddedBodyReady = false;
+      }
+      if (embeddedBodyReady) {
+        markReady("note_iframe_ready", "load_event");
+      }
+    };
+    frame.addEventListener("load", onLoad);
+    const iframeDelayMs = noteFlashDebugIframeDelayMs();
+    if (iframeDelayMs > 0) {
+      frame.style.visibility = "hidden";
+    }
+    failOpenTimerId = window.setTimeout(() => {
+      markReady("note_iframe_fail_open", "fail_open_timeout");
+    }, NOTE_FLASH_DEBUG_FAIL_OPEN_MS);
+    const assignSrcdoc = () => {
+      srcdocAssigned = true;
+      frame.srcdoc = normalizedWorkspaceHtmlDocument(html);
+      noteFlashDebugRecord("note_iframe_srcdoc_assigned", {
+        selected_note_id: noteRecordId(record),
+        reason: iframeDelayMs > 0 ? "delayed_srcdoc" : "srcdoc"
+      });
+    };
+    if (iframeDelayMs > 0) {
+      window.setTimeout(assignSrcdoc, iframeDelayMs);
+    } else {
+      assignSrcdoc();
+    }
+    return wrap;
   }
 
   function filteredFeedEmptyView() {
@@ -9076,7 +9211,7 @@
       identity = el("button", `identity ${cardStateClass(card)}`);
       identity.type = "button";
       applyCardActionData(identity, "mark_read", card, "reply");
-      identity.innerHTML = replyCardIconSvg(card.icon, { filled: true });
+      identity.innerHTML = replyCardIconSvg(feedIdentityIconName(card), { filled: true });
       identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
       identity.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -9085,36 +9220,58 @@
     }
 
     const body = el("div", isMeetingList ? "card-body is-title-only" : "card-body");
-    body.setAttribute("role", "button");
-    body.tabIndex = 0;
-    body.setAttribute("aria-disabled", "false");
-    applyCardActionData(body, isMeetingList ? "attachment" : "transcript", card, isMeetingList ? "meeting" : "reply");
-    body.addEventListener("click", () => {
-      if (!shouldSuppressCardActivation()) {
-        if (isMeetingList) {
+    if (isMeetingList) {
+      body.setAttribute("role", "button");
+      body.tabIndex = 0;
+      body.setAttribute("aria-disabled", "false");
+      applyCardActionData(body, "attachment", card, "meeting");
+      body.addEventListener("click", () => {
+        if (!shouldSuppressCardActivation()) {
           void showMeetingDetail(card.meeting_record);
-          return;
         }
-        showTranscript(card);
-      }
-    });
-    body.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        if (isMeetingList) {
+      });
+      body.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
           void showMeetingDetail(card.meeting_record);
-          return;
         }
-        showTranscript(card);
-      }
-    });
-    const title = el("h2", "title", card.title || "Pucky");
-    body.append(title);
-    if (!isMeetingList) {
+      });
+      body.append(el("h2", "title", card.title || "Pucky"));
+    } else {
+      const title = el("button", "card-title-trigger title", card.title || "Pucky");
+      title.type = "button";
+      applyCardActionData(title, "transcript_title", card, "reply");
+      title.setAttribute("aria-label", `Open transcript for ${card.title || "reply"}`);
+      title.addEventListener("click", () => {
+        if (!shouldSuppressCardActivation()) {
+          showTranscript(card);
+        }
+      });
+      body.append(title);
       if (currentTileAudioPhase(card) !== "idle") {
-        body.append(audioTileStatus(card));
+        const inlineAudio = el("button", "card-inline-audio-trigger");
+        inlineAudio.type = "button";
+        applyCardActionData(inlineAudio, "audio_controls_inline", card, "reply");
+        inlineAudio.setAttribute("aria-label", `Open audio controls for ${card.title || "reply"}`);
+        inlineAudio.append(audioTileStatus(card));
+        inlineAudio.addEventListener("click", () => {
+          if (!shouldSuppressCardActivation()) {
+            showAudioDetail(resolveAudioControlsTargetCard(card));
+          }
+        });
+        body.append(inlineAudio);
       } else {
-        body.append(el("p", "preview", card.summary || card.transcript || ""));
+        const summary = el("button", "card-summary-trigger");
+        summary.type = "button";
+        applyCardActionData(summary, "transcript_body", card, "reply");
+        summary.setAttribute("aria-label", `Open transcript for ${card.title || "reply"}`);
+        summary.append(el("p", "preview", card.summary || card.transcript || ""));
+        summary.addEventListener("click", () => {
+          if (!shouldSuppressCardActivation()) {
+            showTranscript(card);
+          }
+        });
+        body.append(summary);
       }
     }
 
@@ -9399,7 +9556,7 @@
   }
 
   async function resolveAudioAttachmentSrc(item, options = {}) {
-    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+    const hasNativeBridge = hasNativeArtifactBridge();
     const meetingId = String(item && item.meeting_id || "").trim();
     const artifactId = attachmentArtifactId(item);
     let url = String(item && item.url || "").trim();
@@ -9435,6 +9592,94 @@
     return resolveArtifactUrl(item, options);
   }
 
+  function currentBrowserPlayerState() {
+    return playerHasAudioIdentity(state.player)
+      ? syncSharedBrowserPlayerState({ render: false })
+      : state.player;
+  }
+
+  async function toggleHostedBrowserAudio(card, busyKey) {
+    const current = currentBrowserPlayerState();
+    rememberPlayerProgress(current);
+    recordAudioProbeEvent("player_state_before_action", {
+      target_key: busyKey,
+      state: String(current?.state || ""),
+      is_playing: Boolean(current?.is_playing),
+      path: String(current?.path || ""),
+      source: String(current?.source || ""),
+      position_ms: Number(current?.position_ms || 0)
+    });
+    const same = isSameAudioCard(current, card);
+    const sameCompleted = same && isCompletePlayback(current);
+    const sourceInfo = describeAudioSourceForCard(card);
+    const startSpeed = resolvedStartSpeedForCard(card);
+    const audioUrl = String(card?.audio_url || "").trim();
+    if (same && current.is_playing) {
+      setAudioProbePhase(card, "pause_pending", {
+        reason: "pause_requested",
+        clear_error: true,
+        ...sourceInfo
+      });
+      render();
+      recordAudioProbeEvent("pause_request_start", { target_key: busyKey });
+      state.player = stampPlayerState(await pauseWithRewind(card));
+      recordAudioProbeEvent("pause_request_end", {
+        target_key: busyKey,
+        state: String(state.player?.state || ""),
+        is_playing: Boolean(state.player?.is_playing),
+        position_ms: Number(state.player?.position_ms || 0)
+      });
+      syncAudioProbeFromPlayerState(current, state.player);
+      return;
+    }
+    if (!audioUrl) {
+      throw new Error("Audio unavailable: hosted audio URL is missing.");
+    }
+    const start = same && !sameCompleted
+      ? savedPositionFor(current.source || current.path)
+      : savedPositionFor(audioUrl);
+    if (!same || sameCompleted) {
+      forgetCompleted(audioUrl);
+    }
+    setAudioProbePhase(card, "starting", {
+      reason: same && !sameCompleted ? "resume_requested" : "play_requested",
+      clear_error: true,
+      ...sourceInfo
+    });
+    state.activePath = audioControlKey(card);
+    recordAudioProbeEvent("source_resolved", {
+      target_key: busyKey,
+      ...sourceInfo
+    });
+    recordAudioProbeEvent("play_request_start", {
+      target_key: busyKey,
+      mode: same && !sameCompleted ? "resume_existing" : "direct_path",
+      requested_path: audioUrl,
+      start_at_ms: start,
+      speed: startSpeed
+    });
+    render();
+    state.player = stampPlayerState(await Pucky.request({
+      command: "player.play",
+      args: {
+        path: audioUrl,
+        source: audioControlKey(card) || audioUrl,
+        title: card.title,
+        start_at_ms: start,
+        speed: startSpeed
+      }
+    }));
+    recordAudioProbeEvent("play_request_end", {
+      target_key: busyKey,
+      state: String(state.player?.state || ""),
+      is_playing: Boolean(state.player?.is_playing),
+      path: String(state.player?.path || ""),
+      source: String(state.player?.source || "")
+    });
+    rememberPlayerProgress(state.player);
+    confirmAudioProbePlaybackStart(busyKey, state.player);
+  }
+
   async function toggleAudio(card) {
     const busyKey = audioStateKey(card);
     const phaseBefore = currentTileAudioPhase(card);
@@ -9451,6 +9696,12 @@
     recordAudioProbeEvent("busy_start", { target_key: busyKey });
     render();
     try {
+      if (prefersHostedDirectAudio(card)) {
+        await toggleHostedBrowserAudio(card, busyKey);
+        markCardRead(card);
+        render();
+        return;
+      }
       const current = await Pucky.request({ command: "player.state", args: {} });
       rememberPlayerProgress(current);
       recordAudioProbeEvent("player_state_before_action", {
@@ -9810,11 +10061,7 @@
       if (!pageSource) {
         throw new Error("Page source is missing.");
       }
-      const result = await Pucky.request({
-        command: "artifact.read_base64",
-        args: { path: pageSource, max_bytes: 1024 * 1024 }
-      });
-      content.append(await richFrame(result, pageSource, card), el("div", "rich-swipe-edge"));
+      content.append(await richFrame(pageSource, card), el("div", "rich-swipe-edge"));
     } catch (error) {
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
@@ -9830,17 +10077,49 @@
     }
   }
 
-  async function richFrame(result, path = "", source = null) {
+  async function readRichPageSource(pageSource) {
+    const source = String(pageSource || "").trim();
+    if (!source) {
+      throw new Error("Page source is missing.");
+    }
+    if (hasNativeArtifactBridge()) {
+      const result = await Pucky.request({
+        command: "artifact.read_base64",
+        args: { path: source, max_bytes: 1024 * 1024 }
+      });
+      const mime = String((result && result.mime_type) || "").trim() || guessMediaMime(source);
+      const contentBase64 = String((result && result.content_base64) || "");
+      return {
+        path: source,
+        mime_type: mime,
+        bytes: Number((result && result.bytes) || 0),
+        content_base64: contentBase64,
+        text: mime === "application/pdf" ? "" : atob(contentBase64)
+      };
+    }
+    const response = await fetchArtifactHttpResponse(source, "Page");
+    const mime = String(response.headers.get("content-type") || "").split(";", 1)[0].trim() || guessMediaMime(source);
+    const buffer = await response.arrayBuffer();
+    return {
+      path: source,
+      mime_type: mime,
+      bytes: Number(buffer.byteLength || 0),
+      content_base64: base64FromBytes(buffer),
+      text: mime === "application/pdf" ? "" : new TextDecoder().decode(buffer)
+    };
+  }
+
+  async function richFrame(path = "", source = null) {
     const iframe = el("iframe", "rich-frame");
     iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-same-origin");
+    const result = await readRichPageSource(path);
     const mime = String((result && result.mime_type) || "").toLowerCase();
-    const content = String((result && result.content_base64) || "");
     const transcriptContext = source ? await resolveMeetingTranscriptLink(source, source) : { href: "" };
     const audioContext = source ? await resolveMeetingAudioAttachmentLink(source, source) : { href: "" };
     if (mime === "application/pdf" || ((mime === "" || mime === "application/octet-stream") && /\.pdf$/i.test(String(path)))) {
-      iframe.srcdoc = pdfArtifactHtml(result, path, content);
+      iframe.srcdoc = pdfArtifactHtml(result, path, String(result && result.content_base64 || ""));
     } else {
-      iframe.srcdoc = await rewriteMeetingHtmlContent(atob(content), source || {}, {
+      iframe.srcdoc = await rewriteMeetingHtmlContent(String(result && result.text || ""), source || {}, {
         transcriptHref: String(transcriptContext.href || ""),
         audioHref: String(audioContext.href || "")
       });
@@ -9859,7 +10138,7 @@
     const htmlPath = String(card.html_path || "").trim();
     const htmlUrl = String(card.html_url || "").trim();
     const htmlArtifact = String(card.html_artifact || "").trim();
-    if (hasNativeAudioBridge()) {
+    if (hasNativeArtifactBridge()) {
       return htmlPath || (htmlArtifact ? artifactVirtualPath(htmlArtifact) : "") || htmlUrl;
     }
     return htmlUrl || (htmlArtifact ? artifactApiUrl(htmlArtifact) : "") || htmlPath;
@@ -10798,11 +11077,15 @@
     });
   }
 
+  function hasNativeArtifactBridge() {
+    return Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+  }
+
   async function resolveArtifactUrl(item, options = {}) {
     if (item.src || item.data_url) {
       return String(item.src || item.data_url);
     }
-    const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+    const hasNativeBridge = hasNativeArtifactBridge();
     const artifactId = attachmentArtifactId(item);
     const path = mediaPath(item);
     if (path && hasNativeBridge && isAndroidLocalArtifactPath(path)) {
@@ -14158,6 +14441,31 @@
     }
   }
 
+  function parseDebugDelayMs(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(5000, Math.round(numeric)));
+  }
+
+  function resolveNoteFlashDebugDefaults() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return {
+        enabled: params.get("debug_note_flash") === "1",
+        route_delay_ms: parseDebugDelayMs(params.get("debug_note_flash_delay_route_ms")),
+        iframe_delay_ms: parseDebugDelayMs(params.get("debug_note_flash_delay_iframe_ms"))
+      };
+    } catch (_) {
+      return {
+        enabled: false,
+        route_delay_ms: 0,
+        iframe_delay_ms: 0
+      };
+    }
+  }
+
   function normalizeTheme(value) {
     const theme = String(value || "").trim().toLowerCase();
     return theme === "light" || theme === "dark" ? theme : "";
@@ -14887,7 +15195,7 @@
       showTranscript(card, { restoring: true, scrollTop: detail.scroll_top });
       return;
     }
-    if (detail.type === "page" && card.html_path) {
+    if (detail.type === "page" && hasRichPage(card)) {
       showRichPage(card, { restoring: true, scrollTop: detail.scroll_top });
       return;
     }
@@ -15170,6 +15478,14 @@
     const className = options.className || "material-icon";
     const paths = filled ? (symbol.filled || symbol.filled_svg || symbol.outline || symbol.outline_svg) : (symbol.outline || symbol.outline_svg || symbol.filled || symbol.filled_svg);
     return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  }
+
+  function feedIdentityIconName(card) {
+    const name = normalizeReplyCardIcon(card?.icon);
+    if (hasAudio(card) && ["mic", "keyboard_voice", "graphic_eq", "radio"].includes(name)) {
+      return "mail";
+    }
+    return name;
   }
 
   function scheduleCardIconRegistryRefresh() {

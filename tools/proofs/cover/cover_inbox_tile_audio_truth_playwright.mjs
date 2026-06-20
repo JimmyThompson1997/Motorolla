@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 
 import {
   attachPageLogging,
@@ -25,11 +25,13 @@ function parseArgs(argv) {
     reportDir: DEFAULT_REPORT_DIR,
     timeoutMs: 30000,
     headless: true,
+    browserName: "chromium",
     preferredTitle: "Probe Check",
     sampleDurationMs: 8000,
     sampleIntervalMs: 100,
     skipCanonicalCheck: false,
     apiToken: String(process.env.PUCKY_WEB_UI_TOKEN || process.env.PUCKY_API_TOKEN || "").trim(),
+    allowAutoplayBypass: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -47,8 +49,13 @@ function parseArgs(argv) {
       config.preferredTitle = String(argv[++index] || config.preferredTitle);
     } else if (arg === "--headed") {
       config.headless = false;
+    } else if (arg === "--browser" && argv[index + 1]) {
+      const browserName = String(argv[++index] || config.browserName).trim().toLowerCase();
+      config.browserName = browserName === "webkit" ? "webkit" : "chromium";
     } else if (arg === "--skip-canonical-check") {
       config.skipCanonicalCheck = true;
+    } else if (arg === "--allow-autoplay-bypass") {
+      config.allowAutoplayBypass = true;
     }
   }
   return config;
@@ -128,6 +135,22 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+async function launchConfiguredBrowser(config) {
+  const browserName = String(config.browserName || "chromium").trim().toLowerCase();
+  if (browserName === "webkit") {
+    return webkit.launch({ headless: config.headless });
+  }
+  const browserArgs = ["--disable-extensions"];
+  if (config.allowAutoplayBypass) {
+    browserArgs.push("--autoplay-policy=no-user-gesture-required");
+  }
+  return chromium.launch({
+    headless: config.headless,
+    executablePath: resolveChromePath(),
+    args: browserArgs
+  });
 }
 
 async function loadInbox(page, config) {
@@ -242,6 +265,7 @@ async function collectDiagnostics(page, title) {
   return page.evaluate(async (targetTitle) => {
     const surface = await window.Pucky.request({ command: "ui.surface.get", args: {} });
     const probe = await window.Pucky.request({ command: "ui.debug.audio_probe.get", args: {} });
+    const player = await window.Pucky.request({ command: "player.state", args: {} });
     const cards = Array.from(document.querySelectorAll('article[data-card-id], article[data-card-session-id]'));
     const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
     const node = cards.find(card => normalize(card.querySelector(".title")?.textContent) === targetTitle)
@@ -262,6 +286,7 @@ async function collectDiagnostics(page, title) {
           shown_at: String(surface?.toast?.shown_at || "")
         }
       },
+      player,
       probe,
       card: {
         found: Boolean(node),
@@ -293,6 +318,7 @@ async function sampleTimeline(page, title, options = {}) {
   const intervalMs = Math.max(50, Number(options.intervalMs || 100));
   const reportDir = options.reportDir;
   const prefix = String(options.prefix || "sample");
+  const stopWhen = typeof options.stopWhen === "function" ? options.stopWhen : null;
   const samples = [];
   const screenshots = {};
   let firstConfirmedAtMs = null;
@@ -334,6 +360,9 @@ async function sampleTimeline(page, title, options = {}) {
         screenshots.starting = firstFeedbackShot || screenshots.ended_immediately;
       }
     }
+    if (stopWhen && stopWhen(sample, samples)) {
+      break;
+    }
     await page.waitForTimeout(intervalMs);
   }
   screenshots.final = await saveScreenshot(page, reportDir, `${prefix}-final`);
@@ -362,11 +391,22 @@ async function runStartStopScenario(page, config, title, reportDir) {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
     reportDir,
-    prefix: "02-probe-check"
+    prefix: "02-probe-check",
+    stopWhen: (sample) => {
+      if (sample.card.audio_phase === "start_failed" || sample.card.audio_phase === "ended_immediately") {
+        return true;
+      }
+      if (sample.card.audio_phase !== "playing_confirmed") {
+        return false;
+      }
+      const durationMs = Math.max(0, Number(sample?.player?.duration_ms || 0));
+      const requiredDeltaMs = requiredPlaybackDeltaMs(durationMs);
+      return Number(sample?.player?.position_ms || 0) >= requiredDeltaMs;
+    }
   });
   let stopTimeline = null;
   let stopShot = "";
-  if (phaseSeen(timeline.samples, "playing_confirmed")) {
+  if (phaseSeen(timeline.samples, "playing_confirmed") && lastSample(timeline.samples)?.card?.audio_phase === "playing_confirmed") {
     await clickAudioButton(page, title);
     stopTimeline = await sampleTimeline(page, title, {
       durationMs: 2500,
@@ -384,6 +424,13 @@ async function runStartStopScenario(page, config, title, reportDir) {
     stop_timeline: stopTimeline,
     stop_screenshot: stopShot
   };
+}
+
+function requiredPlaybackDeltaMs(durationMs) {
+  if (durationMs > 0 && durationMs < 2400) {
+    return Math.max(250, Math.min(1000, Math.round(durationMs * 0.5)));
+  }
+  return 2000;
 }
 
 async function runCrossCardScenario(page, config, primaryTitle, secondaryTitle, reportDir) {
@@ -484,9 +531,58 @@ function playingStabilityResult(scenario) {
   const sustained = scenario.timeline.samples.some(sample =>
     sample.elapsed_ms >= confirmed.elapsed_ms + 1000 && sample.card.audio_phase === "playing_confirmed"
   );
+  if (sustained) {
+    return {
+      pass: true,
+      confirmed_at_ms: confirmed.elapsed_ms,
+      stability_kind: "sustained_confirmed"
+    };
+  }
+  const postConfirmed = scenario.timeline.samples.filter(sample => sample.elapsed_ms >= confirmed.elapsed_ms);
+  const durationMs = Math.max(0, ...postConfirmed.map(sample => Number(sample?.player?.duration_ms || 0)));
+  const maxPositionMs = Math.max(0, ...postConfirmed.map(sample => Number(sample?.player?.position_ms || 0)));
+  const endedImmediately = postConfirmed.find(sample => sample.card.audio_phase === "ended_immediately") || null;
+  const finalPostConfirmed = lastSample(postConfirmed);
+  const requiredCompletionMs = durationMs > 0
+    ? Math.max(250, Math.min(1000, Math.round(durationMs * 0.5)))
+    : 500;
+  const shortClipReadyForPause = Boolean(
+    durationMs > 0
+      && durationMs <= 2400
+      && String(finalPostConfirmed?.card?.audio_phase || "") === "playing_confirmed"
+      && maxPositionMs >= requiredCompletionMs
+  );
+  const shortClipCompleted = Boolean(
+    endedImmediately
+      && durationMs > 0
+      && durationMs <= 2400
+      && maxPositionMs >= requiredCompletionMs
+  );
   return {
-    pass: sustained,
-    confirmed_at_ms: confirmed.elapsed_ms
+    pass: shortClipReadyForPause || shortClipCompleted,
+    confirmed_at_ms: confirmed.elapsed_ms,
+    stability_kind: shortClipReadyForPause
+      ? "short_clip_confirmed_before_pause"
+      : shortClipCompleted
+        ? "short_clip_completed_after_confirmed"
+        : "not_sustained",
+    duration_ms: durationMs,
+    max_position_ms: maxPositionMs,
+    required_completion_ms: requiredCompletionMs,
+    ended_immediately_at_ms: endedImmediately?.elapsed_ms ?? null
+  };
+}
+
+function progressAdvancementResult(scenario) {
+  const positions = scenario.timeline.samples.map(sample => Number(sample?.player?.position_ms || 0));
+  const durationMs = Math.max(0, ...scenario.timeline.samples.map(sample => Number(sample?.player?.duration_ms || 0)));
+  const deltaMs = positions.length ? Math.max(...positions) - Math.min(...positions) : 0;
+  const requiredDeltaMs = requiredPlaybackDeltaMs(durationMs);
+  return {
+    pass: deltaMs >= requiredDeltaMs,
+    delta_ms: deltaMs,
+    required_delta_ms: requiredDeltaMs,
+    duration_ms: durationMs
   };
 }
 
@@ -542,6 +638,37 @@ function injectedEarlyStopResult(scenario) {
   };
 }
 
+function realMediaRequestResult(events) {
+  const mediaEvent = Array.isArray(events)
+    ? events.find((event) => {
+        const url = String(event?.url || "");
+        const contentType = String(event?.content_type || "");
+        return !/\/mock\//i.test(url)
+          && Number(event?.status || 0) >= 200
+          && Number(event?.status || 0) < 300
+          && (
+            String(event?.resource_type || "") === "media"
+            || /audio\//i.test(contentType)
+            || /\.(wav|mp3|m4a|aac|ogg|opus)(?:$|[?#])/i.test(url)
+          );
+      })
+    : null;
+  return {
+    pass: Boolean(mediaEvent),
+    event: mediaEvent || null
+  };
+}
+
+function consoleGestureFailureResult(messages) {
+  const match = Array.isArray(messages)
+    ? messages.find(message => /play\(\) failed because the user didn't interact with the document first/i.test(String(message?.text || "")))
+    : null;
+  return {
+    pass: !match,
+    message: match ? String(match.text || "") : ""
+  };
+}
+
 function buildAnalysis(summary) {
   const lines = [];
   lines.push("# Inbox Tile Audio Truth Proof");
@@ -557,7 +684,8 @@ function buildAnalysis(summary) {
   lines.push(`- Target tile: ${summary.targets.primary_title}`);
   lines.push(`- Immediate feedback: ${summary.results.immediate_feedback.pass ? "PASS" : "FAIL"}${summary.results.immediate_feedback.first_feedback_ms !== null ? ` (${summary.results.immediate_feedback.first_feedback_ms} ms, ${summary.results.immediate_feedback.first_feedback_phase || "unknown"})` : ""}`);
   lines.push(`- No fake waveform before confirmed play: ${summary.results.truthful_wave.pass ? "PASS" : "FAIL"}`);
-  lines.push(`- Confirmed play stayed visually stable: ${summary.results.playing_stability.pass ? "PASS" : "FAIL"}`);
+  lines.push(`- Confirmed play stayed visually stable: ${summary.results.playing_stability.pass ? "PASS" : "FAIL"}${summary.results.playing_stability.stability_kind ? ` (${summary.results.playing_stability.stability_kind})` : ""}`);
+  lines.push(`- Real progress advanced: ${summary.results.progress_advancement.pass ? "PASS" : "FAIL"} (${summary.results.progress_advancement.delta_ms} ms / required ${summary.results.progress_advancement.required_delta_ms} ms)`);
   lines.push(`- Second-tap stop returned cleanly to idle: ${summary.results.stop.pass ? "PASS" : "FAIL"}${summary.results.stop.final_phase ? ` (${summary.results.stop.final_phase})` : ""}`);
   lines.push("");
 
@@ -577,6 +705,14 @@ function buildAnalysis(summary) {
   if (summary.results.injected_early_stop.terminal_reason) {
     lines.push(`- Terminal reason: ${summary.results.injected_early_stop.terminal_reason}`);
   }
+  lines.push("");
+
+  lines.push("## Runtime Evidence");
+  lines.push(`- Real media request observed: ${summary.results.real_media_request.pass ? "PASS" : "FAIL"}`);
+  if (summary.results.real_media_request.event?.url) {
+    lines.push(`- Media URL: ${summary.results.real_media_request.event.url}`);
+  }
+  lines.push(`- No user-gesture play() console failure: ${summary.results.console_user_gesture_failure.pass ? "PASS" : "FAIL"}`);
   lines.push("");
 
   lines.push("## Screenshots");
@@ -601,30 +737,48 @@ async function run() {
     assert(String(manifest.source_commit_full || "") === String(repo.head), `Live manifest ${manifest.source_commit_full} does not match local/pushed HEAD ${repo.head}.`);
   }
 
-  const chromePath = resolveChromePath();
-  const browser = await chromium.launch({
-    headless: config.headless,
-    executablePath: chromePath,
-    args: [
-      "--disable-extensions",
-      "--autoplay-policy=no-user-gesture-required"
-    ]
-  });
+  const browser = await launchConfiguredBrowser(config);
 
   const summary = {
+    browser_name: config.browserName,
     page_url: config.pageUrl,
     report_dir: config.reportDir,
     repo,
     manifest,
-    chrome_path: chromePath,
+    chrome_path: config.browserName === "chromium" ? resolveChromePath() : "",
     screenshots: {}
   };
 
   try {
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    const videoDir = path.join(config.reportDir, "video");
+    ensureDir(videoDir);
+    const tracePath = path.join(config.reportDir, "trace.zip");
+    const networkEvents = [];
+    const consoleMessages = [];
+    const context = await browser.newContext({
+      viewport: VIEWPORT,
+      recordVideo: { dir: videoDir, size: VIEWPORT }
+    });
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     const page = await context.newPage();
+    const pageVideo = page.video();
     page.setDefaultTimeout(config.timeoutMs);
     attachPageLogging(page, consoleLogPath);
+    page.on("console", (message) => {
+      consoleMessages.push({
+        type: message.type(),
+        text: message.text()
+      });
+    });
+    page.on("response", async (response) => {
+      const headers = await response.allHeaders().catch(() => ({}));
+      networkEvents.push({
+        url: response.url(),
+        status: response.status(),
+        resource_type: response.request().resourceType(),
+        content_type: String(headers["content-type"] || "")
+      });
+    });
 
     await loadInbox(page, config);
     await installInjectionHelpers(page);
@@ -644,6 +798,10 @@ async function run() {
     const injectedFailure = await runInjectedFailureScenario(page, config, targets.primary.title, config.reportDir);
     const injectedEarlyStop = await runInjectedEarlyStopScenario(page, config, targets.primary.title, config.reportDir);
 
+    fs.writeFileSync(path.join(config.reportDir, "final-dom.html"), await page.content(), "utf8");
+    writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);
+    writeJsonFile(path.join(config.reportDir, "console.json"), consoleMessages);
+
     summary.scenarios = {
       start_stop: startStop,
       cross_card: crossCard,
@@ -654,10 +812,13 @@ async function run() {
       immediate_feedback: immediateFeedbackResult(startStop),
       truthful_wave: truthfulWaveResult(startStop),
       playing_stability: playingStabilityResult(startStop),
+      progress_advancement: progressAdvancementResult(startStop),
       stop: stopResult(startStop),
       cross_card: crossCard ? crossCardResult(crossCard) : { pass: false, reason: "No secondary audio card found." },
       injected_failure: injectedFailureResult(injectedFailure),
-      injected_early_stop: injectedEarlyStopResult(injectedEarlyStop)
+      injected_early_stop: injectedEarlyStopResult(injectedEarlyStop),
+      real_media_request: realMediaRequestResult(networkEvents),
+      console_user_gesture_failure: consoleGestureFailureResult(consoleMessages)
     };
     summary.screenshots = {
       pre_click: startStop.pre_click_screenshot,
@@ -669,10 +830,32 @@ async function run() {
       injected_start_failed: injectedFailure.timeline.screenshots.start_failed || injectedFailure.timeline.screenshots.final || "",
       injected_ended_immediately: injectedEarlyStop.timeline.screenshots.ended_immediately || injectedEarlyStop.timeline.screenshots.final || ""
     };
+    summary.evidence = {
+      trace: tracePath,
+      console_log: consoleLogPath,
+      console_json: path.join(config.reportDir, "console.json"),
+      network_json: path.join(config.reportDir, "network.json"),
+      final_dom: path.join(config.reportDir, "final-dom.html"),
+      video_dir: videoDir,
+      video_path: ""
+    };
 
+    await context.tracing.stop({ path: tracePath });
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     fs.writeFileSync(path.join(config.reportDir, "analysis.md"), buildAnalysis(summary), "utf8");
     await context.close();
+    summary.evidence.video_path = pageVideo ? await pageVideo.path().catch(() => "") : "";
+    writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
+    assert(summary.results.immediate_feedback.pass, `Tile audio did not show prompt user feedback (saw ${summary.results.immediate_feedback.first_feedback_phase || "nothing"} at ${summary.results.immediate_feedback.first_feedback_ms ?? "never"} ms).`);
+    assert(summary.results.truthful_wave.pass, "Tile audio showed a fake waveform before real playback was confirmed.");
+    assert(summary.results.playing_stability.pass, `Confirmed playback did not remain stable enough to trust the UI (${summary.results.playing_stability.stability_kind || summary.results.playing_stability.reason || "unknown"}).`);
+    assert(summary.results.progress_advancement.pass, `Audio did not advance enough to prove real playback (${summary.results.progress_advancement.delta_ms} ms / required ${summary.results.progress_advancement.required_delta_ms} ms).`);
+    assert(summary.results.stop.pass, `Second-tap pause/stop did not return the tile to idle (${summary.results.stop.final_phase || summary.results.stop.reason || "unknown"}).`);
+    assert(summary.results.cross_card.pass, `Cross-card playback handoff failed (${summary.results.cross_card.reason || summary.results.cross_card.primary_final_phase || "unknown"}).`);
+    assert(summary.results.injected_failure.pass, "Injected play failure did not surface as a clear start_failed outcome.");
+    assert(summary.results.injected_early_stop.pass, "Injected early stop did not surface as ended_immediately.");
+    assert(summary.results.real_media_request.pass, "No successful non-mock audio media request was observed.");
+    assert(summary.results.console_user_gesture_failure.pass, "Observed a browser user-gesture play() failure in the console log.");
   } catch (error) {
     writeAutomationError(config.reportDir, error);
     throw error;

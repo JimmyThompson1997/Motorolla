@@ -48,6 +48,7 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert "Connect stays read-only" in source
     assert "connect_cta_clicked: false" in source
     assert "fetchConnectMyApps(" in source
+    assert "waitForConnectChips(" in source
     assert "data-links-connected-slug" in source
     assert "Reload connect directly" in source
     assert 'LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"]' in source
@@ -64,3 +65,26 @@ def test_tools_package_exposes_live_user_session_script() -> None:
     payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
 
     assert payload["scripts"]["test:cover-live-user-session"] == "node ./proofs/cover/cover_live_user_session_playwright.mjs"
+
+
+def test_tools_package_exposes_inbox_related_proofs() -> None:
+    payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
+
+    assert payload["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
+    assert payload["scripts"]["test:cover-light-native-ports"] == "node ./proofs/cover/cover_light_native_ports_playwright.mjs"
+
+
+def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
+    source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+
+    assert "cover_light_native_ports_playwright.mjs" in source
+    assert "cover_inbox_tile_audio_truth_playwright.mjs" in source
+    assert "cover_live_user_session_playwright.mjs" in source
+    assert "--skip-canonical-check" in source
+    assert "127.0.0.1:8768" in source
+    assert 'for browser_name in ("chromium", "webkit"):' in source
+    assert "for attempt in range(1, 4):" in source
+    assert 'append_refresh_param(' in source
+    assert '"_pucky_refresh"' in source
+    assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
+    assert 'live_root / "light-native-ports" / browser_name / run_name' in source

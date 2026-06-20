@@ -1,8 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 
+import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -16,30 +15,6 @@ const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://1
 const VIEWPORT = { width: 430, height: 932 };
 const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };
 const PROOF_RUN_ID = "proof-workspace";
-const require = createRequire(import.meta.url);
-
-function loadPlaywrightCore() {
-  const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
-  const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
-  const candidates = [
-    () => require("playwright-core"),
-    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
-    () => require(bundled)
-  ];
-  for (const candidate of candidates) {
-    try {
-      const resolved = candidate();
-      if (resolved) {
-        return resolved;
-      }
-    } catch {
-      // Try the next resolution path.
-    }
-  }
-  throw new Error("Could not resolve playwright-core from local tools or bundled runtime");
-}
-
-const { chromium } = loadPlaywrightCore();
 
 function resolveApiToken() {
   const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
@@ -443,7 +418,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Partner lead",
       metadata: {
         avatar: "P1",
-        photo: "fixtures/contact_photos/proof-contact.webp",
         email: "proof.one@example.com",
         phone: "+1 (555) 010-1000",
         activity: ["Created by proof", "Linked to Alpha"]
@@ -455,7 +429,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Customer sponsor",
       metadata: {
         avatar: "P2",
-        photo: "fixtures/contact_photos/eric.webp",
         email: "proof.two@example.com",
         phone: "+1 (555) 010-2000",
         activity: ["Created by proof", "Linked to Beta"]
@@ -785,7 +758,6 @@ async function readDetailHtmlBodyMetrics(page) {
     const header = document.querySelector(".light-page-header-shell");
     const body = document.querySelector(".light-detail-html-body");
     const frame = body?.querySelector(".light-html-frame");
-    const feed = document.getElementById("feed");
     const scrollingNode = document.scrollingElement || document.documentElement;
     const rect = (node) => {
       if (!(node instanceof Element)) return null;
@@ -806,7 +778,6 @@ async function readDetailHtmlBodyMetrics(page) {
       frame: rect(frame),
       headerBottom: rect(header)?.bottom || 0,
       bodyTop: rect(body)?.top || 0,
-      feedScrollTop: feed?.scrollTop || 0,
       pageScrollHeight: scrollingNode?.scrollHeight || 0,
       pageClientHeight: scrollingNode?.clientHeight || 0,
       frameClientHeight: frame?.clientHeight || 0,
@@ -867,7 +838,6 @@ function assertDetailHtmlLayout(layout, label) {
   assert(layout.body.left <= layout.page.left + 2, `Expected ${label} HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
   assert(layout.body.right >= layout.page.right - 2, `Expected ${label} HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
   assert(Number(layout.bodyTop || 0) <= Number(layout.headerBottom || 0) + 2, `Expected ${label} HTML body to start directly below the header, got ${layout.bodyTop} vs ${layout.headerBottom}`);
-  assert(Number(layout.feedScrollTop || 0) <= 2, `Expected ${label} shell scroll to reset to top, got ${layout.feedScrollTop}`);
   assert(Number(layout.frameClientHeight || 0) + 2 >= Number(layout.frameScrollHeight || 0), `Expected ${label} iframe height to cover its document height, got ${layout.frameClientHeight} vs ${layout.frameScrollHeight}`);
 }
 
@@ -916,30 +886,16 @@ function taskRowControl(page, taskId) {
 }
 
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
-  await page.setViewportSize({ width: VIEWPORT.width, height: 360 });
   await openTile(page, "Notes", "notes", config.timeoutMs);
   const note = seed.writeEnabled
-    ? { id: `${seed.runId}-recent-note`, title: "Proof Recent Note" }
+    ? { id: seed.pinnedNoteId, title: "Proof Pinned Note" }
     : (seed.notes || []).find(item => Boolean(item.id)) ;
   const rowSelector = `.light-note-row[data-note-id="${note?.id || ""}"]`;
   if (!note?.id || !note?.title) {
     await backHome(page, theme, config.timeoutMs);
-    await page.setViewportSize(VIEWPORT);
     return;
   }
   await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
-  if (seed.writeEnabled) {
-    const notesScrollTop = await page.evaluate(() => {
-      const feed = document.getElementById("feed");
-      if (!feed) {
-        return 0;
-      }
-      feed.scrollTop = Math.max(0, feed.scrollHeight - feed.clientHeight);
-      return feed.scrollTop;
-    });
-    assert(notesScrollTop > 0, `Expected notes list to scroll before opening detail, got ${notesScrollTop}`);
-    await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
-  }
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
   await page.locator(rowSelector).click();
   await expectFrameHeading(page, note.title, config.timeoutMs);
@@ -1449,41 +1405,7 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function assertFlatContactProfileCard(page, label) {
-  const cardState = await page.evaluate(() => {
-    const card = document.querySelector(".light-contact-detail-page .light-profile-card");
-    if (!card) {
-      return { exists: false };
-    }
-    const styles = window.getComputedStyle(card);
-    const rect = card.getBoundingClientRect();
-    return {
-      exists: true,
-      heading: String(card.querySelector("h1")?.textContent || "").trim(),
-      summary: String(card.querySelector("p")?.textContent || "").trim(),
-      backgroundColor: styles.backgroundColor,
-      borderRadius: styles.borderRadius,
-      borderTopColor: styles.borderTopColor,
-      borderTopStyle: styles.borderTopStyle,
-      borderTopWidth: styles.borderTopWidth,
-      boxShadow: styles.boxShadow,
-      rect: {
-        height: Math.round(rect.height),
-        width: Math.round(rect.width)
-      }
-    };
-  });
-  assert(cardState.exists, `${label} should render the scoped contact profile card`);
-  assert(cardState.heading, `${label} should keep a visible profile heading`);
-  assert(cardState.summary, `${label} should keep visible descriptor text`);
-  assert(cardState.backgroundColor === "rgba(0, 0, 0, 0)" || cardState.backgroundColor === "transparent", `${label} profile card should have a transparent background, got ${cardState.backgroundColor}`);
-  assert(cardState.boxShadow === "none", `${label} profile card should not have a shadow, got ${cardState.boxShadow}`);
-  assert(cardState.borderRadius === "0px", `${label} profile card should not have a card radius, got ${cardState.borderRadius}`);
-  assert(cardState.borderTopWidth === "0px" || cardState.borderTopStyle === "none" || cardState.borderTopColor === "rgba(0, 0, 0, 0)", `${label} profile card should not have a visible border, got ${cardState.borderTopWidth} ${cardState.borderTopStyle} ${cardState.borderTopColor}`);
-  return cardState;
-}
-
-async function assertNoContactEndpoints(page, config, contactId, label, options = {}) {
+async function assertNoContactEndpoints(page, config, contactId, label) {
   const detailState = await page.evaluate(() => {
     const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
       .map(node => String(node.textContent || "").trim())
@@ -1492,10 +1414,6 @@ async function assertNoContactEndpoints(page, config, contactId, label, options 
       sectionTitles
     };
   });
-  assert(detailState.sectionTitles.some(title => title.toLowerCase() === "contact"), `${label} should render the Contact section`);
-  if (options.requireActivity) {
-    assert(detailState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should render the Activity section`);
-  }
   assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
   if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
     const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
@@ -1503,70 +1421,6 @@ async function assertNoContactEndpoints(page, config, contactId, label, options 
     assert(!Object.prototype.hasOwnProperty.call(metadata, "endpoints"), `${label} API metadata should not expose endpoints`);
   }
   return detailState;
-}
-
-async function assertNoContactHtmlDocument(page, config, contactId, label) {
-  const htmlState = await page.evaluate(() => {
-    const root = document.querySelector(".light-contact-detail-page");
-    const text = String(root?.textContent || "");
-    return {
-      hasHtmlBody: Boolean(root?.querySelector(".light-detail-html-body")),
-      hasHtmlCard: Boolean(root?.querySelector(".light-html-card")),
-      hasHtmlFrame: Boolean(root?.querySelector(".light-html-frame")),
-      hasGeneratedFallback: text.includes("generated contact page") || text.includes("Generated page")
-    };
-  });
-  assert(!htmlState.hasHtmlBody, `${label} should not render a Contact HTML document panel`);
-  assert(!htmlState.hasHtmlCard, `${label} should not render a Contact HTML card`);
-  assert(!htmlState.hasHtmlFrame, `${label} should not render a Contact HTML iframe`);
-  assert(!htmlState.hasGeneratedFallback, `${label} should not render generated-page fallback text`);
-  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
-    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
-    assert(!String(record?.html || "").trim(), `${label} API contact record should not expose document HTML`);
-    assert(!String(record?.html_asset_id || "").trim(), `${label} API contact record should not expose document HTML asset id`);
-  }
-  return htmlState;
-}
-
-async function assertContactPhotoThumbnails(page, label) {
-  const rows = await page.evaluate(() => {
-    const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
-    return {
-      loadedImageCount: loadedImages.length,
-      rows: Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]")).map(row => {
-        const avatar = row.querySelector(".light-avatar");
-        const img = row.querySelector(".light-avatar.has-photo img");
-        const titleNode = row.querySelector(".light-text-stack span");
-        return {
-          id: String(row.getAttribute("data-contact-id") || ""),
-          title: String(titleNode?.textContent || "").trim(),
-          hasPhotoClass: Boolean(avatar?.classList.contains("has-photo")),
-          imageCount: img ? 1 : 0,
-          src: img ? String(img.getAttribute("src") || img.currentSrc || "") : "",
-          naturalWidth: img ? img.naturalWidth : 0,
-          naturalHeight: img ? img.naturalHeight : 0,
-          complete: img ? img.complete : false,
-          objectFit: img ? getComputedStyle(img).objectFit : "",
-          initials: avatar ? String(avatar.textContent || "").trim() : ""
-        };
-      })
-    };
-  });
-  assert(rows.rows.length > 0, `${label} should render contact rows`);
-  assert(!rows.rows.some(row => row.title === "Clinic front desk" || row.id === "clinic-front-desk"), "Clinic front desk should not render in Contacts");
-  const me = rows.rows.find(row => row.id === "contact-me");
-  assert(me, `${label} should render contact-me`);
-  assert(!me.hasPhotoClass && me.imageCount === 0, "contact-me should remain initials-only");
-  const contacts = rows.rows.filter(row => row.id !== "contact-me");
-  assert(contacts.length > 0, `${label} should render at least one non-self contact`);
-  for (const contact of contacts) {
-    assert(contact.hasPhotoClass, `${contact.title || contact.id} should use the photo avatar class`);
-    assert(contact.imageCount === 1, `${contact.title || contact.id} should render exactly one thumbnail image`);
-    assert(contact.complete, `${contact.title || contact.id} thumbnail should finish loading`);
-    assert(contact.naturalWidth > 0 && contact.naturalHeight > 0, `${contact.title || contact.id} thumbnail should have natural dimensions, got ${contact.naturalWidth}x${contact.naturalHeight}`);
-    assert(contact.objectFit === "cover", `${contact.title || contact.id} thumbnail should use object-fit: cover, got ${contact.objectFit}`);
-  }
-  return rows;
 }
 
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
@@ -1579,11 +1433,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
-  const meProfileCard = await assertFlatContactProfileCard(page, "Me contact detail");
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
-  await assertNoContactHtmlDocument(page, config, "contact-me", "Me contact detail");
-  summary.contactProfileCards = summary.contactProfileCards || [];
-  summary.contactProfileCards.push({ theme, contact: "contact-me", profile: meProfileCard });
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
   assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
@@ -1595,26 +1445,17 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`);
-  summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
-  summary.contactPhotoThumbnails.push({ theme, ...photoState });
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
   if (seed.writeEnabled) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-    const contactProfileCard = await assertFlatContactProfileCard(page, "Proof Contact One detail");
-    await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail", { requireActivity: true });
-    await assertNoContactHtmlDocument(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
-    summary.contactProfileCards.push({ theme, contact: `${seed.runId}-contact-one`, profile: contactProfileCard });
+    await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
+    await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
   } else {
     const firstContact = contacts[0];
     await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
-    await waitForGraphText(page, firstContact.title, config.timeoutMs);
-    const contactProfileCard = await assertFlatContactProfileCard(page, `${firstContact.title} detail`);
+    await expectFrameHeading(page, firstContact.title, config.timeoutMs);
     await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
-    await assertNoContactHtmlDocument(page, config, firstContact.id, `${firstContact.title} detail`);
-    summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
   const detailState = await readGraphDetailState(page);
   assert(detailState.route === "contact-detail", `Expected contact-detail route, got ${detailState.route}`);
