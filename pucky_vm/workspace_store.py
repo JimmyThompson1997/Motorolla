@@ -31,6 +31,7 @@ KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
 SELF_CONTACT_ID = "contact-me"
 SELF_CONTACT_TITLE = "Me"
 SELF_CONTACT_SUMMARY = "Personal reminder delivery profile"
+JIMMY_THOMPSON_CONTACT_ID = "jimmy-thompson"
 CONTACT_EMAIL_ENDPOINT_LABELS = ("email", "gmail", "mail")
 CONTACT_PHONE_ENDPOINT_LABELS = ("phone", "sms", "text", "mobile", "call")
 CONTACT_PHOTO_FIXTURES = (
@@ -43,6 +44,7 @@ CONTACT_PHOTO_BY_ID = {
     "maya": "fixtures/contact_photos/maya.webp",
     "sam-rivera": "fixtures/contact_photos/sam.webp",
     "eric-donaldson": "fixtures/contact_photos/eric.webp",
+    JIMMY_THOMPSON_CONTACT_ID: "fixtures/contact_photos/proof-contact.webp",
 }
 
 
@@ -126,6 +128,23 @@ def _self_contact_record() -> dict[str, object]:
             "notification_device_id": "",
             "preferred_reminder_device_id": "",
             "activity": ["Reminder delivery profile"],
+        },
+    }
+
+
+def _jimmy_thompson_contact_record() -> dict[str, object]:
+    return {
+        "id": JIMMY_THOMPSON_CONTACT_ID,
+        "title": "Jimmy Thompson",
+        "summary": "Personal contact",
+        "metadata": {
+            "first_name": "Jimmy",
+            "last_name": "Thompson",
+            "avatar": "JT",
+            "photo": CONTACT_PHOTO_BY_ID[JIMMY_THOMPSON_CONTACT_ID],
+            "email": "jimmythompson323@gmail.com",
+            "phone": "4074969882",
+            "activity": ["Contact added manually"],
         },
     }
 
@@ -778,6 +797,7 @@ class WorkspaceStore:
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
             contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
+            contact_jimmy_thompson = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_jimmy_thompson_v1'").fetchone()
             notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
             demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
@@ -833,6 +853,8 @@ class WorkspaceStore:
             self._cleanup_workspace_metadata_v1(now)
         if not contact_html_removed:
             self._remove_contact_html_v1(now)
+        if not contact_jimmy_thompson:
+            self._seed_jimmy_thompson_contact_v1(now)
         if not demo_time_refresh_seeded:
             self._refresh_seeded_demo_time_v1(now)
         self.ensure_self_contact()
@@ -972,6 +994,33 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("contact_cleanup_photos_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _seed_jimmy_thompson_contact_v1(self, now_ms: int) -> None:
+        payload = _jimmy_thompson_contact_record()
+        current = self.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID, include_deleted=True)
+        if current is not None:
+            current_metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+            next_metadata = {
+                **current_metadata,
+                **payload["metadata"],
+            }
+            next_metadata.pop("is_self", None)
+            if isinstance(current_metadata.get("activity"), list) and current_metadata.get("activity"):
+                next_metadata["activity"] = list(current_metadata["activity"])
+            payload = {
+                **payload,
+                "summary": str(current.get("summary") or payload["summary"]).strip() or payload["summary"],
+                "archived": False,
+                "deleted": False,
+                "metadata": next_metadata,
+            }
+        self.upsert_record("contacts", payload)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_jimmy_thompson_v1", "1", now_ms),
             )
             self._conn.commit()
 
@@ -2056,6 +2105,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                     "activity": ["Slack DM - approved the engineering budget", "Meeting - Roadmap sync today"],
                 },
             },
+            _jimmy_thompson_contact_record(),
         ],
     }
 

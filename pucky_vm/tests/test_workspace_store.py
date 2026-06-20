@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from pucky_vm.workspace_store import (
+    JIMMY_THOMPSON_CONTACT_ID,
     SELF_CONTACT_ID,
     WorkspaceStore,
     _linked_note_link_id,
@@ -270,6 +271,49 @@ def test_contact_cleanup_removes_clinic_and_assigns_fixture_photos(tmp_path: Pat
         photo = str(contact["metadata"].get("photo") or "")
         assert photo.startswith("fixtures/contact_photos/")
         assert photo.endswith((".jpg", ".jpeg", ".webp"))
+
+
+def test_jimmy_thompson_contact_is_seeded_with_requested_fields(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+
+    contact = store.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID)
+    assert contact is not None
+    assert contact["title"] == "Jimmy Thompson"
+    assert contact["summary"] == "Personal contact"
+    assert contact["html"] == ""
+    assert contact["html_asset_id"] == ""
+    assert contact["metadata"]["first_name"] == "Jimmy"
+    assert contact["metadata"]["last_name"] == "Thompson"
+    assert contact["metadata"]["avatar"] == "JT"
+    assert contact["metadata"]["email"] == "jimmythompson323@gmail.com"
+    assert contact["metadata"]["phone"] == "4074969882"
+    assert contact["metadata"]["photo"] == "fixtures/contact_photos/proof-contact.webp"
+
+
+def test_jimmy_thompson_contact_migration_adds_contact_to_existing_workspace(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store._conn.execute(
+        "DELETE FROM workspace_records WHERE kind = 'contact' AND record_id = ?",
+        (JIMMY_THOMPSON_CONTACT_ID,),
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'contact_jimmy_thompson_v1'")
+    store._conn.commit()
+    store.close()
+
+    migrated = WorkspaceStore(str(db_path), clock_ms=clock)
+    contact = migrated.get_record("contacts", JIMMY_THOMPSON_CONTACT_ID)
+    assert contact is not None
+    assert contact["deleted"] is False
+    assert contact["archived"] is False
+    assert contact["metadata"]["email"] == "jimmythompson323@gmail.com"
+    assert contact["metadata"]["phone"] == "4074969882"
+    assert contact["metadata"]["photo"] == "fixtures/contact_photos/proof-contact.webp"
+
+    meta = migrated._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_jimmy_thompson_v1'").fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
 
 
 def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: Path) -> None:
