@@ -753,6 +753,7 @@ class WorkspaceStore:
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
             notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
+            demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
         now = self.now_ms()
         if not seeded:
             defaults, default_links = seeded_workspace_snapshot(
@@ -801,6 +802,8 @@ class WorkspaceStore:
             self._migrate_notes_only_html_v1(now)
         if not metadata_cleanup_seeded:
             self._cleanup_workspace_metadata_v1(now)
+        if not demo_time_refresh_seeded:
+            self._refresh_seeded_demo_time_v1(now)
         self.ensure_self_contact()
 
     def ensure_self_contact(self) -> dict[str, object]:
@@ -1021,6 +1024,76 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("workspace_metadata_cleanup_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _refresh_seeded_demo_time_v1(self, now_ms: int) -> None:
+        fields_by_collection: dict[str, tuple[str, ...]] = {
+            "calendar-events": ("date", "start_at_ms", "end_at_ms"),
+            "meeting-notes": ("date", "start_at_ms", "end_at_ms"),
+            "tasks": ("due_at_ms",),
+            "reminders": ("due_at_ms",),
+            "feed-items": ("event_at_ms",),
+        }
+        columns_by_kind: dict[str, tuple[str, ...]] = {
+            "calendar_event": ("date_key", "start_at_ms", "end_at_ms"),
+            "meeting_note": ("date_key", "start_at_ms", "end_at_ms"),
+            "task": ("due_at_ms",),
+            "reminder": ("due_at_ms",),
+            "feed_item": ("event_at_ms",),
+        }
+        desired: dict[tuple[str, str], dict[str, object]] = {}
+        for source in (default_workspace_records(now_ms), default_workspace_graph_records(now_ms)):
+            for collection, fields in fields_by_collection.items():
+                kind = self.kind_for_collection(collection)
+                for record in source.get(collection, []):
+                    record_id = str(record.get("id") or "").strip()
+                    if not record_id:
+                        continue
+                    next_values: dict[str, object] = {}
+                    for field in fields:
+                        if field == "date":
+                            next_values["date_key"] = str(record.get("date") or "").strip()
+                        else:
+                            next_values[field] = _int_or_zero(record.get(field))
+                    desired[(kind, record_id)] = next_values
+        with self._lock:
+            for (kind, record_id), next_values in desired.items():
+                row = self._conn.execute(
+                    """
+                    SELECT date_key, start_at_ms, end_at_ms, due_at_ms, event_at_ms, deleted
+                    FROM workspace_records
+                    WHERE kind = ? AND record_id = ?
+                    """,
+                    (kind, record_id),
+                ).fetchone()
+                if row is None or bool(row["deleted"]):
+                    continue
+                assignments: list[str] = []
+                params: list[object] = []
+                for column in columns_by_kind[kind]:
+                    current_value: object
+                    if column == "date_key":
+                        current_value = str(row[column] or "").strip()
+                    else:
+                        current_value = int(row[column] or 0)
+                    desired_value = next_values.get(column, "" if column == "date_key" else 0)
+                    if current_value == desired_value:
+                        continue
+                    assignments.append(f"{column} = ?")
+                    params.append(desired_value)
+                if not assignments:
+                    continue
+                assignments.append("updated_at_ms = ?")
+                params.append(now_ms)
+                params.extend((kind, record_id))
+                self._conn.execute(
+                    f"UPDATE workspace_records SET {', '.join(assignments)} WHERE kind = ? AND record_id = ?",
+                    tuple(params),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_demo_time_refresh_v1", "1", now_ms),
             )
             self._conn.commit()
 
