@@ -4205,6 +4205,9 @@
       const section = el("section", "light-info-section");
       section.append(lightSectionTitle("Connected"));
       const card = el("div", `light-card light-attendee-chip-card light-event-connected-card ${calendarEventTone(meeting)}`.trim());
+      if (chips.childElementCount === 1) {
+        card.classList.add("is-single");
+      }
       card.append(chips);
       section.append(card);
       page.append(section);
@@ -4234,14 +4237,10 @@
       const who = el("div", "light-calendar-detail-row");
       who.dataset.detailRow = "who";
       const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");
-      if (recognized.length) {
-        const cloud = el("div", "light-attendee-chip-cloud");
-        recognized.forEach(entry => cloud.append(lightRecordChip(entry, { fromRoute: "meeting-detail" })));
-        value.append(cloud);
-      }
-      if (guests.length) {
-        value.append(el("p", "light-calendar-detail-guest-list", guests.join(", ")));
-      }
+      const cloud = el("div", "light-attendee-chip-cloud");
+      recognized.forEach(entry => cloud.append(lightRecordChip(entry, { fromRoute: "meeting-detail" })));
+      guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));
+      value.append(cloud);
       who.append(el("strong", "light-calendar-detail-row-label", "Who"), value);
       card.append(who);
     }
@@ -4265,6 +4264,10 @@
       el("div", "light-calendar-detail-row-value", value)
     );
     return row;
+  }
+
+  function lightGuestAttendeeChip(label) {
+    return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());
   }
 
   function lightMeetingNotesPage() {
@@ -6968,7 +6971,7 @@
         }));
     }
     if (options.contactsOnly === true) {
-      return chips;
+      return disambiguateCalendarChipLabels(chips);
     }
     const currentKind = String(event?.kind || "calendar_event");
     const currentId = String(event?.id || event?.record_id || "");
@@ -6989,7 +6992,31 @@
         kind: relatedKind
       });
     });
-    return chips;
+    return disambiguateCalendarChipLabels(chips);
+  }
+
+  function disambiguateCalendarChipLabels(chips) {
+    const duplicateCounts = new Map();
+    chips.forEach(entry => {
+      const label = String(entry?.label || "").trim();
+      const kind = String(entry?.kind || entry?.target?.kind || "").trim();
+      if (!label || kind === "contact") {
+        return;
+      }
+      const key = label.toLowerCase();
+      duplicateCounts.set(key, Number(duplicateCounts.get(key) || 0) + 1);
+    });
+    return chips.map(entry => {
+      const label = String(entry?.label || "").trim();
+      const kind = String(entry?.kind || entry?.target?.kind || "").trim();
+      if (!label || kind === "contact" || Number(duplicateCounts.get(label.toLowerCase()) || 0) < 2) {
+        return entry;
+      }
+      return {
+        ...entry,
+        label: `${label}${DOT}${graphKindLabel(kind)}`
+      };
+    });
   }
 
   function lightRecordChip(entry, options = {}) {

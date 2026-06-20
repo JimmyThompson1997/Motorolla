@@ -198,11 +198,19 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'page.append(lightCopySection("Description", meeting.summary));' in light_meeting_detail
     assert light_meeting_detail.index("lightCalendarEventDetailsSection(meeting, attendees)") < light_meeting_detail.index('lightCopySection("Description", meeting.summary)')
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' in light_meeting_detail
+    assert 'card.classList.add("is-single");' in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
     assert 'who.dataset.detailRow = "who";' in app
     assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
     assert 'light-attendee-chip-cloud' in app
+    assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' in app
+    assert 'light-calendar-detail-guest-list' not in app
+    assert 'function lightGuestAttendeeChip(label) {' in app
+    assert 'return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());' in app
+    assert "function disambiguateCalendarChipLabels(chips) {" in app
+    assert 'return disambiguateCalendarChipLabels(chips);' in app
+    assert 'label: `${label}${DOT}${graphKindLabel(kind)}`' in app
     assert "calendarEventTypeFiltersCard()" in app
     assert 'const sheet = el("section", "settings-selector-sheet calendar-settings-panel");' in app
     assert "trace-sheet settings-sheet calendar-settings-sheet" not in app
@@ -255,6 +263,11 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".calendar-settings-panel" in styles
     assert ".calendar-type-filter-row" in styles
     assert ".light-calendar-detail-card" in styles
+    assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip.is-link" in styles
+    assert ".light-attendee-chip-guest" in styles
+    assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip-guest" in styles
+    assert ".light-event-connected-card.is-single" in styles
+    assert ".app-shell[data-theme=\"dark\"] .light-event-connected-card.is-single" in styles
 
 
 def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
