@@ -77,8 +77,10 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert '".light-task-status-circle-trigger"' not in source
     assert 'description_is_first_section' in source
     assert 'task_html_frame_present' in source
-    assert "notesSection = infoSection(\"notes\")" in source
-    assert "notes: Array.from(notesSection?.querySelectorAll('.light-info-row .light-text-stack strong') || [])" in source
+    assert "connectedSection = infoSection(\"connected\")" in source
+    assert "connected: Array.from(connectedSection?.querySelectorAll('.light-info-row[data-task-connected-kind]') || [])" in source
+    assert 'assert(!taskState.sections.includes("notes")' in source
+    assert 'assert(!taskState.sections.includes("attached")' in source
     assert 'assert(!taskState.task_html_frame_present' in source
     assert 'assert(taskState.description_is_first_section' in source
     assert "Open task list status selector" in source

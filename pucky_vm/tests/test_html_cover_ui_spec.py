@@ -944,6 +944,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     app = read("app.js")
 
     workspace_html = function_block(app, "workspaceHtml")
+    linked_entries = function_block(app, "workspaceLinkedEntries")
     linked_rows = function_block(app, "workspaceLinkedRows")
     linked_notes = function_block(app, "lightLinkedNotesSection")
     contact_detail = function_block(app, "lightContactDetailPage")
@@ -954,9 +955,10 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'return String(record.html || "");' in workspace_html
     assert "loadWorkspaceAsset" not in app
     assert "workspace.assets" not in app
-    assert "const includeKinds =" in linked_rows
-    assert "const excludeKinds = new Set(" in linked_rows
-    assert 'if ((includeKinds && !includeKinds.has(normalizedKind)) || excludeKinds.has(normalizedKind)) {' in linked_rows
+    assert "const includeKinds =" in linked_entries
+    assert "const excludeKinds = new Set(" in linked_entries
+    assert 'if ((includeKinds && !includeKinds.has(normalizedKind)) || excludeKinds.has(normalizedKind)) {' in linked_entries
+    assert 'return workspaceLinkedEntries(record, options).map(entry => {' in linked_rows
     assert 'includeKinds: ["note"],' in linked_notes
     assert 'valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"' in linked_notes
     assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
@@ -1060,7 +1062,7 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
 
 
-def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open() -> None:
+def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset_scroll_on_open() -> None:
     app = read("app.js")
     tasks_page = function_block(app, "lightTasksPage")
     task_workspace_page = function_block(app, "lightTaskWorkspacePage")
@@ -1070,15 +1072,16 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     task_group = function_block(app, "lightTaskGroup")
     task_detail_rows = function_block(app, "taskDetailRows")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
-    task_notes_section = function_block(app, "lightTaskNotesSection")
     task_people_section = function_block(app, "lightTaskPeopleSection")
-    task_attachment_rows = function_block(app, "taskAttachmentRows")
-    task_attachments_section = function_block(app, "lightTaskAttachmentsSection")
+    task_connected_rows = function_block(app, "taskConnectedRows")
+    task_connected_section = function_block(app, "lightTaskConnectedSection")
     task_people_loader = function_block(app, "ensureTaskPeopleContactsLoaded")
     task_filters = function_block(app, "lightTaskFilters")
     light_info_row = function_block(app, "lightInfoRow")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
+    workspace_linked_entries = function_block(app, "workspaceLinkedEntries")
+    linked_record_recency = function_block(app, "linkedRecordRecencyMs")
     task_refresh_interval = re.search(
         r'setInterval\(\(\) => \{\s*'
         r'if \((?P<condition>.*?)\) \{\s*'
@@ -1115,16 +1118,26 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'dataset: { taskPersonRole: "owner" }' in task_people_section
     assert 'return lightInfoSection("People", rows);' in task_people_section
     assert "lightRecordChip(" not in task_people_section
-    assert 'return lightLinkedNotesSection(task);' in task_notes_section
-    assert 'icon: graphKindIcon(relatedKind),' in task_attachment_rows
-    assert 'accentKey: graphKindAccentKey(relatedKind),' in task_attachment_rows
-    assert 'value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),' in task_attachment_rows
-    assert 'openOptions: { taskOrigin: origin }' in task_attachment_rows
-    assert 'return lightInfoSection("Attached", rows);' in task_attachments_section
-    assert "lightRecordChip(" not in task_attachments_section
+    assert 'return workspaceLinkedEntries(record, options).map(entry => {' in function_block(app, "workspaceLinkedRows")
+    assert 'const currentKind = String(options.currentKind || record?.kind || "");' in workspace_linked_entries
+    assert 'label,' in workspace_linked_entries
+    assert 'relation,' in workspace_linked_entries
+    assert 'target: workspaceTargetForKind(relatedKind, related?.id || relatedId),' in workspace_linked_entries
+    assert 'if (kind === "note") {' in linked_record_recency
+    assert 'return noteContentUpdatedAtMs(related);' in linked_record_recency
+    assert 'workspaceLinkedEntries(task, { currentKind: "task" }).forEach(entry => {' in task_connected_rows
+    assert 'const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);' in task_connected_rows
+    assert 'value = entry.relatedKind === "note"' in task_connected_rows
+    assert 'dataset: {' in task_connected_rows
+    assert 'taskConnectedKind: entry.relatedKind,' in task_connected_rows
+    assert 'taskConnectedRecencyMs: String(recencyMs || 0),' in task_connected_rows
+    assert 'rows.sort((left, right) => {' in task_connected_rows
+    assert 'const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);' in task_connected_rows
+    assert 'return lightInfoSection("Connected", rows);' in task_connected_section
+    assert "lightRecordChip(" not in task_connected_section
     assert "lightHtmlDocument(task" not in task_detail_surface
-    assert 'const notes = lightTaskNotesSection(task);' in task_detail_surface
-    assert "surface.append(notes);" in task_detail_surface
+    assert 'const connected = lightTaskConnectedSection(task);' in task_detail_surface
+    assert "surface.append(connected);" in task_detail_surface
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert "function updateTaskStatus(taskId, nextStatus)" in app
     assert "function toggleTaskChecklistItem" not in app
@@ -1149,8 +1162,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert "options.showChevron !== false" in light_info_row
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
     assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
-    assert task_detail_surface.index("lightTaskChecklistSection(task)") < task_detail_surface.index("lightTaskNotesSection(task)")
-    assert task_detail_surface.index("lightTaskNotesSection(task)") < task_detail_surface.index("lightTaskAttachmentsSection(task)")
+    assert task_detail_surface.index("lightTaskChecklistSection(task)") < task_detail_surface.index("lightTaskConnectedSection(task)")
     assert "resetLightRouteScroll();" in light_navigate
     assert "restoreScrollPosition(feed, 0);" in reset_scroll
     assert "window.scrollTo(0, 0);" in reset_scroll

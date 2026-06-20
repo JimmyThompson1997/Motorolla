@@ -223,7 +223,7 @@ async function readTaskState(page) {
       String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
     ) || null;
     const peopleSection = infoSection("people");
-    const attachedSection = infoSection("attached");
+    const connectedSection = infoSection("connected");
     const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
       .map(node => String(node.textContent || "").trim().toLowerCase());
     const sections = Array.from(document.querySelectorAll(".light-task-section-toggle")).map(toggle => {
@@ -271,8 +271,8 @@ async function readTaskState(page) {
           done: row.classList.contains("is-done"),
         }))
       : [];
-    const attached = attachedSection
-      ? Array.from(attachedSection.querySelectorAll('.light-info-row[data-workspace-target-kind]')).map(node => ({
+    const connected = connectedSection
+      ? Array.from(connectedSection.querySelectorAll('.light-info-row[data-workspace-target-kind]')).map(node => ({
           kind: String(node.getAttribute("data-workspace-target-kind") || ""),
           id: String(node.getAttribute("data-workspace-target-id") || ""),
           route: String(node.getAttribute("data-workspace-target-route") || ""),
@@ -280,6 +280,7 @@ async function readTaskState(page) {
           value: String(node.querySelector(".light-text-stack span")?.textContent || "").trim(),
           hasIcon: Boolean(node.querySelector(".light-small-icon svg")),
           uses_small_icon: Boolean(node.querySelector(".light-small-icon")),
+          recency_ms: Number(node.getAttribute("data-task-connected-recency-ms") || 0),
         }))
       : [];
     const people = peopleSection
@@ -310,18 +311,20 @@ async function readTaskState(page) {
       hasDescriptionSection: sectionTitles.includes("description"),
       hasPeopleSection: sectionTitles.includes("people"),
       hasChecklistSection: sectionTitles.includes("checklist"),
+      hasNotesSection: sectionTitles.includes("notes"),
+      hasConnectedSection: sectionTitles.includes("connected"),
       hasAttachedSection: sectionTitles.includes("attached"),
-      attachedRowCount: attached.length,
       hasTaskPersonChips: Boolean(peopleSection?.querySelector(".light-record-chip")),
-      hasTaskAttachmentChips: Boolean(attachedSection?.querySelector(".light-record-chip")),
+      hasTaskConnectedChips: Boolean(connectedSection?.querySelector(".light-record-chip")),
       statusHeaderPresent: Boolean(detail?.querySelector(".light-task-detail-card")),
       statusCirclePresent: Boolean(detail?.querySelector(".light-task-status-circle")),
       people,
+      connected,
       sections,
       filters,
       filterVisual,
       checklist,
-      attached,
+      connectedRowCount: connected.length,
     };
   });
 }
