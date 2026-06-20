@@ -502,43 +502,55 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
 }
 
 async function openInlineAudioDetail(page, selector, timeoutMs) {
-  const trigger = page.locator(selector).first();
-  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
-  const target = await trigger.evaluate(node => {
-    const article = node.closest("article.card");
+  const targets = await listCardActionTargets(page, selector);
+  for (const target of targets) {
+    if (!target.card_id && !target.session_id) {
+      continue;
+    }
+    const audioSelector = selectorForCardAction(target, "audio");
+    const inlineSelector = selectorForCardAction(target, "audio_controls_inline");
+    if (!audioSelector || !inlineSelector || !await page.locator(audioSelector).count()) {
+      continue;
+    }
+    await clickSelector(page, audioSelector, timeoutMs);
+    const startedPlaying = await page.waitForFunction(
+      selectorValue => Boolean(document.querySelector(selectorValue)?.classList.contains("is-playing")),
+      audioSelector,
+      { timeout: Math.min(timeoutMs, 2500) }
+    ).then(() => true).catch(() => false);
+    if (!startedPlaying) {
+      continue;
+    }
+    const hasInlineStrip = await page.waitForFunction(
+      selectorValue => Boolean(document.querySelector(selectorValue)),
+      inlineSelector,
+      { timeout: Math.min(timeoutMs, 2500) }
+    ).then(() => true).catch(() => false);
+    if (!hasInlineStrip) {
+      const stillPlaying = await page.locator(audioSelector).evaluate(button => button.classList.contains("is-playing")).catch(() => false);
+      if (stillPlaying) {
+        await clickSelector(page, audioSelector, timeoutMs);
+        await page.waitForTimeout(160);
+      }
+      continue;
+    }
+    await clickSelector(page, inlineSelector, timeoutMs);
+    await page.waitForFunction(() => {
+      const detail = document.getElementById("detail");
+      return String(detail?.getAttribute("data-detail-type") || "") === "audio";
+    }, { timeout: timeoutMs });
+    const before = await readPlayerState(page);
+    await page.waitForTimeout(900);
+    const after = await readPlayerState(page);
+    const detail = await readDetailState(page);
+    await closeDetail(page, timeoutMs);
     return {
-      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
-      card_id: String(article?.getAttribute("data-card-id") || "").trim()
+      target,
+      detail,
+      player_delta_ms: Number(after?.position_ms || 0) - Number(before?.position_ms || 0)
     };
-  });
-  assert(target.card_id || target.session_id, "Inline audio target did not resolve to a canonical card identity");
-  const audioSelector = target.session_id
-    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="audio"]`
-    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="audio"]`;
-  await clickSelector(page, audioSelector, timeoutMs);
-  await page.waitForFunction(
-    selectorValue => Boolean(document.querySelector(selectorValue)?.classList.contains("is-playing")),
-    audioSelector,
-    { timeout: timeoutMs }
-  );
-  const inlineSelector = target.session_id
-    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="audio_controls_inline"]`
-    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="audio_controls_inline"]`;
-  await clickSelector(page, inlineSelector, timeoutMs);
-  await page.waitForFunction(() => {
-    const detail = document.getElementById("detail");
-    return String(detail?.getAttribute("data-detail-type") || "") === "audio";
-  }, { timeout: timeoutMs });
-  const before = await readPlayerState(page);
-  await page.waitForTimeout(900);
-  const after = await readPlayerState(page);
-  const detail = await readDetailState(page);
-  await closeDetail(page, timeoutMs);
-  return {
-    target,
-    detail,
-    player_delta_ms: Number(after?.position_ms || 0) - Number(before?.position_ms || 0)
-  };
+  }
+  throw new Error("No audio card exposed an inline audio detail strip after playback started");
 }
 
 async function readRichPageFrameState(page) {

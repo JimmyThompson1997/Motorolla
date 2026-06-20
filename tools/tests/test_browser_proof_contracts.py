@@ -224,6 +224,7 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "measurements.find(candidate => candidate.can_scroll) || measurements[0]" in source
     assert "listCardActionTargets(" in source
     assert "No page action opened a scrollable rich page that reached the bottom in both themes" in source
+    assert "No audio card exposed an inline audio detail strip after playback started" in source
     assert "reached_bottom" in source
     assert "Open audio controls" in source
     assert "openAudioControls(" in source
