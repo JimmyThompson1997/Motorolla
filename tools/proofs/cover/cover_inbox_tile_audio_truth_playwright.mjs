@@ -191,6 +191,7 @@ async function installInjectionHelpers(page) {
       let armed = true;
       let stopAtMs = 0;
       let injected = false;
+      let pauseRequested = false;
       window.Pucky.request = async (payload) => {
         const command = payload && payload.command;
         if (armed && command === "player.play") {
@@ -199,14 +200,12 @@ async function installInjectionHelpers(page) {
           stopAtMs = Date.now() + Math.max(200, Number(delayMs || 450));
           return result;
         }
-        if (!injected && stopAtMs && command === "player.state" && Date.now() >= stopAtMs) {
+        if (!pauseRequested && stopAtMs && Date.now() >= stopAtMs) {
+          pauseRequested = true;
+          original({ command: "player.pause", args: {} }).catch(() => {});
+        }
+        if (!injected && command === "player.state" && pauseRequested) {
           injected = true;
-          const result = await original(payload);
-          return {
-            ...result,
-            state: "paused",
-            is_playing: false
-          };
         }
         return original(payload);
       };
