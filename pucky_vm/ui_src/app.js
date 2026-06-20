@@ -12331,6 +12331,9 @@
       const back = detail.querySelector(".light-back-button, .detail-back");
       if (back) {
         back.click();
+        if (detail.classList.contains("is-open")) {
+          dismissDetail();
+        }
       } else {
         dismissDetail();
       }
