@@ -659,14 +659,15 @@
     const isPlaying = Boolean(audio && !audio.paused && !audio.ended);
     const durationSource = Number.isFinite(audioPlayerNumberValue(audio.duration, 0)) ? audio.duration : 0;
     const positionSource = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+    const audioElementSource = String(audio.currentSrc || audio.src || "").trim();
     const next = {
       schema: "pucky.player_state.v1",
       loaded: true,
       state: String(overrides.state || "").trim() || (isPlaying ? "playing" : (audio.ended ? "completed" : "paused")),
       is_playing: isPlaying,
       title: String("title" in overrides ? overrides.title : previousPlayer?.title || ""),
-      path: String("path" in overrides ? overrides.path : previousPlayer?.path || ""),
-      source: String("source" in overrides ? overrides.source : previousPlayer?.source || ""),
+      path: String("path" in overrides ? overrides.path : previousPlayer?.path || audioElementSource || ""),
+      source: String("source" in overrides ? overrides.source : previousPlayer?.source || state.activePath || audioElementSource || ""),
       position_ms: Math.max(0, Math.round("position_ms" in overrides ? audioPlayerNumberValue(overrides.position_ms) : positionSource * 1000)),
       duration_ms: Math.max(0, Math.round("duration_ms" in overrides ? audioPlayerNumberValue(overrides.duration_ms) : (hasDuration ? durationSource * 1000 : audioPlayerNumberValue(previousPlayer?.duration_ms, 0)))),
       queue_index: audioPlayerNumberValue("queue_index" in overrides ? overrides.queue_index : previousPlayer?.queue_index, -1),
@@ -971,7 +972,7 @@
         ? Math.max(0, Math.round(Number(args.start_at_ms)))
         : savedPositionFor(nextSource || nextPath);
       const speed = finiteSpeed(args.speed ?? args.rate)
-        ?? savedSpeedForCard(state.cards.find(card => audioControlKey(card) === (nextSource || nextPath)) || {})
+        ?? savedSpeedForCard(findCardByAudioLookupKey(nextSource || nextPath) || {})
         ?? state.player.speed
         ?? 1;
       const audio = ensureSharedBrowserAudio();
@@ -9614,6 +9615,7 @@
     const sourceInfo = describeAudioSourceForCard(card);
     const startSpeed = resolvedStartSpeedForCard(card);
     const audioUrl = String(card?.audio_url || "").trim();
+    const controlKey = audioControlKey(card) || audioUrl;
     if (same && current.is_playing) {
       setAudioProbePhase(card, "pause_pending", {
         reason: "pause_requested",
@@ -9637,16 +9639,16 @@
     }
     const start = same && !sameCompleted
       ? savedPositionFor(current.source || current.path)
-      : savedPositionFor(audioUrl);
+      : savedPositionFor(controlKey);
     if (!same || sameCompleted) {
-      forgetCompleted(audioUrl);
+      forgetCompleted(controlKey);
     }
     setAudioProbePhase(card, "starting", {
       reason: same && !sameCompleted ? "resume_requested" : "play_requested",
       clear_error: true,
       ...sourceInfo
     });
-    state.activePath = audioControlKey(card);
+    state.activePath = controlKey;
     recordAudioProbeEvent("source_resolved", {
       target_key: busyKey,
       ...sourceInfo
@@ -9663,7 +9665,7 @@
       command: "player.play",
       args: {
         path: audioUrl,
-        source: audioControlKey(card) || audioUrl,
+        source: controlKey,
         title: card.title,
         start_at_ms: start,
         speed: startSpeed
@@ -12085,7 +12087,7 @@
         const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
+          args: { path: audioPath, source: audioControlKey(card) || audioPath, title: card.title, start_at_ms: positionMs, speed: resolvedStartSpeedForCard(card) }
         });
       }
       state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
@@ -12300,7 +12302,7 @@
         const audioPath = await prepareAudioForPlayback(card);
         await Pucky.request({
           command: "player.play",
-          args: { path: audioPath, title: card.title, start_at_ms: positionMs }
+          args: { path: audioPath, source: audioControlKey(card) || audioPath, title: card.title, start_at_ms: positionMs }
         });
       }
       state.player = stampPlayerState(await Pucky.request({ command: "player.seek", args: { position_ms: positionMs } }));
@@ -13702,13 +13704,55 @@
       return card.audio_playlist_path;
     }
     if (!hasNativeAudioBridge() && card.audio_url) {
-      return card.audio_url;
+      return hostedAudioSessionKey(card) || card.audio_url;
     }
     return card.audio_path || card.audio_media_id || card.audio_url || card.session_id || card.title || "";
   }
 
   function audioStateKey(card) {
     return normalizePath(audioControlKey(card));
+  }
+
+  function hostedAudioSessionKey(card) {
+    if (!card || typeof card !== "object") {
+      return "";
+    }
+    const explicit = String(card.audio_media_id || card.media_id || "").trim();
+    if (explicit) {
+      return `media:${explicit}`;
+    }
+    const cardId = String(card.card_id || "").trim();
+    if (cardId) {
+      return `card:${cardId}:audio`;
+    }
+    const sessionId = cardSessionId(card);
+    if (sessionId) {
+      return `session:${sessionId}:audio`;
+    }
+    const threadId = cardThreadId(card);
+    if (threadId) {
+      return `thread:${threadId}:audio`;
+    }
+    const audioUrl = canonicalHostedAudioUrlIdentity(card.audio_url);
+    return audioUrl ? `url:${audioUrl}` : "";
+  }
+
+  function canonicalHostedAudioUrlIdentity(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+    try {
+      const base = window.location && window.location.origin
+        ? window.location.origin
+        : DEFAULT_LINKS_API_BASE;
+      const url = new URL(raw, base);
+      url.hash = "";
+      url.search = "";
+      return url.toString();
+    } catch (_) {
+      return raw.replace(/[?#].*$/, "");
+    }
   }
 
   function playerStateKey(player) {
@@ -14021,8 +14065,12 @@
     if (!playerHasAudioIdentity(player) || !hasAudio(card)) {
       return false;
     }
+    if (samePath(playerStateKey(player), audioStateKey(card))) {
+      return true;
+    }
     return samePath(player.path, card.audio_path)
       || samePath(player.path, card.audio_url)
+      || samePath(player.source, audioControlKey(card))
       || samePath(player.source, card.audio_playlist_path)
       || samePath(player.source, card.audio_url);
   }
@@ -14098,7 +14146,9 @@
     if (!targetKey) {
       return false;
     }
-    const phase = currentTileAudioPhase({ audio_path: targetKey, audio_url: targetKey, title: state.audioProbe.target_card?.title || "" });
+    const phase = isAudioTilePhase(state.audioProbe.current_tile_audio_phase)
+      ? state.audioProbe.current_tile_audio_phase
+      : "idle";
     const nextKey = playerStateKey(nextPlayer);
     const matchesTarget = samePath(nextKey, targetKey);
     const isPlaying = Boolean(nextPlayer?.is_playing && matchesTarget);
@@ -14156,6 +14206,19 @@
     if (!samePath(playerStateKey(player), state.activePath)) {
       state.activePath = "";
     }
+  }
+
+  function findCardByAudioLookupKey(key) {
+    const target = normalizePath(key);
+    if (!target) {
+      return null;
+    }
+    return feedDisplayCards().find(card => (
+      samePath(audioControlKey(card), target)
+        || samePath(card.audio_url, target)
+        || samePath(card.audio_path, target)
+        || samePath(card.audio_playlist_path, target)
+    )) || null;
   }
 
   function samePath(left, right) {

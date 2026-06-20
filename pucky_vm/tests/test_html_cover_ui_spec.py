@@ -395,6 +395,7 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     sync_probe = function_block(app, "syncAudioProbeFromPlayerState")
     browser_request = function_block(app, "browserRequest")
     ensure_shared_browser_audio = function_block(app, "ensureSharedBrowserAudio")
+    sync_shared_browser_player = function_block(app, "syncSharedBrowserPlayerState")
     describe_audio_source = function_block(app, "describeAudioSourceForCard")
     audio_tile_status = function_block(app, "audioTileStatus")
     confirm_playback = function_block(app, "confirmAudioProbePlaybackStart")
@@ -403,6 +404,8 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     current_player_position = function_block(app, "currentPlayerPositionMs")
     playback_position = function_block(app, "playbackPositionForCard")
     should_animate = function_block(app, "shouldAnimateActiveTileAudio")
+    hosted_audio_session_key = function_block(app, "hostedAudioSessionKey")
+    is_same_audio_card = function_block(app, "isSameAudioCard")
 
     assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
     assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
@@ -429,20 +432,31 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
     assert "const current = currentBrowserPlayerState();" in toggle_hosted_audio
     assert 'const audioUrl = String(card?.audio_url || "").trim();' in toggle_hosted_audio
+    assert "const controlKey = audioControlKey(card) || audioUrl;" in toggle_hosted_audio
+    assert ": savedPositionFor(controlKey);" in toggle_hosted_audio
+    assert "forgetCompleted(controlKey);" in toggle_hosted_audio
     assert 'command: "player.play",' in toggle_hosted_audio
-    assert 'source: audioControlKey(card) || audioUrl,' in toggle_hosted_audio
+    assert "source: controlKey," in toggle_hosted_audio
     assert 'if (!hasNativeAudioBridge() && card.audio_url) {' in audio_control_key
-    assert "return card.audio_url;" in audio_control_key
+    assert "return hostedAudioSessionKey(card) || card.audio_url;" in audio_control_key
+    assert "return `media:${explicit}`;" in hosted_audio_session_key
+    assert "return `card:${cardId}:audio`;" in hosted_audio_session_key
+    assert "return `session:${sessionId}:audio`;" in hosted_audio_session_key
+    assert "samePath(playerStateKey(player), audioStateKey(card))" in is_same_audio_card
     assert 'if (!Boolean(player?.is_playing) || !samePath(targetKey, playerStateKey(player))) {' in confirm_playback
     assert 'const BROWSER_AUDIO_RUNTIME = "browser_native";' in app
     assert 'const audio = new Audio();' in ensure_shared_browser_audio
     assert 'audio.addEventListener("loadedmetadata", () => syncSharedBrowserPlayerState({ render: true }));' in ensure_shared_browser_audio
     assert 'audio.addEventListener("ratechange", () => syncSharedBrowserPlayerState({ render: false }));' in ensure_shared_browser_audio
+    assert "const audioElementSource = String(audio.currentSrc || audio.src || \"\").trim();" in sync_shared_browser_player
+    assert "previousPlayer?.path || audioElementSource" in sync_shared_browser_player
+    assert "previousPlayer?.source || state.activePath || audioElementSource" in sync_shared_browser_player
     assert 'return playerHasAudioIdentity(state.player)' in browser_request
     assert 'return setAudioProbePhaseByKey(targetKey, "playing_confirmed", {' in confirm_playback
     assert 'reason: String(reason || "play_request_acknowledged")' in confirm_playback
     assert 'if (phase !== "playing_confirmed") {' in current_strip_kind
     assert 'if (Number(state.player.duration_ms || 0) > 0 && activePlayerMatchesCard(card)) {' in current_strip_kind
+    assert "const phase = isAudioTilePhase(state.audioProbe.current_tile_audio_phase)" in sync_probe
     assert 'setAudioProbePhaseByKey(targetKey, "playing_confirmed"' in sync_probe
     assert 'setAudioProbeTerminalByKey(targetKey, "ended_immediately"' in sync_probe
     assert 'if (prefersHostedDirectAudio(card)) {' in describe_audio_source

@@ -400,22 +400,50 @@ async function readPlayerState(page) {
 
 async function waitForPlayerAdvance(page, timeoutMs, minimumDeltaMs = 400) {
   const before = await readPlayerState(page);
-  await page.waitForFunction(
-    ({ minimumDelta }) => window.Pucky.request({ command: "player.state", args: {} }).then((player) => {
-      const current = Number(player?.position_ms || 0);
-      const duration = Number(player?.duration_ms || 0);
-      const playing = Boolean(player?.is_playing);
-      return current >= minimumDelta || (duration > 0 && current >= duration) || !playing;
-    }),
-    { minimumDelta: Math.max(50, Number(minimumDeltaMs || 400)) },
-    { timeout: timeoutMs }
-  );
-  const after = await readPlayerState(page);
+  const startPosition = Number(before?.position_ms || 0);
+  const timeoutAt = Date.now() + Math.max(250, Number(timeoutMs || 0));
+  let after = before;
+  let durationMs = Number(before?.duration_ms || 0);
+  let maxPositionMs = Math.max(0, startPosition);
+  while (Date.now() < timeoutAt) {
+    await page.waitForTimeout(100);
+    after = await readPlayerState(page);
+    const currentPositionMs = Number(after?.position_ms || 0);
+    durationMs = Math.max(durationMs, Number(after?.duration_ms || 0));
+    maxPositionMs = Math.max(maxPositionMs, currentPositionMs);
+    const requiredDeltaMs = durationMs > 0
+      ? requiredAudioProgressDelta(durationMs)
+      : Math.max(50, Number(minimumDeltaMs || 400));
+    const completedShortClip = durationMs > 0
+      && durationMs < 4000
+      && maxPositionMs >= Math.max(requiredDeltaMs, durationMs - 80);
+    if (maxPositionMs - startPosition >= requiredDeltaMs || completedShortClip) {
+      break;
+    }
+  }
+  durationMs = Math.max(durationMs, Number(after?.duration_ms || 0), Number(before?.duration_ms || 0));
+  const requiredDeltaMs = requiredAudioProgressDelta(durationMs);
+  const completedShortClip = durationMs > 0
+    && durationMs < 4000
+    && maxPositionMs >= Math.max(requiredDeltaMs, durationMs - 80);
+  const observedStartMs = completedShortClip ? 0 : startPosition;
   return {
     before,
     after,
-    delta_ms: Number(after?.position_ms || 0) - Number(before?.position_ms || 0)
+    delta_ms: Math.max(0, maxPositionMs - observedStartMs),
+    duration_ms: durationMs,
+    required_delta_ms: requiredDeltaMs,
+    observed_start_ms: observedStartMs,
+    max_position_ms: maxPositionMs
   };
+}
+
+function requiredAudioProgressDelta(durationMs) {
+  const duration = Math.max(0, Number(durationMs || 0));
+  if (duration > 0 && duration < 4000) {
+    return Math.max(250, Math.min(1000, Math.round(duration * 0.5)));
+  }
+  return 2000;
 }
 
 async function openAudioControls(page, selector, timeoutMs) {
@@ -542,7 +570,7 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
     targetSelector,
     { timeout: timeoutMs }
   );
-  const progress = await waitForPlayerAdvance(page, timeoutMs, 250);
+  const progress = await waitForPlayerAdvance(page, Math.min(timeoutMs, 3500), 2000);
   const playing = await page.locator(targetSelector).evaluate(button => ({
     classes: String(button.className || "").trim(),
     aria_label: String(button.getAttribute("aria-label") || "").trim()
@@ -896,8 +924,14 @@ async function main() {
     assert(lightInboxAudioState.title === darkFeedAudioState.title, "Light Inbox audio title diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.session_id === darkFeedAudioState.session_id, "Light Inbox audio session diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.aria_label === darkFeedAudioState.aria_label, "Light Inbox audio control label diverged from the canonical dark Home feed");
-    assert(lightInboxAudioState.progress.delta_ms >= 0, "Light Inbox audio did not advance or complete after starting playback");
-    assert(darkFeedAudioState.progress.delta_ms >= 0, "Dark Feed audio did not advance or complete after starting playback");
+    assert(
+      lightInboxAudioState.progress.delta_ms >= lightInboxAudioState.progress.required_delta_ms,
+      `Light Inbox audio did not advance enough after starting playback (${lightInboxAudioState.progress.delta_ms} ms / required ${lightInboxAudioState.progress.required_delta_ms} ms; duration ${lightInboxAudioState.progress.duration_ms} ms; observed_start ${lightInboxAudioState.progress.observed_start_ms} ms; max ${Number(lightInboxAudioState.progress.max_position_ms || 0)} ms; before ${Number(lightInboxAudioState.progress.before?.position_ms || 0)} ms; after ${Number(lightInboxAudioState.progress.after?.position_ms || 0)} ms; state ${String(lightInboxAudioState.progress.after?.state || "")}; playing ${Boolean(lightInboxAudioState.progress.after?.is_playing)})`
+    );
+    assert(
+      darkFeedAudioState.progress.delta_ms >= darkFeedAudioState.progress.required_delta_ms,
+      `Dark Feed audio did not advance enough after starting playback (${darkFeedAudioState.progress.delta_ms} ms / required ${darkFeedAudioState.progress.required_delta_ms} ms; duration ${darkFeedAudioState.progress.duration_ms} ms; observed_start ${darkFeedAudioState.progress.observed_start_ms} ms; max ${Number(darkFeedAudioState.progress.max_position_ms || 0)} ms; before ${Number(darkFeedAudioState.progress.before?.position_ms || 0)} ms; after ${Number(darkFeedAudioState.progress.after?.position_ms || 0)} ms; state ${String(darkFeedAudioState.progress.after?.state || "")}; playing ${Boolean(darkFeedAudioState.progress.after?.is_playing)})`
+    );
     logAction(actions, "open_inline_audio_detail");
     const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
     const lightInboxInlineAudioDetail = await openInlineAudioDetail(
@@ -908,7 +942,7 @@ async function main() {
     assert(darkFeedInlineAudioDetail.detail.detail_type === "audio", "Dark Feed inline audio strip did not open audio detail");
     assert(lightInboxInlineAudioDetail.detail.detail_type === "audio", "Light Inbox inline audio strip did not open audio detail");
     assert(
-      darkFeedInlineAudioDetail.player_delta_ms >= 0 && lightInboxInlineAudioDetail.player_delta_ms >= 0,
+      darkFeedInlineAudioDetail.player_delta_ms >= 500 && lightInboxInlineAudioDetail.player_delta_ms >= 500,
       "Inline audio detail did not preserve the active player session"
     );
     logAction(actions, "open_audio_controls_navigation");

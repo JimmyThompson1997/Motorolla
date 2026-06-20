@@ -201,6 +201,8 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     assert 'assert(summary.results.immediate_feedback.pass' in source
     assert 'assert(summary.results.playing_stability.pass' in source
     assert 'assert(summary.results.cross_card.pass' in source
+    assert "observed_start_ms: observedStartMs" in source
+    assert "max_position_ms: maxPositionMs" in source
     assert 'assert(summary.results.injected_failure.pass' in source
     assert 'assert(summary.results.injected_early_stop.pass' in source
     assert 'summary.evidence.video_path = pageVideo ? await pageVideo.path().catch(() => "") : "";' in source
@@ -229,6 +231,11 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "No page action opened a scrollable rich page that reached the bottom in both themes" in source
     assert "No audio card exposed an inline audio detail strip after playback started" in source
     assert "reached_bottom" in source
+    assert "maxPositionMs" in source
+    assert "function requiredAudioProgressDelta(" in source
+    assert "required_delta_ms: requiredDeltaMs" in source
+    assert "return 2000;" in source
+    assert "player_delta_ms >= 500" in source
     assert "Open audio controls" in source
     assert "openAudioControls(" in source
     assert "inbox_audio_controls" in source

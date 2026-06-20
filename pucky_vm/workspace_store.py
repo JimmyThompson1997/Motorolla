@@ -751,10 +751,13 @@ class WorkspaceStore:
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
+            contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
+            contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
             notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
             demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
         now = self.now_ms()
+        newly_seeded = not seeded
         if not seeded:
             defaults, default_links = seeded_workspace_snapshot(
                 default_workspace_records(now),
@@ -798,6 +801,16 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
+        if not contact_html_removed:
+            if newly_seeded:
+                self._mark_workspace_meta("contact_html_removed_v1", now)
+            else:
+                self._remove_contact_html_v1(now)
+        if not contact_cleanup_photos:
+            if newly_seeded:
+                self._mark_workspace_meta("contact_cleanup_photos_v1", now)
+            else:
+                self._cleanup_contact_photos_v1(now)
         if not notes_only_html_seeded:
             self._migrate_notes_only_html_v1(now)
         if not metadata_cleanup_seeded:
@@ -833,6 +846,14 @@ class WorkspaceStore:
         }
         return self.upsert_record("contacts", payload)
 
+    def _mark_workspace_meta(self, key: str, now_ms: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                (key, "1", now_ms),
+            )
+            self._conn.commit()
+
     def _remove_contact_endpoints_v1(self, now_ms: int) -> None:
         with self._lock:
             rows = self._conn.execute("SELECT record_id, metadata_json FROM workspace_records WHERE kind = 'contact'").fetchall()
@@ -861,6 +882,82 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("contact_endpoints_removed_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _remove_contact_html_v1(self, now_ms: int) -> None:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT record_id, metadata_json FROM workspace_records WHERE kind = 'contact'"
+            ).fetchall()
+            for row in rows:
+                metadata = _json_loads(row["metadata_json"], {})
+                next_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                next_metadata.pop("html", None)
+                next_metadata.pop("html_asset_id", None)
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET html = '', html_asset_id = '', metadata_json = ?, updated_at_ms = ?
+                    WHERE kind = 'contact' AND record_id = ?
+                    """,
+                    (_json_dumps(next_metadata), now_ms, row["record_id"]),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_html_removed_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _cleanup_contact_photos_v1(self, now_ms: int) -> None:
+        photo_by_contact_id = {
+            "maya": "fixtures/contact_photos/maya.webp",
+            "sam-rivera": "fixtures/contact_photos/sam.webp",
+            "eric-donaldson": "fixtures/contact_photos/eric.webp",
+        }
+        fallback_photo = "fixtures/contact_photos/proof-contact.webp"
+        retired_contact_id = "clinic-front-desk"
+        with self._lock:
+            self._conn.execute(
+                """
+                DELETE FROM workspace_links
+                WHERE (source_kind = 'contact' AND source_id = ?)
+                   OR (target_kind = 'contact' AND target_id = ?)
+                """,
+                (retired_contact_id, retired_contact_id),
+            )
+            self._conn.execute(
+                """
+                UPDATE workspace_records
+                SET archived = 1, deleted = 1, updated_at_ms = ?
+                WHERE kind = 'contact' AND record_id = ?
+                """,
+                (now_ms, retired_contact_id),
+            )
+            rows = self._conn.execute(
+                "SELECT record_id, metadata_json, deleted FROM workspace_records WHERE kind = 'contact'"
+            ).fetchall()
+            for row in rows:
+                record_id = str(row["record_id"] or "").strip()
+                metadata = _json_loads(row["metadata_json"], {})
+                next_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                if record_id == SELF_CONTACT_ID:
+                    next_metadata.pop("photo", None)
+                elif not bool(row["deleted"]):
+                    next_metadata["photo"] = photo_by_contact_id.get(record_id, fallback_photo)
+                else:
+                    continue
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET metadata_json = ?, updated_at_ms = ?
+                    WHERE kind = 'contact' AND record_id = ?
+                    """,
+                    (_json_dumps(next_metadata), now_ms, record_id),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_cleanup_photos_v1", "1", now_ms),
             )
             self._conn.commit()
 

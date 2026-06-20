@@ -688,10 +688,20 @@ async function readTaskDetailState(page) {
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
     const statusTrigger = document.querySelector(".light-task-status-trigger");
+    const detailSurface = document.querySelector(".light-task-detail-surface");
+    const statusValue = statusTrigger?.getAttribute("data-task-status")
+      || detailSurface?.getAttribute("data-task-status")
+      || "";
+    const statusLabels = {
+      do: "To do",
+      in_progress: "In progress",
+      waiting: "Waiting",
+      done: "Done"
+    };
     const statusLabel = statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent?.trim()
       || statusTrigger?.textContent?.trim()
+      || statusLabels[statusValue]
       || "";
-    const statusValue = statusTrigger?.getAttribute("data-task-status") || "";
     const hasNotes = /\bnotes\b/i.test(pageText);
     const hasRelated = /\brelated\b/i.test(pageText);
     const hasGeneratedPage = /\bgenerated page\b/i.test(pageText);
