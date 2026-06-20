@@ -3954,6 +3954,21 @@ button {
   width: 100%;
 }
 
+.light-linked-record-list {
+  gap: 12px;
+}
+
+.light-linked-record-feed-row {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.light-linked-records-empty-shell {
+  min-height: 74px;
+  background: color-mix(in srgb, var(--home-shell-card-strong) 82%, transparent);
+  box-shadow: none;
+}
+
 .light-list {
   display: flex;
   flex-direction: column;

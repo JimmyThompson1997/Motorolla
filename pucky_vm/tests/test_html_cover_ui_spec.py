@@ -221,9 +221,19 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "lightCalendarEventDetailsSection(meeting, attendees)" in light_meeting_detail
     assert 'page.append(lightCopySection("Description", meeting.summary));' in light_meeting_detail
     assert light_meeting_detail.index("lightCalendarEventDetailsSection(meeting, attendees)") < light_meeting_detail.index('lightCopySection("Description", meeting.summary)')
-    assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' in light_meeting_detail
-    assert 'card.classList.add("is-single");' in light_meeting_detail
+    assert "lightLinkedRecordSection(meeting, {" in light_meeting_detail
+    assert 'title: "Connected"' in light_meeting_detail
+    assert 'excludeKinds: ["contact"]' in light_meeting_detail
+    assert "showWhenEmpty: true" in light_meeting_detail
+    assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' not in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
+    linked_record_section = function_block(app, "lightLinkedRecordSection")
+    assert 'const entries = workspaceLinkedEntries(record, {' in linked_record_section
+    assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
+    assert "if (!entries.length && !showWhenEmpty) {" in linked_record_section
+    assert 'section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();' in linked_record_section
+    assert 'body.append(el("div", "light-card light-linked-records-empty-shell"));' in linked_record_section
+    assert 'entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {' in linked_record_section
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
     assert 'who.dataset.detailRow = "who";' in app
     assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
@@ -290,8 +300,9 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip.is-link" in styles
     assert ".light-attendee-chip-guest" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip-guest" in styles
-    assert ".light-event-connected-card.is-single" in styles
-    assert ".app-shell[data-theme=\"dark\"] .light-event-connected-card.is-single" in styles
+    assert ".light-linked-record-list" in styles
+    assert ".light-linked-record-feed-row" in styles
+    assert ".light-linked-records-empty-shell" in styles
 
 
 def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
@@ -947,6 +958,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     linked_entries = function_block(app, "workspaceLinkedEntries")
     linked_rows = function_block(app, "workspaceLinkedRows")
     linked_notes = function_block(app, "lightLinkedNotesSection")
+    linked_record_section = function_block(app, "lightLinkedRecordSection")
     contact_detail = function_block(app, "lightContactDetailPage")
     feed_detail = function_block(app, "lightFeedDetailPage")
     project_detail = function_block(app, "lightProjectDetailPage")
@@ -961,8 +973,15 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'return workspaceLinkedEntries(record, options).map(entry => {' in linked_rows
     assert 'includeKinds: ["note"],' in linked_notes
     assert 'valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"' in linked_notes
-    assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
-    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' in contact_detail
+    assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
+    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
+    assert "page.append(lightLinkedRecordSection(contact, {" in contact_detail
+    assert 'title: "Linked records"' in contact_detail
+    assert "showWhenEmpty: true" in contact_detail
+    assert 'fromRoute: "contact-detail"' in contact_detail
+    assert "const title = options.title || \"Linked records\";" in linked_record_section
+    assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
+    assert 'const entries = workspaceLinkedEntries(record, {' in linked_record_section
     assert "lightHtmlDocument(contact" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
     assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
@@ -1308,8 +1327,10 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));' in contact_detail
     assert 'lightInfoSection("Endpoints"' not in contact_detail
     assert "meta.endpoints" not in contact_detail
-    assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
-    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' in contact_detail
+    assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
+    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
+    assert "lightLinkedRecordSection(contact, {" in contact_detail
+    assert "showWhenEmpty: true" in contact_detail
     assert "lightHtmlDocument(contact" not in contact_detail
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail

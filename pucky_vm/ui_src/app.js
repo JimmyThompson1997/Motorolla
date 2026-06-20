@@ -3926,14 +3926,11 @@
       value: item
       }))));
     }
-    const notes = lightLinkedNotesSection(contact);
-    if (notes) {
-      page.append(notes);
-    }
-    const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });
-    if (linkedRows.length) {
-      page.append(lightInfoSection("Linked records", linkedRows));
-    }
+    page.append(lightLinkedRecordSection(contact, {
+      title: "Linked records",
+      showWhenEmpty: true,
+      fromRoute: "contact-detail"
+    }));
     return page;
   }
 
@@ -4213,18 +4210,12 @@
     if (String(meeting.summary || "").trim()) {
       page.append(lightCopySection("Description", meeting.summary));
     }
-    const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true });
-    if (chips) {
-      const section = el("section", "light-info-section");
-      section.append(lightSectionTitle("Connected"));
-      const card = el("div", `light-card light-attendee-chip-card light-event-connected-card ${calendarEventTone(meeting)}`.trim());
-      if (chips.childElementCount === 1) {
-        card.classList.add("is-single");
-      }
-      card.append(chips);
-      section.append(card);
-      page.append(section);
-    }
+    page.append(lightLinkedRecordSection(meeting, {
+      title: "Connected",
+      excludeKinds: ["contact"],
+      showWhenEmpty: true,
+      fromRoute: "meeting-detail"
+    }));
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
       page.append(lightListSection("Agenda", meta.agenda));
     }
@@ -5595,13 +5586,14 @@
       if ((includeKinds && !includeKinds.has(normalizedKind)) || excludeKinds.has(normalizedKind)) {
         return;
       }
-      const relatedId = isSource ? link.target_id : link.source_id;
+      const relatedId = String(isSource ? link.target_id : link.source_id || "").trim();
       const related = workspaceRecordByKind(relatedKind, relatedId);
-      const label = related?.title || link.label || relatedId || graphKindLabel(relatedKind);
+      const label = String(related?.title || link.label || relatedId || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
       rows.push({
         link,
         related,
+        kind: normalizedKind,
         relatedKind: normalizedKind,
         relatedId,
         label,
@@ -5640,6 +5632,86 @@
       return null;
     }
     return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
+  }
+
+  function lightLinkedRecordChips(entry) {
+    if (entry?.related) {
+      return graphObjectChips(entry.related);
+    }
+    const row = el("span", "light-graph-chip-row");
+    row.append(el("span", "light-graph-chip", graphKindLabel(entry?.kind)));
+    return row;
+  }
+
+  function lightLinkedRecordFeedRow(entry, options = {}) {
+    const kind = String(entry?.kind || entry?.relatedKind || "").trim();
+    const target = entry?.target || null;
+    const related = entry?.related || null;
+    const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
+    const row = el(
+      isInteractive ? "button" : "div",
+      [
+        "light-card",
+        "light-feed-row",
+        "light-graph-row",
+        "light-linked-record-feed-row",
+        String(options.rowClassName || "").trim(),
+      ].filter(Boolean).join(" ")
+    );
+    const title = String(related?.title || entry?.label || entry?.relatedId || graphKindLabel(kind)).trim() || graphKindLabel(kind);
+    const detail = related
+      ? graphListLabel(related)
+      : String(entry?.relation || graphKindLabel(kind)).trim() || graphKindLabel(kind);
+    row.dataset.recordId = String(related?.id || entry?.relatedId || "").trim();
+    row.dataset.linkedRecordKind = kind;
+    row.dataset.linkedRecordId = String(entry?.relatedId || "").trim();
+    if (isInteractive) {
+      row.type = "button";
+      row.dataset.workspaceTargetRoute = target.route;
+      row.dataset.workspaceTargetId = target.id;
+      row.dataset.workspaceTargetKind = target.kind || kind;
+      row.addEventListener("click", () => openWorkspaceTarget(
+        target,
+        options.fromRoute || state.route || "",
+        options.openOptions || {}
+      ));
+    }
+    row.append(
+      lightSmallIcon(graphKindIcon(kind), graphKindAccentKey(kind)),
+      lightTextStack(title, detail),
+      lightLinkedRecordChips(entry),
+      isInteractive ? el("span", "light-chevron", ">") : el("span", "")
+    );
+    return row;
+  }
+
+  function lightLinkedRecordSection(record, options = {}) {
+    const title = options.title || "Linked records";
+    const showWhenEmpty = options.showWhenEmpty === true;
+    const entries = workspaceLinkedEntries(record, {
+      includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
+      excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : []
+    });
+    if (!entries.length && !showWhenEmpty) {
+      return null;
+    }
+    const section = el("section", "light-linked-records-section light-feed-section");
+    section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();
+    const header = el("div", "light-feed-section-header");
+    header.append(lightSectionTitle(title));
+    const body = el("div", "light-linked-record-list light-feed-section-body light-feed-list");
+    body.dataset.linkedRecordsCount = String(entries.length);
+    if (!entries.length) {
+      body.append(el("div", "light-card light-linked-records-empty-shell"));
+    } else {
+      entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {
+        fromRoute: options.fromRoute || state.route || "",
+        rowClassName: options.rowClassName || "",
+        openOptions: options.openOptions || {}
+      })));
+    }
+    section.append(header, body);
+    return section;
   }
 
   function noteContentUpdatedAtMs(note) {
