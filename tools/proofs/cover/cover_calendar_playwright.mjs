@@ -522,8 +522,8 @@ async function setCalendarTypeEnabled(page, label, enabled) {
   }
 }
 
-async function selectConnectedChip(page, label) {
-  await page.locator(".light-event-connected-card .light-attendee-chip", { hasText: label }).first().click();
+async function selectConnectedRow(page, label) {
+  await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row', { hasText: label }).first().click();
 }
 
 function proofEventSelector(seed) {
@@ -543,8 +543,15 @@ async function selectCalendarEvent(page, seed) {
   await waitForHeaderText(page, "Proof freelance review call");
 }
 
-async function selectCalendarDetailTarget(page, label, route, expectedText) {
-  await selectConnectedChip(page, label);
+async function selectCalendarEventById(page, seed, eventSuffix, expectedTitle) {
+  await page.locator(`.light-event-block[data-event-id="${seed.runId}-${eventSuffix}"] .light-event-main`).click();
+  await waitForHeaderText(page, expectedTitle);
+}
+
+async function selectCalendarDetailTarget(page, route, targetId, expectedText) {
+  await page.locator(
+    `.light-linked-records-section[data-linked-records-title="connected"] [data-workspace-target-route="${route}"][data-workspace-target-id="${targetId}"]`
+  ).first().click();
   if (route === "contact-detail") {
     await waitForSelectorText(page, ".light-profile-card h1", expectedText);
   } else if (route === "task-detail") {
@@ -554,7 +561,7 @@ async function selectCalendarDetailTarget(page, label, route, expectedText) {
   } else {
     await waitForHeaderText(page, expectedText);
   }
-  assert(await currentLightRoute(page) === route, `Expected ${route} after selecting ${label}, got ${await currentLightRoute(page)}.`);
+  assert(await currentLightRoute(page) === route, `Expected ${route} after selecting ${targetId}, got ${await currentLightRoute(page)}.`);
 }
 
 async function selectTimezone(page, value) {
@@ -648,8 +655,9 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const detailSectionTitles = (await allText(page, ".light-document-page .light-section-title")).map(value => value.toUpperCase());
     assert(detailSectionTitles.includes("DETAILS"), `Expected event detail section titles to include Details, got ${detailSectionTitles.join(", ")}.`);
     assert(detailSectionTitles.includes("DESCRIPTION"), `Expected event detail section titles to include Description, got ${detailSectionTitles.join(", ")}.`);
+    assert(detailSectionTitles.includes("CONNECTED"), `Expected event detail section titles to include Connected, got ${detailSectionTitles.join(", ")}.`);
     assert(detailSectionTitles.indexOf("DETAILS") < detailSectionTitles.indexOf("DESCRIPTION"), `Expected Details to appear before Description, got ${detailSectionTitles.join(", ")}.`);
-    assert(!detailText.includes("Linked records"), "Expected event detail to collapse Linked records into Connected chips.");
+    assert(!detailText.includes("Linked records"), "Expected event detail to keep the section label as Connected.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected Who to render guests as chips instead of paragraph copy.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected Who to include at least one neutral guest chip.");
     const whoChipTexts = await allText(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip');
@@ -657,16 +665,19 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       assert(whoChipTexts.includes(label), `Expected Who to include ${label}, got ${whoChipTexts.join(", ")}.`);
     }
     await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
-    const connectedChipTexts = await allText(page, ".light-event-connected-card .light-attendee-chip");
+    const connectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
+    const connectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
+    assert(await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-attendee-chip').count() === 0, "Expected Connected to switch from attendee pills to standard feed rows.");
+    assert(await connectedRows.count() === 5, `Expected the populated Connected section to render five linked rows, got ${await connectedRows.count()}.`);
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
-      assert(connectedChipTexts.includes(label), `Expected Connected to include ${label}, got ${connectedChipTexts.join(", ")}.`);
+      const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
+      assert(connectedRowTexts.some(value => value.includes(normalizedLabel)), `Expected Connected to include ${label}, got ${connectedRowTexts.join(", ")}.`);
     }
-    assert(!connectedChipTexts.includes("Jimmy T."), "Expected contact chips to stay in Who, not Connected.");
-    assert(!connectedChipTexts.includes("Jeff B."), "Expected contact chips to stay in Who, not Connected.");
-    assert(!connectedChipTexts.includes("Outside counsel"), "Expected unmatched attendees to stay in Who, not Connected.");
-    assert(!connectedChipTexts.includes("Kitchen table"), "Expected place to stay out of Connected chips on detail.");
+    assert(!connectedRowTexts.some(value => value.includes("Jimmy T.")), "Expected contact chips to stay in Who, not Connected.");
+    assert(!connectedRowTexts.some(value => value.includes("Jeff B.")), "Expected contact chips to stay in Who, not Connected.");
+    assert(!connectedRowTexts.some(value => value.includes("Outside counsel")), "Expected unmatched attendees to stay in Who, not Connected.");
+    assert(!connectedRowTexts.some(value => value.includes("Kitchen table")), "Expected place to stay out of Connected rows on detail.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="place"] .light-attendee-chip').count() === 0, "Expected Place to stay plain text only.");
-    await assertChipContrast(page, ".light-event-connected-card .light-attendee-chip.is-link");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail.png`, summary);
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
     await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
@@ -675,23 +686,32 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     for (const target of [
-      { label: "Proof freelance follow-up", route: "project-detail", expectedText: "Proof freelance follow-up" },
-      { label: "Send proof review notes · Task", route: "task-detail", expectedText: "Send proof review notes" },
-      { label: "Proof review outline", route: "note-detail", expectedText: "Proof review outline" },
-      { label: "Proof freelance prep", route: "meeting-note-detail", expectedText: "Proof freelance prep" },
-      { label: "Send proof review notes · Reminder", route: "reminder-detail", expectedText: "Send proof review notes" }
+      { id: `${seed.runId}-project`, route: "project-detail", expectedText: "Proof freelance follow-up" },
+      { id: `${seed.runId}-task`, route: "task-detail", expectedText: "Send proof review notes" },
+      { id: `${seed.runId}-note`, route: "note-detail", expectedText: "Proof review outline" },
+      { id: `${seed.runId}-meeting-note`, route: "meeting-note-detail", expectedText: "Proof freelance prep" },
+      { id: `${seed.runId}-reminder`, route: "reminder-detail", expectedText: "Send proof review notes" }
     ]) {
-      await selectCalendarDetailTarget(page, target.label, target.route, target.expectedText);
+      await selectCalendarDetailTarget(page, target.route, target.id, target.expectedText);
       await saveShot(page, reportDir, `calendar-desktop-${theme}-${target.route}.png`, summary);
       await page.getByRole("button", { name: "Back" }).click();
-      assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from ${target.label} to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+      assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from ${target.route} to restore meeting-detail, got ${await currentLightRoute(page)}.`);
       await waitForHeaderText(page, "Proof freelance review call");
     }
+    await page.getByRole("button", { name: "Back" }).click();
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
+    const emptyConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
+    await emptyConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+    assert(await emptyConnectedSection.locator(".light-linked-record-feed-row").count() === 0, "Expected the sparse event Connected section to stay empty when only attendee chips exist.");
+    const emptyConnectedShell = emptyConnectedSection.locator(".light-linked-records-empty-shell").first();
+    await emptyConnectedShell.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-connected-empty.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected event-detail Back to preserve the selected day.");
-    summary.assertions.push(`desktop ${theme} calendar detail kept full chip navigation and Back restoration`);
+    summary.assertions.push(`desktop ${theme} calendar detail kept Connected feed-row navigation, empty shells, and Back restoration`);
 
     await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });
@@ -808,19 +828,23 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     const mobileSectionTitles = (await allText(page, ".light-document-page .light-section-title")).map(value => value.toUpperCase());
     assert(mobileSectionTitles.includes("DETAILS"), `Expected mobile event detail section titles to include Details, got ${mobileSectionTitles.join(", ")}.`);
     assert(mobileSectionTitles.includes("DESCRIPTION"), `Expected mobile event detail section titles to include Description, got ${mobileSectionTitles.join(", ")}.`);
+    assert(mobileSectionTitles.includes("CONNECTED"), `Expected mobile event detail section titles to include Connected, got ${mobileSectionTitles.join(", ")}.`);
     assert(mobileSectionTitles.indexOf("DETAILS") < mobileSectionTitles.indexOf("DESCRIPTION"), `Expected mobile Details to appear before Description, got ${mobileSectionTitles.join(", ")}.`);
-    assert(!mobileDetailText.includes("Linked records"), "Expected mobile event detail to collapse Linked records into Connected chips.");
+    assert(!mobileDetailText.includes("Linked records"), "Expected mobile event detail to keep the section label as Connected.");
     const mobileWhoChipTexts = await allText(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip');
     assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B.") && mobileWhoChipTexts.includes("Outside counsel"), `Expected mobile Who row to carry contact and guest chips, got ${mobileWhoChipTexts.join(", ")}.`);
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected mobile Who row to avoid guest paragraphs.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected mobile Who row to include at least one guest chip.");
     await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
-    const mobileConnectedChipTexts = await allText(page, ".light-event-connected-card .light-attendee-chip");
-    assert(!mobileConnectedChipTexts.includes("Jimmy T.") && !mobileConnectedChipTexts.includes("Jeff B."), `Expected mobile Connected chips to exclude contacts, got ${mobileConnectedChipTexts.join(", ")}.`);
+    const mobileConnectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
+    const mobileConnectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
+    assert(await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-attendee-chip').count() === 0, "Expected mobile Connected to render feed rows instead of attendee pills.");
+    assert(!mobileConnectedRowTexts.some(value => value.includes("Jimmy T.")) && !mobileConnectedRowTexts.some(value => value.includes("Jeff B.")), `Expected mobile Connected rows to exclude contacts, got ${mobileConnectedRowTexts.join(", ")}.`);
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
-      assert(mobileConnectedChipTexts.includes(label), `Expected mobile Connected to include ${label}, got ${mobileConnectedChipTexts.join(", ")}.`);
+      const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
+      assert(mobileConnectedRowTexts.some(value => value.includes(normalizedLabel)), `Expected mobile Connected to include ${label}, got ${mobileConnectedRowTexts.join(", ")}.`);
     }
-    await assertChipContrast(page, ".light-event-connected-card .light-attendee-chip.is-link");
+    assert(await mobileConnectedRows.count() === 5, `Expected mobile Connected to render five linked rows, got ${await mobileConnectedRows.count()}.`);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -853,17 +877,26 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     });
     assert(detailTop.headerTop <= 1, `Expected deep-scroll event taps to land with the header visible, got ${JSON.stringify(detailTop)}.`);
     assert(detailTop.feedScrollTop <= 24, `Expected deep-scroll event detail to open near the top, got ${JSON.stringify(detailTop)}.`);
-    assert(await page.locator(".light-event-connected-card.is-single").count() === 1, "Expected the late-call detail to use the compact single-chip Connected card.");
-    const lateCallConnected = await allText(page, ".light-event-connected-card .light-attendee-chip");
-    assert(lateCallConnected.length === 1 && lateCallConnected[0] === "Late-call follow-up", `Expected the late-call detail to expose one linked note chip, got ${lateCallConnected.join(", ")}.`);
-    await selectConnectedChip(page, "Late-call follow-up");
+    const lateCallConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
+    await lateCallConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+    const lateCallConnected = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
+    assert(lateCallConnected.length === 1 && lateCallConnected[0].includes("Late-call follow-up"), `Expected the late-call detail to expose one linked note row, got ${lateCallConnected.join(", ")}.`);
+    await selectConnectedRow(page, "Late-call follow-up");
     await waitForHeaderText(page, "Late-call follow-up");
     assert(await currentLightRoute(page) === "note-detail", `Expected late-call chip tap to open note-detail, got ${await currentLightRoute(page)}.`);
     await page.getByRole("button", { name: "Back" }).click();
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from late-call linked note to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof late call");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-late-call-detail.png`, summary);
-    summary.assertions.push(`mobile ${theme} sticky header, full chips, and lean event detail stayed readable`);
+    await page.getByRole("button", { name: "Back" }).click();
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from late-call detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
+    const mobileEmptyConnected = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
+    await mobileEmptyConnected.waitFor({ state: "visible", timeout: config.timeoutMs });
+    assert(await mobileEmptyConnected.locator(".light-linked-record-feed-row").count() === 0, "Expected the mobile sparse event Connected section to stay empty when only attendee chips exist.");
+    await mobileEmptyConnected.locator(".light-linked-records-empty-shell").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-connected-empty.png`, summary);
+    summary.assertions.push(`mobile ${theme} sticky header, Connected feed rows, and empty shells stayed readable`);
   } finally {
     await context.tracing.stop({ path: path.join(reportDir, `trace-mobile-${theme}.zip`) });
     await context.close();

@@ -556,6 +556,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       ["meeting-task", "meeting_note", `${runId}-graph-meeting`, "task", `${runId}-future-task`, "Proof Future Task"],
       ["meeting-project", "meeting_note", `${runId}-graph-meeting`, "project", `${runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting-reminder", "meeting_note", `${runId}-graph-meeting`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
+      ["contact-note", "contact", `${runId}-contact-one`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["project-reminder", "project", `${runId}-alpha-project`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
       ["reminder-task", "reminder", `${runId}-graph-reminder`, "task", `${runId}-future-task`, "Proof Future Task"],
       ["reminder-meeting", "reminder", `${runId}-graph-reminder`, "meeting_note", `${runId}-graph-meeting`, "Proof Graph Meeting"]
@@ -1653,6 +1654,13 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   const meProfileCard = await assertFlatContactProfileCard(page, "Me contact detail");
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
   await assertNoContactHtmlDocument(page, config, "contact-me", "Me contact detail");
+  const meLinkedSection = page.locator('.light-linked-records-section[data-linked-records-title="linked records"]').first();
+  await meLinkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert(await meLinkedSection.getByText("NOTES").count() === 0, "Expected Me contact detail to avoid a separate Notes section.");
+  const meEmptyShell = meLinkedSection.locator(".light-linked-records-empty-shell").first();
+  await meEmptyShell.waitFor({ state: "visible", timeout: config.timeoutMs });
+  const meEmptyShellBox = await meEmptyShell.boundingBox();
+  assert(meEmptyShellBox && meEmptyShellBox.height >= 60 && meEmptyShellBox.height <= 120, `Expected Me linked-record shell to stay compact, got ${JSON.stringify(meEmptyShellBox)}.`);
   summary.contactProfileCards = summary.contactProfileCards || [];
   summary.contactProfileCards.push({ theme, contact: "contact-me", profile: meProfileCard });
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
@@ -1687,13 +1695,23 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await assertNoContactHtmlDocument(page, config, firstContact.id, `${firstContact.title} detail`);
     summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
+  const linkedSection = page.locator('.light-linked-records-section[data-linked-records-title="linked records"]').first();
+  await linkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+  assert(await page.getByText("NOTES").count() === 0, "Expected populated contact detail to avoid a separate Notes section.");
+  assert(await linkedSection.locator(".light-linked-record-feed-row").count() >= 3, "Expected populated contact detail to show mixed linked-record rows.");
+  assert(await linkedSection.locator(".light-info-row").count() === 0, "Expected linked records to use feed rows instead of legacy info rows.");
+  const linkedTexts = await linkedSection.locator(".light-linked-record-feed-row").allTextContents();
+  for (const label of ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"]) {
+    assert(linkedTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${linkedTexts.join(", ")}.`);
+  }
   screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
   if (seed.writeEnabled) {
     for (const [route, id, text] of [
+      ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
       ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
-      await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
+      await linkedSection.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
       await waitForLightRoute(page, route, config.timeoutMs);
       await waitForGraphText(page, text, config.timeoutMs);
       await topBackToRoute(page, "contact-detail", "Proof Contact One", config.timeoutMs);
