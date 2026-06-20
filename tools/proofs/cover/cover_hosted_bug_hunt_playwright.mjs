@@ -29,6 +29,10 @@ const FINDING_CLASSES = [
   "state-truthfulness",
   "performance-feel",
 ];
+const HOSTED_SEEDED_CALENDAR_EVENT_IDS = {
+  today: ["roadmap", "vendor", "design-overlap", "house-walkthrough", "forster-dinner", "late-night-design-call"],
+  tomorrow: ["tomorrow-demo", "clinic-checkin", "katy-handoff"],
+};
 const ROUTE_SWEEP_ORDER = [
   {
     surface: "Home",
@@ -508,6 +512,70 @@ async function waitForExpectedDetail(page, detail, surface, timeoutMs) {
   }
 }
 
+function localDateKey(offsetDays = 0) {
+  const target = new Date();
+  target.setHours(12, 0, 0, 0);
+  target.setDate(target.getDate() + offsetDays);
+  return [
+    String(target.getFullYear()),
+    String(target.getMonth() + 1).padStart(2, "0"),
+    String(target.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+async function setCalendarDate(page, value, timeoutMs) {
+  const input = page.locator('input.light-date-input[type="date"]').first();
+  await input.waitFor({ state: "visible", timeout: timeoutMs });
+  await input.fill(value);
+  await input.dispatchEvent("change");
+  await page.waitForFunction(
+    expected => document.querySelector('input.light-date-input[type="date"]')?.value === expected,
+    value,
+    { timeout: timeoutMs }
+  );
+}
+
+async function visibleCalendarEventIds(page) {
+  return await page.evaluate(() =>
+    Array.from(document.querySelectorAll(".light-event-block[data-event-id]"))
+      .map(node => String(node.getAttribute("data-event-id") || "").trim())
+      .filter(Boolean)
+  );
+}
+
+async function runCalendarFreshnessCheck(page, config, matrixEntry, screenshotsDir) {
+  const checks = [
+    { key: "today", date: localDateKey(0), expectedIds: HOSTED_SEEDED_CALENDAR_EVENT_IDS.today },
+    { key: "tomorrow", date: localDateKey(1), expectedIds: HOSTED_SEEDED_CALENDAR_EVENT_IDS.tomorrow },
+  ];
+  const screenshots = [];
+  for (const check of checks) {
+    await setCalendarDate(page, check.date, config.timeoutMs);
+    await page.waitForLoadState("networkidle", { timeout: Math.min(10_000, config.timeoutMs) }).catch(() => {});
+    const visibleIds = await visibleCalendarEventIds(page);
+    const matchedIds = check.expectedIds.filter(id => visibleIds.includes(id));
+    const screenshot = await saveScreenshot(page, screenshotsDir, `calendar-${matrixEntry.label}-${check.key}-seeded-window`);
+    screenshots.push(screenshot);
+    if (!matchedIds.length) {
+      return {
+        status: "failed",
+        reason: `missing_${check.key}_seeded_demo_events`,
+        screenshot_paths: screenshots,
+        observed: { date: check.date, visible_ids: visibleIds, expected_ids: check.expectedIds },
+      };
+    }
+  }
+  await setCalendarDate(page, checks[0].date, config.timeoutMs);
+  return {
+    status: "passed",
+    reason: "",
+    screenshot_paths: screenshots,
+    observed: {
+      today_expected_ids: checks[0].expectedIds,
+      tomorrow_expected_ids: checks[1].expectedIds,
+    },
+  };
+}
 async function collectRouteMetrics(page, surface) {
   return await page.evaluate((routeSurface) => {
     function text(value) {
@@ -695,10 +763,14 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
           await page.waitForLoadState("networkidle", { timeout: Math.min(10_000, config.timeoutMs) }).catch(() => {});
           const metrics = await collectRouteMetrics(page, surface);
           const screenshot = await saveScreenshot(page, screenshotsDir, `${slug(surface.route)}-${matrixEntry.label}`);
+          const calendarFreshness = surface.route === "calendar"
+            ? await runCalendarFreshnessCheck(page, config, matrixEntry, screenshotsDir)
+            : { status: "skipped", reason: "", screenshot_paths: [], observed: {} };
           const detailResult = await runDetailCheck(page, config, surface, matrixEntry, screenshotsDir);
           const status = metrics.loadedRoute === surface.route
             && (!surface.requiresHeader || metrics.hasHeader)
             && (metrics.primaryCount > 0 || metrics.hasEmptyState)
+            && calendarFreshness.status !== "failed"
             && detailResult.status !== "failed"
             ? "pass"
             : "fail";
@@ -826,6 +898,25 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
               automation_candidate: "yes",
             });
           }
+          if (calendarFreshness.status === "failed") {
+            pushFinding(findings, {
+              id: `calendar-seeded-window-${matrixEntry.label}`,
+              surface: surface.surface,
+              route: surface.route,
+              theme: matrixEntry.theme,
+              viewport: matrixEntry.viewportName,
+              severity: "P1",
+              class: "content",
+              expected: "Hosted Calendar should show current-window seeded demo events on both today and tomorrow.",
+              actual: `Calendar ${calendarFreshness.observed.date} showed ${JSON.stringify(calendarFreshness.observed.visible_ids)} instead of any of ${JSON.stringify(calendarFreshness.observed.expected_ids)}.`,
+              repro_steps: [
+                `Open ${buildPageUrl(config.baseUrl, surface.route, matrixEntry.theme, config.refreshKey)}`,
+                `Set the calendar date to ${calendarFreshness.observed.date}`,
+              ],
+              screenshot_paths: [...calendarFreshness.screenshot_paths, screenshot].filter(Boolean),
+              automation_candidate: "yes",
+            });
+          }
           if (detailResult.status === "gap") {
             coverageGaps.push({
               surface: surface.surface,
@@ -847,6 +938,10 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
             screenshot_path: screenshot,
             detail_screenshot_path: detailResult.screenshot || "",
             metrics,
+            calendar_freshness: {
+              status: calendarFreshness.status,
+              reason: calendarFreshness.reason || "",
+            },
             detail: {
               status: detailResult.status,
               reason: detailResult.reason || "",

@@ -8,6 +8,8 @@ from pucky_vm.workspace_store import (
     WorkspaceStore,
     _linked_note_link_id,
     _linked_note_record_id,
+    default_workspace_graph_records,
+    default_workspace_records,
     derive_task_group,
 )
 
@@ -18,6 +20,30 @@ class Clock:
 
     def __call__(self) -> int:
         return self.value
+
+
+SEEDED_DEMO_TIME_FIELDS_BY_COLLECTION: dict[str, tuple[str, ...]] = {
+    "calendar-events": ("date", "start_at_ms", "end_at_ms"),
+    "meeting-notes": ("date", "start_at_ms", "end_at_ms"),
+    "tasks": ("due_at_ms",),
+    "reminders": ("due_at_ms",),
+    "feed-items": ("event_at_ms",),
+}
+
+
+def _expected_seeded_demo_time_fields(now_ms: int) -> dict[tuple[str, str], dict[str, object]]:
+    expected: dict[tuple[str, str], dict[str, object]] = {}
+    for source in (default_workspace_records(now_ms), default_workspace_graph_records(now_ms)):
+        for collection, fields in SEEDED_DEMO_TIME_FIELDS_BY_COLLECTION.items():
+            for record in source.get(collection, []):
+                record_id = str(record.get("id") or "").strip()
+                if not record_id:
+                    continue
+                expected[(collection, record_id)] = {
+                    field: (str(record.get(field) or "").strip() if field == "date" else int(record.get(field) or 0))
+                    for field in fields
+                }
+    return expected
 
 
 def test_workspace_store_keeps_note_html_and_clears_non_note_html(tmp_path: Path) -> None:
@@ -922,6 +948,125 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
     assert not any(kind == "contact" for kind, _ in clinic_links)
     assert ("note", "clinic-prep-note") in clinic_links
     assert ("reminder", "demo-reminder-health-call") in clinic_links
+
+
+def test_seeded_demo_time_refresh_rebases_existing_seeded_records_and_preserves_graph_timing(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    before_house = store.get_record("calendar-events", "house-walkthrough")
+    before_roadmap = store.get_record("calendar-events", "roadmap")
+    before_task = store.get_record("tasks", "demo-task-do-budget")
+    before_reminder = store.get_record("reminders", "demo-reminder-health-call")
+    before_feed = store.get_record("feed-items", "calendar-change")
+    assert before_house is not None
+    assert before_roadmap is not None
+    assert before_task is not None
+    assert before_reminder is not None
+    assert before_feed is not None
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'")
+    store._conn.commit()
+    store.close()
+
+    clock.value += 5 * 24 * 60 * 60 * 1000
+    expected = _expected_seeded_demo_time_fields(clock.value)
+    refreshed = WorkspaceStore(str(db_path), clock_ms=clock)
+
+    for (collection, record_id), expected_fields in expected.items():
+        record = refreshed.get_record(collection, record_id)
+        assert record is not None, (collection, record_id)
+        for field, expected_value in expected_fields.items():
+            assert record[field] == expected_value, (collection, record_id, field)
+
+    house_event = refreshed.get_record("calendar-events", "house-walkthrough")
+    clinic_event = refreshed.get_record("calendar-events", "clinic-checkin")
+    freelance_event = refreshed.get_record("calendar-events", "freelance-review")
+    house_meeting = refreshed.get_record("meeting-notes", "demo-meeting-home-refresh")
+    freelance_meeting = refreshed.get_record("meeting-notes", "demo-meeting-freelance-followup")
+    health_reminder = refreshed.get_record("reminders", "demo-reminder-health-call")
+    assert house_event is not None
+    assert clinic_event is not None
+    assert freelance_event is not None
+    assert house_meeting is not None
+    assert freelance_meeting is not None
+    assert health_reminder is not None
+
+    assert house_event["start_at_ms"] != before_house["start_at_ms"]
+    assert refreshed.get_record("calendar-events", "roadmap")["start_at_ms"] != before_roadmap["start_at_ms"]
+    assert refreshed.get_record("tasks", "demo-task-do-budget")["due_at_ms"] != before_task["due_at_ms"]
+    assert health_reminder["due_at_ms"] != before_reminder["due_at_ms"]
+    assert refreshed.get_record("feed-items", "calendar-change")["event_at_ms"] != before_feed["event_at_ms"]
+
+    assert house_meeting["date"] == house_event["date"]
+    assert house_meeting["start_at_ms"] == house_event["start_at_ms"]
+    assert house_meeting["end_at_ms"] == house_event["end_at_ms"]
+    assert freelance_meeting["date"] == freelance_event["date"]
+    assert freelance_meeting["end_at_ms"] <= freelance_event["start_at_ms"]
+    assert health_reminder["due_at_ms"] < clinic_event["start_at_ms"]
+
+    counts = {"do": 0, "soon": 0, "overdue": 0, "done": 0}
+    for task in refreshed.list_records("tasks")["items"]:
+        counts[str(task["derived_group"])] += 1
+    assert counts == {"do": 6, "soon": 2, "overdue": 1, "done": 3}
+
+
+def test_seeded_demo_time_refresh_preserves_seeded_edits_skips_deleted_rows_and_is_idempotent(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store.patch_record(
+        "calendar-events",
+        "house-walkthrough",
+        {"title": "Custom walkthrough title", "summary": "Custom walkthrough summary"},
+    )
+    store.delete_record("calendar-events", "vendor")
+    custom_task = store.upsert_record(
+        "tasks",
+        {
+            "id": "custom-user-task",
+            "title": "Custom user task",
+            "status": "open",
+            "due_at_ms": 123_456_789,
+        },
+    )
+    assert custom_task["due_at_ms"] == 123_456_789
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'")
+    store._conn.commit()
+    store.close()
+
+    clock.value += 3 * 24 * 60 * 60 * 1000
+    expected = _expected_seeded_demo_time_fields(clock.value)
+    refreshed = WorkspaceStore(str(db_path), clock_ms=clock)
+    edited = refreshed.get_record("calendar-events", "house-walkthrough")
+    deleted = refreshed.get_record("calendar-events", "vendor", include_deleted=True)
+    custom = refreshed.get_record("tasks", "custom-user-task")
+    assert edited is not None
+    assert deleted is not None
+    assert custom is not None
+    assert edited["title"] == "Custom walkthrough title"
+    assert edited["summary"] == "Custom walkthrough summary"
+    assert edited["date"] == expected[("calendar-events", "house-walkthrough")]["date"]
+    assert edited["start_at_ms"] == expected[("calendar-events", "house-walkthrough")]["start_at_ms"]
+    assert edited["end_at_ms"] == expected[("calendar-events", "house-walkthrough")]["end_at_ms"]
+    assert deleted["deleted"] is True
+    assert refreshed.get_record("calendar-events", "vendor") is None
+    assert custom["due_at_ms"] == 123_456_789
+
+    first_due = refreshed.get_record("tasks", "demo-task-do-budget")
+    assert first_due is not None
+    first_due_at_ms = first_due["due_at_ms"]
+    meta = refreshed._conn.execute(
+        "SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'"
+    ).fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
+    refreshed.close()
+
+    clock.value += 2 * 24 * 60 * 60 * 1000
+    rerun = WorkspaceStore(str(db_path), clock_ms=clock)
+    rerun_task = rerun.get_record("tasks", "demo-task-do-budget")
+    assert rerun_task is not None
+    assert rerun_task["due_at_ms"] == first_due_at_ms
 
 
 def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> None:
