@@ -33,6 +33,17 @@ SELF_CONTACT_TITLE = "Me"
 SELF_CONTACT_SUMMARY = "Personal reminder delivery profile"
 CONTACT_EMAIL_ENDPOINT_LABELS = ("email", "gmail", "mail")
 CONTACT_PHONE_ENDPOINT_LABELS = ("phone", "sms", "text", "mobile", "call")
+CONTACT_PHOTO_FIXTURES = (
+    "fixtures/contact_photos/maya.webp",
+    "fixtures/contact_photos/sam.webp",
+    "fixtures/contact_photos/eric.webp",
+    "fixtures/contact_photos/proof-contact.webp",
+)
+CONTACT_PHOTO_BY_ID = {
+    "maya": "fixtures/contact_photos/maya.webp",
+    "sam-rivera": "fixtures/contact_photos/sam.webp",
+    "eric-donaldson": "fixtures/contact_photos/eric.webp",
+}
 
 
 def _now_ms() -> int:
@@ -138,6 +149,20 @@ def _contact_metadata_without_endpoints(metadata: dict[str, Any]) -> dict[str, A
     cleaned = dict(metadata or {})
     cleaned.pop("endpoints", None)
     return cleaned
+
+
+def _is_contact_fixture_bitmap_photo(value: object) -> bool:
+    photo = str(value or "").strip()
+    return photo.startswith("fixtures/contact_photos/") and photo.lower().endswith((".jpg", ".jpeg", ".webp"))
+
+
+def _contact_fixture_photo(record_id: str, title: str = "") -> str:
+    clean_id = str(record_id or "").strip()
+    if clean_id in CONTACT_PHOTO_BY_ID:
+        return CONTACT_PHOTO_BY_ID[clean_id]
+    key = f"{clean_id}:{title}".strip(":") or "contact"
+    index = sum(ord(char) for char in key) % len(CONTACT_PHOTO_FIXTURES)
+    return CONTACT_PHOTO_FIXTURES[index]
 
 
 def _normalize_reminder_recipient_id(value: object) -> str:
