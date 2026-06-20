@@ -5639,7 +5639,7 @@
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection(options.title || "Notes", rows);
+    return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
   }
 
   function noteContentUpdatedAtMs(note) {
@@ -6403,7 +6403,7 @@
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection("People", rows);
+    return lightInfoSection("People", rows, { showTrailingChevron: false });
   }
 
   function taskConnectedRows(task) {
@@ -6479,7 +6479,7 @@
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection("Connected", rows);
+    return lightInfoSection("Connected", rows, { showTrailingChevron: false });
   }
 
   function lightChipIcon(icon, accentKey = "") {
@@ -7311,12 +7311,13 @@
     return section;
   }
 
-  function lightInfoSection(title, rows) {
+  function lightInfoSection(title, rows, options = {}) {
     const section = el("section", "light-info-section");
     section.append(lightSectionTitle(title));
     const card = el("div", "light-card light-info-card");
     const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";
-    rows.forEach(row => card.append(lightInfoRow(row, { showChevron: !suppressInteractiveChevron })));
+    const showTrailingChevron = options.showTrailingChevron !== false && !suppressInteractiveChevron;
+    rows.forEach(row => card.append(lightInfoRow(row, { showChevron: showTrailingChevron })));
     section.append(card);
     return section;
   }

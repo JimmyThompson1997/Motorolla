@@ -774,6 +774,7 @@ async function readTaskDetailState(page) {
       description: String(Array.from(document.querySelectorAll(".light-copy-section"))
         .find(node => /description/i.test(String(node.textContent || "")))?.textContent || "").trim(),
       description_is_first_section: firstSectionTitle === "description",
+      task_detail_chevron_count: Array.from(detail?.querySelectorAll(".light-info-row .light-chevron") || []).length,
       status_card_present: Boolean(statusCard),
       status_circle_present: Boolean(document.querySelector(".light-task-status-circle")),
       task_html_frame_present: Boolean(detail?.querySelector(".light-html-frame, iframe")),
@@ -1032,11 +1033,12 @@ async function runRouteTour(page, config, mode, seed) {
   assert(taskState.connected.some(item => item.kind === "project" && item.label === seed.projectTitle), `${mode}: task detail missing connected project`);
   assert(taskState.checklist.includes("Prep the room summary"), `${mode}: task detail missing expected checklist item`);
   assert(taskState.description.includes(seed.primaryDescription), `${mode}: task detail missing seeded description`);
+  assert(taskState.task_detail_chevron_count === 0, `${mode}: task detail linked rows should not render trailing chevrons`);
   await recorder.capture({
     route: taskState.route || "tasks",
     action: "Open seeded task detail",
-    expected: "The seeded primary task shows Description first, then Details, People, Checklist, and Connected with no embedded task HTML block.",
-    confirmation: "Task detail rendered the cleaned structured sections.",
+    expected: "The seeded primary task shows Description first, then Details, People, Checklist, and Connected with no embedded task HTML block. Task detail linked rows render without trailing chevrons.",
+    confirmation: "Task detail rendered the cleaned structured sections and chevron-free linked rows.",
     observed: taskState,
   });
 
@@ -1097,6 +1099,7 @@ async function runRouteTour(page, config, mode, seed) {
   assert(taskRecord.status === "done", `${mode}: task API did not persist Done after reload`);
   assert(!taskState.task_html_frame_present, `${mode}: task detail should stay free of embedded HTML after reload`);
   assert(taskState.description_is_first_section, `${mode}: task detail should still start with Description after reload`);
+  assert(taskState.task_detail_chevron_count === 0, `${mode}: task detail linked rows should stay chevron-free after reload`);
   await recorder.capture({
     route: taskState.route || expectedTaskReturnRoute(mode),
     action: "Persist Done status after reload",

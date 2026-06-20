@@ -1116,7 +1116,7 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert 'target: workspaceContactTargetByName(owner)' in task_people_section
     assert 'dataset: { taskPersonRole: "created_by" }' in task_people_section
     assert 'dataset: { taskPersonRole: "owner" }' in task_people_section
-    assert 'return lightInfoSection("People", rows);' in task_people_section
+    assert 'return lightInfoSection("People", rows, { showTrailingChevron: false });' in task_people_section
     assert "lightRecordChip(" not in task_people_section
     assert 'return workspaceLinkedEntries(record, options).map(entry => {' in function_block(app, "workspaceLinkedRows")
     assert 'const currentKind = String(options.currentKind || record?.kind || "");' in workspace_linked_entries
@@ -1133,7 +1133,7 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert 'taskConnectedRecencyMs: String(recencyMs || 0),' in task_connected_rows
     assert 'rows.sort((left, right) => {' in task_connected_rows
     assert 'const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);' in task_connected_rows
-    assert 'return lightInfoSection("Connected", rows);' in task_connected_section
+    assert 'return lightInfoSection("Connected", rows, { showTrailingChevron: false });' in task_connected_section
     assert "lightRecordChip(" not in task_connected_section
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert 'const connected = lightTaskConnectedSection(task);' in task_detail_surface
@@ -1320,13 +1320,15 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "border-radius: 0;" in contact_profile_card
 
 
-def test_linked_records_keep_click_targets_but_drop_trailing_chevrons() -> None:
+def test_linked_records_keep_click_targets_but_allow_task_surface_chevron_suppression() -> None:
     app = read("app.js")
     light_info_section = function_block(app, "lightInfoSection")
     light_info_row = function_block(app, "lightInfoRow")
 
+    assert "function lightInfoSection(title, rows, options = {})" in app
     assert 'const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";' in light_info_section
-    assert 'rows.forEach(row => card.append(lightInfoRow(row, { showChevron: !suppressInteractiveChevron })));' in light_info_section
+    assert 'const showTrailingChevron = options.showTrailingChevron !== false && !suppressInteractiveChevron;' in light_info_section
+    assert 'rows.forEach(row => card.append(lightInfoRow(row, { showChevron: showTrailingChevron })));' in light_info_section
     assert "item.dataset.workspaceTargetRoute = row.target.route;" in light_info_row
     assert "item.dataset.workspaceTargetId = row.target.id;" in light_info_row
     assert "item.addEventListener(\"click\", () => openWorkspaceTarget(" in light_info_row
