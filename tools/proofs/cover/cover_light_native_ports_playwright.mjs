@@ -424,6 +424,30 @@ async function stableCardSelector(page, selector, timeoutMs) {
   return selector;
 }
 
+function selectorForCardAction(target, action) {
+  if (target.session_id) {
+    return `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="${cssString(action)}"]`;
+  }
+  if (target.card_id) {
+    return `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="${cssString(action)}"]`;
+  }
+  return "";
+}
+
+async function listCardActionTargets(page, selector, limit = 18) {
+  return page.locator(selector).evaluateAll((nodes, maxRows) =>
+    nodes.slice(0, maxRows).map(node => {
+      const article = node.closest("article.card");
+      return {
+        card_id: String(article?.getAttribute("data-card-id") || "").trim(),
+        session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
+        title: String(article?.querySelector(".title")?.textContent || "").trim()
+      };
+    }),
+    limit
+  );
+}
+
 async function openAndInspectDetail(page, selector, timeoutMs) {
   const targetSelector = await stableCardSelector(page, selector, timeoutMs);
   await clickSelector(page, targetSelector, timeoutMs);
@@ -557,45 +581,65 @@ async function backToLightHome(page, timeoutMs) {
 
 async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs, reportDir) {
   const selector = "[data-card-action=\"page\"]";
-  const darkCount = await darkPage.locator(selector).count();
-  const lightCount = await lightPage.locator(selector).count();
-  if (!darkCount || !lightCount) {
+  const darkTargets = await listCardActionTargets(darkPage, selector);
+  if (!darkTargets.length || !await lightPage.locator(selector).count()) {
     return { checked: false, reason: "No page action was available in the current feed sample." };
   }
-  const darkDetail = await openAndInspectDetail(darkPage, selector, timeoutMs);
-  const lightDetail = await openAndInspectDetail(lightPage, selector, timeoutMs);
-  const topShots = {
-    dark: await saveScreenshot(darkPage, reportDir, "07-dark-inbox-page-top"),
-    light: await saveScreenshot(lightPage, reportDir, "08-light-inbox-page-top")
-  };
-  const darkFrame = await readRichPageFrameState(darkPage);
-  const lightFrame = await readRichPageFrameState(lightPage);
-  const bottomShots = {
-    dark: await saveScreenshot(darkPage, reportDir, "09-dark-inbox-page-bottom"),
-    light: await saveScreenshot(lightPage, reportDir, "10-light-inbox-page-bottom")
-  };
-  assertDetailParity("Inbox page/attachment", darkDetail.state, lightDetail.state);
-  assert(darkDetail.state.detail_type === "page", "Dark Feed page action did not open page detail");
-  assert(lightDetail.state.detail_type === "page", "Light Inbox page action did not open page detail");
-  assert(lightDetail.visual.backgroundColor !== darkDetail.visual.backgroundColor, "Inbox page or attachment detail did not switch to light styling");
-  assert(!/\/mock\//i.test(darkFrame.top_text), "Dark Feed page detail still rendered mock placeholder content");
-  assert(!/\/mock\//i.test(lightFrame.top_text), "Light Inbox page detail still rendered mock placeholder content");
-  assert(darkFrame.scroll_height > darkFrame.iframe_client_height, "Dark Feed rich page did not exceed the viewport height");
-  assert(lightFrame.scroll_height > lightFrame.iframe_client_height, "Light Inbox rich page did not exceed the viewport height");
-  assert(darkFrame.root_scroll_top >= darkFrame.max_scroll_top, "Dark Feed rich page did not reach the bottom");
-  assert(lightFrame.root_scroll_top >= lightFrame.max_scroll_top, "Light Inbox rich page did not reach the bottom");
+  let selected = null;
+  for (const target of darkTargets) {
+    const darkSelector = selectorForCardAction(target, "page");
+    const lightSelector = selectorForCardAction(target, "page");
+    if (!darkSelector || !lightSelector) {
+      continue;
+    }
+    if (!await darkPage.locator(darkSelector).count() || !await lightPage.locator(lightSelector).count()) {
+      continue;
+    }
+    const darkDetail = await openAndInspectDetail(darkPage, darkSelector, timeoutMs);
+    const lightDetail = await openAndInspectDetail(lightPage, lightSelector, timeoutMs);
+    const topShots = {
+      dark: await saveScreenshot(darkPage, reportDir, "07-dark-inbox-page-top"),
+      light: await saveScreenshot(lightPage, reportDir, "08-light-inbox-page-top")
+    };
+    const darkFrame = await readRichPageFrameState(darkPage);
+    const lightFrame = await readRichPageFrameState(lightPage);
+    const bottomShots = {
+      dark: await saveScreenshot(darkPage, reportDir, "09-dark-inbox-page-bottom"),
+      light: await saveScreenshot(lightPage, reportDir, "10-light-inbox-page-bottom")
+    };
+    assertDetailParity("Inbox page/attachment", darkDetail.state, lightDetail.state);
+    assert(darkDetail.state.detail_type === "page", "Dark Feed page action did not open page detail");
+    assert(lightDetail.state.detail_type === "page", "Light Inbox page action did not open page detail");
+    assert(lightDetail.visual.backgroundColor !== darkDetail.visual.backgroundColor, "Inbox page or attachment detail did not switch to light styling");
+    assert(!/\/mock\//i.test(darkFrame.top_text), "Dark Feed page detail still rendered mock placeholder content");
+    assert(!/\/mock\//i.test(lightFrame.top_text), "Light Inbox page detail still rendered mock placeholder content");
+    const darkTallEnough = darkFrame.scroll_height > darkFrame.iframe_client_height;
+    const lightTallEnough = lightFrame.scroll_height > lightFrame.iframe_client_height;
+    const darkReachedBottom = darkFrame.root_scroll_top >= darkFrame.max_scroll_top;
+    const lightReachedBottom = lightFrame.root_scroll_top >= lightFrame.max_scroll_top;
+    if (darkTallEnough && lightTallEnough && darkReachedBottom && lightReachedBottom) {
+      selected = {
+        target,
+        dark: darkDetail,
+        dark_frame: darkFrame,
+        light: lightDetail,
+        light_frame: lightFrame,
+        screenshots: {
+          top: topShots,
+          bottom: bottomShots
+        }
+      };
+      break;
+    }
+    await closeDetail(darkPage, timeoutMs);
+    await closeDetail(lightPage, timeoutMs);
+  }
+  assert(selected, "No page action opened a scrollable rich page that reached the bottom in both themes");
   await closeDetail(darkPage, timeoutMs);
   await closeDetail(lightPage, timeoutMs);
   return {
     checked: true,
-    dark: darkDetail,
-    dark_frame: darkFrame,
-    light: lightDetail,
-    light_frame: lightFrame,
-    screenshots: {
-      top: topShots,
-      bottom: bottomShots
-    }
+    ...selected
   };
 }
 
