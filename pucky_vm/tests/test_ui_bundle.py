@@ -39,6 +39,7 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         "fixtures/contact_photos/maya.webp",
         "fixtures/contact_photos/sam.webp",
         "fixtures/contact_photos/eric.webp",
+        "fixtures/contact_photos/jimmy.jpg",
         "fixtures/contact_photos/proof-contact.webp",
     ):
         assert contact_photo in manifest["files"]
@@ -57,6 +58,7 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         assert "fixtures/contact_photos/maya.webp" in names
         assert "fixtures/contact_photos/sam.webp" in names
         assert "fixtures/contact_photos/eric.webp" in names
+        assert "fixtures/contact_photos/jimmy.jpg" in names
         assert "fixtures/contact_photos/proof-contact.webp" in names
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest

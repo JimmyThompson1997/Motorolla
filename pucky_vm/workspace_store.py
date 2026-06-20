@@ -38,13 +38,14 @@ CONTACT_PHOTO_FIXTURES = (
     "fixtures/contact_photos/maya.webp",
     "fixtures/contact_photos/sam.webp",
     "fixtures/contact_photos/eric.webp",
+    "fixtures/contact_photos/jimmy.jpg",
     "fixtures/contact_photos/proof-contact.webp",
 )
 CONTACT_PHOTO_BY_ID = {
     "maya": "fixtures/contact_photos/maya.webp",
     "sam-rivera": "fixtures/contact_photos/sam.webp",
     "eric-donaldson": "fixtures/contact_photos/eric.webp",
-    JIMMY_THOMPSON_CONTACT_ID: "fixtures/contact_photos/proof-contact.webp",
+    JIMMY_THOMPSON_CONTACT_ID: "fixtures/contact_photos/jimmy.jpg",
 }
 
 
