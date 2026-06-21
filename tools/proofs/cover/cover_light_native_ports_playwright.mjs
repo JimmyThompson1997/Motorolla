@@ -18,6 +18,8 @@ const DEFAULT_DARK_FEED_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?
 const DEFAULT_DARK_MEETINGS_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=dark&route=meetings&reset_nav=1";
 const VIEWPORT = { width: 430, height: 932 };
 const NARROW_VIEWPORT = { width: 320, height: 932 };
+const INBOX_MANAGE_SELECT_SELECTOR = '[data-card-action="manage_select"]';
+const INBOX_MANAGE_MENU_SELECTOR = '[data-card-action="manage_menu"]';
 
 function parseArgs(argv) {
   const config = {
@@ -564,6 +566,252 @@ async function readInboxActionLayout(page) {
       audio_only_action_width_px: audioOnlyActionRect ? audioOnlyActionRect.width : 0
     };
   });
+}
+
+async function readInboxManagementState(page) {
+  return page.evaluate(() => {
+    const rect = (node) => {
+      if (!(node instanceof HTMLElement)) {
+        return null;
+      }
+      const bounds = node.getBoundingClientRect();
+      return {
+        x: Number(bounds.x.toFixed(2)),
+        y: Number(bounds.y.toFixed(2)),
+        width: Number(bounds.width.toFixed(2)),
+        height: Number(bounds.height.toFixed(2)),
+        right: Number(bounds.right.toFixed(2)),
+        bottom: Number(bounds.bottom.toFixed(2))
+      };
+    };
+    const shell = document.querySelector(".light-shell[data-light-route=\"inbox\"]");
+    const wraps = Array.from(shell?.querySelectorAll(".card-wrap") || []);
+    const firstManageable = wraps.find(wrap =>
+      wrap.querySelector("article.card[data-card-id]")
+        && wrap.querySelector("[data-card-action=\"manage_menu\"]")
+    );
+    const firstArticle = firstManageable?.querySelector("article.card");
+    const selectedCount = Number(shell?.querySelector(".inbox-manage-bar")?.getAttribute("data-inbox-manage-selected-count") || 0);
+    const openMenu = shell?.querySelector(".inbox-card-menu");
+    return {
+      manage_button_visible: Boolean(shell?.querySelector(".inbox-manage-toggle")),
+      archive_toggle_visible: Boolean(shell?.querySelector(".inbox-archive-toggle")),
+      manage_mode_active: Boolean(shell?.querySelector(".inbox-manage-bar")),
+      selected_count: selectedCount,
+      selected_button_count: shell?.querySelectorAll("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]").length || 0,
+      menu_button_count: shell?.querySelectorAll("[data-card-action=\"manage_menu\"]").length || 0,
+      menu_open: Boolean(openMenu),
+      menu_actions: Array.from(openMenu?.querySelectorAll(".inbox-card-menu-item") || [])
+        .map(node => String(node.getAttribute("data-card-menu-action") || "").trim())
+        .filter(Boolean),
+      archive_reveal_count: shell?.querySelectorAll(".archive-reveal-action").length || 0,
+      visible_card_count: shell?.querySelectorAll(".card-wrap article.card").length || 0,
+      first_card: firstArticle ? {
+        card_id: String(firstArticle.getAttribute("data-card-id") || "").trim(),
+        session_id: String(firstArticle.getAttribute("data-card-session-id") || "").trim(),
+        title: String(firstArticle.querySelector(".title")?.textContent || "").trim(),
+        rect: rect(firstArticle)
+      } : null
+    };
+  });
+}
+
+async function installInboxManagementActionInterceptor(page, actionRequests) {
+  const archivedCardIds = new Set();
+  const feedRequests = [];
+  await page.route(/\/api\/feed(?:\?.*)?$/, async route => {
+    const request = route.request();
+    if (request.method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const headers = await response.headers();
+    const bodyText = await response.text();
+    const url = new URL(request.url());
+    feedRequests.push({
+      url: request.url(),
+      include_archived: String(url.searchParams.get("include_archived") || "")
+    });
+    let payload = null;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch (_error) {
+      payload = null;
+    }
+    if (!payload || !Array.isArray(payload.items)) {
+      await route.fulfill({
+        status: response.status(),
+        headers,
+        body: bodyText
+      });
+      return;
+    }
+    const includeArchived = /^(1|true|yes)$/i.test(String(url.searchParams.get("include_archived") || ""));
+    const nextItems = payload.items
+      .map(item => {
+        const cardId = String(item?.card_id || "").trim();
+        if (cardId && archivedCardIds.has(cardId)) {
+          return { ...item, archived: true };
+        }
+        return item;
+      })
+      .filter(item => {
+        const cardId = String(item?.card_id || "").trim();
+        return includeArchived || !cardId || !archivedCardIds.has(cardId);
+      });
+    const responseHeaders = {
+      ...headers,
+      "content-type": "application/json"
+    };
+    delete responseHeaders["content-length"];
+    delete responseHeaders["content-encoding"];
+    await route.fulfill({
+      status: response.status(),
+      headers: responseHeaders,
+      body: JSON.stringify({ ...payload, items: nextItems })
+    });
+  });
+  await page.route("**/api/feed/actions", async route => {
+    let payload = {};
+    try {
+      payload = route.request().postDataJSON();
+    } catch (_error) {
+      try {
+        payload = JSON.parse(route.request().postData() || "{}");
+      } catch (_jsonError) {
+        payload = {};
+      }
+    }
+    actionRequests.push({
+      url: route.request().url(),
+      method: route.request().method(),
+        payload
+      });
+    const cardId = String(payload?.card_id || "").trim();
+    const action = String(payload?.action || "").trim();
+    if (cardId && action === "archive") {
+      archivedCardIds.add(cardId);
+    } else if (cardId && action === "unarchive") {
+      archivedCardIds.delete(cardId);
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: "pucky.feed_action.v1",
+        ok: true,
+        client_action_id: String(payload?.client_action_id || ""),
+        action: String(payload?.action || ""),
+        item: {
+          card_id: String(payload?.card_id || ""),
+          archived: String(payload?.action || "") === "archive"
+        }
+      })
+    });
+  });
+  return {
+    archivedCardIds,
+    feedRequests
+  };
+}
+
+async function reloadLightInbox(page, timeoutMs) {
+  const url = new URL(page.url());
+  url.searchParams.set("theme", "light");
+  url.searchParams.set("route", "inbox");
+  url.searchParams.set("reset_nav", "1");
+  url.searchParams.set("proof_refresh", String(Date.now()));
+  await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: timeoutMs });
+  await waitForLightRoute(page, "inbox", ".card-wrap article.card", timeoutMs);
+}
+
+async function exerciseInboxManagement(page, timeoutMs, reportDir) {
+  const actionRequests = [];
+  const feedEmulation = await installInboxManagementActionInterceptor(page, actionRequests);
+  const before = await readInboxManagementState(page);
+  assert(before.manage_button_visible, "Light Inbox should render a visible Manage control");
+  assert(before.archive_toggle_visible, "Light Inbox should render a visible archived-feed toggle");
+  assert(before.menu_button_count > 0, "Light Inbox should render visible per-tile more buttons");
+  assert(before.archive_reveal_count === 0, `Light Inbox should not expose swipe-only archive reveal actions, found ${before.archive_reveal_count}`);
+  assert(before.first_card?.card_id || before.first_card?.session_id, "Inbox management proof could not find a manageable card");
+
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"manage_menu\"]").first(), timeoutMs, "Open Inbox tile menu");
+  await page.waitForFunction(
+    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
+    undefined,
+    { timeout: timeoutMs }
+  );
+  const menuOpen = await readInboxManagementState(page);
+  assert(menuOpen.menu_open, "Inbox tile menu did not open");
+  assert(menuOpen.menu_actions.includes("archive"), "Inbox tile menu did not expose Archive");
+  assert(menuOpen.menu_actions.includes("open_transcript"), "Inbox tile menu did not expose Open transcript");
+  const menuScreenshot = await saveScreenshot(page, reportDir, "04a-light-inbox-menu");
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"manage_menu\"]").first(), timeoutMs, "Close Inbox tile menu");
+
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
+  await page.waitForFunction(
+    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar")),
+    undefined,
+    { timeout: timeoutMs }
+  );
+  const manageMode = await readInboxManagementState(page);
+  assert(manageMode.manage_mode_active, "Inbox Manage mode did not activate");
+  assert(manageMode.archive_reveal_count === 0, "Inbox Manage mode should not reintroduce archive reveal actions");
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"manage_select\"]").first(), timeoutMs, "Select Inbox tile");
+  await page.waitForFunction(
+    () => {
+      const bar = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar");
+      return Number(bar?.getAttribute("data-inbox-manage-selected-count") || 0) === 1;
+    },
+    undefined,
+    { timeout: timeoutMs }
+  );
+  const afterSelect = await readInboxManagementState(page);
+  assert(afterSelect.selected_count === 1, "Inbox Manage selection count should update to one");
+  const selectedScreenshot = await saveScreenshot(page, reportDir, "04b-light-inbox-manage-selected");
+
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-action.is-primary").first(), timeoutMs, "Archive selected Inbox tile");
+  await page.waitForFunction(
+    () => {
+      const bar = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar");
+      return Number(bar?.getAttribute("data-inbox-manage-selected-count") || 0) === 0;
+    },
+    undefined,
+    { timeout: timeoutMs }
+  );
+  await page.waitForFunction(
+    expectedCardId => {
+      const cards = Array.from(document.querySelectorAll(".light-shell[data-light-route=\"inbox\"] article.card"));
+      return cards.every(card => String(card.getAttribute("data-card-id") || "").trim() !== expectedCardId);
+    },
+    before.first_card.card_id,
+    { timeout: timeoutMs }
+  );
+  const afterArchive = await readInboxManagementState(page);
+  assert(actionRequests.some(item => item.payload?.action === "archive" && item.payload?.card_id === before.first_card.card_id), "Inbox Manage archive did not issue the expected feed action payload");
+  assert(afterArchive.visible_card_count === Math.max(0, before.visible_card_count - 1), "Archived Inbox tile should disappear from the active Inbox view");
+  const archivedScreenshot = await saveScreenshot(page, reportDir, "04c-light-inbox-manage-archived");
+
+  feedEmulation.archivedCardIds.clear();
+  await reloadLightInbox(page, timeoutMs);
+  const restored = await readInboxManagementState(page);
+  assert(restored.visible_card_count >= before.visible_card_count, "Inbox reload after intercepted archive should restore the active card list");
+  return {
+    before,
+    menu_open: menuOpen,
+    manage_mode: manageMode,
+    after_select: afterSelect,
+    after_archive: afterArchive,
+    restored,
+    action_requests: actionRequests,
+    feed_requests: feedEmulation.feedRequests,
+    screenshots: {
+      menu: menuScreenshot,
+      selected: selectedScreenshot,
+      archived: archivedScreenshot
+    }
+  };
 }
 
 async function readDetailState(page) {
@@ -1187,6 +1435,11 @@ async function main() {
     assert(inboxActionLayout.audio_only_actions.class_name.includes("action-count-1"), "Light Inbox audio-only card did not use the one-action layout class");
     assert(inboxActionLayout.audio_only_action_width_px >= 37 && inboxActionLayout.audio_only_action_width_px <= 39, `Light Inbox audio-only action column should be 38px wide, got ${inboxActionLayout.audio_only_action_width_px}px`);
     assert(inboxActionLayout.audio_only_mic_right_aligned, "Light Inbox audio-only mic should align to the far-right action edge");
+    logAction(actions, "exercise_inbox_management");
+    const inboxManagement = await exerciseInboxManagement(lightPage, config.timeoutMs, config.reportDir);
+    screenshots.inboxMenu = inboxManagement.screenshots.menu;
+    screenshots.inboxManageSelected = inboxManagement.screenshots.selected;
+    screenshots.inboxManageArchived = inboxManagement.screenshots.archived;
     screenshots.inboxList = await saveScreenshot(lightPage, config.reportDir, "04-light-inbox-list");
 
     logAction(actions, "open_transcript_title_detail");
@@ -1352,6 +1605,7 @@ async function main() {
       meetings_card_count: lightMeetingsRows.length,
       inbox_unread_marker: unreadMarker,
       inbox_action_layout: inboxActionLayout,
+      inbox_management: inboxManagement,
       scrollability: {
         dark_feed: darkFeedScroll,
         light_inbox: lightInboxScroll,

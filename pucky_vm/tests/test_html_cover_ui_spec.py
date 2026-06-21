@@ -1717,6 +1717,29 @@ def test_light_inbox_unread_attachment_actions_use_light_theme_icon_color() -> N
     assert "--icon-card-action-unread: #101624;" in light_shell
 
 
+def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    inbox_page = function_block(app, "lightInboxPage")
+    card_view = function_block(app, "cardView")
+
+    assert "action: inboxManageHeaderAction()" in inbox_page
+    assert "function inboxManageHeaderAction(" in app
+    assert "function inboxManageToolbar(" in app
+    assert "function archiveSelectedInboxCards(" in app
+    assert "function cardOverflowMenu(" in app
+    assert 'applyCardActionData(select, "manage_select", card, "reply");' in app
+    assert 'applyCardActionData(menuButton, "manage_menu", card, "reply");' in app
+    assert 'requestFeedAction(card, "archive"' in app
+    assert 'requestFeedAction(card, "unarchive"' in app
+    assert '"delete"' not in function_block(app, "cardOverflowMenu")
+    assert 'const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);' in card_view
+    assert ".inbox-manage-bar" in styles
+    assert ".inbox-manage-select" in styles
+    assert ".inbox-card-menu" in styles
+    assert ".inbox-card-menu-item" in styles
+
+
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     styles = read("styles.css")

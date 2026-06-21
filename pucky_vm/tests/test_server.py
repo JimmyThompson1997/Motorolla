@@ -1063,6 +1063,46 @@ class ServerTests(unittest.TestCase):
 
             self.assertEqual(caught.exception.code, 401, msg=path)
 
+    def test_unauthorized_feed_action_drains_body_before_keep_alive_get(self) -> None:
+        body = json.dumps(
+            {
+                "client_action_id": "unauthorized_keepalive_mark_read",
+                "card_id": "pucky_card_missing",
+                "action": "mark_read",
+            }
+        ).encode("utf-8")
+        post = "\r\n".join(
+            [
+                "POST /api/feed/actions HTTP/1.1",
+                f"Host: 127.0.0.1:{self.server.server_port}",
+                "Content-Type: application/json",
+                f"Content-Length: {len(body)}",
+                "Connection: keep-alive",
+                "",
+                "",
+            ]
+        ).encode("ascii") + body
+        get = "\r\n".join(
+            [
+                "GET /api/feed?limit=1 HTTP/1.1",
+                f"Host: 127.0.0.1:{self.server.server_port}",
+                "Connection: close",
+                "",
+                "",
+            ]
+        ).encode("ascii")
+
+        with socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as sock:
+            sock.settimeout(2)
+            sock.sendall(post + get)
+            first_status, _, first_body = self.read_raw_http_response(sock)
+            second_status, _, second_body = self.read_raw_http_response(sock)
+
+        self.assertIn(" 401 ", first_status)
+        self.assertEqual(json.loads(first_body.decode("utf-8"))["error"], "unauthorized")
+        self.assertIn(" 200 ", second_status)
+        self.assertEqual(json.loads(second_body.decode("utf-8"))["schema"], "pucky.feed_sync.v1")
+
     def test_ui_bundle_endpoints_serve_manifest_bundle_and_browser_app(self) -> None:
         manifest = self.get_json("/ui/pucky/latest/manifest.json")
 
@@ -1696,6 +1736,43 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(first["item"]["archived"])
         payload = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertTrue(payload["items"][0]["archived"])
+
+    def test_feed_unarchive_action_restores_card_to_active_feed(self) -> None:
+        turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_unarchive_turn")
+        archive = self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "client_action_archive_restore",
+                "card_id": turn["card_id"],
+                "action": "archive",
+            },
+        )
+        self.assertTrue(archive["ok"])
+        self.assertTrue(archive["item"]["archived"])
+        active_after_archive = self.get_json(
+            "/api/feed?limit=10&include_archived=0",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(active_after_archive["items"], [])
+
+        body = {
+            "client_action_id": "client_action_unarchive_restore",
+            "card_id": turn["card_id"],
+            "action": "unarchive",
+        }
+        first = self.post_json("/api/feed/actions", body)
+        second = self.post_json("/api/feed/actions", body)
+
+        self.assertTrue(first["ok"])
+        self.assertEqual(first, second)
+        self.assertEqual(first["item"]["card_id"], turn["card_id"])
+        self.assertFalse(first["item"]["archived"])
+        active_after_restore = self.get_json(
+            "/api/feed?limit=10&include_archived=0",
+            headers={"Authorization": "Bearer secret"},
+        )
+        self.assertEqual(active_after_restore["items"][0]["card_id"], turn["card_id"])
+        self.assertFalse(active_after_restore["items"][0]["archived"])
 
     def test_feed_archive_missing_card_fails_with_not_found(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -4287,6 +4364,30 @@ class ServerTests(unittest.TestCase):
                 return sock.recv(4096).decode("utf-8", errors="replace")
             except socket.timeout as exc:
                 self.fail(f"server did not answer before reading the declared body: {exc}")
+
+    def read_raw_http_response(self, sock: socket.socket) -> tuple[str, dict[str, str], bytes]:
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        header_bytes, _, body = data.partition(b"\r\n\r\n")
+        header_text = header_bytes.decode("iso-8859-1", errors="replace")
+        lines = header_text.splitlines()
+        status_line = lines[0] if lines else ""
+        headers: dict[str, str] = {}
+        for line in lines[1:]:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.strip().lower()] = value.strip()
+        content_length = int(headers.get("content-length") or "0")
+        while len(body) < content_length:
+            chunk = sock.recv(content_length - len(body))
+            if not chunk:
+                break
+            body += chunk
+        return status_line, headers, body[:content_length]
 
     def post_audio(
         self,

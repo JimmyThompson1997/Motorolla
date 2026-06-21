@@ -77,6 +77,10 @@ def runtime_card_from_deploy(
     device_audio_path = str(card.pop("device_audio_path", "") or "").strip()
     public_audio_path = str(card.pop("public_audio_path", "") or "").strip()
     public_audio_playlist_path = str(card.pop("public_audio_playlist_path", "") or "").strip()
+    if not str(card.get("card_id") or "").strip():
+        session_id = str(card.get("session_id") or card.get("turn_id") or "").strip()
+        if session_id:
+            card["card_id"] = f"fixture_card_{session_id}"
     implied_audio_artifact = inferred_audio_artifact_name(
         card,
         html_artifact=html_artifact,

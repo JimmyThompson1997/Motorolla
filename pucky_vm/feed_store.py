@@ -355,7 +355,7 @@ class FeedStore:
             raise ValueError("missing_client_action_id")
         if not clean_card_id:
             raise ValueError("missing_card_id")
-        if clean_action not in {"archive", "delete", "mark_read"}:
+        if clean_action not in {"archive", "unarchive", "delete", "mark_read"}:
             raise ValueError("unsupported_action")
         now = time.time()
         now_ms = round(now * 1000)
@@ -375,6 +375,8 @@ class FeedStore:
             deleted = int(card["deleted"])
             if clean_action == "archive":
                 archived = 1
+            elif clean_action == "unarchive":
+                archived = 0
             elif clean_action == "mark_read":
                 read = 1
             elif clean_action == "delete":

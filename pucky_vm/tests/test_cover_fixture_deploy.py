@@ -76,6 +76,7 @@ def test_runtime_fixture_from_deploy_uses_bundled_artifact_urls() -> None:
     assert runtime["schema"] == "pucky.reply_cards.v1"
     assert isinstance(fixture_cards, list)
     assert fixture_cards
+    assert all(str(card.get("card_id") or "").startswith("fixture_card_") for card in fixture_cards)
 
     artifact_cards = [card for card in fixture_cards if card.get("audio_artifact") or card.get("html_artifact")]
     assert artifact_cards

@@ -226,6 +226,14 @@
     feedLastAppliedAt: 0,
     vmFeedSnapshotPromise: null,
     showArchivedFeed: false,
+    inboxManageMode: false,
+    selectedInboxCardKeys: new Set(),
+    lastInboxManageResult: {
+      action: "",
+      ok: true,
+      count: 0,
+      error: ""
+    },
     openCardMenuSessionId: "",
     openCardMenuThreadId: "",
     cardMenuClickSuppressUntil: 0,
@@ -1295,6 +1303,7 @@
     state.feedSource = String(snapshot?.source || "unknown");
     state.feedLastAppliedAt = Date.now();
     state.feedLoadError = "";
+    reconcileInboxManageSelection();
     reconcileReadOverrides();
     reconcileFocusedCardSelection();
     clearMissingFeedIconFilter();
@@ -1319,7 +1328,7 @@
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
     try {
-      const snapshot = await fetchVmFeedSnapshot({ includeArchived: false });
+      const snapshot = await fetchVmFeedSnapshot({ includeArchived: Boolean(options.includeArchived || state.showArchivedFeed) });
       const applied = applyFeedSnapshot(snapshot, { render: options.render !== false });
       await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
       return applied;
@@ -2874,6 +2883,14 @@
         overflow_y: feedStyle?.overflowY || "",
         direct_card_count: feed ? Array.from(feed.children).filter(node => node?.classList?.contains("card-wrap")).length : 0,
         visible_card_count: cards.length,
+        inbox_manage_mode: Boolean(state.inboxManageMode),
+        inbox_manage_selected_count: state.selectedInboxCardKeys instanceof Set ? state.selectedInboxCardKeys.size : 0,
+        inbox_manage_selected_ids: state.selectedInboxCardKeys instanceof Set ? Array.from(state.selectedInboxCardKeys) : [],
+        open_card_menu_session_id: String(state.openCardMenuSessionId || ""),
+        open_card_menu_thread_id: String(state.openCardMenuThreadId || ""),
+        last_inbox_manage_result: {
+          ...(state.lastInboxManageResult || {})
+        },
         archive_reveal_open_count: document.querySelectorAll(".card-wrap.is-archive-reveal-open").length,
         archive_reveal_active_count: document.querySelectorAll(".card-wrap.is-archive-reveal-active").length,
         last_scroll_sample: {
@@ -3604,6 +3621,8 @@
   function dismissTransientUiForRouteChange() {
     dismissArchiveReveal({ immediate: true, reason: "route_change", context: "route_change" });
     dismissOpenCardMenu(false);
+    state.inboxManageMode = false;
+    inboxManageSelection().clear();
     dismissTraceSheet();
     dismissOriginSheet();
     dismissAdvancedSettingsSheet();
@@ -7938,13 +7957,14 @@
       title: "Inbox",
       surface: "inbox",
       createPage: () => {
-        const page = lightPage("Inbox");
+        const page = lightPage("Inbox", { action: inboxManageHeaderAction() });
         page.classList.add("light-canonical-port-page", "light-inbox-page");
         return page;
       },
       surfaceTag: "section",
       surfaceClassName: "light-canonical-port-surface light-inbox-surface",
-      sections: [lightInboxSection()]
+      sections: [lightInboxSection()],
+      afterSections: [inboxManageToolbar()].filter(Boolean)
     });
   }
 
@@ -9675,6 +9695,230 @@
     });
   }
 
+  function inboxManageSelection() {
+    if (!(state.selectedInboxCardKeys instanceof Set)) {
+      state.selectedInboxCardKeys = new Set(Array.isArray(state.selectedInboxCardKeys) ? state.selectedInboxCardKeys : []);
+    }
+    return state.selectedInboxCardKeys;
+  }
+
+  function inboxManageCardKey(card) {
+    const cardId = String(card && card.card_id || "").trim();
+    if (cardId) {
+      return `card:${cardId}`;
+    }
+    const sessionId = cardSessionId(card);
+    return sessionId ? `session:${sessionId}` : "";
+  }
+
+  function canManageInboxCard(card) {
+    if (!card || Boolean(card.synthetic_pending)) {
+      return false;
+    }
+    if (!String(card.card_id || "").trim()) {
+      return false;
+    }
+    if (!isPendingOutboundCard(card)) {
+      return true;
+    }
+    return isFailedPendingOutboundCard(card);
+  }
+
+  function isInboxCardSelected(card) {
+    const key = inboxManageCardKey(card);
+    return Boolean(key && inboxManageSelection().has(key));
+  }
+
+  function reconcileInboxManageSelection(cards = filteredFeedCards(feedDisplayCards())) {
+    const selection = inboxManageSelection();
+    const visibleKeys = new Set((Array.isArray(cards) ? cards : [])
+      .filter(canManageInboxCard)
+      .map(inboxManageCardKey)
+      .filter(Boolean));
+    for (const key of Array.from(selection)) {
+      if (!visibleKeys.has(key)) {
+        selection.delete(key);
+      }
+    }
+  }
+
+  function selectedInboxManageCards() {
+    const selection = inboxManageSelection();
+    return filteredFeedCards(feedDisplayCards()).filter(card => {
+      const key = inboxManageCardKey(card);
+      return key && selection.has(key) && canManageInboxCard(card);
+    });
+  }
+
+  function setInboxManageMode(active, options = {}) {
+    state.inboxManageMode = Boolean(active);
+    if (!state.inboxManageMode) {
+      inboxManageSelection().clear();
+    } else {
+      reconcileInboxManageSelection();
+    }
+    dismissOpenCardMenu(false);
+    if (options.render !== false) {
+      render();
+    }
+  }
+
+  function toggleInboxManageSelection(card) {
+    if (!canManageInboxCard(card)) {
+      return;
+    }
+    const key = inboxManageCardKey(card);
+    if (!key) {
+      return;
+    }
+    const selection = inboxManageSelection();
+    if (selection.has(key)) {
+      selection.delete(key);
+    } else {
+      selection.add(key);
+    }
+    render();
+  }
+
+  function clearInboxManageSelection() {
+    inboxManageSelection().clear();
+    render();
+  }
+
+  function inboxManageHeaderAction() {
+    const wrap = el("div", "inbox-header-actions");
+    const archive = lightCircleButton(
+      "archive_folder",
+      state.showArchivedFeed ? "Show active Inbox" : "Show archived replies",
+      () => {
+        void toggleInboxArchivedFeed();
+      },
+      state.showArchivedFeed ? "inbox-archive-toggle is-active" : "inbox-archive-toggle"
+    );
+    archive.setAttribute("aria-pressed", state.showArchivedFeed ? "true" : "false");
+    const manage = lightCircleButton(
+      "checklist",
+      state.inboxManageMode ? "Done managing Inbox" : "Manage Inbox",
+      () => setInboxManageMode(!state.inboxManageMode),
+      state.inboxManageMode ? "inbox-manage-toggle is-active" : "inbox-manage-toggle"
+    );
+    manage.setAttribute("aria-pressed", state.inboxManageMode ? "true" : "false");
+    wrap.append(archive, manage);
+    return wrap;
+  }
+
+  async function toggleInboxArchivedFeed() {
+    state.showArchivedFeed = !state.showArchivedFeed;
+    state.inboxManageMode = false;
+    inboxManageSelection().clear();
+    dismissOpenCardMenu(false);
+    render();
+    await syncFeedCards({
+      reason: state.showArchivedFeed ? "show_archived_inbox" : "show_active_inbox",
+      includeArchived: state.showArchivedFeed,
+      silent: true,
+      render: true
+    });
+  }
+
+  function inboxManageToolbar() {
+    if (!state.inboxManageMode) {
+      return null;
+    }
+    reconcileInboxManageSelection();
+    const count = inboxManageSelection().size;
+    const actionLabel = state.showArchivedFeed ? "Unarchive" : "Archive";
+    const bar = el("div", "inbox-manage-bar");
+    bar.dataset.inboxManageSelectedCount = String(count);
+    const status = el("div", "inbox-manage-count", `${count} selected`);
+    const actions = el("div", "inbox-manage-actions");
+    const archive = el("button", "inbox-manage-action is-primary", actionLabel);
+    archive.type = "button";
+    archive.disabled = count === 0;
+    archive.addEventListener("click", () => {
+      void archiveSelectedInboxCards();
+    });
+    const clear = el("button", "inbox-manage-action", "Clear");
+    clear.type = "button";
+    clear.disabled = count === 0;
+    clear.addEventListener("click", clearInboxManageSelection);
+    const cancel = el("button", "inbox-manage-action", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => setInboxManageMode(false));
+    actions.append(archive, clear, cancel);
+    bar.append(status, actions);
+    return bar;
+  }
+
+  function applyOptimisticInboxBatchAction(cards, action) {
+    const previousCards = state.cards.slice();
+    const previousSelection = new Set(inboxManageSelection());
+    const targetKeys = new Set((Array.isArray(cards) ? cards : []).map(inboxManageCardKey).filter(Boolean));
+    const nextArchived = action === "archive";
+    state.cards = state.cards.map(card => {
+      const key = inboxManageCardKey(card);
+      return key && targetKeys.has(key) ? { ...card, archived: nextArchived } : card;
+    });
+    inboxManageSelection().clear();
+    reconcileFocusedCardSelection();
+    reconcileReadOverrides();
+    clearMissingFeedIconFilter();
+    render();
+    return () => {
+      state.cards = previousCards;
+      state.selectedInboxCardKeys = previousSelection;
+      reconcileFocusedCardSelection();
+      reconcileReadOverrides();
+      clearMissingFeedIconFilter();
+      render();
+    };
+  }
+
+  async function archiveSelectedInboxCards() {
+    const targets = selectedInboxManageCards();
+    const action = state.showArchivedFeed ? "unarchive" : "archive";
+    if (!targets.length) {
+      return null;
+    }
+    dismissOpenCardMenu(false);
+    const rollback = applyOptimisticInboxBatchAction(targets, action);
+    try {
+      const results = [];
+      for (const card of targets) {
+        const result = await postFeedAction(card, action);
+        if (result === null || result && result.ok === false) {
+          throw new Error(String(result && (result.error || result.detail) || "Feed action failed"));
+        }
+        results.push(result);
+      }
+      state.lastInboxManageResult = {
+        action,
+        ok: true,
+        count: targets.length,
+        error: ""
+      };
+      render();
+      void syncFeedCards({
+        reason: `inbox_manage_${action}`,
+        includeArchived: state.showArchivedFeed,
+        silent: true,
+        render: true
+      });
+      return results;
+    } catch (error) {
+      rollback();
+      state.lastInboxManageResult = {
+        action,
+        ok: false,
+        count: targets.length,
+        error: error instanceof Error ? error.message : String(error || "Feed action failed")
+      };
+      render();
+      showToast(state.lastInboxManageResult.error);
+      return null;
+    }
+  }
+
   function uniqueFeedIcons() {
     return uniqueFeedIconFilters().map(filter => filter.key);
   }
@@ -11060,6 +11304,102 @@
   }
 
 
+  function inboxManageSelectButton(card) {
+    const selected = isInboxCardSelected(card);
+    const select = el("button", selected ? "inbox-manage-select is-selected" : "inbox-manage-select");
+    select.type = "button";
+    applyCardActionData(select, "manage_select", card, "reply");
+    select.setAttribute("aria-label", `${selected ? "Deselect" : "Select"} ${card?.title || "Inbox tile"}`);
+    select.setAttribute("aria-pressed", selected ? "true" : "false");
+    select.innerHTML = iconSvg("checklist", { filled: selected });
+    select.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleInboxManageSelection(card);
+    });
+    return select;
+  }
+
+  function isInboxCardMenuOpen(card) {
+    const sessionId = cardSessionId(card);
+    const threadId = cardThreadId(card);
+    return Boolean(
+      (sessionId && state.openCardMenuSessionId === sessionId)
+      || (!sessionId && threadId && state.openCardMenuThreadId === threadId)
+    );
+  }
+
+  function openInboxCardMenu(card) {
+    state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+    state.openCardMenuSessionId = cardSessionId(card);
+    state.openCardMenuThreadId = cardThreadId(card);
+    renderFeed();
+    void syncVoiceThreadScope({ reason: "inbox_card_menu_open", render: true, force: true });
+  }
+
+  function inboxCardMenuButton(card) {
+    const open = isInboxCardMenuOpen(card);
+    const menuButton = el("button", open ? "inbox-card-menu-button is-open" : "inbox-card-menu-button");
+    menuButton.type = "button";
+    applyCardActionData(menuButton, "manage_menu", card, "reply");
+    menuButton.setAttribute("aria-label", `More actions for ${card?.title || "Inbox tile"}`);
+    menuButton.setAttribute("aria-expanded", open ? "true" : "false");
+    menuButton.innerHTML = iconSvg("more_vert", { filled: true });
+    menuButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (isInboxCardMenuOpen(card)) {
+        dismissOpenCardMenu(false);
+        return;
+      }
+      openInboxCardMenu(card);
+    });
+    return menuButton;
+  }
+
+  function cardOverflowMenu(card) {
+    const menu = el("div", "card-longpress-menu inbox-card-menu");
+    menu.setAttribute("role", "menu");
+    const addItem = (label, icon, actionName, handler) => {
+      const item = el("button", "inbox-card-menu-item");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.dataset.cardMenuAction = actionName;
+      item.innerHTML = `${iconSvg(icon, { filled: true })}<span>${label}</span>`;
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        handler();
+      });
+      menu.append(item);
+    };
+    addItem("Open transcript", "chat", "open_transcript", () => {
+      dismissOpenCardMenu(false);
+      showTranscript(card);
+    });
+    if (isCardRead(card)) {
+      addItem("Mark unread", "checklist", "mark_unread", () => {
+        dismissOpenCardMenu(false);
+        setCardReadOverride(card, false);
+        render();
+      });
+    } else {
+      addItem("Mark read", "checklist", "mark_read", () => {
+        dismissOpenCardMenu(false);
+        markCardRead(card);
+      });
+    }
+    if (state.showArchivedFeed) {
+      addItem("Unarchive", "archive_folder", "unarchive", () => {
+        dismissOpenCardMenu(false);
+        void requestFeedAction(card, "unarchive", { silent: false });
+      });
+    } else {
+      addItem("Archive", "archive_folder", "archive", () => {
+        dismissOpenCardMenu(false);
+        void requestFeedAction(card, "archive", { silent: false });
+      });
+    }
+    return menu;
+  }
+
   function cardView(card, options = {}) {
     const flatFeed = Boolean(options.flatFeed);
     const surface = String(options.surface || "").trim().toLowerCase();
@@ -11073,6 +11413,21 @@
     setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const isMeetingList = isMeetingsListCard(card);
+    const inboxSurface = surface === "inbox" && !isMeetingList;
+    const manageableInboxCard = inboxSurface && canManageInboxCard(card);
+    const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
+    if (inboxSurface) {
+      wrapper.classList.add("is-inbox-card");
+    }
+    if (manageableInboxCard) {
+      wrapper.classList.add("has-inbox-menu");
+    }
+    if (inboxManageMode) {
+      wrapper.classList.add("is-inbox-manage-mode");
+    }
+    if (manageableInboxCard && isInboxCardSelected(card)) {
+      wrapper.classList.add("is-inbox-manage-selected");
+    }
     const cardClassName = isMeetingList
       ? meetingListCardClass(card)
       : isCardRead(card)
@@ -11097,6 +11452,10 @@
       identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
       identity.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (inboxManageMode) {
+          toggleInboxManageSelection(card);
+          return;
+        }
         toggleCardRead(card);
       });
     }
@@ -11130,6 +11489,10 @@
       applyCardActionData(title, "transcript_title", card, "reply");
       title.setAttribute("aria-label", `Open transcript for ${card.title || "reply"}`);
       title.addEventListener("click", () => {
+        if (inboxManageMode) {
+          toggleInboxManageSelection(card);
+          return;
+        }
         if (!shouldSuppressCardActivation()) {
           showTranscript(card);
         }
@@ -11142,6 +11505,10 @@
         inlineAudio.setAttribute("aria-label", `Open audio controls for ${card.title || "reply"}`);
         inlineAudio.append(audioTileStatus(card));
         inlineAudio.addEventListener("click", () => {
+          if (inboxManageMode) {
+            toggleInboxManageSelection(card);
+            return;
+          }
           if (!shouldSuppressCardActivation()) {
             showAudioDetail(resolveAudioControlsTargetCard(card));
           }
@@ -11154,6 +11521,10 @@
         summary.setAttribute("aria-label", `Open transcript for ${card.title || "reply"}`);
         summary.append(el("p", "preview", card.summary || card.transcript || ""));
         summary.addEventListener("click", () => {
+          if (inboxManageMode) {
+            toggleInboxManageSelection(card);
+            return;
+          }
           if (!shouldSuppressCardActivation()) {
             showTranscript(card);
           }
@@ -11187,6 +11558,10 @@
               : `Play ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
+        if (inboxManageMode) {
+          toggleInboxManageSelection(card);
+          return;
+        }
         if (isMeetingList) {
           void showMeetingAudioDetail(card.meeting_record);
           return;
@@ -11205,6 +11580,10 @@
         page.setAttribute("aria-label", `Open page for ${card.title}`);
         page.addEventListener("click", (event) => {
           event.stopPropagation();
+          if (inboxManageMode) {
+            toggleInboxManageSelection(card);
+            return;
+          }
           showRichPage(card);
         });
         actions.append(page);
@@ -11216,6 +11595,10 @@
         file.setAttribute("aria-label", `Open file for ${card.title}`);
         file.addEventListener("click", (event) => {
           event.stopPropagation();
+          if (inboxManageMode) {
+            toggleInboxManageSelection(card);
+            return;
+          }
           showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
         });
         actions.append(file);
@@ -11253,13 +11636,23 @@
       });
       return wrapper;
     }
-    if (canArchiveHomeCard(card)) {
+    const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);
+    if (inboxManageMode) {
+      wrapper.append(inboxManageSelectButton(card));
+    }
+    if (revealArchiveEnabled) {
       appendArchiveRevealAction(wrapper, {
         label: `Archive ${card.title || "reply"}`
       });
     }
     wrapper.append(cardEl);
-    if (canArchiveHomeCard(card)) {
+    if (manageableInboxCard) {
+      wrapper.append(inboxCardMenuButton(card));
+      if (isInboxCardMenuOpen(card)) {
+        wrapper.append(cardOverflowMenu(card));
+      }
+    }
+    if (revealArchiveEnabled) {
       installArchiveReveal(wrapper, card, {
         canReveal: canRevealHomeArchive,
         performArchive: () => performHomeArchive(card)
@@ -11360,13 +11753,14 @@
     }
     meta.append(metaCopy);
     cardEl.append(copy, meta);
-    if (canArchiveHomeCard(card)) {
+    const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);
+    if (revealArchiveEnabled) {
       appendArchiveRevealAction(wrapper, {
         label: `Archive ${card.title || "reply"}`
       });
     }
     wrapper.append(cardEl);
-    if (canArchiveHomeCard(card)) {
+    if (revealArchiveEnabled) {
       installArchiveReveal(wrapper, card, {
         canReveal: canRevealHomeArchive,
         performArchive: () => performHomeArchive(card)
@@ -14801,7 +15195,8 @@
       }
       const target = event.target instanceof Element ? event.target : null;
       const menu = target?.closest(".card-longpress-menu");
-      if (menu) {
+      const menuButton = target?.closest(".inbox-card-menu-button");
+      if (menu || menuButton) {
         return;
       }
       dismissOpenCardMenu(true);
@@ -16314,22 +16709,29 @@
     persistAudioState();
   }
 
-  async function requestFeedAction(card, action, options = {}) {
+  async function postFeedAction(card, action) {
     const cardId = String(card && card.card_id || "");
-    const sessionId = cardSessionId(card);
     if (!cardId) {
       return null;
     }
     const clientActionId = `feed_${action}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+    return feedApiRequest("/api/feed/actions", {
+      method: "POST",
+      body: {
+        client_action_id: clientActionId,
+        card_id: cardId,
+        action
+      }
+    });
+  }
+
+  async function requestFeedAction(card, action, options = {}) {
+    const cardId = String(card && card.card_id || "");
+    if (!cardId) {
+      return null;
+    }
     try {
-      const result = await feedApiRequest("/api/feed/actions", {
-        method: "POST",
-        body: {
-          client_action_id: clientActionId,
-          card_id: cardId,
-          action
-        }
-      });
+      const result = await postFeedAction(card, action);
       state.cards = result && result.ok === false
         ? state.cards
         : applyLocalFeedAction(state.cards, card, action);
@@ -17419,6 +17821,9 @@
         }
         if (action === "archive") {
           return { ...card, archived: true };
+        }
+        if (action === "unarchive") {
+          return { ...card, archived: false };
         }
         if (action === "mark_read") {
           return { ...card, read: true };

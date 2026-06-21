@@ -519,6 +519,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return
             if path == "/api/feed/actions":
                 if not self._is_authorized():
+                    self._drain_request_body(256 * 1024)
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 try:
@@ -865,6 +866,12 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             if len(data) > limit:
                 raise ValueError("audio body is too large")
             return data
+
+        def _drain_request_body(self, limit: int) -> None:
+            try:
+                self._read_body(limit)
+            except ValueError:
+                return
 
         def _is_authorized(self) -> bool:
             return is_any_bearer_authorized(

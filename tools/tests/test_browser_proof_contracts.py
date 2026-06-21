@@ -531,6 +531,20 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "inbox_action_layout" in source
     assert "unread_page_action.contrast_ratio >= 3" in source
     assert "document.body || current === document.documentElement" in source
+    assert '"--surface-card"' in source
+    assert "background_source" in source
+    assert 'unread_page_action.color !== "rgb(245, 249, 255)"' in source
+    assert "audio_only_mic_right_aligned" in source
+    assert "action-count-1" in source
+    assert "readInboxManagementState(" in source
+    assert "exerciseInboxManagement(" in source
+    assert "inbox_management" in source
+    assert 'data-card-action="manage_select"' in source
+    assert 'data-card-action="manage_menu"' in source
+    assert "archive_reveal_count" in source
+    assert "manage_mode_active" in source
+    assert "selected_count" in source
+    assert "menu_open" in source
 
 
 def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract() -> None:
