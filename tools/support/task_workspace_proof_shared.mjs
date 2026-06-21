@@ -208,6 +208,8 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
       last_name: runDisplayToken(seed),
       photo: "fixtures/contact_photos/proof-contact.webp",
       email: `${seed.prefix}@example.com`,
+      phone: "+1 (415) 555-0188",
+      activity: ["Linked to live alpha"],
     },
   });
   await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/contacts", {
@@ -219,6 +221,8 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
       last_name: runDisplayToken(seed),
       photo: "fixtures/contact_photos/eric.webp",
       email: `${seed.prefix}-owner@example.com`,
+      phone: "+1 (415) 555-0179",
+      activity: ["Owner handoff"],
     },
   });
   await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/projects", {

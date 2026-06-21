@@ -62,6 +62,8 @@ TASK_HELP = {
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
     "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
     "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
+    "proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle.",
+    "proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
     "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
@@ -385,6 +387,30 @@ def run_local_notes_flash_browser_proof(extra_args: list[str]) -> int:
     )
 
 
+def run_local_contacts_search_browser_proof(extra_args: list[str]) -> int:
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
+        [
+            "--base-url",
+            base_url,
+            "--api-token",
+            "proof-token",
+            "--sections",
+            "contacts",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-contacts-search-browser").resolve()),
+        ],
+        extra_args,
+        server_command=build_local_workspace_proof_server_command(
+            port,
+            state_dir=ROOT / ".tmp" / "proof-local-contacts-search-browser-state",
+        ),
+        health_url=f"{base_url}/healthz",
+    )
+
+
 def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_node_proofs(
@@ -395,6 +421,26 @@ def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
                 [
                     "--report-dir",
                     str((ROOT / ".tmp" / "proof-live-notes-flash-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_contacts_search_browser_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/cover/cover_live_user_session_playwright.mjs",
+                [
+                    "--routes",
+                    "contacts",
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-contacts-search-browser").resolve()),
                     *extra_args,
                 ],
             ),
@@ -587,6 +633,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_notes_flash_browser_proof(args.extra_args)
     if args.task == "proof-live-notes-flash-browser":
         return run_live_notes_flash_browser_proof(args.extra_args)
+    if args.task == "proof-local-contacts-search-browser":
+        return run_local_contacts_search_browser_proof(args.extra_args)
+    if args.task == "proof-live-contacts-search-browser":
+        return run_live_contacts_search_browser_proof(args.extra_args)
     if args.task == "proof-local-universal-tiles":
         return run_local_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-live-universal-tiles":

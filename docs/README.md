@@ -16,6 +16,8 @@ This folder is the retained documentation set. Treat this file as the top-level 
 - Full test: `python -m tools.dev test-full`
 - Notes flash browser proof (local): `python -m tools.dev proof-local-notes-flash-browser`
 - Notes flash browser proof (live): `python -m tools.dev proof-live-notes-flash-browser`
+- Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`
+- Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`
 - Local proof: `python -m tools.dev proof-local-web`
 - Live proof: `python -m tools.dev proof-live-web`
 - Deploy VM: `python -m tools.dev deploy-vm`

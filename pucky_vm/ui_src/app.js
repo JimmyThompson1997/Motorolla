@@ -222,6 +222,7 @@
     lastRenderedTurnVisualState: "",
     lastRenderedTurnId: "",
     waveHistory: new Map(),
+    contacts: { search: "" },
     links: initialLinksState(),
     meetings: initialMeetingsState(),
     meetingRecording: initialMeetingRecordingStatus(),
@@ -3819,16 +3820,114 @@
       });
   }
 
+  function normalizeSearchDigits(value) {
+    return String(value || "").replace(/\D+/g, "");
+  }
+
+  function contactSearchTerms(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    const activity = Array.isArray(meta.activity) ? meta.activity : [];
+    return [
+      contact?.title,
+      contact?.summary,
+      meta.display_name,
+      meta.first_name,
+      meta.last_name,
+      meta.email,
+      meta.phone,
+      ...activity,
+    ]
+      .map(value => String(value || "").trim())
+      .filter(Boolean);
+  }
+
+  function contactMatchesSearch(contact, needle = state.contacts.search) {
+    const query = String(needle || "").trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    if (contactSearchTerms(contact).some(value => value.toLowerCase().includes(query))) {
+      return true;
+    }
+    const phoneDigits = normalizeSearchDigits(contact?.metadata?.phone);
+    const queryDigits = normalizeSearchDigits(query);
+    return Boolean(phoneDigits && queryDigits && phoneDigits.includes(queryDigits));
+  }
+
+  function filteredContactsListItems() {
+    return contactsListItems().filter(contact => contactMatchesSearch(contact));
+  }
+
+  function queueContactsSearchFieldFocus(selectionStart = null, selectionEnd = null) {
+    const restore = () => {
+      const search = document.getElementById("contactsSearch");
+      if (!(search instanceof HTMLInputElement)) {
+        return;
+      }
+      search.focus({ preventScroll: true });
+      if (Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
+        try {
+          search.setSelectionRange(selectionStart, selectionEnd);
+        } catch (_error) {
+          // Ignore selection restore failures on search inputs that reject manual ranges.
+        }
+      }
+    };
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(restore);
+      return;
+    }
+    restore();
+  }
+
+  function lightContactsSearchField() {
+    const searchWrap = el("label", "light-contacts-search-wrap");
+    searchWrap.setAttribute("for", "contactsSearch");
+    const search = el("input", "light-contacts-search");
+    search.id = "contactsSearch";
+    search.type = "search";
+    search.setAttribute("aria-label", "Search contacts");
+    search.placeholder = "Search contacts";
+    search.autocomplete = "off";
+    search.spellcheck = false;
+    search.value = String(state.contacts.search || "");
+    const onSearchInput = () => {
+      const nextValue = search.value;
+      if (String(state.contacts.search || "") === nextValue) {
+        return;
+      }
+      const selectionStart = search.selectionStart;
+      const selectionEnd = search.selectionEnd;
+      state.contacts.search = nextValue;
+      resetLightRouteScroll();
+      render();
+      queueContactsSearchFieldFocus(selectionStart, selectionEnd);
+    };
+    search.addEventListener("input", onSearchInput);
+    search.addEventListener("search", onSearchInput);
+    searchWrap.append(search);
+    return searchWrap;
+  }
+
   function lightContactsPage() {
     const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
     page.classList.add("light-contacts-page");
-    const list = el("div", "light-contact-list");
     const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
     if (status) {
       page.append(status);
       return page;
     }
-    list.append(...contactsListItems().map(contact => {
+    const searchWrap = lightContactsSearchField();
+    const contacts = filteredContactsListItems();
+    page.append(searchWrap);
+    if (!contacts.length) {
+      page.append(lightEmptyState("search", "No contacts match your search.", "Clear the search field to see every contact again."));
+      return page;
+    }
+    const list = el("div", "light-contact-list");
+    list.append(...contacts.map(contact => {
       const row = el("button", "light-contact-row light-feed-row is-flat-feed");
       row.type = "button";
       row.dataset.contactId = contact.id;
@@ -7578,6 +7677,18 @@
     });
   }
 
+  function isContactsSurfaceRoute(route) {
+    const value = String(route || "").trim();
+    return value === "contacts" || value === "contact-detail";
+  }
+
+  function resetContactsSearchIfLeavingContacts(nextRoute, currentRoute = state.route) {
+    if (!isContactsSurfaceRoute(currentRoute) || isContactsSurfaceRoute(nextRoute)) {
+      return;
+    }
+    state.contacts.search = "";
+  }
+
   function restoreLightRouteScroll(snapshot) {
     const normalized = normalizeLightRouteSnapshot(snapshot);
     if (!normalized) {
@@ -7619,6 +7730,7 @@
     if (!normalized) {
       return false;
     }
+    resetContactsSearchIfLeavingContacts(normalized.route);
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       state[key] = String(normalized[key] || "");
     });
@@ -7675,6 +7787,7 @@
       reason: options.from || "light_app_click"
     });
     const commitNavigation = (reason = "light_app_click") => {
+      resetContactsSearchIfLeavingContacts(nextRoute);
       applyLightRouteSelectionPatch(selectionPatch || {});
       state.route = nextRoute;
       state.lightReturnRoute = state.route === "home" ? "" : "home";
@@ -7727,6 +7840,7 @@
     const parent = isHomeShellCanonicalRoute()
       ? "home"
       : detailParent || LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
+    resetContactsSearchIfLeavingContacts(parent === state.route ? "home" : parent);
     state.route = parent === state.route ? "home" : parent;
     state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
     state.lightReturnRoute = state.route === "home" ? "" : "home";
