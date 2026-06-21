@@ -9,15 +9,15 @@ import {
   writeAutomationError,
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
+import { loadProofRuntimeEnv, resolveWriteToken } from "../../support/proof_runtime_env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+loadProofRuntimeEnv({ rootDir: ROOT });
 const RESULT_SCHEMA = "pucky.universal_feed_tiles_browser_proof.v1";
 const DEFAULT_BASE_URL = process.env.PUCKY_UNIVERSAL_FEED_TILES_BASE_URL || "https://pucky.fly.dev";
 const MOBILE_VIEWPORT = { width: 430, height: 932 };
 const DESKTOP_VIEWPORT = { width: 1440, height: 980 };
 const DETAIL_SELECTOR = "#detail";
-const LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN";
-const LEGACY_WEB_TOKEN_PLACEHOLDER = ["Paste ", "PUCKY_", "WEB_UI_TOKEN"].join("");
 const ROUTES = [
   {
     surface: "Notes",
@@ -94,15 +94,7 @@ const ROUTES = [
 ];
 
 function resolveApiToken() {
-  const webToken = String(process.env[LEGACY_WEB_TOKEN_ENV] || "").trim();
-  if (webToken) {
-    return webToken;
-  }
-  const operatorToken = String(process.env.PUCKY_OPERATOR_TOKEN || "").trim();
-  if (operatorToken) {
-    return operatorToken;
-  }
-  return String(process.env.PUCKY_API_TOKEN || "").trim();
+  return resolveWriteToken({ rootDir: ROOT });
 }
 
 function timestampSlug() {
@@ -221,28 +213,8 @@ async function waitForRoute(page, route, timeoutMs) {
   );
 }
 
-async function unlockPreviewIfNeeded(page, apiToken, timeoutMs) {
-  const locked = await page.evaluate(() => {
-    const title = document.querySelector(".light-empty-state h2");
-    const action = document.querySelector(".light-empty-state .light-empty-state-action");
-    return String(title?.textContent || "").trim() === "Preview needs api_token"
-      && String(action?.textContent || "").trim() === "Unlock web preview";
-  });
-  if (!locked) {
-    return false;
-  }
-  assert(String(apiToken || "").trim(), "Universal feed tiles proof requires --api-token or a preview token when unlock is needed");
-  await page.getByRole("button", { name: "Unlock web preview" }).click();
-  await page.getByPlaceholder(LEGACY_WEB_TOKEN_PLACEHOLDER).waitFor({ state: "visible", timeout: timeoutMs });
-  await page.getByPlaceholder(LEGACY_WEB_TOKEN_PLACEHOLDER).fill(String(apiToken || "").trim());
-  await page.getByRole("button", { name: "Save token" }).click();
-  await page.waitForTimeout(250);
-  return true;
-}
-
 async function waitForSurfaceReady(page, routeConfig, apiToken, timeoutMs) {
-  await waitForRoute(page, routeConfig.route, timeoutMs);
-  await unlockPreviewIfNeeded(page, apiToken, timeoutMs);
+  void apiToken;
   await waitForRoute(page, routeConfig.route, timeoutMs);
   await page.waitForFunction(
     ({ primarySelector, emptySelector }) => {

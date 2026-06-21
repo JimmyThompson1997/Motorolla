@@ -12,9 +12,14 @@ import {
   writeAutomationError,
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
+import {
+  loadProofRuntimeEnv,
+  resolveWriteToken,
+} from "../../support/proof_runtime_env.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
+loadProofRuntimeEnv({ rootDir: repoRoot });
 const RESULT_SCHEMA = "pucky.hosted_bug_hunt_browser_proof.v1";
 const DEFAULT_BASE_URL = process.env.PUCKY_HOSTED_BUG_HUNT_BASE_URL || "https://pucky.fly.dev";
 const MOBILE_VIEWPORT = { width: 430, height: 932 };
@@ -355,11 +360,7 @@ const BASELINE_PROOFS = [
 ];
 
 function resolveApiToken() {
-  const operatorToken = String(process.env.PUCKY_OPERATOR_TOKEN || "").trim();
-  if (operatorToken) {
-    return operatorToken;
-  }
-  return String(process.env.PUCKY_API_TOKEN || "").trim();
+  return resolveWriteToken({ rootDir: repoRoot });
 }
 
 function timestampSlug() {

@@ -18,11 +18,15 @@ import {
   writeAutomationError,
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
+import {
+  loadProofRuntimeEnv,
+  resolveWriteToken,
+} from "../../support/proof_runtime_env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+loadProofRuntimeEnv({ rootDir: ROOT });
 const DEFAULT_BASE_URL = process.env.PUCKY_LIVE_USER_SESSION_BASE_URL || "https://pucky.fly.dev";
 const RESULT_SCHEMA = "pucky.live_user_session_browser_proof.v1";
-const LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN";
 const REQUIRED_HOME_ROUTES = [
   "inbox",
   "meetings",
@@ -97,19 +101,10 @@ function isHostedDeployBaseUrl(baseUrl) {
 }
 
 function resolveApiToken() {
-  const webToken = String(process.env[LEGACY_WEB_TOKEN_ENV] || "").trim();
-  if (webToken) {
-    return webToken;
-  }
-  const proofToken = String(process.env.PUCKY_LIVE_USER_SESSION_TOKEN || "").trim();
-  if (proofToken) {
-    return proofToken;
-  }
-  const operatorToken = String(process.env.PUCKY_OPERATOR_TOKEN || "").trim();
-  if (operatorToken) {
-    return operatorToken;
-  }
-  return String(process.env.PUCKY_API_TOKEN || "").trim();
+  return resolveWriteToken({
+    envKeys: ["PUCKY_LIVE_USER_SESSION_TOKEN"],
+    rootDir: ROOT,
+  });
 }
 
 function timestampSlug() {

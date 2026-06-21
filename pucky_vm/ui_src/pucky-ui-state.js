@@ -31,21 +31,6 @@ window.PUCKY_UI_STATE = (() => {
     }
   }
 
-  function resolveBrowserApiToken(options = {}) {
-    const tokenStateKey = String(options.tokenStateKey || "pucky.cover.browser_api_token.v1");
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryToken = String(params.get("api_token") || "").trim();
-      if (queryToken) {
-        localStorage.setItem(tokenStateKey, queryToken);
-        return queryToken;
-      }
-      return String(localStorage.getItem(tokenStateKey) || "").trim();
-    } catch (_) {
-      return "";
-    }
-  }
-
   function resolveBrowserDeviceId(options = {}) {
     const deviceStateKey = String(options.deviceStateKey || "pucky.cover.browser_device_id.v1");
     try {
@@ -100,7 +85,6 @@ window.PUCKY_UI_STATE = (() => {
     loadNavState,
     normalizeTheme,
     persistTheme,
-    resolveBrowserApiToken,
     resolveBrowserDeviceId,
     resolveInitialTheme,
     shouldResetNavState,
