@@ -1530,7 +1530,10 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   assert(projectState.chipCloudCount === 0, "Project detail should not render the top chip cloud");
   assert(projectState.sectionGridCount === 0, "Project detail should not render the legacy per-kind grid");
   assert(projectState.connectedSectionCount === 1, "Project detail should render one Connected section");
+  assert(projectState.connectedBodyIsFlat, "Project detail should render Connected inside one shared flat-feed shell");
   assert(projectState.connectedRows > 0, "Project detail should render connected feed rows");
+  assert(projectState.flatRowCount === projectState.connectedRows, "Project detail connected rows should all use flat-feed styling");
+  assert(projectState.contiguousRows, "Project detail connected rows should render contiguously with no inter-row gaps");
   if (seed.writeEnabled) {
     assert(projectState.pinnedNoteRows === 1, "Project detail should collapse duplicate linked-note targets into one row");
   }
@@ -1937,18 +1940,32 @@ async function readProjectDetailState(page, runId) {
   return page.evaluate(({ runId: currentRunId }) => {
     const connectedSection = [...document.querySelectorAll(".light-linked-records-section")]
       .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === "connected");
+    const connectedBody = connectedSection?.querySelector(".light-linked-record-list") || null;
     const connectedRows = connectedSection
       ? connectedSection.querySelectorAll(".light-linked-record-feed-row").length
+      : 0;
+    const flatRowCount = connectedSection
+      ? connectedSection.querySelectorAll(".light-linked-record-feed-row.is-flat-feed").length
       : 0;
     const pinnedNoteRows = connectedSection
       ? connectedSection.querySelectorAll(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${currentRunId}-pinned-note"]`).length
       : 0;
+    const rowRects = connectedSection
+      ? [...connectedSection.querySelectorAll(".light-linked-record-feed-row")].map((row) => {
+          const rect = row.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom };
+        })
+      : [];
+    const contiguousRows = rowRects.every((rect, index) => index === 0 || Math.abs(rect.top - rowRects[index - 1].bottom) <= 1.5);
     return {
       heroCount: document.querySelectorAll(".light-detail-hero").length,
       chipCloudCount: document.querySelectorAll(".light-project-detail-page .light-chip-cloud").length,
       sectionGridCount: document.querySelectorAll(".light-project-section-grid").length,
       connectedSectionCount: connectedSection ? 1 : 0,
+      connectedBodyIsFlat: Boolean(connectedBody?.classList.contains("light-card") && connectedBody?.classList.contains("is-flat-feed")),
       connectedRows,
+      flatRowCount,
+      contiguousRows,
       pinnedNoteRows,
       shellRoute: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
     };

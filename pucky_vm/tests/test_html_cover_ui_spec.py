@@ -240,7 +240,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert "if (!entries.length && !showWhenEmpty) {" in linked_record_section
     assert 'section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();' in linked_record_section
-    assert 'body.append(el("div", "light-card light-linked-records-empty-shell"));' in linked_record_section
+    assert 'body.append(el("div", flatFeed ? "light-linked-records-empty-shell is-flat-feed" : "light-card light-linked-records-empty-shell"));' in linked_record_section
     assert 'entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {' in linked_record_section
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
     assert 'who.dataset.detailRow = "who";' in app
@@ -313,6 +313,10 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-linked-record-list" in styles
     assert ".light-linked-record-feed-row" in styles
     assert ".light-linked-records-empty-shell" in styles
+    assert ".light-linked-record-list.is-flat-feed {" in styles
+    assert ".light-linked-records-section.is-flat-feed {" in styles
+    assert ".light-linked-record-feed-row.is-flat-feed {" in styles
+    assert ".light-linked-records-empty-shell.is-flat-feed {" in styles
 
 
 def test_voice_status_dot_is_always_rendered_and_debuggable() -> None:
@@ -1005,7 +1009,9 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'includeKinds: ["note"],' in linked_notes
     assert 'valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"' in linked_notes
     assert "const showChips = options.showChips !== false;" in linked_feed_row
+    assert 'const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";' in linked_feed_row
     assert 'showChips ? "" : "is-no-chips",' in linked_feed_row
+    assert 'flatFeed ? "is-flat-feed" : "",' in linked_feed_row
     assert 'typeof options.detailResolver === "function"' in linked_feed_row
     assert "if (showChips) {" in linked_feed_row
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
@@ -1016,10 +1022,15 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'fromRoute: "contact-detail"' in contact_detail
     assert "const title = options.title || \"Linked records\";" in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
+    assert 'const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";' in linked_record_section
     assert 'const entries = workspaceLinkedEntries(record, {' in linked_record_section
     assert "dedupeTargets: options.dedupeTargets === true," in linked_record_section
+    assert "if (flatFeed) {" in linked_record_section
+    assert 'section.classList.add("is-flat-feed");' in linked_record_section
+    assert 'body.classList.add("light-card", "is-flat-feed");' in linked_record_section
     assert "detailResolver: typeof options.detailResolver === \"function\" ? options.detailResolver : null," in linked_record_section
     assert "showChips: options.showChips !== false," in linked_record_section
+    assert 'variant: flatFeed ? "flat" : "",' in linked_record_section
     assert "lightHtmlDocument(contact" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
     assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
@@ -1036,6 +1047,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'fromRoute: "project-detail"' in project_detail
     assert "dedupeTargets: true," in project_detail
     assert "showChips: false," in project_detail
+    assert 'variant: "flat",' in project_detail
     assert "detailResolver: projectConnectedDetail," in project_detail
     assert "function projectConnectedDetail(entry) {" in app
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail

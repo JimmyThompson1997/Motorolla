@@ -338,12 +338,22 @@ async function assertProjectConnectedLayout(page) {
   const state = await page.evaluate(() => {
     const connectedSection = [...document.querySelectorAll(".light-linked-records-section")]
       .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === "connected");
+    const connectedBody = connectedSection?.querySelector(".light-linked-record-list") || null;
+    const rowRects = connectedSection
+      ? [...connectedSection.querySelectorAll(".light-linked-record-feed-row")].map((row) => {
+          const rect = row.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom };
+        })
+      : [];
     return {
       heroCount: document.querySelectorAll(".light-detail-hero").length,
       chipCloudCount: document.querySelectorAll(".light-project-detail-page .light-chip-cloud").length,
       gridCount: document.querySelectorAll(".light-project-section-grid").length,
       connectedSectionCount: connectedSection ? 1 : 0,
       connectedRows: connectedSection ? connectedSection.querySelectorAll(".light-linked-record-feed-row").length : 0,
+      flatRowCount: connectedSection ? connectedSection.querySelectorAll(".light-linked-record-feed-row.is-flat-feed").length : 0,
+      connectedBodyIsFlat: Boolean(connectedBody?.classList.contains("light-card") && connectedBody?.classList.contains("is-flat-feed")),
+      contiguousRows: rowRects.every((rect, index) => index === 0 || Math.abs(rect.top - rowRects[index - 1].bottom) <= 1.5),
     };
   });
   if (state.heroCount !== 0) {
@@ -357,6 +367,15 @@ async function assertProjectConnectedLayout(page) {
   }
   if (state.connectedSectionCount !== 1 || state.connectedRows < 1) {
     throw new Error("Projects: unified Connected feed did not render");
+  }
+  if (!state.connectedBodyIsFlat) {
+    throw new Error("Projects: Connected feed did not render inside one shared flat-feed shell");
+  }
+  if (state.flatRowCount !== state.connectedRows) {
+    throw new Error("Projects: Connected rows did not all switch to flat-feed styling");
+  }
+  if (!state.contiguousRows) {
+    throw new Error("Projects: Connected rows still have inter-row spacing");
   }
 }
 
@@ -422,18 +441,18 @@ async function main() {
     await backToHome(page);
 
     await clickTile(page, "inbox");
-    await assertVisible(page, ".light-shell[data-light-route=\"inbox\"] .light-real-feed-list", "inbox real feed");
-    if ((await page.locator(".light-real-feed-list .card-wrap").count()) < 1) {
+    await assertVisible(page, ".light-shell[data-light-route=\"inbox\"] .light-inbox-surface", "inbox real feed");
+    if ((await page.locator(".light-shell[data-light-route=\"inbox\"] .light-inbox-surface .card-wrap").count()) < 1) {
       throw new Error("Light Inbox did not render real Home feed cards");
     }
-    if ((await page.locator(".light-real-feed-list [data-card-action=\"page\"]").count()) < 1) {
+    if ((await page.locator(".light-shell[data-light-route=\"inbox\"] .light-inbox-surface [data-card-action=\"page\"]").count()) < 1) {
       throw new Error("Light Inbox did not expose canonical page attachment actions");
     }
-    if ((await page.locator(".light-real-feed-list [data-card-action=\"audio\"]").count()) < 1) {
+    if ((await page.locator(".light-shell[data-light-route=\"inbox\"] .light-inbox-surface [data-card-action=\"audio\"]").count()) < 1) {
       throw new Error("Light Inbox did not expose canonical audio actions");
     }
     screenshots.inbox = await screenshot(page, config.reportDir, "06-light-inbox-fixture-cards");
-    await page.locator(".light-real-feed-list .card-body").first().click();
+    await page.locator(".light-shell[data-light-route=\"inbox\"] .light-inbox-surface .card-body").first().click();
     await assertVisible(page, ".detail-panel.is-open", "inbox detail");
     screenshots.inboxDetail = await screenshot(page, config.reportDir, "07-light-inbox-card-detail");
     await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
@@ -462,56 +481,6 @@ async function main() {
     await assertVisible(page, ".detail-panel.is-open", "meeting audio detail");
     screenshots.meetingsAudio = await screenshot(page, config.reportDir, "10-light-meetings-audio");
     await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-    await backToHome(page);
-
-    await clickTile(page, "notes");
-    await page.locator(".light-note-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"note-detail\"] .light-note-document", "note detail");
-    screenshots.notes = await screenshot(page, config.reportDir, "11-light-note-detail");
-    await backToHome(page);
-
-    await clickTile(page, "tasks");
-    await assertVisible(page, ".light-shell[data-light-route=\"tasks\"]", "tasks");
-    for (const label of ["DO", "DO SOON", "OVERDUE", "DONE"]) {
-      await page.getByText(label, { exact: true }).first().waitFor({ state: "visible", timeout: 8000 });
-    }
-    screenshots.tasks = await screenshot(page, config.reportDir, "12-light-tasks-groups");
-    await page.locator(".light-task-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"task-detail\"]", "task detail");
-    await backToHome(page);
-
-    await clickTile(page, "calendar");
-    await assertVisible(page, ".light-shell[data-light-route=\"calendar\"] .light-timeline", "calendar");
-    await page.locator(".light-event-block").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"meeting-detail\"] .light-event-document", "meeting detail");
-    screenshots.calendar = await screenshot(page, config.reportDir, "13-light-calendar-event-detail");
-    await backToHome(page);
-
-    await clickTile(page, "meeting-notes");
-    await assertVisible(page, ".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row", "meeting notes");
-    if (await page.locator(".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row .light-graph-chip-row").count()) {
-      throw new Error("Meeting Notes list still renders right-side pill chips");
-    }
-    if (await page.locator(".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row .light-small-icon, .light-shell[data-light-route=\"meeting-notes\"] .light-graph-row .light-chevron").count()) {
-      throw new Error("Meeting Notes list regressed its icon/chevron cleanup");
-    }
-    screenshots.meetingNotes = await screenshot(page, config.reportDir, "14-light-meeting-notes-list");
-    await page.locator(".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"meeting-note-detail\"]", "meeting note detail");
-    screenshots.meetingNoteDetail = await screenshot(page, config.reportDir, "14b-light-meeting-note-detail");
-    await backToHome(page);
-
-    await clickTile(page, "projects");
-    await page.locator(".light-project-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"project-detail\"] .light-linked-records-section", "project detail");
-    await assertProjectConnectedLayout(page);
-    screenshots.projects = await screenshot(page, config.reportDir, "15-light-project-detail");
-    await backToHome(page);
-
-    await clickTile(page, "contacts");
-    await page.locator(".light-contact-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"contact-detail\"] .light-profile-card", "contact detail");
-    screenshots.contacts = await screenshot(page, config.reportDir, "16-light-contact-detail");
     await backToHome(page);
 
     screenshots.backHome = await screenshot(page, config.reportDir, "17-back-home");
