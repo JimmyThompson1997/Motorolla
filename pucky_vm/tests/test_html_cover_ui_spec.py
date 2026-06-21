@@ -306,11 +306,12 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-shell[data-light-route=\"connect\"]" in styles
     assert ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface" in styles
     assert ".light-page-header-shell" in styles
+    assert ".light-page-header-shell.has-chrome" in styles
     assert ".light-canonical-port-surface" in styles
     assert "overflow-x: clip;" in styles
     assert "overflow-y: visible;" in styles
     assert ".light-page-header-shell {\n  position: sticky;" in styles
-    assert ".light-date-picker {\n  position: sticky;" in styles
+    assert ".light-date-picker {\n  position: sticky;" not in styles
     assert ".light-calendar-strip-nav-button" in styles
     assert "grid-auto-columns: 58px;" in styles
     assert "scroll-snap-type: x proximity;" in styles
@@ -399,6 +400,7 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
+    light_header = function_block(app, "lightHeader")
 
     assert 'notes: "Notes"' in routes
     assert '"calendar-events": "Calendar"' in routes
@@ -413,6 +415,9 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (bucket.error) {' in light_workspace_status
     assert 'if (!bucket.loaded) {' in light_workspace_status
     assert 'if (bucket.loaded && !workspaceItems(collection).length) {' in light_workspace_status
+    assert 'headerChrome: lightDatePicker()' in light_calendar_page
+    assert 'page.append(lightDatePicker())' not in light_calendar_page
+    assert "if (options.headerChrome)" in light_header
     assert 'if (bucket.error) {' in light_calendar_page
     assert 'if (!bucket.loaded) {' in light_calendar_page
 
@@ -1138,7 +1143,7 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
 
 
-def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset_scroll_on_open() -> None:
+def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_trigger_and_reset_scroll_on_open() -> None:
     app = read("app.js")
     tasks_page = function_block(app, "lightTasksPage")
     task_workspace_page = function_block(app, "lightTaskWorkspacePage")
@@ -1146,13 +1151,11 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     styles = read("styles.css")
 
     task_group = function_block(app, "lightTaskGroup")
-    task_detail_rows = function_block(app, "taskDetailRows")
+    task_detail_card = function_block(app, "lightTaskDetailCard")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
     task_checklist_section = function_block(app, "lightTaskChecklistSection")
-    task_people_section = function_block(app, "lightTaskPeopleSection")
     task_connected_rows = function_block(app, "taskConnectedRows")
     task_connected_section = function_block(app, "lightTaskConnectedSection")
-    task_people_loader = function_block(app, "ensureTaskPeopleContactsLoaded")
     task_filters = function_block(app, "lightTaskFilters")
     light_info_row = function_block(app, "lightInfoRow")
     light_navigate = function_block(app, "lightNavigate")
@@ -1170,31 +1173,22 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
 
     assert 'el("span", "light-task-row-summary"' not in task_group
     assert "function taskRowSummary" not in app
-    assert "function taskOwners(task)" in app
-    assert "function taskPrimaryOwner(task)" in app
+    assert "function taskOwners(task)" not in app
+    assert "function taskPrimaryOwner(task)" not in app
+    assert "function taskCreatedBy(task)" not in app
+    assert "function taskCreatedByTarget(task)" not in app
+    assert "function ensureTaskPeopleContacts(task)" not in app
+    assert "function ensureTaskPeopleContactsLoaded(tasks)" not in app
+    assert "function taskDetailRows(task)" not in app
+    assert "function lightTaskPeopleSection(task)" not in app
     assert "explicitOwners" not in app
     assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
     assert 'statusTrigger.type = "button";' in task_group
     assert 'openTaskStatusSelector(task, "list");' in task_group
     assert 'const main = el("button", "light-task-row-main");' in task_group
-    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in tasks_page
+    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in tasks_page
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in task_workspace_page
-    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' in render_task_groups
-    assert "items.some(task => taskCreatedBy(task) || taskPrimaryOwner(task))" in task_people_loader
-    assert 'void loadWorkspaceCollection("contacts", { render: true });' in task_people_loader
-    assert 'label: "Created by"' not in task_detail_rows
-    assert 'label: "Owner"' not in task_detail_rows
-    assert 'const owner = taskPrimaryOwner(task);' in task_people_section
-    assert 'label: createdBy,' in task_people_section
-    assert 'label: owner,' in task_people_section
-    assert 'value: "Created by"' in task_people_section
-    assert 'value: "Owner"' in task_people_section
-    assert 'target: taskCreatedByTarget(task)' in task_people_section
-    assert 'target: workspaceContactTargetByName(owner)' in task_people_section
-    assert 'dataset: { taskPersonRole: "created_by" }' in task_people_section
-    assert 'dataset: { taskPersonRole: "owner" }' in task_people_section
-    assert 'return lightInfoSection("People", rows, { showTrailingChevron: false });' in task_people_section
-    assert "lightRecordChip(" not in task_people_section
+    assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in render_task_groups
     assert 'return workspaceLinkedEntries(record, options).map(entry => {' in function_block(app, "workspaceLinkedRows")
     assert 'const currentKind = String(options.currentKind || record?.kind || "");' in workspace_linked_entries
     assert 'label,' in workspace_linked_entries
@@ -1216,6 +1210,9 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert 'const connected = lightTaskConnectedSection(task);' in task_detail_surface
     assert "surface.append(connected);" in task_detail_surface
     assert "lightHtmlDocument(task" not in task_detail_surface
+    assert "ensureTaskPeopleContacts(task)" not in task_detail_surface
+    assert 'lightInfoSection("Details", taskDetailRows(task))' not in task_detail_surface
+    assert "lightTaskPeopleSection(task)" not in task_detail_surface
     assert "taskMutationPending: {}," in app
     assert "function updateTaskStatus(taskId, nextStatus)" in app
     assert "function taskMutationPending(taskId, scope)" in app
@@ -1229,7 +1226,6 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert 'row.disabled = taskMutationPending(taskRecordId(task), item.id);' in task_checklist_section
     assert 'row.addEventListener("click", event => {' in task_checklist_section
     assert 'void toggleTaskChecklistItem(task, item.id);' in task_checklist_section
-    task_detail_card = function_block(app, "lightTaskDetailCard")
     assert "function lightTaskStatusControl" not in app
     assert 'const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
     assert 'card.type = "button";' in task_detail_card
@@ -1241,14 +1237,16 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert 'const statusCircle = el("span", "light-task-status-circle");' in task_detail_card
     assert 'statusCircle.append(el("span", taskCheckCircleClass(task)));' in task_detail_card
     assert "lightTaskStatusControl(task)" not in task_detail_card
+    assert 'const createdAt = Number(task?.created_at_ms || 0);' in task_detail_card
+    assert 'if (Number.isFinite(createdAt) && createdAt > 0) {' in task_detail_card
+    assert 'copy.append(el("span", "light-task-detail-created", `Created ${taskDateTimeLabel(createdAt, "")}`));' in task_detail_card
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert 'Object.entries(row.dataset).forEach(([key, value]) => {' in light_info_row
     assert 'item.dataset[key] = String(value || "");' in light_info_row
     assert 'row.fromRoute || state.route || ""' in light_info_row
     assert 'row.openOptions || {}' in light_info_row
     assert "options.showChevron !== false" in light_info_row
-    assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))')
-    assert task_detail_surface.index('lightInfoSection("Details", taskDetailRows(task))') < task_detail_surface.index("lightTaskPeopleSection(task)")
+    assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index("lightTaskChecklistSection(task)")
     assert task_detail_surface.index("lightTaskChecklistSection(task)") < task_detail_surface.index("lightTaskConnectedSection(task)")
     assert "resetLightRouteScroll();" in light_navigate
     assert "restoreScrollPosition(feed, 0);" in reset_scroll
@@ -1267,6 +1265,7 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert ".light-task-person-row" not in styles
     assert ".light-task-filter-button-icon" in styles
     assert ".light-task-detail-card" in styles
+    assert ".light-task-detail-created" in styles
     assert ".light-task-row:focus-within" not in styles
     assert ".light-task-row-main:focus," in styles
     assert ".light-task-row-main:focus-visible," in styles

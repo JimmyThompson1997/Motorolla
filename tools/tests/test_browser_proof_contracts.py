@@ -115,6 +115,26 @@ def test_live_notes_centering_proof_seeds_saved_browser_token_and_verifies_patch
     assert "second PATCH returned 401" in source
 
 
+def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert "async function calendarChromeLayoutMetrics(page)" in source
+    assert 'const headerShell = document.querySelector(".light-page-header-shell");' in source
+    assert "chromeInHeaderShell" in source
+    assert "chromePosition" in source
+    assert "topRowWidth" in source
+    assert "stripWidth" in source
+    assert "laneWidth" in source
+    assert "Expected calendar chrome to live inside the sticky header shell" in source
+    assert "Expected calendar chrome to stop using its own sticky positioning" in source
+    assert "Expected calendar top row to span the full calendar lane" in source
+    assert "Expected calendar day rail to span the full calendar lane" in source
+    assert 'calendar-desktop-${theme}-chrome.png' in source
+    assert 'calendar-mobile-${theme}-chrome.png' in source
+    assert "scrollDayStripWithButton(page, 1)" in source
+    assert "scrollDayStripDirect(page, 220)" in source
+
+
 def test_task_workspace_proof_page_url_seeds_api_token_for_preview_writes() -> None:
     source = read_source("task_workspace_proof_shared.mjs")
 
@@ -258,11 +278,17 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
 
     assert 'document.querySelector(".light-task-detail-card")' in source
     assert 'document.querySelector(".light-task-status-circle")' in source
+    assert 'document.querySelector(".light-task-detail-created")' in source
     assert 'document.querySelector(".light-task-status-trigger")' not in source
     assert 'document.querySelector(".light-task-status-circle-trigger")' not in source
     assert '".light-task-row-status-trigger"' in source
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
+    assert 'assert(!detailState.sections.includes("details")' in source
+    assert 'assert(!detailState.sections.includes("people")' in source
+    assert 'detailState.sections.includes("checklist")' in source
+    assert 'detailState.createdMeta' in source
+    assert 'detailState.checklistImmediatelyAfterDescription' in source
     assert "light-task-detail-body" not in source
     assert "lightHtmlFrame" not in source
     assert ".light-task-detail-toggle" not in source
@@ -284,13 +310,19 @@ def test_live_user_session_proof_checks_task_focus_ring_is_gone() -> None:
     assert "Task detail header selector opened in place without a blue focus rectangle." in source
 
 
-def test_live_user_session_proof_requires_chevron_free_task_detail_rows() -> None:
+def test_live_user_session_proof_requires_clean_task_detail_layout_and_chevron_free_rows() -> None:
     source = read_source("cover_live_user_session_playwright.mjs")
 
+    assert "header_created_meta" in source
+    assert "checklist_immediately_after_description" in source
+    assert 'assert(!taskState.sections.includes("details")' in source
+    assert 'assert(!taskState.sections.includes("people")' in source
+    assert 'assert(taskState.checklist_immediately_after_description' in source
+    assert 'assert(taskState.header_created_meta' in source
     assert "task_detail_chevron_count" in source
     assert 'querySelectorAll(".light-info-row .light-chevron")' in source
     assert 'assert(taskState.task_detail_chevron_count === 0' in source
-    assert "Task detail linked rows render without trailing chevrons" in source
+    assert "Task detail keeps the compact header, checklist-first layout, and chevron-free linked rows." in source
     assert "for (const link of TASK_LINKS)" in source
 
 

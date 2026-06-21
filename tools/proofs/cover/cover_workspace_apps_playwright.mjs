@@ -354,7 +354,14 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       title: "Proof Future Task",
       summary: "Due later.",
       status: "open",
+      created_at_ms: Date.now() - 6 * 60 * 60 * 1000,
       due_at_ms: Date.now() + 3 * 24 * 60 * 60 * 1000,
+      description: "Proof Future Task should keep its structured description visible above checklist items.",
+      checklist: [
+        { id: `${runId}-future-task-check-1`, label: "Pull product feedback", done: false },
+        { id: `${runId}-future-task-check-2`, label: "Refine the launch checklist", done: false },
+        { id: `${runId}-future-task-check-3`, label: "Share the final summary", done: false },
+      ],
       html: [
         "<!doctype html><html><body>",
         "<h1>Proof Future Task</h1>",
@@ -700,7 +707,7 @@ async function backHome(page, theme, timeoutMs) {
 }
 
 async function topBackToRoute(page, route, text, timeoutMs) {
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.locator("button.light-back-button").first().click();
   await waitForLightRoute(page, route, timeoutMs);
   if (text) {
     await waitForGraphText(page, text, timeoutMs);
@@ -747,7 +754,10 @@ async function readTaskDetailState(page) {
     const hasGeneratedPage = sectionTitles.includes("generated page") || /\bgenerated page\b/i.test(pageText);
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
-    const firstSectionTitle = String(contentSections[0]?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
+    const contentSectionTitles = contentSections
+      .map(node => String(node.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase())
+      .filter(Boolean);
+    const firstSectionTitle = String(contentSectionTitles[0] || "");
     const notes = Array.from(
       detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong, [data-workspace-target-route="note-detail"] .light-record-chip-label') || []
     )
@@ -765,6 +775,8 @@ async function readTaskDetailState(page) {
       hasRelated,
       hasGeneratedPage,
       sections: sectionTitles,
+      createdMeta: document.querySelector(".light-task-detail-created")?.textContent?.trim() || "",
+      checklistImmediatelyAfterDescription: contentSectionTitles[0] === "description" && contentSectionTitles[1] === "checklist",
       descriptionIsFirstSection: firstSectionTitle === "description",
       taskHtmlFramePresent: Boolean(detail?.querySelector(".light-html-frame, iframe")),
       statusCardPresent: Boolean(document.querySelector(".light-task-detail-card")),
@@ -1209,9 +1221,13 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   assert(detailState.route === "task-detail", `Expected task-detail route, got ${detailState.route}`);
   assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
   assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
-  assert(detailState.sections.includes("details"), "Expected inline task detail to include a Details section");
+  assert(detailState.sections.includes("checklist"), "Expected inline task detail to include a Checklist section");
   assert(detailState.sections.includes("connected"), "Expected inline task detail to include a Connected section");
+  assert(!detailState.sections.includes("details"), "Did not expect inline task detail to include a Details section");
+  assert(!detailState.sections.includes("people"), "Did not expect inline task detail to include a People section");
   assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
+  assert(detailState.checklistImmediatelyAfterDescription, "Expected inline task detail to place Checklist directly after Description");
+  assert(detailState.createdMeta, "Expected inline task detail to render compact created metadata in the header");
   assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
   assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");
   assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");

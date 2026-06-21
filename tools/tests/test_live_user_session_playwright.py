@@ -81,14 +81,23 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert '.settings-selector-option[data-selector-value="waiting"]' in source
     assert '".light-task-detail-card"' in source
     assert '".light-task-status-circle"' in source
+    assert '".light-task-detail-created"' in source
     assert '".light-task-status-trigger"' not in source
     assert '".light-task-status-circle-trigger"' not in source
     assert 'description_is_first_section' in source
+    assert 'checklist_immediately_after_description' in source
+    assert 'header_created_meta' in source
     assert 'task_html_frame_present' in source
-    assert "connectedSection = infoSection(\"connected\")" in source
+    assert 'const connectedSection = infoSection("connected");' in source
     assert "connected: Array.from(connectedSection?.querySelectorAll('.light-info-row[data-task-connected-kind]') || [])" in source
+    assert "const peopleSection = infoSection(\"people\");" not in source
+    assert "people:" not in source
+    assert 'assert(!taskState.sections.includes("details")' in source
+    assert 'assert(!taskState.sections.includes("people")' in source
     assert 'assert(!taskState.sections.includes("notes")' in source
     assert 'assert(!taskState.sections.includes("attached")' in source
+    assert 'assert(taskState.checklist_immediately_after_description' in source
+    assert 'assert(taskState.header_created_meta' in source
     assert 'task_detail_chevron_count: Array.from(detail?.querySelectorAll(".light-info-row .light-chevron") || []).length,' in source
     assert 'assert(!taskState.task_html_frame_present' in source
     assert 'assert(taskState.description_is_first_section' in source
@@ -96,7 +105,7 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert "Open task list status selector" in source
     assert "Open task detail header status selector near circle" in source
     assert "Open task detail header status selector on title area" in source
-    assert "Task detail linked rows render without trailing chevrons" in source
+    assert "Task detail keeps the compact header, checklist-first layout, and chevron-free linked rows." in source
     assert "Task list status selector opened in place without a blue focus rectangle." in source
     assert "Task detail header selector opened in place without a blue focus rectangle." in source
     assert "Open task detail pill status selector" not in source
