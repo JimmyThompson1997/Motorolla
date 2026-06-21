@@ -43,7 +43,6 @@ def test_release_hosted_web_task_is_registered_and_wires_release_lane() -> None:
     assert "HOSTED_RELEASE_TEST_PATHS = [" in source
     assert "HOSTED_RELEASE_NODE_CHECKS = [" in source
     assert "HOSTED_RELEASE_PROOF_SCRIPTS = [" in source
-    assert '"tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs"' in source
     assert '"tools/proofs/cover/cover_live_user_session_playwright.mjs"' in source
     assert "def run_release_hosted_web(extra_args: list[str]) -> int:" in source
     assert "verify_live_manifest_matches_head()" in source

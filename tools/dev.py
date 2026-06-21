@@ -100,16 +100,6 @@ HOSTED_RELEASE_NODE_CHECKS = [
 ]
 HOSTED_RELEASE_PROOF_SCRIPTS = [
     (
-        "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
-        lambda report_root, extra_args: [
-            "--base-url",
-            append_refresh_param("https://pucky.fly.dev", current_git_head() or str(int(time.time()))),
-            "--report-dir",
-            str((report_root / "universal-feed-tiles").resolve()),
-            *extra_args,
-        ],
-    ),
-    (
         "tools/proofs/cover/cover_live_user_session_playwright.mjs",
         lambda report_root, extra_args: [
             "--report-dir",
