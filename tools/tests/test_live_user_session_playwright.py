@@ -111,6 +111,21 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert "Open task detail pill status selector" not in source
     assert "Open task detail top-left status selector" not in source
     assert "Persist Done status after reload" in source
+    assert "function readTaskFilterSelectorState(page)" in source
+    assert "function assertTaskFilterSelectorLeadingVisuals(state, context)" in source
+    assert "task_filter_selector_options" in source
+    assert "selector_option_count" in source
+    assert "has_leading_visual" in source
+    assert "Open dark task filter selector" in source
+    assert "Open light task filter selector" in source
+    assert "Task filter selector renders leading visuals for every task category in dark mode." in source
+    assert "Task filter selector renders leading visuals for every task category in light mode." in source
+    assert "Complete final task checklist item" in source
+    assert "Reopen task by unchecking a completed checklist item" in source
+    assert 'assert(taskStateAfterChecklistDone.task_status === "done"' in source
+    assert 'assert(taskStateAfterChecklistReopen.task_status === "in_progress"' in source
+    assert 'assert(taskRecordAfterChecklistDone.status === "done"' in source
+    assert 'assert(taskRecordAfterChecklistReopen.status === "in_progress"' in source
 
 
 def test_live_user_session_wrapper_targets_nested_runner() -> None:

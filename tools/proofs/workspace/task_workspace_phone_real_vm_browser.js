@@ -264,6 +264,22 @@ async function readTaskState(page) {
         chevronHasRect: Boolean(svg?.querySelector("rect")),
       };
     })() : null;
+    const filterSelectorOptions = Array.from(document.querySelectorAll(".settings-selector-option")).map(option => {
+      const leading = option.querySelector(".settings-selector-option-leading");
+      return {
+        value: String(option.getAttribute("data-selector-value") || ""),
+        label: String(option.querySelector(".settings-selector-option-label")?.textContent || "").trim(),
+        meta: String(option.querySelector(".settings-selector-option-meta")?.textContent || "").trim(),
+        hasLeadingVisual: Boolean(
+          leading
+          && (
+            leading.children.length > 0
+            || leading.querySelector("svg, .light-check-circle")
+            || String(leading.textContent || "").trim()
+          )
+        ),
+      };
+    });
     const checklist = detail
       ? Array.from(detail.querySelectorAll(".light-task-checklist-row")).map(row => ({
           id: String(row.getAttribute("data-checklist-item-id") || ""),
@@ -323,6 +339,7 @@ async function readTaskState(page) {
       sections,
       filters,
       filterVisual,
+      filterSelectorOptions,
       checklist,
       connectedRowCount: connected.length,
     };
