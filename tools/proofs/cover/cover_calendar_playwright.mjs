@@ -757,6 +757,54 @@ async function selectConnectedRow(page, label) {
   await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row', { hasText: label }).first().click();
 }
 
+async function ensureMeetingDetailSectionExpanded(page, sectionKey, expanded = true) {
+  const header = page.locator(`.light-meeting-detail-section[data-meeting-detail-section="${sectionKey}"] > .light-meeting-detail-section-header`).first();
+  await header.waitFor({ state: "visible" });
+  const current = await header.getAttribute("aria-expanded");
+  if (String(current) !== String(expanded)) {
+    await header.click();
+  }
+  await page.waitForFunction(({ key, nextExpanded }) => {
+    const button = document.querySelector(`.light-meeting-detail-section[data-meeting-detail-section="${key}"] > .light-meeting-detail-section-header`);
+    return Boolean(button && button.getAttribute("aria-expanded") === String(nextExpanded));
+  }, { key: sectionKey, nextExpanded: expanded });
+}
+
+async function readMeetingDetailState(page) {
+  return page.evaluate(() => {
+    const visible = node => Boolean(node instanceof HTMLElement && !node.hidden && node.getClientRects().length);
+    const sectionRoots = Array.from(document.querySelectorAll(".light-meeting-detail-section"));
+    const sections = Object.fromEntries(sectionRoots.map(section => {
+      const key = String(section.getAttribute("data-meeting-detail-section") || "").trim();
+      const header = section.querySelector(":scope > .light-meeting-detail-section-header");
+      const body = section.querySelector(":scope > .light-meeting-detail-section-body");
+      return [key, {
+        expanded: header?.getAttribute("aria-expanded") === "true",
+        headerText: String(header?.textContent || "").replace(/\s+/g, " ").trim(),
+        bodyVisible: visible(body),
+      }];
+    }));
+    const titleNodes = Array.from(document.querySelectorAll(".light-document-page .light-section-title"));
+    const detailRows = Array.from(document.querySelectorAll('.light-meeting-detail-section[data-meeting-detail-section="details"] .light-calendar-detail-row'));
+    const connectedRows = Array.from(document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row'));
+    const descriptionNode = document.querySelector(".light-calendar-detail-description-copy");
+    const connectedCountNode = document.querySelector('.light-meeting-detail-section[data-meeting-detail-section="connected"] .light-meeting-detail-section-count');
+    return {
+      text: String(document.querySelector(".light-document-page")?.innerText || "").replace(/\s+/g, " ").trim(),
+      sectionTitles: titleNodes.map(node => String(node.textContent || "").trim().toUpperCase()),
+      hasStandaloneDescriptionTitle: titleNodes.some(node => String(node.textContent || "").trim().toUpperCase() === "DESCRIPTION"),
+      detailsExpanded: Boolean(sections.details?.expanded),
+      connectedExpanded: Boolean(sections.connected?.expanded),
+      visibleDetailRowLabels: detailRows.filter(visible).map(row => String(row.querySelector(".light-calendar-detail-row-label")?.textContent || "").trim()),
+      visibleConnectedRowCount: connectedRows.filter(visible).length,
+      descriptionText: String(descriptionNode?.textContent || "").trim(),
+      descriptionVisible: visible(descriptionNode),
+      connectedCount: Number(connectedCountNode?.textContent || 0) || 0,
+      whoChipTexts: Array.from(document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip')).map(node => String(node.textContent || "").trim()).filter(Boolean),
+    };
+  });
+}
+
 function proofEventSelector(seed) {
   return `.light-event-block[data-event-id="${seed.runId}-freelance-review"]`;
 }
@@ -958,22 +1006,30 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await page.locator(".light-event-detail-time").count() === 0, "Expected event detail to remove the redundant time line beneath the header.");
     assert(await page.locator(".light-doc-eyebrow").count() === 0, "Expected the calendar detail eyebrow to be removed.");
     assert(await page.locator(".light-doc-article h1").count() === 0, "Expected calendar detail to avoid repeating the title in a large H1.");
-    const detailText = String(await page.locator(".light-document-page").textContent() || "").replace(/\s+/g, " ").trim();
-    assert(/details/i.test(detailText), "Expected event detail to render the Details section.");
-    assert(/description/i.test(detailText), "Expected event detail to render a Description section.");
-    const detailSectionTitles = (await allText(page, ".light-document-page .light-section-title")).map(value => value.toUpperCase());
-    assert(detailSectionTitles.includes("DETAILS"), `Expected event detail section titles to include Details, got ${detailSectionTitles.join(", ")}.`);
-    assert(detailSectionTitles.includes("DESCRIPTION"), `Expected event detail section titles to include Description, got ${detailSectionTitles.join(", ")}.`);
-    assert(detailSectionTitles.includes("CONNECTED"), `Expected event detail section titles to include Connected, got ${detailSectionTitles.join(", ")}.`);
-    assert(detailSectionTitles.indexOf("DETAILS") < detailSectionTitles.indexOf("DESCRIPTION"), `Expected Details to appear before Description, got ${detailSectionTitles.join(", ")}.`);
-    assert(!detailText.includes("Linked records"), "Expected event detail to keep the section label as Connected.");
+    let detailState = await readMeetingDetailState(page);
+    assert(detailState.sectionTitles.includes("DETAILS"), `Expected event detail section titles to include Details, got ${detailState.sectionTitles.join(", ")}.`);
+    assert(detailState.sectionTitles.includes("CONNECTED"), `Expected event detail section titles to include Connected, got ${detailState.sectionTitles.join(", ")}.`);
+    assert(!detailState.hasStandaloneDescriptionTitle, "Expected event detail to avoid a standalone Description section.");
+    assert(detailState.detailsExpanded, "Expected Details to start expanded on a fresh event open.");
+    assert(!detailState.connectedExpanded, "Expected Connected to start collapsed on a fresh event open.");
+    assert(detailState.descriptionVisible, "Expected merged description text inside Details.");
+    assert(detailState.descriptionText.includes("Homepage pass, invoice cleanup"), `Expected merged description text inside Details, got ${detailState.descriptionText}.`);
+    assert(detailState.connectedCount === 5, `Expected Connected header count to show five linked records, got ${detailState.connectedCount}.`);
+    assert(detailState.visibleConnectedRowCount === 0, `Expected no visible Connected rows while collapsed, got ${detailState.visibleConnectedRowCount}.`);
+    assert(!detailState.text.includes("Linked records"), "Expected event detail to keep the section label as Connected.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected Who to render guests as chips instead of paragraph copy.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected Who to include at least one neutral guest chip.");
-    const whoChipTexts = await allText(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip');
+    const whoChipTexts = detailState.whoChipTexts;
     for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(whoChipTexts.includes(label), `Expected Who to include ${label}, got ${whoChipTexts.join(", ")}.`);
     }
     await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-default.png`, summary);
+
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
+    detailState = await readMeetingDetailState(page);
+    assert(detailState.connectedExpanded, "Expected Connected to expand after tapping its header.");
+    assert(detailState.visibleConnectedRowCount === 5, `Expected Connected to reveal five flat linked rows, got ${detailState.visibleConnectedRowCount}.`);
     const connectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     const connectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     const connectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
@@ -994,6 +1050,17 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(!connectedRowTexts.some(value => value.includes("Kitchen table")), "Expected place to stay out of Connected rows on detail.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="place"] .light-attendee-chip').count() === 0, "Expected Place to stay plain text only.");
     await saveLocatorShot(connectedSection, reportDir, `calendar-desktop-${theme}-connected.png`, summary);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-connected-expanded.png`, summary);
+
+    await ensureMeetingDetailSectionExpanded(page, "details", false);
+    detailState = await readMeetingDetailState(page);
+    assert(!detailState.detailsExpanded, "Expected Details to collapse after tapping its header.");
+    assert(detailState.visibleDetailRowLabels.length === 0, `Expected Details collapse to hide metadata rows, got ${detailState.visibleDetailRowLabels.join(", ")}.`);
+    assert(!detailState.descriptionVisible, "Expected Details collapse to hide merged description text.");
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-details-collapsed.png`, summary);
+
+    await ensureMeetingDetailSectionExpanded(page, "details", true);
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail.png`, summary);
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
     await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
@@ -1001,6 +1068,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await page.getByRole("button", { name: "Back" }).click();
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
+    detailState = await readMeetingDetailState(page);
+    assert(detailState.connectedExpanded, "Expected Back from Who chip to preserve Connected expanded state.");
     for (const target of [
       { id: `${seed.runId}-project`, route: "project-detail", expectedText: "Proof freelance follow-up" },
       { id: `${seed.runId}-task`, route: "task-detail", expectedText: "Send proof review notes" },
@@ -1013,12 +1082,16 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       await page.getByRole("button", { name: "Back" }).click();
       assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from ${target.route} to restore meeting-detail, got ${await currentLightRoute(page)}.`);
       await waitForHeaderText(page, "Proof freelance review call");
+      detailState = await readMeetingDetailState(page);
+      assert(detailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
     }
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-connected-restored.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const emptyConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     await emptyConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     assert(await emptyConnectedSection.locator(".light-linked-record-feed-row").count() === 0, "Expected the sparse event Connected section to stay empty when only attendee chips exist.");
     const emptyConnectedShell = emptyConnectedSection.locator(".light-linked-records-empty-shell").first();
     await emptyConnectedShell.waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1028,12 +1101,15 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected event-detail Back to preserve the selected day.");
     await selectCalendarEventByContainer(page, seed);
+    detailState = await readMeetingDetailState(page);
+    assert(detailState.detailsExpanded, "Expected reopening the event detail to reset Details open.");
+    assert(!detailState.connectedExpanded, "Expected reopening the event detail to reset Connected closed.");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-container-click.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from container-tap event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected container-tap Back to preserve the selected day.");
-    summary.assertions.push(`desktop ${theme} calendar detail kept Connected feed-row navigation, container taps, empty shells, and Back restoration`);
+    summary.assertions.push(`desktop ${theme} calendar detail kept section toggles, reset defaults, connected rows, and Back restoration`);
 
     await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });
@@ -1217,18 +1293,28 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(await page.locator(".light-event-detail-time").count() === 0, "Expected mobile event detail to remove the redundant time line beneath the header.");
     assert(await page.locator(".light-doc-eyebrow").count() === 0, "Expected the mobile detail eyebrow to be removed.");
     assert(await page.locator(".light-doc-article h1").count() === 0, "Expected the mobile detail to avoid a duplicated large title.");
-    const mobileDetailText = String(await page.locator(".light-document-page").textContent() || "").replace(/\s+/g, " ").trim();
-    const mobileSectionTitles = (await allText(page, ".light-document-page .light-section-title")).map(value => value.toUpperCase());
-    assert(mobileSectionTitles.includes("DETAILS"), `Expected mobile event detail section titles to include Details, got ${mobileSectionTitles.join(", ")}.`);
-    assert(mobileSectionTitles.includes("DESCRIPTION"), `Expected mobile event detail section titles to include Description, got ${mobileSectionTitles.join(", ")}.`);
-    assert(mobileSectionTitles.includes("CONNECTED"), `Expected mobile event detail section titles to include Connected, got ${mobileSectionTitles.join(", ")}.`);
-    assert(mobileSectionTitles.indexOf("DETAILS") < mobileSectionTitles.indexOf("DESCRIPTION"), `Expected mobile Details to appear before Description, got ${mobileSectionTitles.join(", ")}.`);
-    assert(!mobileDetailText.includes("Linked records"), "Expected mobile event detail to keep the section label as Connected.");
-    const mobileWhoChipTexts = await allText(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip');
+    let mobileDetailState = await readMeetingDetailState(page);
+    assert(mobileDetailState.sectionTitles.includes("DETAILS"), `Expected mobile event detail section titles to include Details, got ${mobileDetailState.sectionTitles.join(", ")}.`);
+    assert(mobileDetailState.sectionTitles.includes("CONNECTED"), `Expected mobile event detail section titles to include Connected, got ${mobileDetailState.sectionTitles.join(", ")}.`);
+    assert(!mobileDetailState.hasStandaloneDescriptionTitle, "Expected mobile event detail to avoid a standalone Description section.");
+    assert(mobileDetailState.detailsExpanded, "Expected Details to start expanded on a fresh event open.");
+    assert(!mobileDetailState.connectedExpanded, "Expected Connected to start collapsed on a fresh event open.");
+    assert(mobileDetailState.descriptionVisible, "Expected merged description text inside Details.");
+    assert(mobileDetailState.descriptionText.includes("Homepage pass, invoice cleanup"), `Expected merged description text inside Details, got ${mobileDetailState.descriptionText}.`);
+    assert(mobileDetailState.connectedCount === 5, `Expected mobile Connected header count to show five linked records, got ${mobileDetailState.connectedCount}.`);
+    assert(mobileDetailState.visibleConnectedRowCount === 0, `Expected mobile Connected rows to stay hidden while collapsed, got ${mobileDetailState.visibleConnectedRowCount}.`);
+    assert(!mobileDetailState.text.includes("Linked records"), "Expected mobile event detail to keep the section label as Connected.");
+    const mobileWhoChipTexts = mobileDetailState.whoChipTexts;
     assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B.") && mobileWhoChipTexts.includes("Outside counsel"), `Expected mobile Who row to carry contact and guest chips, got ${mobileWhoChipTexts.join(", ")}.`);
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected mobile Who row to avoid guest paragraphs.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected mobile Who row to include at least one guest chip.");
     await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-default.png`, summary);
+
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
+    mobileDetailState = await readMeetingDetailState(page);
+    assert(mobileDetailState.connectedExpanded, "Expected mobile Connected to expand after tapping its header.");
+    assert(mobileDetailState.visibleConnectedRowCount === 5, `Expected mobile Connected to reveal five flat linked rows, got ${mobileDetailState.visibleConnectedRowCount}.`);
     const mobileConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     const mobileConnectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     const mobileConnectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
@@ -1245,10 +1331,31 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     }
     assert(await mobileConnectedRows.count() === 5, `Expected mobile Connected to render five linked rows, got ${await mobileConnectedRows.count()}.`);
     await saveLocatorShot(mobileConnectedSection, reportDir, `calendar-mobile-${theme}-connected.png`, summary);
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-connected-expanded.png`, summary);
+
+    await ensureMeetingDetailSectionExpanded(page, "details", false);
+    mobileDetailState = await readMeetingDetailState(page);
+    assert(!mobileDetailState.detailsExpanded, "Expected mobile Details to collapse after tapping its header.");
+    assert(mobileDetailState.visibleDetailRowLabels.length === 0, `Expected mobile Details collapse to hide metadata rows, got ${mobileDetailState.visibleDetailRowLabels.join(", ")}.`);
+    assert(!mobileDetailState.descriptionVisible, "Expected mobile Details collapse to hide merged description text.");
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-details-collapsed.png`, summary);
+
+    await ensureMeetingDetailSectionExpanded(page, "details", true);
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
+    await selectCalendarDetailTarget(page, "project-detail", `${seed.runId}-project`, "Proof freelance follow-up");
+    await page.getByRole("button", { name: "Back" }).click();
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from project-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    await waitForHeaderText(page, "Proof freelance review call");
+    mobileDetailState = await readMeetingDetailState(page);
+    assert(mobileDetailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-connected-restored.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     await selectCalendarEventByContainer(page, seed);
+    mobileDetailState = await readMeetingDetailState(page);
+    assert(mobileDetailState.detailsExpanded, "Expected reopening the mobile event detail to reset Details open.");
+    assert(!mobileDetailState.connectedExpanded, "Expected reopening the mobile event detail to reset Connected closed.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-container-click.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -1284,6 +1391,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(detailTop.feedScrollTop <= 24, `Expected deep-scroll event detail to open near the top, got ${JSON.stringify(detailTop)}.`);
     const lateCallConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     await lateCallConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     const lateCallConnected = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     assert(lateCallConnected.length === 1 && lateCallConnected[0].includes("Late-call follow-up"), `Expected the late-call detail to expose one linked note row, got ${lateCallConnected.join(", ")}.`);
     await selectConnectedRow(page, "Late-call follow-up");
@@ -1298,10 +1406,11 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const mobileEmptyConnected = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     await mobileEmptyConnected.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     assert(await mobileEmptyConnected.locator(".light-linked-record-feed-row").count() === 0, "Expected the mobile sparse event Connected section to stay empty when only attendee chips exist.");
     await mobileEmptyConnected.locator(".light-linked-records-empty-shell").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await saveShot(page, reportDir, `calendar-mobile-${theme}-connected-empty.png`, summary);
-    summary.assertions.push(`mobile ${theme} sticky header, Connected feed rows, and empty shells stayed readable`);
+    summary.assertions.push(`mobile ${theme} sticky header, meeting-detail section toggles, and empty Connected shells stayed readable`);
   } finally {
     await context.tracing.stop({ path: path.join(reportDir, `trace-mobile-${theme}.zip`) });
     await context.close();

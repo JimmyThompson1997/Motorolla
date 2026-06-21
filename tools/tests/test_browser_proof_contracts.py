@@ -602,6 +602,27 @@ def test_calendar_and_hosted_bug_hunt_proofs_cover_event_container_clicks() -> N
     assert 'openerSelector: ".light-event-block"' in hosted_source
 
 
+def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
+    calendar_source = read_source("cover_calendar_playwright.mjs")
+
+    assert "data-meeting-detail-section" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-default.png" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-connected-expanded.png" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-details-collapsed.png" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-connected-restored.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-default.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-connected-expanded.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-details-collapsed.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-connected-restored.png" in calendar_source
+    assert "Expected event detail to avoid a standalone Description section." in calendar_source
+    assert "Expected merged description text inside Details." in calendar_source
+    assert "Expected Connected to start collapsed on a fresh event open." in calendar_source
+    assert "Expected Details to start expanded on a fresh event open." in calendar_source
+    assert "Expected Back from linked target to restore Connected expanded state." in calendar_source
+    assert "Expected reopening the event detail to reset Connected closed." in calendar_source
+    assert "Expected reopening the event detail to reset Details open." in calendar_source
+
+
 def test_calendar_browser_proof_covers_continuous_month_rail_contract() -> None:
     calendar_source = read_source("cover_calendar_playwright.mjs")
 

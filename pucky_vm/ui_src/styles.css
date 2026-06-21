@@ -5368,6 +5368,73 @@ button {
   border-color: rgba(255, 255, 255, 0.08);
 }
 
+.light-meeting-detail-section {
+  gap: 8px;
+}
+
+.light-meeting-detail-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--home-shell-text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.light-meeting-detail-section-header:active {
+  opacity: 0.72;
+}
+
+.light-meeting-detail-section-header:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
+.light-meeting-detail-section-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.light-meeting-detail-section-title {
+  margin: 0;
+}
+
+.light-meeting-detail-section-count {
+  color: color-mix(in srgb, var(--home-shell-text-muted) 76%, transparent);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.light-meeting-detail-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--home-shell-text-muted) 84%, transparent);
+}
+
+.light-meeting-detail-section-chevron .material-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.light-meeting-detail-section-header.is-expanded .light-meeting-detail-section-chevron,
+.light-meeting-detail-section-header.is-expanded .light-meeting-detail-section-title {
+  color: var(--home-shell-text);
+}
+
+.light-meeting-detail-section-body[hidden] {
+  display: none !important;
+}
+
 .light-calendar-detail-row {
   display: grid;
   gap: 8px;
@@ -5423,12 +5490,25 @@ button {
   justify-content: flex-start;
 }
 
+.light-calendar-detail-description {
+  padding: 14px 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.light-calendar-detail-description-copy {
+  margin: 0;
+  color: var(--text-muted-strong);
+  font-size: 14px;
+  line-height: 1.48;
+}
+
 .app-shell[data-theme="dark"] .light-calendar-detail-row-label,
 .app-shell[data-theme="dark"] .calendar-type-filter-label {
   color: #f5f8ff;
 }
 
-.app-shell[data-theme="dark"] .light-calendar-detail-row-value {
+.app-shell[data-theme="dark"] .light-calendar-detail-row-value,
+.app-shell[data-theme="dark"] .light-calendar-detail-description-copy {
   color: #b6c2d3;
 }
 

@@ -179,6 +179,8 @@
     taskFilter: "all",
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
+    meetingDetailSections: null,
+    meetingDetailSectionCache: {},
     workspace: {
       notes: { items: [], loaded: false, loading: false, error: "" },
       tasks: { items: [], loaded: false, loading: false, error: "" },
@@ -4245,6 +4247,11 @@
     block.setAttribute("aria-label", event.title || "Open event");
     const openEvent = () => {
       state.selectedMeetingId = event.id;
+      state.meetingDetailSections = resetMeetingDetailSections(event.id);
+      state.meetingDetailSectionCache = {
+        ...state.meetingDetailSectionCache,
+        [String(event.id || "").trim()]: state.meetingDetailSections,
+      };
       lightNavigate("meeting-detail", { from: "calendar" });
     };
     block.addEventListener("click", event => {
@@ -4295,6 +4302,75 @@
       });
   }
 
+  function resetMeetingDetailSections(meetingId = state.selectedMeetingId) {
+    const normalizedMeetingId = String(meetingId || "").trim();
+    return {
+      meetingId: normalizedMeetingId,
+      details: true,
+      connected: false,
+    };
+  }
+
+  function ensureMeetingDetailSections(meetingId = state.selectedMeetingId) {
+    const normalizedMeetingId = String(meetingId || "").trim();
+    const current = state.meetingDetailSections;
+    if (current && current.meetingId === normalizedMeetingId) {
+      return current;
+    }
+    const cached = state.meetingDetailSectionCache?.[normalizedMeetingId];
+    if (cached && cached.meetingId === normalizedMeetingId) {
+      state.meetingDetailSections = {
+        ...cached
+      };
+      return state.meetingDetailSections;
+    }
+    if (!current || current.meetingId !== normalizedMeetingId) {
+      state.meetingDetailSections = resetMeetingDetailSections(normalizedMeetingId);
+    }
+    state.meetingDetailSectionCache = {
+      ...state.meetingDetailSectionCache,
+      [normalizedMeetingId]: state.meetingDetailSections,
+    };
+    return state.meetingDetailSections;
+  }
+
+  function meetingDetailSectionExpanded(sectionKey, meetingId = state.selectedMeetingId) {
+    const normalizedKey = String(sectionKey || "").trim().toLowerCase();
+    const sections = ensureMeetingDetailSections(meetingId);
+    return Boolean(sections?.[normalizedKey]);
+  }
+
+  function setMeetingDetailSectionExpanded(sectionKey, expanded, meetingId = state.selectedMeetingId) {
+    const normalizedKey = String(sectionKey || "").trim().toLowerCase();
+    if (!normalizedKey) {
+      return state.meetingDetailSections;
+    }
+    const sections = ensureMeetingDetailSections(meetingId);
+    state.meetingDetailSections = {
+      ...sections,
+      meetingId: String(meetingId || sections?.meetingId || "").trim(),
+      [normalizedKey]: Boolean(expanded),
+    };
+    state.meetingDetailSectionCache = {
+      ...state.meetingDetailSectionCache,
+      [state.meetingDetailSections.meetingId]: state.meetingDetailSections,
+    };
+    return state.meetingDetailSections;
+  }
+
+  function toggleMeetingDetailSection(sectionKey) {
+    const meetingId = String(state.selectedMeetingId || "").trim();
+    if (!meetingId) {
+      return;
+    }
+    setMeetingDetailSectionExpanded(
+      sectionKey,
+      !meetingDetailSectionExpanded(sectionKey, meetingId),
+      meetingId
+    );
+    render();
+  }
+
   function lightMeetingDetailPage() {
     const meeting = selectedMeeting();
     if (!meeting) {
@@ -4308,21 +4384,11 @@
     if (calendarEventNeedsContacts(meeting) && !contactBucket.loaded && !contactBucket.loading) {
       void loadWorkspaceCollection("contacts", { render: true });
     }
+    ensureMeetingDetailSections(meeting.id);
     const page = lightPage(meeting.title || "Event", { detail: true });
     page.classList.add("light-document-page", "light-event-document", "light-event-detail-page");
     page.append(lightCalendarEventDetailsSection(meeting, attendees));
-    if (String(meeting.summary || "").trim()) {
-      page.append(lightCopySection("Description", meeting.summary));
-    }
-    page.append(lightLinkedRecordSection(meeting, {
-      title: "Connected",
-      excludeKinds: ["contact"],
-      showWhenEmpty: true,
-      showChips: false,
-      showChevron: false,
-      variant: "flat",
-      fromRoute: "meeting-detail"
-    }));
+    page.append(lightMeetingDetailConnectedSection(meeting));
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
       page.append(lightListSection("Agenda", meta.agenda));
     }
@@ -4333,8 +4399,6 @@
   }
 
   function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {
-    const section = el("section", "light-calendar-detail-section");
-    section.append(lightSectionTitle("Details"));
     const card = el("div", "light-calendar-detail-card");
     card.append(
       lightCalendarDetailRow("when", "When", `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`)
@@ -4363,8 +4427,14 @@
     if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
       card.append(lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone));
     }
-    section.append(card);
-    return section;
+    const description = String(event?.summary || "").trim();
+    if (description) {
+      card.append(lightCalendarDetailDescription(description));
+    }
+    return lightMeetingDetailSection("Details", "details", card, {
+      expanded: meetingDetailSectionExpanded("details", event?.id),
+      sectionClassName: "light-calendar-detail-section"
+    });
   }
 
   function lightCalendarDetailRow(rowKey, label, value) {
@@ -4375,6 +4445,82 @@
       el("div", "light-calendar-detail-row-value", value)
     );
     return row;
+  }
+
+  function lightCalendarDetailDescription(description) {
+    const block = el("div", "light-calendar-detail-description");
+    block.dataset.detailRow = "description";
+    block.append(el("p", "light-calendar-detail-description-copy", String(description || "").trim()));
+    return block;
+  }
+
+  function lightMeetingDetailConnectedSection(meeting) {
+    const entries = workspaceLinkedEntries(meeting, {
+      excludeKinds: ["contact"],
+    });
+    const list = el("div", "light-linked-record-list light-feed-section-body light-feed-list light-card is-flat-feed");
+    list.dataset.linkedRecordsCount = String(entries.length);
+    if (!entries.length) {
+      list.append(el("div", "light-linked-records-empty-shell is-flat-feed"));
+    } else {
+      entries.forEach(entry => list.append(lightLinkedRecordFeedRow(entry, {
+        fromRoute: "meeting-detail",
+        showChips: false,
+        showChevron: false,
+        variant: "flat",
+      })));
+    }
+    return lightMeetingDetailSection("Connected", "connected", list, {
+      expanded: meetingDetailSectionExpanded("connected", meeting?.id),
+      count: entries.length,
+      sectionClassName: "light-linked-records-section is-flat-feed",
+      linkedRecordsTitle: "connected",
+    });
+  }
+
+  function lightMeetingDetailSection(title, sectionKey, bodyContent, options = {}) {
+    const normalizedTitle = String(title || "").trim();
+    const normalizedKey = String(sectionKey || normalizedTitle).trim().toLowerCase();
+    const expanded = options.expanded !== false;
+    const sectionClassName = `light-feed-section light-meeting-detail-section ${String(options.sectionClassName || "").trim()}`.trim();
+    const section = el("section", sectionClassName);
+    section.dataset.meetingDetailSection = normalizedKey;
+    if (options.linkedRecordsTitle) {
+      section.dataset.linkedRecordsTitle = String(options.linkedRecordsTitle || "").trim().toLowerCase();
+    }
+    const controlsId = `light-meeting-detail-section-${normalizedKey}`;
+    section.append(lightMeetingDetailSectionHeader(normalizedTitle, normalizedKey, options.count, expanded, controlsId));
+    const body = el("div", "light-meeting-detail-section-body");
+    body.id = controlsId;
+    body.hidden = !expanded;
+    if (bodyContent instanceof Node) {
+      body.append(bodyContent);
+    }
+    section.append(body);
+    return section;
+  }
+
+  function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId) {
+    const button = el("button", expanded ? "light-feed-section-header light-meeting-detail-section-header is-expanded" : "light-feed-section-header light-meeting-detail-section-header");
+    button.type = "button";
+    button.dataset.meetingDetailSection = String(sectionKey || "").trim().toLowerCase();
+    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-controls", controlsId);
+    button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${String(title || sectionKey || "section").trim().toLowerCase()}`);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleMeetingDetailSection(sectionKey);
+    });
+    const copy = el("span", "light-meeting-detail-section-copy");
+    copy.append(el("span", "light-section-title light-meeting-detail-section-title", String(title || "").trim().toUpperCase()));
+    if (Number.isFinite(Number(count))) {
+      copy.append(el("span", "light-meeting-detail-section-count", String(Number(count))));
+    }
+    const chevron = el("span", "light-meeting-detail-section-chevron");
+    chevron.innerHTML = iconSvg(expanded ? "expand_more" : "chevron_right");
+    button.append(copy, chevron);
+    return button;
   }
 
   function lightGuestAttendeeChip(label) {
@@ -6074,6 +6220,13 @@
       state.taskNavOrigin = {
         taskId: String(options.taskOrigin.taskId || "").trim(),
         route: String(options.taskOrigin.route || "").trim() || taskDetailReturnRoute()
+      };
+    }
+    if (target.route === "meeting-detail") {
+      state.meetingDetailSections = resetMeetingDetailSections(target.id);
+      state.meetingDetailSectionCache = {
+        ...state.meetingDetailSectionCache,
+        [String(target.id || "").trim()]: state.meetingDetailSections,
       };
     }
     state[target.selectedKey] = target.id;

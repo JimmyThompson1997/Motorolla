@@ -271,15 +271,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'lightDocumentEyebrow("Calendar event"' not in light_meeting_detail
     assert 'el("h1", "", meeting.title || "Untitled event")' not in light_meeting_detail
     assert "lightCalendarEventDetailsSection(meeting, attendees)" in light_meeting_detail
-    assert 'page.append(lightCopySection("Description", meeting.summary));' in light_meeting_detail
-    assert light_meeting_detail.index("lightCalendarEventDetailsSection(meeting, attendees)") < light_meeting_detail.index('lightCopySection("Description", meeting.summary)')
-    assert "lightLinkedRecordSection(meeting, {" in light_meeting_detail
-    assert 'title: "Connected"' in light_meeting_detail
-    assert 'excludeKinds: ["contact"]' in light_meeting_detail
-    assert "showWhenEmpty: true" in light_meeting_detail
-    assert 'showChips: false,' in light_meeting_detail
-    assert 'showChevron: false,' in light_meeting_detail
-    assert 'variant: "flat",' in light_meeting_detail
+    assert 'page.append(lightCopySection("Description", meeting.summary));' not in light_meeting_detail
+    assert "lightMeetingDetailConnectedSection(meeting)" in light_meeting_detail
+    assert "lightLinkedRecordSection(meeting, {" not in light_meeting_detail
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' not in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     linked_record_section = function_block(app, "lightLinkedRecordSection")
@@ -290,11 +284,26 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'body.append(el("div", flatFeed ? "light-linked-records-empty-shell is-flat-feed" : "light-card light-linked-records-empty-shell"));' in linked_record_section
     assert 'entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {' in linked_record_section
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
+    assert 'const description = String(event?.summary || "").trim();' in app
+    assert 'lightCalendarDetailDescription(description)' in app
     assert 'who.dataset.detailRow = "who";' in app
     assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
     assert 'light-attendee-chip-cloud' in app
     assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' in app
     assert 'light-calendar-detail-guest-list' not in app
+    assert 'function lightCalendarDetailDescription(description) {' in app
+    assert 'function lightMeetingDetailConnectedSection(meeting) {' in app
+    assert 'function lightMeetingDetailSection(title, sectionKey, bodyContent, options = {}) {' in app
+    assert 'function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId) {' in app
+    assert 'function resetMeetingDetailSections(meetingId = state.selectedMeetingId) {' in app
+    assert 'function ensureMeetingDetailSections(meetingId = state.selectedMeetingId) {' in app
+    assert 'function toggleMeetingDetailSection(sectionKey) {' in app
+    assert 'state.meetingDetailSections = resetMeetingDetailSections(event.id);' in app
+    assert 'state.meetingDetailSections = resetMeetingDetailSections(target.id);' in app
+    assert 'const body = el("div", "light-meeting-detail-section-body");' in app
+    assert 'body.hidden = !expanded;' in app
+    assert 'button.setAttribute("aria-expanded", String(expanded));' in app
+    assert 'button.setAttribute("aria-controls", controlsId);' in app
     assert 'function lightGuestAttendeeChip(label) {' in app
     assert 'return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());' in app
     assert "function disambiguateCalendarChipLabels(chips) {" in app
