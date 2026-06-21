@@ -12,6 +12,7 @@ import {
   seedTaskProofWorkspace,
 } from "../../support/task_workspace_proof_shared.mjs";
 import {
+  buildPageTracking,
   ensureDir,
   resolveChromePath,
   saveScreenshot,
@@ -296,28 +297,12 @@ function buildRouteUrl(config, route, theme = "light") {
   return url.toString();
 }
 
-function buildTracking(page, consoleLogPath) {
-  const consoleErrors = [];
-  const pageErrors = [];
-  page.on("console", message => {
-    fs.appendFileSync(consoleLogPath, `[console:${message.type()}] ${message.text()}\n`, "utf8");
-    if (message.type() === "error") {
-      consoleErrors.push(message.text());
-    }
-  });
-  page.on("pageerror", error => {
-    const text = error?.message || String(error);
-    fs.appendFileSync(consoleLogPath, `[pageerror] ${text}\n`, "utf8");
-    pageErrors.push(text);
-  });
-  return { consoleErrors, pageErrors };
-}
-
 function seriousConsoleErrors(messages) {
   const patterns = [
     /\b401\b/i,
     /forbidden/i,
     /cannot read/i,
+    /ERR_HTTP2_PROTOCOL_ERROR/i,
     /is not a function/i,
     /referenceerror/i,
     /syntaxerror/i,
@@ -326,6 +311,30 @@ function seriousConsoleErrors(messages) {
     /unhandled/i,
   ];
   return messages.filter(message => patterns.some(pattern => pattern.test(String(message || ""))));
+}
+
+function sameOriginUrl(baseUrl, value) {
+  try {
+    const candidate = new URL(String(value || ""), String(baseUrl || ""));
+    const expected = new URL(String(baseUrl || ""));
+    return candidate.origin === expected.origin;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function seriousFailedRequests(failures, baseUrl) {
+  return (Array.isArray(failures) ? failures : []).filter(entry => {
+    if (!sameOriginUrl(baseUrl, entry?.url)) {
+      return false;
+    }
+    const failure = String(entry?.failure || "");
+    return !/err_aborted/i.test(failure);
+  });
+}
+
+function seriousHttpErrorResponses(responses, baseUrl) {
+  return (Array.isArray(responses) ? responses : []).filter(entry => sameOriginUrl(baseUrl, entry?.url));
 }
 
 async function waitForRoute(page, route, timeoutMs) {
@@ -1365,14 +1374,18 @@ async function runProofMode(browser, config, mode, seed) {
 
   const page = await context.newPage();
   const consoleLogPath = path.join(config.reportDir, `${mode}.console.log`);
-  const tracking = buildTracking(page, consoleLogPath);
+  const tracking = buildPageTracking(page, consoleLogPath);
   try {
     logStep(config, `${mode}: starting live user session route tour`);
     const result = await runRouteTour(page, config, mode, seed);
     const pageErrors = tracking.pageErrors.slice();
     const badConsole = seriousConsoleErrors(tracking.consoleErrors);
+    const badRequests = seriousFailedRequests(tracking.failedRequests, config.baseUrl);
+    const badResponses = seriousHttpErrorResponses(tracking.httpErrorResponses, config.baseUrl);
     assert(pageErrors.length === 0, `${mode}: unexpected page errors: ${JSON.stringify(pageErrors)}`);
     assert(badConsole.length === 0, `${mode}: unexpected console errors: ${JSON.stringify(badConsole)}`);
+    assert(badRequests.length === 0, `${mode}: unexpected failed requests: ${JSON.stringify(badRequests)}`);
+    assert(badResponses.length === 0, `${mode}: unexpected HTTP error responses: ${JSON.stringify(badResponses)}`);
     return {
       mode,
       page_url: result.page_url,
@@ -1381,6 +1394,8 @@ async function runProofMode(browser, config, mode, seed) {
       console_log: consoleLogPath,
       page_errors: pageErrors,
       console_errors: tracking.consoleErrors,
+      failed_requests: tracking.failedRequests,
+      http_error_responses: tracking.httpErrorResponses,
     };
   } finally {
     await context.close().catch(() => {});
@@ -1406,11 +1421,27 @@ function renderReport(summary) {
     const result = summary[lane];
     lines.push("", `## ${lane[0].toUpperCase()}${lane.slice(1)}`, "");
     lines.push(`- Start URL: ${result.page_url}`);
+    lines.push(`- Console errors: ${(result.console_errors || []).length}`);
+    lines.push(`- Page errors: ${(result.page_errors || []).length}`);
+    lines.push(`- Failed requests: ${(result.failed_requests || []).length}`);
+    lines.push(`- HTTP error responses: ${(result.http_error_responses || []).length}`);
     for (const step of result.steps || []) {
       const shot = path.basename(String(step.screenshot || ""));
       lines.push(
         `- ${step.step_id}: ${step.action}. Expected: ${step.expected} Confirmation: ${step.confirmation} Screenshot: [${shot}](${shot})`
       );
+    }
+    if (Array.isArray(result.failed_requests) && result.failed_requests.length) {
+      lines.push("", "### Failed Requests", "");
+      for (const entry of result.failed_requests) {
+        lines.push(`- ${entry.resource_type || "resource"} ${entry.method || "GET"} ${entry.url} :: ${entry.failure || "failed"}`);
+      }
+    }
+    if (Array.isArray(result.http_error_responses) && result.http_error_responses.length) {
+      lines.push("", "### HTTP Error Responses", "");
+      for (const entry of result.http_error_responses) {
+        lines.push(`- ${entry.status || 0} ${entry.resource_type || "resource"} ${entry.url}`);
+      }
     }
   }
   return `${lines.join("\n")}\n`;

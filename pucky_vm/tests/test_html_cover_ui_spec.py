@@ -461,6 +461,7 @@ def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flo
     app = read("app.js")
     settings_page = function_block(app, "settingsPageView")
     create_links_row = function_block(app, "createLinksRow")
+    observe_links_icon = function_block(app, "observeLinksIconImage")
     hydrate_links_session = function_block(app, "hydrateLinksSession")
     load_links_connected = function_block(app, "loadLinksConnected")
     load_phone_role_status = function_block(app, "loadPhoneRoleStatus")
@@ -470,6 +471,11 @@ def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flo
     assert "openBrowserUnlockSheet" not in app
     assert 'cards.push(phoneRoleSettingsCard(), advancedSettingsCard());' in settings_page
     assert 'showToast("Connect stays read-only in hosted web.");' in create_links_row
+    assert "createLinksIconFallback()" in create_links_row
+    assert "observeLinksIconImage(icon, app);" in create_links_row
+    assert "typeof IntersectionObserver !== \"function\"" in observe_links_icon
+    assert 'rootMargin: "240px 0px 240px 0px"' in observe_links_icon
+    assert 'img.fetchPriority = "low";' in app
     assert "hostedConnectReadOnlyMode()" in hydrate_links_session
     assert 'state.links.available = true;' in hydrate_links_session
     assert 'await loadLinksConnected({ render: false, force: Boolean(options.force) });' in hydrate_links_session

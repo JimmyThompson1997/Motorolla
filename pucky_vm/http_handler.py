@@ -865,10 +865,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
 
         def _is_authorized(self) -> bool:
             return is_any_bearer_authorized(
-                (
-                    service.config.pucky_api_token,
-                    service.config.pucky_web_ui_token,
-                ),
+                (service.config.pucky_api_token,),
                 self.headers.get("Authorization", ""),
             )
 

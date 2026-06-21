@@ -49,7 +49,6 @@ def config(tmp_path: Path) -> Config:
         host="127.0.0.1",
         port=0,
         pucky_api_token="test-token",
-        pucky_web_ui_token="web-token",
         deepgram_api_key="",
         deepinfra_api_key="",
         max_audio_bytes=1024,
@@ -302,7 +301,7 @@ def test_workspace_api_authenticated_task_patch_persists_checklist_and_status(tm
         server.shutdown()
 
 
-def test_workspace_api_accepts_web_ui_token_for_note_writes(tmp_path: Path) -> None:
+def test_workspace_api_rejects_removed_web_ui_token_for_note_writes(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
         note = request_json(
@@ -313,14 +312,15 @@ def test_workspace_api_accepts_web_ui_token_for_note_writes(tmp_path: Path) -> N
             body={"id": "web-token-note", "title": "Web Token Note", "pinned": False},
         )
 
-        patched = request_json(
-            base_url,
-            f"/api/workspace/notes/{note['id']}",
-            method="PATCH",
-            token="web-token",
-            body={"pinned": True},
-        )
-        assert patched["pinned"] is True
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            request_json(
+                base_url,
+                f"/api/workspace/notes/{note['id']}",
+                method="PATCH",
+                token="web-token",
+                body={"pinned": True},
+            )
+        assert exc_info.value.code == 401
     finally:
         server.shutdown()
 
