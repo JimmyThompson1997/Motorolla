@@ -4672,13 +4672,153 @@
 
   function lightMeetingNoteDetailPage() {
     const meeting = selectedMeetingNote();
-    return lightGraphDetailPage(meeting, {
-      title: "Meeting Note",
-      eyebrow: "Graph meeting",
-      icon: "record_voice_over",
-      rows: meetingNoteDetailRows(meeting),
-      fallback: "No generated meeting note page yet."
+    if (!meeting) {
+      return lightPage("Meeting Note", { subtitle: "Meeting note not found.", detail: true });
+    }
+    ensureMeetingNoteSupportingCollections(meeting);
+    const page = lightPage(meeting.title || "Meeting Note", { detail: true });
+    page.classList.add("light-document-page", "light-meeting-note-detail-page");
+    const summary = String(meeting.summary || "").trim();
+    if (summary) {
+      page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));
+    }
+    page.append(lightMeetingNoteDetailsSection(meeting));
+    const who = lightMeetingNoteWhoSection(meeting);
+    if (who) {
+      page.append(who);
+    }
+    page.append(lightLinkedRecordSection(meeting, {
+      title: "Connected",
+      excludeKinds: ["contact"],
+      showWhenEmpty: true,
+      fromRoute: "meeting-note-detail",
+      dedupeTargets: true,
+      showChips: false,
+      showChevron: false,
+      variant: "flat",
+      detailResolver: meetingNoteConnectedDetail,
+    }));
+    return page;
+  }
+
+  function ensureMeetingNoteSupportingCollections(meeting) {
+    ensureLinkedCollections(meeting);
+    const meta = meeting?.metadata || {};
+    const participants = Array.isArray(meta.participants)
+      ? meta.participants.map(value => String(value || "").trim()).filter(Boolean)
+      : [];
+    const contactBucket = workspaceBucket("contacts");
+    if (participants.length && contactBucket && !contactBucket.loaded && !contactBucket.loading) {
+      void loadWorkspaceCollection("contacts", { render: true });
+    }
+    const sourceKind = String(meta.source_kind || "calendar_event").trim();
+    const sourceId = String(meta.source_id || meta.source || "").trim();
+    const sourceCollection = workspaceCollectionForKind(sourceKind);
+    const sourceBucket = sourceCollection ? workspaceBucket(sourceCollection) : null;
+    if (sourceId && sourceCollection && sourceBucket && !sourceBucket.loaded && !sourceBucket.loading) {
+      void loadWorkspaceCollection(sourceCollection, { render: true });
+    }
+  }
+
+  function meetingNoteTopicsLabel(meeting) {
+    const topics = Array.isArray(meeting?.metadata?.extracted_topics) ? meeting.metadata.extracted_topics : [];
+    return topics.length ? topics.join(", ") : "No topics yet";
+  }
+
+  function lightMeetingNoteDetailsSection(meeting) {
+    const meta = meeting?.metadata || {};
+    const sourceKind = String(meta.source_kind || "calendar_event").trim();
+    const sourceId = String(meta.source_id || meta.source || "").trim();
+    const sourceTarget = sourceId ? workspaceTargetForKind(sourceKind, sourceId) : null;
+    const section = el("section", "light-calendar-detail-section light-meeting-note-details-section");
+    section.append(lightSectionTitle("Details"));
+    const card = el("div", "light-calendar-detail-card");
+    card.append(lightMeetingNoteDetailRow("when", "When", meetingTimeLabel(meeting)));
+    if (sourceId) {
+      card.append(lightMeetingNoteDetailRow("source", "Source", workspaceTargetLabel(sourceKind, sourceId), {
+        target: sourceTarget,
+        fromRoute: "meeting-note-detail",
+      }));
+    }
+    card.append(lightMeetingNoteDetailRow("topics", "Topics", meetingNoteTopicsLabel(meeting)));
+    section.append(card);
+    return section;
+  }
+
+  function lightMeetingNoteDetailRow(rowKey, label, value, options = {}) {
+    const target = options?.target || null;
+    const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
+    const row = el(
+      isInteractive ? "button" : "div",
+      [
+        "light-calendar-detail-row",
+        "light-meeting-note-detail-row",
+        isInteractive ? "is-clickable" : "",
+      ].filter(Boolean).join(" ")
+    );
+    row.dataset.detailRow = String(rowKey || label || "").trim().toLowerCase();
+    if (isInteractive) {
+      row.type = "button";
+      row.dataset.workspaceTargetRoute = target.route;
+      row.dataset.workspaceTargetId = target.id;
+      row.dataset.workspaceTargetKind = target.kind || "";
+      row.addEventListener("click", () => openWorkspaceTarget(
+        target,
+        options.fromRoute || state.route || "",
+        options.openOptions || {}
+      ));
+    }
+    row.append(
+      el("strong", "light-calendar-detail-row-label", label),
+      el("div", "light-calendar-detail-row-value", String(value || "").trim())
+    );
+    return row;
+  }
+
+  function meetingNoteAttendeeEntries(meeting) {
+    const participants = Array.isArray(meeting?.metadata?.participants) ? meeting.metadata.participants : [];
+    const seen = new Set();
+    const entries = [];
+    participants.forEach(value => {
+      const label = String(value || "").trim();
+      const key = label.toLowerCase();
+      if (!label || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      const target = workspaceContactTargetByName(label);
+      entries.push({
+        label,
+        target,
+        recognized: Boolean(target),
+      });
     });
+    return entries;
+  }
+
+  function lightMeetingNoteWhoSection(meeting) {
+    const attendees = meetingNoteAttendeeEntries(meeting);
+    if (!attendees.length) {
+      return null;
+    }
+    const section = el("section", "light-info-section light-attendees-section light-meeting-note-who-section");
+    section.append(lightSectionTitle("Who"));
+    const card = el("div", "light-card light-attendee-chip-card");
+    const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
+    attendees.forEach(entry => {
+      if (entry.target) {
+        cloud.append(lightRecordChip({
+          label: entry.label,
+          target: entry.target,
+          kind: "contact"
+        }, { fromRoute: "meeting-note-detail" }));
+        return;
+      }
+      cloud.append(lightGuestAttendeeChip(entry.label));
+    });
+    card.append(cloud);
+    section.append(card);
+    return section;
   }
 
   function lightRemindersPage() {
@@ -4913,38 +5053,21 @@
     return rows;
   }
 
-  function meetingNoteDetailRows(meeting) {
-    const meta = meeting?.metadata || {};
-    const participants = Array.isArray(meta.participants) ? meta.participants : [];
-    const sourceKind = String(meta.source_kind || "calendar_event").trim();
-    const sourceId = String(meta.source_id || meta.source || "").trim();
-    const rows = [
-      { icon: "clock", label: "When", value: meetingTimeLabel(meeting) }
-    ];
-    if (sourceId) {
-      rows.push({
-        icon: graphKindIcon(sourceKind),
-        label: "Source",
-        value: workspaceTargetLabel(sourceKind, sourceId),
-        target: workspaceTargetForKind(sourceKind, sourceId)
-      });
+  function meetingNoteConnectedDetail(entry) {
+    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
+    const kindLabel = graphKindLabel(kind);
+    const related = entry?.related || null;
+    if (!related) {
+      return String(entry?.relation || kindLabel).trim() || kindLabel;
     }
-    if (participants.length) {
-      participants.forEach((name, index) => rows.push({
-        icon: "contacts",
-        label: index === 0 ? "Attendees" : "Also",
-        value: name,
-        target: workspaceContactTargetByName(name)
-      }));
-    } else {
-      rows.push({ icon: "contacts", label: "Attendees", value: "No attendees tagged" });
+    if (kind === "calendar_event") {
+      return [kindLabel, calendarEventDayLabel(related), calendarEventTimeRange(related)].filter(Boolean).join(DOT);
     }
-    rows.push({
-      icon: "note",
-      label: "Topics",
-      value: Array.isArray(meta.extracted_topics) && meta.extracted_topics.length ? meta.extracted_topics.join(", ") : "No topics yet"
-    });
-    return rows;
+    const timestamp = kind === "note"
+      ? noteTimestampLabel(related)
+      : workspaceTimestamp(linkedRecordRecencyMs(kind, related), "");
+    const summary = String(related?.summary || "").trim();
+    return [kindLabel, timestamp, summary].filter(Boolean).join(DOT);
   }
 
   function reminderDetailRows(reminder) {

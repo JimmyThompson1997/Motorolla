@@ -5397,6 +5397,28 @@ button {
   line-height: 1.45;
 }
 
+.light-meeting-note-summary {
+  margin: 0;
+}
+
+.light-meeting-note-detail-row.is-clickable {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.light-meeting-note-detail-row.is-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: -2px;
+}
+
+.light-meeting-note-detail-row.is-clickable:active {
+  background: color-mix(in srgb, var(--surface-card) 86%, var(--accent-primary) 14%);
+}
+
 .light-calendar-detail-people {
   display: grid;
   gap: 10px;

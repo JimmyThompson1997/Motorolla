@@ -2126,6 +2126,35 @@ async function readGraphDetailState(page) {
   }));
 }
 
+async function readMeetingNoteDetailState(page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector(".light-shell");
+    const detail = shell?.querySelector('.light-page[data-light-route="meeting-note-detail"]') || shell;
+    const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
+      .map(node => String(node.textContent || "").trim().toUpperCase())
+      .filter(Boolean);
+    const eyebrowTexts = Array.from(detail?.querySelectorAll(".light-doc-eyebrow") || [])
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
+    const detailRowLabels = Array.from(detail?.querySelectorAll(".light-meeting-note-detail-row .light-calendar-detail-row-label") || [])
+      .map(node => String(node.textContent || "").trim());
+    const whoChipLabels = Array.from(detail?.querySelectorAll(".light-meeting-note-who-section .light-attendee-chip, .light-meeting-note-who-section .light-record-chip-label") || [])
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
+    const connectedRowTexts = Array.from(detail?.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row') || [])
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
+    return {
+      text: detail?.textContent || "",
+      sectionTitles,
+      eyebrowTexts,
+      detailRowLabels,
+      whoChipLabels,
+      connectedRowTexts,
+    };
+  });
+}
+
 async function readProjectDetailState(page, runId) {
   return page.evaluate(({ runId: currentRunId }) => {
     const connectedSection = [...document.querySelectorAll(".light-linked-records-section")]
@@ -2229,17 +2258,42 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);
+  const meetingNoteState = await readMeetingNoteDetailState(page);
+  const meetingConnectedState = await readLinkedRecordSectionState(page, "connected");
   assert(graphState.route === "meeting-note-detail", `Expected meeting-note-detail route, got ${graphState.route}`);
   assert(!graphState.hasHtmlFrame, "Meeting note detail should stay a structured graph document, not a generated HTML iframe");
+  assert(!meetingNoteState.eyebrowTexts.some(value => /graph meeting/i.test(value)), `Meeting note detail should not render the stale Graph meeting eyebrow, got ${meetingNoteState.eyebrowTexts.join(", ")}.`);
+  assert(meetingNoteState.sectionTitles.includes("DETAILS"), `Expected meeting note detail to include DETAILS, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  assert(meetingNoteState.sectionTitles.includes("WHO"), `Expected meeting note detail to include WHO, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  assert(meetingNoteState.sectionTitles.includes("CONNECTED"), `Expected meeting note detail to include CONNECTED, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  assert(!meetingNoteState.sectionTitles.includes("CONTEXT"), `Expected meeting note detail to remove CONTEXT, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  assert(!meetingNoteState.sectionTitles.includes("NOTES"), `Expected meeting note detail to remove the separate NOTES section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  assert(!meetingNoteState.sectionTitles.includes("LINKED RECORDS"), `Expected meeting note detail to remove the separate LINKED RECORDS section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  for (const label of ["When", "Source", "Topics"]) {
+    assert(meetingNoteState.detailRowLabels.includes(label), `Expected meeting note detail rows to include ${label}, got ${meetingNoteState.detailRowLabels.join(", ")}.`);
+  }
+  assert(meetingNoteState.whoChipLabels.some(value => value.includes("Proof Contact One")), `Expected Who chips to include Proof Contact One, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
+  assert(meetingConnectedState.sectionCount === 1, "Expected meeting note detail to render one Connected section.");
+  assert(meetingConnectedState.bodyIsFlat, "Expected meeting note Connected to render inside one shared flat-feed shell.");
+  assert(meetingConnectedState.rowCount === 5, `Expected meeting note Connected to render five linked rows after dedupe/contact exclusion, got ${meetingConnectedState.rowCount}.`);
+  assert(meetingConnectedState.flatRowCount === meetingConnectedState.rowCount, "Expected meeting note Connected rows to all use flat-feed styling.");
+  assert(meetingConnectedState.chevronCount === 0, "Expected meeting note Connected to omit trailing chevrons.");
+  assert(meetingConnectedState.chipCount === 0, "Expected meeting note Connected to omit pills.");
+  assert(meetingConnectedState.contiguousRows, "Expected meeting note Connected rows to render contiguously with no inter-row gaps.");
+  assert(!meetingNoteState.connectedRowTexts.some(value => value.includes("Proof Contact One")), `Expected meeting note Connected to exclude contact rows, got ${meetingNoteState.connectedRowTexts.join(", ")}.`);
   const meetingHtmlState = await assertNoWorkspaceHtmlDocument(page, "Meeting note detail");
   summary.noHtmlDetails = summary.noHtmlDetails || [];
   summary.noHtmlDetails.push({ theme, route: "meeting-note-detail", htmlState: meetingHtmlState });
   screenshots[`${theme}_graph_meeting_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-detail`);
   for (const [route, id, text, shot] of [
-    ["contact-detail", `${seed.runId}-contact-one`, "Proof Contact One", "graph-meeting-linked-contact"],
-    ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-meeting-linked-note"]
+    ["meeting-detail", `${seed.runId}-today-roadmap`, "Proof Today Roadmap", "graph-meeting-source-event"],
+    ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-meeting-linked-note"],
+    ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project", "graph-meeting-linked-project"]
   ]) {
-    await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
+    const locator = route === "meeting-detail"
+      ? page.locator(`[data-detail-row="source"][data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`)
+      : page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first();
+    await locator.click();
     await waitForLightRoute(page, route, config.timeoutMs);
     await waitForGraphText(page, text, config.timeoutMs);
     screenshots[`${theme}_${shot}`] = await saveScreenshot(page, config.reportDir, `${theme}-${shot}`);

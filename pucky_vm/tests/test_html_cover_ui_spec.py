@@ -1037,6 +1037,11 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     linked_record_section = function_block(app, "lightLinkedRecordSection")
     contact_detail = function_block(app, "lightContactDetailPage")
     feed_detail = function_block(app, "lightFeedDetailPage")
+    meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
+    meeting_note_support = function_block(app, "ensureMeetingNoteSupportingCollections")
+    meeting_note_details = function_block(app, "lightMeetingNoteDetailsSection")
+    meeting_note_who = function_block(app, "lightMeetingNoteWhoSection")
+    meeting_note_connected_detail = function_block(app, "meetingNoteConnectedDetail")
     project_detail = function_block(app, "lightProjectDetailPage")
     graph_detail = function_block(app, "lightGraphDetailPage")
 
@@ -1082,6 +1087,38 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "showChevron: options.showChevron !== false," in linked_record_section
     assert 'variant: flatFeed ? "flat" : "",' in linked_record_section
     assert "lightHtmlDocument(contact" not in contact_detail
+    assert "lightGraphDetailPage(meeting" not in meeting_note_detail
+    assert 'page.classList.add("light-document-page", "light-meeting-note-detail-page");' in meeting_note_detail
+    assert 'page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));' in meeting_note_detail
+    assert "page.append(lightMeetingNoteDetailsSection(meeting));" in meeting_note_detail
+    assert "const who = lightMeetingNoteWhoSection(meeting);" in meeting_note_detail
+    assert "page.append(lightLinkedRecordSection(meeting, {" in meeting_note_detail
+    assert 'title: "Connected"' in meeting_note_detail
+    assert 'excludeKinds: ["contact"]' in meeting_note_detail
+    assert "showWhenEmpty: true" in meeting_note_detail
+    assert "dedupeTargets: true," in meeting_note_detail
+    assert "showChips: false," in meeting_note_detail
+    assert 'showChevron: false,' in meeting_note_detail
+    assert 'variant: "flat",' in meeting_note_detail
+    assert "detailResolver: meetingNoteConnectedDetail," in meeting_note_detail
+    assert "Graph meeting" not in meeting_note_detail
+    assert "lightLinkedNotesSection(meeting)" not in meeting_note_detail
+    assert 'lightInfoSection("Linked records"' not in meeting_note_detail
+    assert 'lightInfoSection("Context"' not in meeting_note_detail
+    assert "ensureLinkedCollections(meeting);" in meeting_note_support
+    assert 'void loadWorkspaceCollection("contacts", { render: true });' in meeting_note_support
+    assert "workspaceCollectionForKind(sourceKind)" in meeting_note_support
+    assert "page.append(lightSectionTitle(\"Details\"));" not in meeting_note_detail
+    assert 'section.append(lightSectionTitle("Details"));' in meeting_note_details
+    assert 'card.append(lightMeetingNoteDetailRow("when", "When", meetingTimeLabel(meeting)));' in meeting_note_details
+    assert 'card.append(lightMeetingNoteDetailRow("topics", "Topics", meetingNoteTopicsLabel(meeting)));' in meeting_note_details
+    assert 'lightMeetingNoteDetailRow("source", "Source", workspaceTargetLabel(sourceKind, sourceId),' in meeting_note_details
+    assert 'section.append(lightSectionTitle("Who"));' in meeting_note_who
+    assert 'lightRecordChip({' in meeting_note_who
+    assert "lightGuestAttendeeChip(entry.label)" in meeting_note_who
+    assert 'if (kind === "calendar_event") {' in meeting_note_connected_detail
+    assert 'const timestamp = kind === "note"' in meeting_note_connected_detail
+    assert "linkedRecordRecencyMs(kind, related)" in meeting_note_connected_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
     assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
     assert "lightHtmlDocument(item" not in feed_detail
@@ -1104,6 +1141,8 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
     assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
     assert "lightHtmlDocument(record" not in graph_detail
+    assert ".light-meeting-note-detail-row.is-clickable {" in styles
+    assert ".light-meeting-note-summary {" in styles
     assert ".light-linked-record-feed-row.is-no-chevron {" in styles
     assert "grid-template-columns: 48px minmax(0, 1fr) auto;" in styles
     assert ".light-linked-record-feed-row.is-no-chips.is-no-chevron {" in styles
