@@ -362,6 +362,7 @@ const BASELINE_PROOFS = [
 
 function resolveApiToken() {
   return resolveWriteToken({
+    sharedKeys: ["PUCKY_API_TOKEN", "PUCKY_OPERATOR_TOKEN"],
     rootDir: repoRoot,
     remoteEnvLoader: () => loadFlyEnvironment({ app: "pucky", rootDir: repoRoot }),
   });

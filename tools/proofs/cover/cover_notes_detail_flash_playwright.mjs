@@ -83,6 +83,7 @@ function logStep(config, message) {
 function resolveApiToken() {
   return resolveWriteToken({
     envKeys: ["PUCKY_WORKSPACE_PROOF_TOKEN", "PUCKY_LIVE_USER_SESSION_TOKEN"],
+    sharedKeys: ["PUCKY_API_TOKEN", "PUCKY_OPERATOR_TOKEN"],
     rootDir: ROOT,
     remoteEnvLoader: () => loadFlyEnvironment({ app: "pucky", rootDir: ROOT }),
   });

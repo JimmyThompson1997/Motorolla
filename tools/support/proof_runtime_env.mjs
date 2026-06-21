@@ -133,7 +133,9 @@ export function resolveWriteToken(options = {}) {
   const dotEnv = options.dotEnv && typeof options.dotEnv === "object"
     ? options.dotEnv
     : loadProofRuntimeEnv(options);
-  const sharedKeys = ["PUCKY_OPERATOR_TOKEN", "PUCKY_API_TOKEN"];
+  const sharedKeys = Array.isArray(options.sharedKeys)
+    ? options.sharedKeys.map(normalizeKey).filter(Boolean)
+    : ["PUCKY_OPERATOR_TOKEN", "PUCKY_API_TOKEN"];
   const resolved = firstPopulatedValue([...envKeys, ...sharedKeys], {
     ...options,
     dotEnv,
