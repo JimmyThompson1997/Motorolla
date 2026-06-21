@@ -19,6 +19,7 @@ import {
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
 import {
+  loadFlyEnvironment,
   loadProofRuntimeEnv,
   resolveWriteToken,
 } from "../../support/proof_runtime_env.mjs";
@@ -104,6 +105,7 @@ function resolveApiToken() {
   return resolveWriteToken({
     envKeys: ["PUCKY_LIVE_USER_SESSION_TOKEN"],
     rootDir: ROOT,
+    remoteEnvLoader: () => loadFlyEnvironment({ app: "pucky", rootDir: ROOT }),
   });
 }
 

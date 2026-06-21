@@ -13,6 +13,7 @@ PACKAGE_JSON_PATH = ROOT / "tools" / "package.json"
 def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_report() -> None:
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
+    assert "loadFlyEnvironment(" in source
     assert "resolveWriteToken(" in source
     assert "loadProofRuntimeEnv(" in source
     assert "PUCKY_LIVE_USER_SESSION_TOKEN" in source

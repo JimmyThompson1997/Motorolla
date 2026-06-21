@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const FLY_ENV_CACHE = new Map();
 
 function normalizeKey(value) {
   return String(value || "").trim();
@@ -27,6 +29,18 @@ function decodeValue(raw) {
     .replace(/\\t/g, "\t")
     .replace(/\\"/g, "\"")
     .replace(/\\\\/g, "\\");
+}
+
+function resolveFlyctlBinary() {
+  const explicit = normalizeKey(process.env.FLYCTL_BIN);
+  if (explicit) {
+    return explicit;
+  }
+  const bundled = path.join(String(process.env.HOME || ""), ".fly", "bin", "flyctl");
+  if (bundled && fs.existsSync(bundled)) {
+    return bundled;
+  }
+  return "flyctl";
 }
 
 export function readRepoDotEnv(options = {}) {
@@ -59,6 +73,35 @@ export function loadProofRuntimeEnv(options = {}) {
     }
   }
   return dotEnv;
+}
+
+export function loadFlyEnvironment(options = {}) {
+  const app = normalizeKey(options.app || "pucky") || "pucky";
+  const rootDir = path.resolve(String(options.rootDir || DEFAULT_ROOT));
+  const cacheKey = `${app}:${rootDir}`;
+  if (FLY_ENV_CACHE.has(cacheKey)) {
+    return FLY_ENV_CACHE.get(cacheKey);
+  }
+  const flyctl = resolveFlyctlBinary();
+  const output = execFileSync(
+    flyctl,
+    ["ssh", "console", "-a", app, "--command", "env"],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
+  const payload = {};
+  for (const line of String(output || "").split(/\r?\n/)) {
+    const index = line.indexOf("=");
+    if (index <= 0) {
+      continue;
+    }
+    payload[line.slice(0, index).trim()] = line.slice(index + 1);
+  }
+  FLY_ENV_CACHE.set(cacheKey, payload);
+  return payload;
 }
 
 function firstPopulatedValue(keys, options = {}) {

@@ -36,6 +36,7 @@ import {
   orderedObservedPhases,
 } from "./notes_detail_flash_scoring.mjs";
 import {
+  loadFlyEnvironment,
   loadProofRuntimeEnv,
   resolveWriteToken,
 } from "../../support/proof_runtime_env.mjs";
@@ -83,6 +84,7 @@ function resolveApiToken() {
   return resolveWriteToken({
     envKeys: ["PUCKY_WORKSPACE_PROOF_TOKEN", "PUCKY_LIVE_USER_SESSION_TOKEN"],
     rootDir: ROOT,
+    remoteEnvLoader: () => loadFlyEnvironment({ app: "pucky", rootDir: ROOT }),
   });
 }
 

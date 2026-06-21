@@ -13,6 +13,7 @@ import {
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
 import {
+  loadFlyEnvironment,
   loadProofRuntimeEnv,
   resolveWriteToken,
 } from "../../support/proof_runtime_env.mjs";
@@ -360,7 +361,10 @@ const BASELINE_PROOFS = [
 ];
 
 function resolveApiToken() {
-  return resolveWriteToken({ rootDir: repoRoot });
+  return resolveWriteToken({
+    rootDir: repoRoot,
+    remoteEnvLoader: () => loadFlyEnvironment({ app: "pucky", rootDir: repoRoot }),
+  });
 }
 
 function timestampSlug() {
