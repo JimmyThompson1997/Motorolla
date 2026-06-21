@@ -93,7 +93,7 @@
   const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)
     ? routeCatalog.HOME_SHELL_CANONICAL_ROUTES
     : []);
-  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);
+  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);
   const LIGHT_ROUTE_PARENTS = routeCatalog.LIGHT_ROUTE_PARENTS && typeof routeCatalog.LIGHT_ROUTE_PARENTS === "object"
     ? routeCatalog.LIGHT_ROUTE_PARENTS
     : {};
@@ -130,7 +130,7 @@
     "selectedReminderId",
     "selectedNoteId",
     "selectedTaskId",
-    "selectedProjectId",
+    "selectedTagId",
     "selectedFeedId"
   ];
   let nativeProtectedAuthorization = "";
@@ -165,7 +165,7 @@
     selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
     selectedTaskId: String(persistedNavState.selected_task_id || "").trim() || "demo-task-do-paint-samples",
-    selectedProjectId: "aurora",
+    selectedTagId: String(persistedNavState.selected_tag_id || persistedNavState.selected_project_id || "").trim() || "aurora",
     selectedFeedId: "maya-budget",
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarDayRailStartMonth: "",
@@ -186,7 +186,7 @@
       tasks: { items: [], loaded: false, loading: false, error: "" },
       "calendar-events": { items: [], loaded: false, loading: false, error: "" },
       "feed-items": { items: [], loaded: false, loading: false, error: "" },
-      projects: { items: [], loaded: false, loading: false, error: "" },
+      tags: { items: [], loaded: false, loading: false, error: "" },
       contacts: { items: [], loaded: false, loading: false, error: "" },
       messages: { items: [], loaded: false, loading: false, error: "" },
       "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
@@ -1955,6 +1955,12 @@
         if (!state.links.token) {
           linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
           await ensureLinksApiConfig();
+          if (!state.links.apiToken) {
+            state.links.available = false;
+            state.links.error = "Device provisioning missing pucky_api_token.";
+            linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
+            return;
+          }
           payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url", { authorized: true }));
           state.links.portal_url = payload.portal_url;
           state.links.token = payload.token;
@@ -3753,9 +3759,11 @@
         view.append(lightTaskDetailPage());
         break;
       case "projects":
+      case "tags":
         view.append(lightProjectsPage());
         break;
       case "project-detail":
+      case "tag-detail":
         view.append(lightProjectDetailPage());
         break;
       case "home":
@@ -4683,7 +4691,7 @@
     if (surface === "reminders") {
       return "light-list light-graph-list";
     }
-    if (surface === "projects") {
+    if (surface === "tags") {
       return "light-list";
     }
     if (surface === "meetings") {
@@ -4903,19 +4911,19 @@
   function universalProjectFeedTileDescriptor(project, sectionKey = "") {
     return normalizeUniversalFeedTileDescriptor({
       id: String(project?.id || "").trim(),
-      surface: "projects",
+      surface: "tags",
       variant: "project",
       sectionKey: String(sectionKey || "").trim().toLowerCase(),
-      title: project?.title || "Untitled project",
+      title: project?.title || "Untitled tag",
       meta: { project },
-      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
+      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Tag"}`,
       chips: projectChips(project),
-      leading: { icon: "folder", show: true },
+      leading: { icon: "sell", show: true },
       trailing: null,
       interactive: true,
       open: () => {
-        state.selectedProjectId = project.id;
-        lightNavigate("project-detail", { from: "projects" });
+        state.selectedTagId = project.id;
+        lightNavigate("tag-detail", { from: "tags" });
       },
       renderMode: "flat",
     });
@@ -6073,7 +6081,7 @@
       task: "Task",
       calendar_event: "Calendar",
       feed_item: "Inbox",
-      project: "Project",
+      project: "Tag",
       contact: "Contact",
       message: "Message",
       meeting_note: "Meeting note",
@@ -6092,7 +6100,7 @@
       task: "checklist",
       calendar_event: "calendar",
       feed_item: "text",
-      project: "folder",
+      project: "sell",
       contact: "contacts",
       message: "chat",
       meeting_note: "record_voice_over",
@@ -6121,7 +6129,7 @@
       task: "task-detail",
       calendar_event: "meeting-detail",
       feed_item: "inbox-detail",
-      project: "project-detail",
+      project: "tag-detail",
       contact: "contact-detail",
       meeting_note: "meeting-note-detail",
       reminder: "reminder-detail"
@@ -6131,7 +6139,7 @@
       task: "selectedTaskId",
       calendar_event: "selectedMeetingId",
       feed_item: "selectedFeedId",
-      project: "selectedProjectId",
+      project: "selectedTagId",
       contact: "selectedContactId",
       meeting_note: "selectedMeetingNoteId",
       reminder: "selectedReminderId"
@@ -7837,19 +7845,19 @@
   }
 
   function lightProjectsPage() {
-    const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
+    const status = lightWorkspaceStatus("tags", "sell", "No tags yet");
     return renderUniversalFeedPage({
-      title: "Projects",
-      surface: "projects",
+      title: "Tags",
+      surface: "tags",
       status,
       sections: [{
-        key: "projects",
+        key: "tags",
         label: "",
         count: allProjects().length,
         collapsible: false,
         expanded: true,
         emptyState: null,
-        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))
+        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))
       }],
     });
   }
@@ -7859,16 +7867,14 @@
     const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     row.type = "button";
     row.dataset.projectId = project.id;
+    row.dataset.tagId = project.id;
     row.addEventListener("click", () => {
-      state.selectedProjectId = project.id;
-      lightNavigate("project-detail", { from: "projects" });
+      state.selectedTagId = project.id;
+      lightNavigate("tag-detail", { from: "tags" });
     });
-    const chips = el("span", "light-project-chip-row");
-    projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
     row.append(
-      lightSmallIcon("folder"),
-      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`),
-      chips
+      lightSmallIcon("sell"),
+      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`)
     );
     return row;
   }
@@ -7896,15 +7902,17 @@
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
-      return lightPage("Project", { subtitle: "Project not found.", detail: true });
+      return lightPage("Tag", { subtitle: "Tag not found.", detail: true });
     }
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
     page.classList.add("light-project-detail-page");
+    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`, "sell"));
+    page.append(lightChipCloud(projectChips(project)));
     page.append(lightLinkedRecordSection(project, {
       title: "Connected",
       showWhenEmpty: true,
-      fromRoute: "project-detail",
+      fromRoute: "tag-detail",
       dedupeTargets: true,
       showChips: false,
       showChevron: false,
@@ -8090,7 +8098,7 @@
       "reminder-detail": "selectedReminderId",
       "note-detail": "selectedNoteId",
       "task-detail": "selectedTaskId",
-      "project-detail": "selectedProjectId",
+      "tag-detail": "selectedTagId",
       "contact-detail": "selectedContactId"
     })[String(route || "")] || "";
   }
@@ -8120,6 +8128,9 @@
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       normalized[key] = String(snapshot[key] || "");
     });
+    if (!normalized.selectedTagId) {
+      normalized.selectedTagId = String(snapshot.selectedProjectId || "");
+    }
     return normalized;
   }
 
@@ -8202,6 +8213,10 @@
         state[key] = String(selectionPatch[key] || "");
       }
     });
+    if (!Object.prototype.hasOwnProperty.call(selectionPatch, "selectedTagId")
+      && Object.prototype.hasOwnProperty.call(selectionPatch, "selectedProjectId")) {
+      state.selectedTagId = String(selectionPatch.selectedProjectId || "");
+    }
   }
 
   function isContactsSurfaceRoute(route) {
@@ -9056,11 +9071,11 @@
   }
 
   function selectedProject() {
-    return selectedWorkspaceRecord("projects", state.selectedProjectId);
+    return selectedWorkspaceRecord("tags", state.selectedTagId);
   }
 
   function allProjects() {
-    return workspaceItems("projects");
+    return workspaceItems("tags");
   }
 
   function projectChips(project) {
@@ -9091,7 +9106,7 @@
       "reminder-detail",
       "note-detail",
       "task-detail",
-      "project-detail",
+      "tag-detail",
       "contact-detail"
     ].includes(String(route || ""));
   }
@@ -16881,6 +16896,7 @@
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         selected_task_id: state.selectedTaskId || null,
+        selected_tag_id: state.selectedTagId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),

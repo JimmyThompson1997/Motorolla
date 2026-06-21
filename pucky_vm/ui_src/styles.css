@@ -6082,7 +6082,6 @@ button {
 }
 
 .light-chip-cloud span,
-.light-project-chip,
 .light-attendee-chip {
   min-height: 28px;
   border-radius: 999px;
@@ -6317,14 +6316,6 @@ button {
 
 .card-wrap.is-flat-feed + .card-wrap.is-flat-feed .card.is-flat-feed {
   border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
-}
-
-.light-project-chip-row {
-  grid-column: 2;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 4px;
 }
 
 .light-project-section-grid {

@@ -7,7 +7,7 @@ window.PUCKY_UI_ROUTES = {
     { route: "notes", label: "Notes", semantic: "notes", kind: "real" },
     { route: "tasks", label: "Tasks", semantic: "tasks", kind: "real" },
     { route: "calendar", label: "Calendar", semantic: "calendar", kind: "real" },
-    { route: "projects", label: "Projects", semantic: "projects", kind: "real" },
+    { route: "tags", label: "Tags", semantic: "tags", kind: "real" },
     { route: "contacts", label: "Contacts", semantic: "contacts", kind: "real" },
     { route: "connect", label: "Connect", semantic: "connect", kind: "real" },
     { route: "settings", label: "Settings", semantic: "settings", kind: "real" }
@@ -25,8 +25,8 @@ window.PUCKY_UI_ROUTES = {
     "meeting-note-detail",
     "reminders",
     "reminder-detail",
-    "projects",
-    "project-detail",
+    "tags",
+    "tag-detail",
     "contacts",
     "contact-detail"
   ],
@@ -38,10 +38,13 @@ window.PUCKY_UI_ROUTES = {
     "meeting-detail": "calendar",
     "meeting-note-detail": "meeting-notes",
     "reminder-detail": "reminders",
-    "project-detail": "projects",
+    "tag-detail": "tags",
     "contact-detail": "contacts"
   },
-  ROUTE_ALIASES: {},
+  ROUTE_ALIASES: {
+    projects: "tags",
+    "project-detail": "tag-detail"
+  },
   WORKSPACE_ROUTE_COLLECTIONS: {
     "inbox-detail": "feed-items",
     notes: "notes",
@@ -54,8 +57,8 @@ window.PUCKY_UI_ROUTES = {
     "meeting-note-detail": "meeting-notes",
     reminders: "reminders",
     "reminder-detail": "reminders",
-    projects: "projects",
-    "project-detail": "projects",
+    tags: "tags",
+    "tag-detail": "tags",
     contacts: "contacts",
     "contact-detail": "contacts"
   },
@@ -64,7 +67,7 @@ window.PUCKY_UI_ROUTES = {
     tasks: "Tasks",
     "calendar-events": "Calendar",
     "feed-items": "Feed",
-    projects: "Projects",
+    tags: "Tags",
     contacts: "Contacts",
     "meeting-notes": "Meeting Notes",
     reminders: "Reminders"
@@ -74,7 +77,7 @@ window.PUCKY_UI_ROUTES = {
     task: "tasks",
     calendar_event: "calendar-events",
     feed_item: "feed-items",
-    project: "projects",
+    project: "tags",
     contact: "contacts",
     meeting_note: "meeting-notes",
     reminder: "reminders"

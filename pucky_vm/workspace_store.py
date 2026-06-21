@@ -21,10 +21,14 @@ WORKSPACE_COLLECTIONS: dict[str, str] = {
     "tasks": "task",
     "calendar-events": "calendar_event",
     "feed-items": "feed_item",
-    "projects": "project",
+    "tags": "project",
     "contacts": "contact",
     "meeting-notes": "meeting_note",
     "reminders": "reminder",
+}
+
+WORKSPACE_COLLECTION_ALIASES: dict[str, str] = {
+    "projects": "tags",
 }
 
 KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
@@ -51,6 +55,13 @@ CONTACT_PHOTO_BY_ID = {
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def canonical_collection_name(collection: object) -> str:
+    value = str(collection or "").strip()
+    if not value:
+        return ""
+    return WORKSPACE_COLLECTION_ALIASES.get(value, value)
 
 
 def _json_dumps(value: Any) -> str:
@@ -81,7 +92,7 @@ def _workspace_kind_label(kind: object) -> str:
         "task": "Task",
         "calendar_event": "Calendar",
         "feed_item": "Inbox",
-        "project": "Project",
+        "project": "Tag",
         "contact": "Contact",
         "meeting_note": "Meeting note",
         "reminder": "Reminder",
@@ -514,7 +525,8 @@ class WorkspaceStore:
         date: str = "",
         limit: int = 200,
     ) -> dict[str, object]:
-        kind = self.kind_for_collection(collection)
+        canonical_collection = canonical_collection_name(collection)
+        kind = self.kind_for_collection(canonical_collection)
         query = [
             "SELECT * FROM workspace_records WHERE kind = ?",
             "" if include_deleted else "AND deleted = 0",
@@ -549,7 +561,7 @@ class WorkspaceStore:
         items = [self._row_to_record(row) for row in rows]
         return {
             "schema": "pucky.workspace.list.v1",
-            "collection": collection,
+            "collection": canonical_collection,
             "kind": kind,
             "count": len(items),
             "items": items,
@@ -1308,7 +1320,7 @@ class WorkspaceStore:
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
-        kind = WORKSPACE_COLLECTIONS.get(str(collection or "").strip())
+        kind = WORKSPACE_COLLECTIONS.get(canonical_collection_name(collection))
         if not kind:
             raise ValueError("unknown_workspace_collection")
         return kind
@@ -1781,7 +1793,7 @@ def seeded_workspace_snapshot(
         if str(asset.get("id") or asset.get("asset_id") or "").strip()
     }
     next_records = {
-        collection: [dict(record) for record in records]
+        canonical_collection_name(collection): [dict(record) for record in records]
         for collection, records in records_by_collection.items()
     }
     next_links = [dict(link) for link in links]
@@ -1793,7 +1805,7 @@ def seeded_workspace_snapshot(
         if str(note.get("id") or note.get("record_id") or "").strip()
     }
     for collection, records in next_records.items():
-        kind = WORKSPACE_COLLECTIONS.get(collection, "")
+        kind = WORKSPACE_COLLECTIONS.get(canonical_collection_name(collection), "")
         for record in records:
             metadata = dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {}
             html = str(record.get("html") or "").strip()
@@ -2147,7 +2159,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                 "metadata": {"icon": "note", "type": "note_update"},
             },
         ],
-        "projects": [
+        "tags": [
             {
                 "id": "aurora",
                 "title": "Project Aurora",
@@ -2381,7 +2393,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "metadata": {"place": "Phone", "attendees": ["Sam Rivera"], "type": "call"},
             },
         ],
-        "projects": [
+        "tags": [
             {
                 "id": "home-refresh",
                 "title": "Home refresh",

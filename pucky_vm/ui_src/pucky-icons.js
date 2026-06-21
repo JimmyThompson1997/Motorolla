@@ -116,6 +116,10 @@ window.PUCKY_UI_ICONS = {
       filled: '<path d="M3 17.3V21h3.7L17.8 9.9l-3.7-3.7L3 17.3Zm17.7-10.2a1 1 0 0 0 0-1.4L18.3 3.3a1 1 0 0 0-1.4 0l-1.8 1.8 3.7 3.7 1.9-1.7Z"/>',
       outline: '<path d="M4 20h3.2L18.5 8.7 15.3 5.5 4 16.8V20Z"/><path d="m14.6 6.2 3.2 3.2"/><path d="M3.5 20.5h17"/>'
     },
+    sell: {
+      filled: '<path d="m21.4 11.6-9-9A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7c0 .5.2 1 .6 1.4l9 9a2 2 0 0 0 2.8 0l7-7a2 2 0 0 0 0-2.8ZM6.5 7A1.5 1.5 0 1 1 6.5 4a1.5 1.5 0 0 1 0 3Z"/>',
+      outline: '<path d="M12 3H4.8c-1 0-1.8.8-1.8 1.8V12c0 .4.1.8.4 1.1l8.5 8.5c.7.7 1.8.7 2.5 0l6.6-6.6c.7-.7.7-1.8 0-2.5l-7.5-7.5C12.8 3.2 12.4 3 12 3Z"/><circle cx="6.5" cy="6.5" r="1.2"/>'
+    },
     folder: {
       filled: '<path d="M4 5h6l2 2h8c1.1 0 2 .9 2 2v8.5c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2Z"/>',
       outline: '<path d="M3 6h6.2l2 2H21v10.5c0 .8-.7 1.5-1.5 1.5h-16C2.7 20 2 19.3 2 18.5v-11C2 6.7 2.7 6 3 6Z"/>'
@@ -180,7 +184,7 @@ window.PUCKY_UI_ICONS = {
     notes: { icon: "note", colors: { dark: "#f2a000", light: "#f2a000" } },
     tasks: { icon: "checklist", colors: { dark: "#22c55e", light: "#22c55e" } },
     calendar: { icon: "calendar", colors: { dark: "#ff443a", light: "#ff443a" } },
-    projects: { icon: "folder", colors: { dark: "#0f9fb8", light: "#0f9fb8" } },
+    tags: { icon: "sell", colors: { dark: "#0f9fb8", light: "#0f9fb8" } },
     contacts: { icon: "contacts", colors: { dark: "#f43f68", light: "#f43f68" } }
   }
 };
