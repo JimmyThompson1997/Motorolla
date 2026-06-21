@@ -292,11 +292,10 @@ async function waitForAudioClickDelivery(page, title, before, timeoutMs = 750) {
 
 async function resolveAudioButton(page, title) {
   let lastError = null;
-  for (let attemptIndex = 0; attemptIndex < 5; attemptIndex += 1) {
+  for (let attemptIndex = 0; attemptIndex < 8; attemptIndex += 1) {
     const button = cardLocator(page, title).locator("button.action-audio").first();
     try {
       await button.waitFor({ state: "visible", timeout: 5000 });
-      await button.scrollIntoViewIfNeeded({ timeout: 1500 });
       const target = await button.evaluate(node => ({
         card_id: String(node.getAttribute("data-card-id") || ""),
         session_id: String(node.getAttribute("data-card-session-id") || ""),
@@ -305,7 +304,7 @@ async function resolveAudioButton(page, title) {
       return { button, target };
     } catch (error) {
       lastError = error;
-      await page.waitForTimeout(100);
+      await page.waitForTimeout(100 + attemptIndex * 50);
     }
   }
   throw lastError || new Error(`Could not resolve audio button for "${title}"`);
@@ -346,7 +345,8 @@ async function clickAudioButton(page, title) {
   }
   if (!delivered) {
     delivered = await attempt("mouse_click", async () => {
-      const box = await button.boundingBox();
+      const fresh = await resolveAudioButton(page, title);
+      const box = await fresh.button.boundingBox();
       if (!box) {
         throw new Error("audio button bounding box was unavailable");
       }
