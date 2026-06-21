@@ -9160,10 +9160,6 @@
     try {
       const detail = await loadMeetingDetail(meeting);
       const panel = document.getElementById("detail");
-      if (stateName === "completed") {
-        openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
-        return;
-      }
       if (panel?.classList.contains("is-open") && panel.getAttribute("data-detail-session-id") === meetingId) {
         openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
       }

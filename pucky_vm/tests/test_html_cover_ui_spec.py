@@ -735,6 +735,17 @@ def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> Non
     assert "existing.replaceWith(detailAudioContinuity(card));" in render_detail_audio_continuity
 
 
+def test_completed_meeting_detail_refresh_does_not_reopen_after_dismiss() -> None:
+    app = read("app.js")
+    show_meeting_detail = function_block(app, "showMeetingDetail")
+
+    assert 'const detail = await loadMeetingDetail(meeting);' in show_meeting_detail
+    assert 'const panel = document.getElementById("detail");' in show_meeting_detail
+    assert 'if (stateName === "completed") {\n        openDetail(detail, { scrollTop: state.navDetail?.scroll_top });' not in show_meeting_detail
+    assert 'if (panel?.classList.contains("is-open") && panel.getAttribute("data-detail-session-id") === meetingId) {\n        openDetail(detail, { scrollTop: state.navDetail?.scroll_top });' in show_meeting_detail
+    assert show_meeting_detail.index('const detail = await loadMeetingDetail(meeting);') < show_meeting_detail.index('panel?.classList.contains("is-open")')
+
+
 def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> None:
     app = read("app.js")
     focus_card = function_block(app, "uiDebugFocusCard")
