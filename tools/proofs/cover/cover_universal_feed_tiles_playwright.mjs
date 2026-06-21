@@ -404,6 +404,9 @@ async function collectDetailMetrics(page) {
       scheduleSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "SCHEDULE").length,
       channelsSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "CHANNELS").length,
       notesSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "NOTES").length,
+      reminderDetailFeeds: document.querySelectorAll('[data-reminder-detail-feed="true"]').length,
+      reminderActionRows: document.querySelectorAll('[data-reminder-action-row="true"]').length,
+      reminderDetailChevrons: document.querySelectorAll(".light-reminder-detail-feed .light-chevron").length,
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
       connectedLinkedRecordSections: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"]').length,
       detailShells: document.querySelectorAll(".detail-shell").length,
@@ -461,7 +464,7 @@ function assertRouteSpecificState(routeConfig, metrics) {
     assert(metrics.selectorCounts.graphChevrons === 0, "Meeting Notes: trailing chevron regression detected");
   }
   if (routeConfig.route === "reminders") {
-    assert(metrics.sectionKeys.includes("active"), "Reminders: active section missing");
+    assert(metrics.sectionKeys.includes("now") || metrics.sectionKeys.includes("upcoming"), "Reminders: now/upcoming sections missing");
     if (metrics.selectorCounts.reminderSnoozedRows > 0) {
       assert(metrics.sectionKeys.includes("snoozed"), "Reminders: snoozed section missing");
     }
@@ -560,9 +563,12 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
     assert(detailMetrics.noteHtmlFrames > 0, "Notes: detail should stay HTML-backed");
   }
   if (routeConfig.route === "reminders") {
-    assert(detailMetrics.scheduleSections > 0, "Reminders: schedule section should render");
-    assert(detailMetrics.channelsSections > 0, "Reminders: channels section should render");
-    assert(detailMetrics.notesSections > 0, "Reminders: linked note section should render");
+    assert(detailMetrics.scheduleSections === 0, "Reminders: schedule section should be folded into the mixed feed");
+    assert(detailMetrics.channelsSections === 0, "Reminders: channels section should stay hidden");
+    assert(detailMetrics.notesSections === 0, "Reminders: notes section should be folded into the mixed feed");
+    assert(detailMetrics.reminderDetailFeeds > 0, "Reminders: mixed reminder detail feed should render");
+    assert(detailMetrics.reminderActionRows > 0, "Reminders: action row should render");
+    assert(detailMetrics.reminderDetailChevrons === 0, "Reminders: mixed feed rows should drop trailing chevrons");
   }
   if (routeConfig.route === "projects") {
     assert(detailMetrics.connectedLinkedRecordSections > 0, "Projects: connected detail section should render");

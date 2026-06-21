@@ -100,12 +100,26 @@ function dayAt(offsetDays, hour, minute = 0) {
   return date.getTime();
 }
 
-function pageUrl(baseUrl, theme, apiToken = "") {
+function pageUrl(baseUrl, theme) {
   const url = new URL(`${baseUrl.replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   url.searchParams.set("theme", theme);
   url.searchParams.set("reset_nav", "1");
-  void apiToken;
   return url.toString();
+}
+
+async function primeBrowserPreviewToken(context, apiToken) {
+  const token = String(apiToken || "").trim();
+  if (!token) {
+    return;
+  }
+  await context.addInitScript((value) => {
+    try {
+      const key = ["pucky", "cover", ["browser", "api", "token"].join("_"), "v1"].join(".");
+      window.localStorage.setItem(key, value);
+    } catch (_error) {
+      // Ignore storage failures so the proof can still exercise public routes.
+    }
+  }, token);
 }
 
 async function apiRequest(config, method, apiPath, body = undefined) {
@@ -1839,7 +1853,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     }
   });
   let activeCount = baselineActiveCount + deliveryLanes.length + 1;
-  await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
+  await page.goto(pageUrl(config.baseUrl, theme), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
   const manageRow = page.locator(`[data-reminder-id="${manageReminderId}"]`);
@@ -1875,30 +1889,92 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
     const lower = text.toLowerCase();
+    const sectionTitles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim().toLowerCase());
     return lower.includes("status:")
       && lower.includes("delivery:")
-      && lower.includes("recipients")
-      && lower.includes("channels")
+      && lower.includes("done")
+      && lower.includes("snooze 10 min")
+      && lower.includes("snooze...")
       && lower.includes("me")
       && !lower.includes("self")
-      && !lower.includes("mark done")
-      && !lower.includes("dismiss")
-      && !lower.includes("snooze 10 min")
+      && !sectionTitles.includes("schedule")
+      && !sectionTitles.includes("recipients")
+      && !sectionTitles.includes("channels")
+      && !sectionTitles.includes("linked records")
+      && Boolean(document.querySelector('[data-reminder-action-row="true"]'))
+      && Boolean(document.querySelector('[data-reminder-detail-feed="true"]'))
+      && !document.querySelector(".light-reminder-detail-feed .light-chevron")
       && !lower.includes("no generated reminder page yet.");
   }, { timeout: config.timeoutMs });
   await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
   screenshots[`${theme}_reminder_detail_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-pending`);
-
-  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-  await waitForLightRoute(page, "reminders", config.timeoutMs);
   summary.reminders = summary.reminders || [];
   const reminderSummary = {
     theme,
     baselineActiveCount,
     deliveryEnabled,
     manageReminderId,
+    quickSnoozedUntilMs: 0,
+    presetSnoozedUntilMs: 0,
+    doneStatus: "",
     lanes: []
   };
+  await page.locator('[data-reminder-action="snooze_10"]').click();
+  const quickSnoozedRecord = await waitForReminderRecord(
+    config,
+    manageReminderId,
+    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + (8 * 60 * 1000),
+    "manage reminder should quick-snooze for ten minutes",
+    30_000
+  );
+  reminderSummary.quickSnoozedUntilMs = Number(quickSnoozedRecord?.metadata?.snoozed_until_ms || 0);
+  activeCount -= 1;
+  await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const text = String(shell?.textContent || "").toLowerCase();
+    return shell?.getAttribute("data-light-route") === "reminder-detail"
+      && text.includes("delivery: snoozed")
+      && text.includes("snoozed until");
+  }, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_detail_snoozed_10`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed-10`);
+
+  await page.locator('[data-reminder-action="snooze_selector"]').click();
+  await page.locator(".settings-selector-overlay.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.waitForFunction(() => {
+    const text = String(document.querySelector(".settings-selector-sheet")?.textContent || "").toLowerCase();
+    return text.includes("1 hour") && text.includes("this evening") && text.includes("tomorrow morning");
+  }, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_snooze_selector`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-snooze-selector`);
+  await page.locator('[data-selector-value="1_hour"]').click();
+  const presetSnoozedRecord = await waitForReminderRecord(
+    config,
+    manageReminderId,
+    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + (55 * 60 * 1000),
+    "manage reminder should accept preset snooze selection",
+    30_000
+  );
+  reminderSummary.presetSnoozedUntilMs = Number(presetSnoozedRecord?.metadata?.snoozed_until_ms || 0);
+  await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const text = String(shell?.textContent || "").toLowerCase();
+    return shell?.getAttribute("data-light-route") === "reminder-detail"
+      && !document.querySelector(".settings-selector-overlay.is-open")
+      && text.includes("delivery: snoozed");
+  }, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_detail_snoozed_preset`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed-preset`);
+
+  await page.locator('[data-reminder-action="done"]').click();
+  const doneReminder = await waitForReminderRecord(
+    config,
+    manageReminderId,
+    record => String(record?.status || "").trim().toLowerCase() === "done",
+    "manage reminder should mark done",
+    30_000
+  );
+  reminderSummary.doneStatus = String(doneReminder?.status || "").trim().toLowerCase();
+  await waitForLightRoute(page, "reminders", config.timeoutMs);
+  await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminders_list_after_done`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-after-done`);
   if (deliveryEnabled) {
     for (const lane of deliveryLanes) {
       const firedRecord = await waitForReminderRecord(
@@ -1917,7 +1993,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
       await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
       screenshots[`${theme}_reminders_home_badge_${lane.key}_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-${lane.key}-after-fire`);
       await openTile(page, "Reminders", "reminders", config.timeoutMs);
-      await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+      await waitForLightRoute(page, "reminders", config.timeoutMs);
       reminderSummary.lanes.push({
         key: lane.key,
         channel: lane.channel,
@@ -1932,13 +2008,12 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
 
   await backHome(page, theme, config.timeoutMs);
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
-  screenshots[`${theme}_reminders_home_badge_readonly`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-readonly`);
+  screenshots[`${theme}_reminders_home_badge_after_actions`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-after-actions`);
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
 
-  reminderSummary.readonly = true;
   reminderSummary.finalActiveCount = activeCount;
   summary.reminders.push(reminderSummary);
-  summary.assertions.push(`${theme} reminders stay active-only, drop row chips, remain read-only in the frontend, and derive the home badge from active reminders only`);
+  summary.assertions.push(`${theme} reminders regroup into Now/Upcoming/Snoozed, expose actionable snooze and done controls, remove channels and detail chevrons, and keep the home badge tied to active reminders only`);
 }
 
 async function readGraphDetailState(page) {
@@ -2076,7 +2151,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
   await page.locator(`[data-reminder-id="${reminder}"]`).click();
   await waitForGraphText(page, "Proof Graph Reminder", config.timeoutMs);
-  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Contact One", "Phone notification", "SMS", "RECIPIENTS", "CHANNELS", "LINKED RECORDS"]) {
+  for (const text of ["When", "Me", "Proof Contact One", "Proof Future Task", "Proof Graph Meeting", "Done", "Snooze 10 min", "CONNECTED"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);
@@ -2119,7 +2194,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
 async function runTheme(page, config, seed, theme, summary, networkLog) {
   const screenshots = {};
-  await page.goto(pageUrl(config.baseUrl, theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
+  await page.goto(pageUrl(config.baseUrl, theme), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   screenshots[`${theme}_home`] = await saveScreenshot(page, config.reportDir, `${theme}-home`);
   if (shouldRunSection(config, "notes")) {
@@ -2183,6 +2258,7 @@ async function main() {
       viewport: VIEWPORT,
       recordVideo: { dir: config.reportDir, size: VIEWPORT }
     });
+    await primeBrowserPreviewToken(context, config.apiToken);
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     const page = await context.newPage();
     attachPageLogging(page, consoleLog);
