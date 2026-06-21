@@ -860,7 +860,12 @@ async function main() {
     assertMeaningfulRows("Light Inbox", inboxRows);
     assert(rowsMatch(darkFeedRows, inboxRows), "Light Inbox cards did not match the canonical dark Home feed rows");
     const lightInboxCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card");
-    assert(lightInboxCardStyle.backgroundColor !== darkFeedCardStyle.backgroundColor, "Light Inbox cards did not switch to a light surface style");
+    assert(
+      lightInboxCardStyle.backgroundColor === "rgba(0, 0, 0, 0)" || lightInboxCardStyle.backgroundColor === "transparent",
+      "Light Inbox cards should stay flat at rest"
+    );
+    assert(lightInboxCardStyle.boxShadow === "none", "Light Inbox cards should not reintroduce a boxed shadow shell");
+    assert(lightInboxCardStyle.color !== darkFeedCardStyle.color, "Light Inbox cards should still switch to light-theme text contrast");
     const lightInboxScroll = await readScrollReachability(
       lightPage,
       ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card",

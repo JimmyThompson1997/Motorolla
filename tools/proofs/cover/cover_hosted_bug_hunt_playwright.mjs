@@ -127,7 +127,7 @@ const ROUTE_SWEEP_ORDER = [
     primarySelector: ".light-event-block",
     emptySelector: ".light-empty-state",
     detail: {
-      openerSelector: ".light-event-main",
+      openerSelector: ".light-event-block",
       expectedRoute: "meeting-detail",
       htmlPolicy: "forbid",
     },

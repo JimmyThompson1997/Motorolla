@@ -283,8 +283,7 @@ async function collectRouteMetrics(page, routeConfig) {
     function count(selector) {
       return selector ? document.querySelectorAll(selector).length : 0;
     }
-    function rectData(selector) {
-      const node = document.querySelector(selector);
+    function nodeRect(node) {
       if (!node) {
         return null;
       }
@@ -295,6 +294,10 @@ async function collectRouteMetrics(page, routeConfig) {
         width: Number(rect.width.toFixed(2)),
         height: Number(rect.height.toFixed(2)),
       };
+    }
+    function rectData(selector) {
+      const node = document.querySelector(selector);
+      return nodeRect(node);
     }
     function classList(node) {
       return node ? [...node.classList] : [];
@@ -319,9 +322,29 @@ async function collectRouteMetrics(page, routeConfig) {
     const matchingRows = [...document.querySelectorAll(config.primarySelector)];
     const firstRow = matchingRows[0] || null;
     const firstRowStyle = firstRow ? window.getComputedStyle(firstRow) : null;
+    const firstIdentity = firstRow?.querySelector(".identity, .light-small-icon, .light-app-icon") || null;
+    const firstBody = firstRow?.querySelector(".card-body, .light-text-stack") || null;
+    const firstActions = firstRow?.querySelector(".card-actions") || null;
+    const firstTitle = firstRow?.querySelector(".card-title-trigger, .title, .light-event-title, strong") || null;
+    const firstSummary = firstRow?.querySelector(".card-summary-trigger .preview, .card-summary-trigger, .light-note-row-context, .light-project-summary, .light-event-summary") || null;
+    const firstBodyStyle = firstBody ? window.getComputedStyle(firstBody) : null;
+    const firstActionsStyle = firstActions ? window.getComputedStyle(firstActions) : null;
     const dividerNode = matchingRows.slice(1).find(node => hasVisibleDivider(node)) || null;
     const dividerStyle = dividerNode ? window.getComputedStyle(dividerNode) : null;
     const wrapper = firstRow?.closest(".card-wrap") || null;
+    const rowActionMetrics = matchingRows.slice(0, 4).map(node => {
+      const actionsNode = node.querySelector(".card-actions");
+      const titleNode = node.querySelector(".card-title-trigger, .title, .light-event-title, strong");
+      const summaryNode = node.querySelector(".card-summary-trigger .preview, .card-summary-trigger, .light-note-row-context, .light-project-summary, .light-event-summary");
+      return {
+        classList: classList(node),
+        actionCount: actionsNode ? actionsNode.querySelectorAll(".action").length : 0,
+        actionsClassList: classList(actionsNode),
+        actionsRect: nodeRect(actionsNode),
+        titleRect: nodeRect(titleNode),
+        summaryRect: nodeRect(summaryNode),
+      };
+    });
 
     return {
       routeIdentity: shell?.getAttribute("data-light-route") || "",
@@ -359,6 +382,21 @@ async function collectRouteMetrics(page, routeConfig) {
         dividerColor: dividerStyle ? dividerStyle.borderTopColor : "",
         dividerWidth: dividerStyle ? dividerStyle.borderTopWidth : "",
       } : null,
+      firstRowContentMetrics: firstRow ? {
+        identityRect: nodeRect(firstIdentity),
+        bodyRect: nodeRect(firstBody),
+        actionsRect: nodeRect(firstActions),
+        titleRect: nodeRect(firstTitle),
+        summaryRect: nodeRect(firstSummary),
+        actionCount: firstActions ? firstActions.querySelectorAll(".action").length : 0,
+        actionsClassList: classList(firstActions),
+        bodyPaddingLeft: firstBodyStyle ? firstBodyStyle.paddingLeft : "",
+        bodyPaddingRight: firstBodyStyle ? firstBodyStyle.paddingRight : "",
+        actionsGap: firstActionsStyle ? firstActionsStyle.gap : "",
+        actionsMinWidth: firstActionsStyle ? firstActionsStyle.minWidth : "",
+        actionsWidth: firstActionsStyle ? firstActionsStyle.width : "",
+      } : null,
+      rowActionMetrics,
       selectorCounts: {
         primary: count(config.primarySelector),
         genericFeedRows: count(".light-feed-row"),
@@ -461,6 +499,18 @@ function assertRouteSpecificState(routeConfig, metrics) {
   if (routeConfig.route === "inbox" && metrics.selectorCounts.primary > 0) {
     assert(metrics.selectorCounts.inboxCards > 0, "Inbox: canonical cards should render");
     assert(metrics.selectorCounts.archiveActions > 0, "Inbox: archive reveal should remain available");
+    assert(metrics.firstRowContentMetrics, "Inbox: missing first-row content metrics");
+    assert(metrics.firstRowContentMetrics.bodyRect, "Inbox: missing measurable body width");
+    assert(metrics.firstRowContentMetrics.actionsRect, "Inbox: missing measurable action rail width");
+    assert(metrics.firstRowContentMetrics.bodyRect.width > 190, `Inbox: flat cards should reclaim body width beyond the old 184px column (${metrics.firstRowContentMetrics.bodyRect.width})`);
+    const oneActionRow = metrics.rowActionMetrics.find(item => item.actionCount === 1 && item.actionsRect);
+    if (oneActionRow) {
+      assert(oneActionRow.actionsRect.width < 60, `Inbox: one-action rows should not reserve the old wide action rail (${oneActionRow.actionsRect.width})`);
+    }
+    const twoActionRow = metrics.rowActionMetrics.find(item => item.actionCount >= 2 && item.actionsRect);
+    if (twoActionRow) {
+      assert(twoActionRow.actionsRect.width < 92, `Inbox: two-action rows should stay tighter than the old 98px rail (${twoActionRow.actionsRect.width})`);
+    }
   }
   if (routeConfig.route === "meetings") {
     assert(metrics.selectorCounts.meetingsToolbar === 1, "Meetings: embedded toolbar should render once");
@@ -714,6 +764,8 @@ async function captureRoute(browser, config, routeConfig, theme, viewportName, v
       title_metrics: metrics.titleMetrics,
       scroll_metrics: metrics.scrollMetrics,
       first_row_chrome_metrics: metrics.firstRowChrome,
+      first_row_content_metrics: metrics.firstRowContentMetrics,
+      row_action_metrics: metrics.rowActionMetrics,
       section_keys: metrics.sectionKeys,
       first_detail_result: detailResult,
       archive_reveal_result: archiveRevealResult,

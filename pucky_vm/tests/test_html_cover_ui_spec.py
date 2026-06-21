@@ -199,6 +199,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
     light_event_block = function_block(app, "lightCalendarEventBlock")
+    light_attendee_chip = function_block(app, "lightAttendeeChip")
     light_info_section = function_block(app, "lightInfoSection")
     light_info_row = function_block(app, "lightInfoRow")
     light_project_section_item = function_block(app, "lightProjectSectionItem")
@@ -215,6 +216,13 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'lightCalendarEventChips(event, { fromRoute: "calendar", contactsOnly: true })' in light_event_block
     assert 'limit: 2' not in light_event_block
     assert "light-event-summary" not in light_event_block
+    assert 'block.setAttribute("role", "button");' in light_event_block
+    assert "block.tabIndex = 0;" in light_event_block
+    assert 'block.addEventListener("click", event => {' in light_event_block
+    assert 'event.target instanceof Element && event.target.closest(".light-attendee-chip")' in light_event_block
+    assert 'main.addEventListener("click", event => {' in light_event_block
+    assert "event.stopPropagation();" in light_event_block
+    assert 'if (event.key === "Enter" || event.key === " ") {' in light_event_block
     light_gap = function_block(app, "lightCalendarGap")
     assert 'Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}' in light_gap
     assert "Long break" not in light_gap
@@ -241,6 +249,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "openWorkspaceTarget(" in light_info_row
     assert "row.fromRoute || state.route || \"\"" in light_info_row
     assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
+    assert "event.stopPropagation();" in light_attendee_chip
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
 
@@ -1264,15 +1273,20 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'renderMode: "flat",' in reply_descriptor
     assert 'renderMode: "flat",' in meeting_descriptor
     assert "const card = descriptor.meta?.card;" in render_universal_tile
-    assert 'return cardView(card, { flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
+    assert 'return cardView(card, { surface: descriptor.surface, flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
     assert "const meeting = descriptor.meta?.meeting;" in render_universal_tile
-    assert 'return cardView(meetingCardFromRecord(meeting), { flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
+    assert 'return cardView(meetingCardFromRecord(meeting), { surface: descriptor.surface, flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
     assert "function cardView(card, options = {})" in app
     assert "const flatFeed = Boolean(options.flatFeed);" in card_view
+    assert 'const surface = String(options.surface || "").trim().toLowerCase();' in card_view
     assert 'const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");' in card_view
     assert 'const cardClassName = isMeetingList' in card_view
     assert 'const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);' in card_view
+    assert 'setDataAttribute(wrapper, "data-card-surface", surface);' in card_view
+    assert 'setDataAttribute(cardEl, "data-card-surface", surface);' in card_view
     assert 'body.classList.add("is-flat-feed");' in card_view
+    assert 'actions.classList.add(`action-count-${Math.min(2, actions.childElementCount)}`);' in card_view
+    assert 'setDataAttribute(actions, "data-card-surface", surface);' in card_view
     assert ".light-canonical-port-surface {" in styles
     assert ".card {" in styles
     assert ".card.card-meeting-list {" in styles
@@ -1286,6 +1300,11 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert ".card-wrap.is-flat-feed {" in styles
     assert ".card.is-flat-feed {" in styles
     assert ".card-wrap.is-flat-feed + .card-wrap.is-flat-feed .card.is-flat-feed {" in styles
+    assert '.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] {' in styles
+    assert '.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-body.is-flat-feed {' in styles
+    assert '.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-1 {' in styles
+    assert '.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-2 {' in styles
+    assert '.light-meetings-surface .card.is-flat-feed[data-card-surface="meetings"]' not in styles
 
 
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
