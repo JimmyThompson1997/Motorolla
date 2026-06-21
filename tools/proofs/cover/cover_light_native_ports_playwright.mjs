@@ -519,7 +519,30 @@ async function openAudioControls(page, selector, timeoutMs) {
 }
 
 async function clickSelector(page, selector, timeoutMs) {
-  await page.locator(selector).first().click({ timeout: timeoutMs });
+  const clickTimeout = Math.min(5_000, timeoutMs);
+  const target = page.locator(selector).first();
+  await target.waitFor({ state: "visible", timeout: timeoutMs });
+  await target.scrollIntoViewIfNeeded({ timeout: Math.min(2_000, timeoutMs) }).catch(() => {});
+  try {
+    await target.click({ timeout: clickTimeout });
+    return;
+  } catch (normalClickError) {
+    try {
+      await target.click({ timeout: clickTimeout, force: true });
+      return;
+    } catch (forceClickError) {
+      const freshTarget = page.locator(selector).first();
+      const box = await freshTarget.boundingBox();
+      if (!box) {
+        throw forceClickError;
+      }
+      try {
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      } catch (mouseClickError) {
+        throw new Error(`Could not click ${selector}: ${normalClickError}; ${forceClickError}; ${mouseClickError}`);
+      }
+    }
+  }
 }
 
 async function stableCardSelector(page, selector, timeoutMs) {
