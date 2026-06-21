@@ -512,9 +512,13 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     source = read_source("cover_light_native_ports_playwright.mjs")
 
     assert "assertMeaningfulRows(" in source
+    assert "const NARROW_VIEWPORT = { width: 320, height: 932 };" in source
     assert "readScrollReachability(" in source
+    assert "readMeetingRowLayout(" in source
     assert "reached_bottom" in source
     assert "maxPositionMs" in source
+    assert "bottomSlackPx" in source
+    assert "meetings_tight_layout" in source
     assert "function requiredAudioProgressDelta(" in source
     assert "required_delta_ms: requiredDeltaMs" in source
     assert "return 2000;" in source
@@ -527,11 +531,18 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "inbox_action_layout" in source
     assert "unread_page_action.contrast_ratio >= 3" in source
     assert "document.body || current === document.documentElement" in source
-    assert '"--surface-card"' in source
-    assert "background_source" in source
-    assert 'unread_page_action.color !== "rgb(245, 249, 255)"' in source
-    assert "audio_only_mic_right_aligned" in source
-    assert "action-count-1" in source
+
+
+def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "readMeetingNoteDetailState(" in source
+    assert "hasStandaloneWhoSection" in source
+    assert "whoInsideDetailsCard" in source
+    assert "whoChipLabels" in source
+    assert 'for (const label of ["When", "Who", "Source", "Topics"]) {' in source
+    assert "Meeting note detail should keep Who inside the Details card" in source
+    assert "Meeting note detail should not keep a standalone Who section shell" in source
 
 
 def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:

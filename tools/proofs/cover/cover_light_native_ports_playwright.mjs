@@ -17,6 +17,7 @@ const DEFAULT_LIGHT_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?them
 const DEFAULT_DARK_FEED_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=dark&route=inbox&reset_nav=1";
 const DEFAULT_DARK_MEETINGS_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=dark&route=meetings&reset_nav=1";
 const VIEWPORT = { width: 430, height: 932 };
+const NARROW_VIEWPORT = { width: 320, height: 932 };
 
 function parseArgs(argv) {
   const config = {
@@ -257,6 +258,36 @@ async function readCardStyle(page, selector) {
   });
 }
 
+async function readMeetingRowLayout(page, selector, limit = 3) {
+  return page.locator(selector).evaluateAll((nodes, maxRows) =>
+    nodes.slice(0, maxRows).map(node => {
+      const style = getComputedStyle(node);
+      const cardRect = node.getBoundingClientRect();
+      const bodyRect = node.querySelector(".card-body")?.getBoundingClientRect() || null;
+      const metaRect = node.querySelector(".card-meeting-meta")?.getBoundingClientRect() || null;
+      const titleRect = node.querySelector(".title")?.getBoundingClientRect() || null;
+      const timestampRect = node.querySelector(".card-timestamp")?.getBoundingClientRect() || null;
+      const audioRect = node.querySelector('[data-card-action="audio"]')?.getBoundingClientRect() || null;
+      const contentBottom = Math.max(
+        titleRect?.bottom || cardRect.top,
+        timestampRect?.bottom || cardRect.top,
+        audioRect?.bottom || cardRect.top
+      );
+      const gridTemplateRows = String(style.gridTemplateRows || "").trim();
+      return {
+        title: String(node.querySelector(".title")?.textContent || "").trim(),
+        height: Math.round(cardRect.height * 10) / 10,
+        gridTemplateRows,
+        gridRowCount: gridTemplateRows ? gridTemplateRows.split(/\s+/).filter(Boolean).length : 0,
+        bottomSlackPx: Math.round((cardRect.bottom - contentBottom) * 10) / 10,
+        bodyMetaGapPx: bodyRect && metaRect ? Math.round((metaRect.left - bodyRect.right) * 10) / 10 : null,
+        timestampAboveAudio: Boolean(timestampRect && audioRect && timestampRect.bottom <= audioRect.top + 1.5)
+      };
+    }),
+    limit
+  );
+}
+
 function assertFlatCardShell(style, label) {
   const background = String(style?.backgroundColor || "").trim().toLowerCase();
   const shadow = String(style?.boxShadow || "").trim().toLowerCase();
@@ -277,6 +308,16 @@ function assertMeaningfulRows(label, rows) {
     meaningfulRows.length > 0,
     `${label} cards rendered, but they did not include visible title, preview, or timestamp content`
   );
+}
+
+function assertTightMeetingRows(label, rows) {
+  assert(rows.length > 0, `${label} did not expose any meeting rows to inspect.`);
+  rows.forEach((row, index) => {
+    assert(row.gridRowCount === 1, `${label} row ${index + 1} should use one effective grid row, got "${row.gridTemplateRows}".`);
+    assert(row.bottomSlackPx <= 18, `${label} row ${index + 1} kept ${row.bottomSlackPx}px of dead bottom space.`);
+    assert((row.bodyMetaGapPx ?? -1) >= 4, `${label} row ${index + 1} body overlapped or crowded the right rail (gap ${row.bodyMetaGapPx}px).`);
+    assert(row.timestampAboveAudio, `${label} row ${index + 1} should keep the timestamp above the mic action.`);
+  });
 }
 
 async function readScrollReachability(page, rowsSelector, preferredContainerSelectors = []) {
@@ -1219,6 +1260,10 @@ async function main() {
     let lightMeetingsDetail = null;
     let lightMeetingsAudio = null;
     let meetingsRowsMatch = false;
+    let meetingsTightLayout = {
+      standard: { dark: [], light: [] },
+      narrow: { dark: [], light: [] }
+    };
     const darkMeetingsCount = await darkMeetingsPage.locator(".meetings-page .card-wrap article.card").count();
     if (darkMeetingsCount > 0) {
       const darkMeetingsRows = await extractCardRows(darkMeetingsPage, ".meetings-page .card-wrap article.card");
@@ -1250,6 +1295,10 @@ async function main() {
       const lightMeetingsCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
       assertFlatCardShell(darkMeetingsCardStyle, "Dark Meetings");
       assertFlatCardShell(lightMeetingsCardStyle, "Light Meetings");
+      meetingsTightLayout.standard.dark = await readMeetingRowLayout(darkMeetingsPage, ".meetings-page .card-wrap article.card.card-meeting-list");
+      meetingsTightLayout.standard.light = await readMeetingRowLayout(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card.card-meeting-list");
+      assertTightMeetingRows("Dark Meetings standard width", meetingsTightLayout.standard.dark);
+      assertTightMeetingRows("Light Meetings standard width", meetingsTightLayout.standard.light);
       screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-list");
 
       const darkMeetingsDetail = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list .card-body", config.timeoutMs);
@@ -1269,6 +1318,16 @@ async function main() {
       screenshots.meetingsAudio = await saveScreenshot(lightPage, config.reportDir, "10-light-meetings-audio");
       await closeDetail(darkMeetingsPage, config.timeoutMs);
       await closeDetail(lightPage, config.timeoutMs);
+
+      await darkMeetingsPage.setViewportSize(NARROW_VIEWPORT);
+      await lightPage.setViewportSize(NARROW_VIEWPORT);
+      await darkMeetingsPage.waitForTimeout(150);
+      await lightPage.waitForTimeout(150);
+      meetingsTightLayout.narrow.dark = await readMeetingRowLayout(darkMeetingsPage, ".meetings-page .card-wrap article.card.card-meeting-list");
+      meetingsTightLayout.narrow.light = await readMeetingRowLayout(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card.card-meeting-list");
+      assertTightMeetingRows("Dark Meetings narrow width", meetingsTightLayout.narrow.dark);
+      assertTightMeetingRows("Light Meetings narrow width", meetingsTightLayout.narrow.light);
+      screenshots.meetingsListNarrow = await saveScreenshot(lightPage, config.reportDir, "10b-light-meetings-list-narrow");
     }
 
     await backToLightHome(lightPage, config.timeoutMs);
@@ -1298,6 +1357,7 @@ async function main() {
         light_inbox: lightInboxScroll,
         dark_meetings: darkMeetingsScroll
       },
+      meetings_tight_layout: meetingsTightLayout,
       comparisons: {
         inbox_rows_match_dark_feed: true,
         meetings_rows_match_dark_meetings: meetingsRowsMatch,

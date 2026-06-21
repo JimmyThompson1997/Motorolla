@@ -1213,7 +1213,8 @@ button {
 
 .card.card-meeting-list {
   grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 82px;
+  grid-template-rows: auto;
+  min-height: 72px;
   align-items: center;
   column-gap: 12px;
   padding: 10px 14px;
@@ -1284,7 +1285,8 @@ button {
 }
 
 .card.card-meeting-list .card-body.is-title-only {
-  display: block;
+  display: flex;
+  align-items: center;
   min-height: 0;
 }
 

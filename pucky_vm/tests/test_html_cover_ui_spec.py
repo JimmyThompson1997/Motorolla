@@ -1109,7 +1109,8 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
     meeting_note_support = function_block(app, "ensureMeetingNoteSupportingCollections")
     meeting_note_details = function_block(app, "lightMeetingNoteDetailsSection")
-    meeting_note_who = function_block(app, "lightMeetingNoteWhoSection")
+    meeting_note_who_row = function_block(app, "lightMeetingNoteWhoRow")
+    meeting_note_attendees = function_block(app, "meetingNoteAttendeeEntries")
     meeting_note_connected_detail = function_block(app, "meetingNoteConnectedDetail")
     project_detail = function_block(app, "lightProjectDetailPage")
     graph_detail = function_block(app, "lightGraphDetailPage")
@@ -1160,7 +1161,6 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'page.classList.add("light-document-page", "light-meeting-note-detail-page");' in meeting_note_detail
     assert 'page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));' in meeting_note_detail
     assert "page.append(lightMeetingNoteDetailsSection(meeting));" in meeting_note_detail
-    assert "const who = lightMeetingNoteWhoSection(meeting);" in meeting_note_detail
     assert "page.append(lightLinkedRecordSection(meeting, {" in meeting_note_detail
     assert 'title: "Connected"' in meeting_note_detail
     assert 'excludeKinds: ["contact"]' in meeting_note_detail
@@ -1174,17 +1174,26 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "lightLinkedNotesSection(meeting)" not in meeting_note_detail
     assert 'lightInfoSection("Linked records"' not in meeting_note_detail
     assert 'lightInfoSection("Context"' not in meeting_note_detail
+    assert "lightMeetingNoteWhoSection(meeting)" not in meeting_note_detail
     assert "ensureLinkedCollections(meeting);" in meeting_note_support
     assert 'void loadWorkspaceCollection("contacts", { render: true });' in meeting_note_support
     assert "workspaceCollectionForKind(sourceKind)" in meeting_note_support
     assert "page.append(lightSectionTitle(\"Details\"));" not in meeting_note_detail
     assert 'section.append(lightSectionTitle("Details"));' in meeting_note_details
     assert 'card.append(lightMeetingNoteDetailRow("when", "When", meetingTimeLabel(meeting)));' in meeting_note_details
+    assert 'const who = lightMeetingNoteWhoRow(meeting);' in meeting_note_details
+    assert "if (who) {" in meeting_note_details
+    assert "card.append(who);" in meeting_note_details
     assert 'card.append(lightMeetingNoteDetailRow("topics", "Topics", meetingNoteTopicsLabel(meeting)));' in meeting_note_details
     assert 'lightMeetingNoteDetailRow("source", "Source", workspaceTargetLabel(sourceKind, sourceId),' in meeting_note_details
-    assert 'section.append(lightSectionTitle("Who"));' in meeting_note_who
-    assert 'lightRecordChip({' in meeting_note_who
-    assert "lightGuestAttendeeChip(entry.label)" in meeting_note_who
+    assert "const contact = workspaceContactByName(label);" in meeting_note_attendees
+    assert "label: contact ? calendarContactChipLabel(contact) : label," in meeting_note_attendees
+    assert "contact: contact || null," in meeting_note_attendees
+    assert 'const row = el("div", "light-calendar-detail-row light-meeting-note-detail-row");' in meeting_note_who_row
+    assert 'const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");' in meeting_note_who_row
+    assert 'const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");' in meeting_note_who_row
+    assert 'lightRecordChip({' in meeting_note_who_row
+    assert "lightGuestAttendeeChip(entry.label)" in meeting_note_who_row
     assert 'if (kind === "calendar_event") {' in meeting_note_connected_detail
     assert 'const timestamp = kind === "note"' in meeting_note_connected_detail
     assert "linkedRecordRecencyMs(kind, related)" in meeting_note_connected_detail
@@ -1666,9 +1675,15 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'setDataAttribute(actions, "data-card-surface", surface);' in card_view
     assert ".light-canonical-port-surface {" in styles
     assert ".card {" in styles
+    meeting_list_card = css_block(styles, ".card.card-meeting-list")
+    meeting_list_title_only = css_block(styles, ".card.card-meeting-list .card-body.is-title-only")
     assert ".card.card-meeting-list {" in styles
     assert ".card-meeting-copy {" in styles
     assert ".card-meeting-meta {" in styles
+    assert "grid-template-rows: auto;" in meeting_list_card
+    assert "min-height: 72px;" in meeting_list_card
+    assert "display: flex;" in meeting_list_title_only
+    assert "align-items: center;" in meeting_list_title_only
     assert ".light-feed-surface.is-flat-feed {" in styles
     assert ".light-feed-section.is-flat-feed {" in styles
     assert ".light-feed-list.is-flat-feed {" in styles

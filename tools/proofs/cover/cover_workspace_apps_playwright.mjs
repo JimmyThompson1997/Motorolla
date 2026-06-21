@@ -2299,9 +2299,11 @@ async function readMeetingNoteDetailState(page) {
       .filter(Boolean);
     const detailRowLabels = Array.from(detail?.querySelectorAll(".light-meeting-note-detail-row .light-calendar-detail-row-label") || [])
       .map(node => String(node.textContent || "").trim());
-    const whoChipLabels = Array.from(detail?.querySelectorAll(".light-meeting-note-who-section .light-attendee-chip, .light-meeting-note-who-section .light-record-chip-label") || [])
+    const whoChipLabels = Array.from(detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip, .light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-record-chip-label') || [])
       .map(node => String(node.textContent || "").trim())
       .filter(Boolean);
+    const hasStandaloneWhoSection = Boolean(detail?.querySelector(".light-meeting-note-who-section"));
+    const whoInsideDetailsCard = Boolean(detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"]'));
     const connectedRowTexts = Array.from(detail?.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row') || [])
       .map(node => String(node.textContent || "").trim())
       .filter(Boolean);
@@ -2311,6 +2313,8 @@ async function readMeetingNoteDetailState(page) {
       eyebrowTexts,
       detailRowLabels,
       whoChipLabels,
+      hasStandaloneWhoSection,
+      whoInsideDetailsCard,
       connectedRowTexts,
     };
   });
@@ -2415,7 +2419,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_meetings`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-notes-list`);
   await page.locator(`[data-record-id="${meeting}"]`).click();
   await expectFrameHeading(page, "Proof Graph Meeting", config.timeoutMs);
-  for (const text of ["Proof Contact One", "Proof Today Roadmap", "Proof Pinned Note", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
+  for (const text of ["Proof Today Roadmap", "Proof Pinned Note", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);
@@ -2425,15 +2429,17 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(!graphState.hasHtmlFrame, "Meeting note detail should stay a structured graph document, not a generated HTML iframe");
   assert(!meetingNoteState.eyebrowTexts.some(value => /graph meeting/i.test(value)), `Meeting note detail should not render the stale Graph meeting eyebrow, got ${meetingNoteState.eyebrowTexts.join(", ")}.`);
   assert(meetingNoteState.sectionTitles.includes("DETAILS"), `Expected meeting note detail to include DETAILS, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(meetingNoteState.sectionTitles.includes("WHO"), `Expected meeting note detail to include WHO, got ${meetingNoteState.sectionTitles.join(", ")}.`);
   assert(meetingNoteState.sectionTitles.includes("CONNECTED"), `Expected meeting note detail to include CONNECTED, got ${meetingNoteState.sectionTitles.join(", ")}.`);
+  assert(!meetingNoteState.sectionTitles.includes("WHO"), `Meeting note detail should keep Who inside the Details card instead of rendering a standalone WHO section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
   assert(!meetingNoteState.sectionTitles.includes("CONTEXT"), `Expected meeting note detail to remove CONTEXT, got ${meetingNoteState.sectionTitles.join(", ")}.`);
   assert(!meetingNoteState.sectionTitles.includes("NOTES"), `Expected meeting note detail to remove the separate NOTES section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
   assert(!meetingNoteState.sectionTitles.includes("LINKED RECORDS"), `Expected meeting note detail to remove the separate LINKED RECORDS section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  for (const label of ["When", "Source", "Topics"]) {
+  for (const label of ["When", "Who", "Source", "Topics"]) {
     assert(meetingNoteState.detailRowLabels.includes(label), `Expected meeting note detail rows to include ${label}, got ${meetingNoteState.detailRowLabels.join(", ")}.`);
   }
-  assert(meetingNoteState.whoChipLabels.some(value => value.includes("Proof Contact One")), `Expected Who chips to include Proof Contact One, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
+  assert(meetingNoteState.whoInsideDetailsCard, "Meeting note detail should keep Who inside the Details card.");
+  assert(!meetingNoteState.hasStandaloneWhoSection, "Meeting note detail should not keep a standalone Who section shell.");
+  assert(meetingNoteState.whoChipLabels.includes("Proof C."), `Expected Who chips to reuse the compact calendar-style contact label, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
   assert(meetingConnectedState.sectionCount === 1, "Expected meeting note detail to render one Connected section.");
   assert(meetingConnectedState.bodyIsFlat, "Expected meeting note Connected to render inside one shared flat-feed shell.");
   assert(meetingConnectedState.rowCount === 5, `Expected meeting note Connected to render five linked rows after dedupe/contact exclusion, got ${meetingConnectedState.rowCount}.`);

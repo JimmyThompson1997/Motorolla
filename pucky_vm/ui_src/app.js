@@ -4988,10 +4988,6 @@
       page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));
     }
     page.append(lightMeetingNoteDetailsSection(meeting));
-    const who = lightMeetingNoteWhoSection(meeting);
-    if (who) {
-      page.append(who);
-    }
     page.append(lightLinkedRecordSection(meeting, {
       title: "Connected",
       excludeKinds: ["contact"],
@@ -5039,6 +5035,10 @@
     section.append(lightSectionTitle("Details"));
     const card = el("div", "light-calendar-detail-card");
     card.append(lightMeetingNoteDetailRow("when", "When", meetingTimeLabel(meeting)));
+    const who = lightMeetingNoteWhoRow(meeting);
+    if (who) {
+      card.append(who);
+    }
     if (sourceId) {
       card.append(lightMeetingNoteDetailRow("source", "Source", workspaceTargetLabel(sourceKind, sourceId), {
         target: sourceTarget,
@@ -5091,9 +5091,12 @@
         return;
       }
       seen.add(key);
-      const target = workspaceContactTargetByName(label);
+      const contact = workspaceContactByName(label);
+      const target = contact ? workspaceTargetForKind("contact", contact.id) : null;
       entries.push({
-        label,
+        label: contact ? calendarContactChipLabel(contact) : label,
+        fullLabel: contact ? String(contact.title || contact.metadata?.display_name || label).trim() || label : label,
+        contact: contact || null,
         target,
         recognized: Boolean(target),
       });
@@ -5101,14 +5104,14 @@
     return entries;
   }
 
-  function lightMeetingNoteWhoSection(meeting) {
+  function lightMeetingNoteWhoRow(meeting) {
     const attendees = meetingNoteAttendeeEntries(meeting);
     if (!attendees.length) {
       return null;
     }
-    const section = el("section", "light-info-section light-attendees-section light-meeting-note-who-section");
-    section.append(lightSectionTitle("Who"));
-    const card = el("div", "light-card light-attendee-chip-card");
+    const row = el("div", "light-calendar-detail-row light-meeting-note-detail-row");
+    row.dataset.detailRow = "who";
+    const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");
     const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
     attendees.forEach(entry => {
       if (entry.target) {
@@ -5121,9 +5124,9 @@
       }
       cloud.append(lightGuestAttendeeChip(entry.label));
     });
-    card.append(cloud);
-    section.append(card);
-    return section;
+    value.append(cloud);
+    row.append(el("strong", "light-calendar-detail-row-label", "Who"), value);
+    return row;
   }
 
   function lightRemindersPage() {
