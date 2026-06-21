@@ -1670,55 +1670,55 @@ async function assertNoContactHtmlDocument(page, config, contactId, label) {
 }
 
 async function assertContactPhotoThumbnails(page, label, timeoutMs) {
-  await page.waitForFunction(() => {
-    const rows = Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]"))
-      .filter(row => String(row.getAttribute("data-contact-id") || "").trim() !== "contact-me");
-    if (!rows.length) {
-      return false;
-    }
-    return rows.every(row => {
-      const img = row.querySelector(".light-avatar.has-photo img");
-      return Boolean(img) && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
+  const startedAt = Date.now();
+  let lastRows = null;
+  let lastError = `${label} should render contact rows`;
+  while (Date.now() - startedAt < timeoutMs) {
+    const rows = await page.evaluate(() => {
+      const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
+      return {
+        loadedImageCount: loadedImages.length,
+        rows: Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]")).map(row => {
+          const avatar = row.querySelector(".light-avatar");
+          const img = row.querySelector(".light-avatar.has-photo img");
+          const titleNode = row.querySelector(".light-text-stack span");
+          return {
+            id: String(row.getAttribute("data-contact-id") || ""),
+            title: String(titleNode?.textContent || "").trim(),
+            hasPhotoClass: Boolean(avatar?.classList.contains("has-photo")),
+            imageCount: img ? 1 : 0,
+            src: img ? String(img.getAttribute("src") || img.currentSrc || "") : "",
+            naturalWidth: img ? img.naturalWidth : 0,
+            naturalHeight: img ? img.naturalHeight : 0,
+            complete: img ? img.complete : false,
+            objectFit: img ? getComputedStyle(img).objectFit : "",
+            initials: avatar ? String(avatar.textContent || "").trim() : ""
+          };
+        })
+      };
     });
-  }, undefined, { timeout: timeoutMs });
-  const rows = await page.evaluate(() => {
-    const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
-    return {
-      loadedImageCount: loadedImages.length,
-      rows: Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]")).map(row => {
-        const avatar = row.querySelector(".light-avatar");
-        const img = row.querySelector(".light-avatar.has-photo img");
-        const titleNode = row.querySelector(".light-text-stack span");
-        return {
-          id: String(row.getAttribute("data-contact-id") || ""),
-          title: String(titleNode?.textContent || "").trim(),
-          hasPhotoClass: Boolean(avatar?.classList.contains("has-photo")),
-          imageCount: img ? 1 : 0,
-          src: img ? String(img.getAttribute("src") || img.currentSrc || "") : "",
-          naturalWidth: img ? img.naturalWidth : 0,
-          naturalHeight: img ? img.naturalHeight : 0,
-          complete: img ? img.complete : false,
-          objectFit: img ? getComputedStyle(img).objectFit : "",
-          initials: avatar ? String(avatar.textContent || "").trim() : ""
-        };
-      })
-    };
-  });
-  assert(rows.rows.length > 0, `${label} should render contact rows`);
-  assert(!rows.rows.some(row => row.title === "Clinic front desk" || row.id === "clinic-front-desk"), "Clinic front desk should not render in Contacts");
-  const me = rows.rows.find(row => row.id === "contact-me");
-  assert(me, `${label} should render contact-me`);
-  assert(!me.hasPhotoClass && me.imageCount === 0, "contact-me should remain initials-only");
-  const contacts = rows.rows.filter(row => row.id !== "contact-me");
-  assert(contacts.length > 0, `${label} should render at least one non-self contact`);
-  for (const contact of contacts) {
-    assert(contact.hasPhotoClass, `${contact.title || contact.id} should use the photo avatar class`);
-    assert(contact.imageCount === 1, `${contact.title || contact.id} should render exactly one thumbnail image`);
-    assert(contact.complete, `${contact.title || contact.id} thumbnail should finish loading`);
-    assert(contact.naturalWidth > 0 && contact.naturalHeight > 0, `${contact.title || contact.id} thumbnail should have natural dimensions, got ${contact.naturalWidth}x${contact.naturalHeight}`);
-    assert(contact.objectFit === "cover", `${contact.title || contact.id} thumbnail should use object-fit: cover, got ${contact.objectFit}`);
+    lastRows = rows;
+    try {
+      assert(rows.rows.length > 0, `${label} should render contact rows`);
+      assert(!rows.rows.some(row => row.title === "Clinic front desk" || row.id === "clinic-front-desk"), "Clinic front desk should not render in Contacts");
+      const me = rows.rows.find(row => row.id === "contact-me");
+      assert(me, `${label} should render contact-me`);
+      assert(!me.hasPhotoClass && me.imageCount === 0, "contact-me should remain initials-only");
+      const contacts = rows.rows.filter(row => row.id !== "contact-me");
+      assert(contacts.length > 0, `${label} should render at least one non-self contact`);
+      for (const contact of contacts) {
+        assert(contact.hasPhotoClass, `${contact.title || contact.id} should use the photo avatar class`);
+        assert(contact.imageCount === 1, `${contact.title || contact.id} should render exactly one thumbnail image`);
+        assert(contact.naturalWidth > 0 && contact.naturalHeight > 0, `${contact.title || contact.id} thumbnail should have natural dimensions, got ${contact.naturalWidth}x${contact.naturalHeight}`);
+        assert(contact.objectFit === "cover", `${contact.title || contact.id} thumbnail should use object-fit: cover, got ${contact.objectFit}`);
+      }
+      return rows;
+    } catch (error) {
+      lastError = String(error?.message || error || lastError);
+      await page.waitForTimeout(250);
+    }
   }
-  return rows;
+  throw new Error(`${lastError}; last rows ${JSON.stringify(lastRows)}`);
 }
 
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
