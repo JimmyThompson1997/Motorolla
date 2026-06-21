@@ -162,6 +162,7 @@
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
+    taskMutationPending: {},
     notesSectionsExpanded: { pinned: true, recent: true },
     notePinPending: {},
     taskFilter: "all",
@@ -6136,6 +6137,29 @@
     });
   }
 
+  function taskMutationKey(taskId, scope) {
+    return `${String(taskId || "").trim()}::${String(scope || "").trim()}`;
+  }
+
+  function taskMutationPending(taskId, scope) {
+    return Boolean(state.taskMutationPending[taskMutationKey(taskId, scope)]);
+  }
+
+  function setTaskMutationPending(taskId, scope, pending) {
+    const key = taskMutationKey(taskId, scope);
+    const next = { ...state.taskMutationPending };
+    if (!String(taskId || "").trim() || !String(scope || "").trim()) {
+      state.taskMutationPending = next;
+      return;
+    }
+    if (pending) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    state.taskMutationPending = next;
+  }
+
   function mergeTaskRecordIntoBucket(record) {
     const bucket = state.workspace.tasks;
     const nextId = taskRecordId(record);
@@ -6176,6 +6200,61 @@
     } catch (error) {
       bucket.error = "";
       showToast(error.message);
+    }
+  }
+
+  async function toggleTaskChecklistItem(task, itemId) {
+    const taskId = taskRecordId(task);
+    const checklistItemId = String(itemId || "").trim();
+    const bucket = state.workspace.tasks;
+    if (!taskId || !checklistItemId || !bucket || !Array.isArray(bucket.items) || taskMutationPending(taskId, checklistItemId)) {
+      return null;
+    }
+    const current = bucket.items.find(item => taskRecordId(item) === taskId) || task;
+    if (!current) {
+      return null;
+    }
+    const checklist = taskChecklist(current);
+    const target = checklist.find(item => String(item?.id || "").trim() === checklistItemId);
+    if (!target) {
+      return null;
+    }
+    const nextChecklist = checklist.map(item => {
+      if (String(item?.id || "").trim() !== checklistItemId) {
+        return item;
+      }
+      return {
+        ...item,
+        done: !Boolean(item?.done),
+      };
+    });
+    const previousItems = bucket.items.slice();
+    const optimistic = {
+      ...current,
+      checklist: nextChecklist,
+      metadata: {
+        ...(current?.metadata || {}),
+        checklist: nextChecklist,
+      },
+    };
+    setTaskMutationPending(taskId, checklistItemId, true);
+    bucket.items = bucket.items.map(item => taskRecordId(item) === taskId ? optimistic : item);
+    bucket.error = "";
+    render();
+    try {
+      const result = await patchWorkspaceRecord("tasks", taskId, { checklist: nextChecklist });
+      mergeTaskRecordIntoBucket(result);
+      state.selectedTaskId = taskRecordId(result) || taskId;
+      persistNavState();
+      return result;
+    } catch (error) {
+      bucket.items = previousItems;
+      bucket.error = "";
+      showToast(error.message);
+      return null;
+    } finally {
+      setTaskMutationPending(taskId, checklistItemId, false);
+      render();
     }
   }
 
@@ -6534,12 +6613,20 @@
     section.append(lightSectionTitle("Checklist"));
     const card = el("div", "light-card light-task-checklist-card");
     items.forEach(item => {
-      const row = el("div", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
+      const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");
+      row.type = "button";
       row.dataset.checklistItemId = String(item.id || "");
+      row.dataset.checklistDone = item.done ? "true" : "false";
+      row.setAttribute("aria-pressed", item.done ? "true" : "false");
+      row.disabled = taskMutationPending(taskRecordId(task), item.id);
       row.append(
         el("span", item.done ? "light-check-circle done" : "light-check-circle"),
         el("span", "light-task-checklist-label", String(item.label || "Checklist item"))
       );
+      row.addEventListener("click", event => {
+        event.preventDefault();
+        void toggleTaskChecklistItem(task, item.id);
+      });
       card.append(row);
     });
     section.append(card);
