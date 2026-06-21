@@ -146,3 +146,18 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert "cover_universal_feed_tiles_playwright.mjs" in source
     assert 'proof-local-universal-tiles' in source
     assert 'proof-live-universal-tiles' in source
+
+
+def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_contracts() -> None:
+    universal_source = (ROOT / "tools" / "proofs" / "cover" / "cover_universal_feed_tiles_playwright.mjs").read_text(encoding="utf-8")
+    calendar_source = (ROOT / "tools" / "proofs" / "cover" / "cover_calendar_playwright.mjs").read_text(encoding="utf-8")
+    hosted_source = (ROOT / "tools" / "proofs" / "cover" / "cover_hosted_bug_hunt_playwright.mjs").read_text(encoding="utf-8")
+
+    assert "first_row_content_metrics" in universal_source
+    assert "row_action_metrics" in universal_source
+    assert "Inbox: one-action rows should not reserve the old wide action rail" in universal_source
+    assert "Inbox: two-action rows should stay tighter than the old 98px rail" in universal_source
+    assert "selectCalendarEventByContainer" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-container-click.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-container-click.png" in calendar_source
+    assert 'openerSelector: ".light-event-block"' in hosted_source

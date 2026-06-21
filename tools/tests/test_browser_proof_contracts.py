@@ -440,3 +440,32 @@ def test_hosted_bug_hunt_contract_includes_universal_feed_tiles_acceptance_surfa
     assert 'label: "Universal feed tiles"' in source
     assert 'script: "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs"' in source
     assert "universal_feed_tiles" in source
+
+
+def test_universal_feed_tiles_proof_tracks_inbox_content_width_metrics() -> None:
+    source = read_source("cover_universal_feed_tiles_playwright.mjs")
+
+    assert "firstRowContentMetrics" in source
+    assert "rowActionMetrics" in source
+    assert "identityRect" in source
+    assert "bodyRect" in source
+    assert "actionsRect" in source
+    assert "titleRect" in source
+    assert "summaryRect" in source
+    assert "actionCount" in source
+    assert "first_row_content_metrics: metrics.firstRowContentMetrics" in source
+    assert "row_action_metrics: metrics.rowActionMetrics" in source
+    assert "Inbox: missing first-row content metrics" in source
+    assert "Inbox: one-action rows should not reserve the old wide action rail" in source
+    assert "Inbox: two-action rows should stay tighter than the old 98px rail" in source
+
+
+def test_calendar_and_hosted_bug_hunt_proofs_cover_event_container_clicks() -> None:
+    calendar_source = read_source("cover_calendar_playwright.mjs")
+    hosted_source = read_source("cover_hosted_bug_hunt_playwright.mjs")
+
+    assert "async function selectCalendarEventByContainer(" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-container-click.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-container-click.png" in calendar_source
+    assert "Expected calendar body click to open meeting-detail" in calendar_source
+    assert 'openerSelector: ".light-event-block"' in hosted_source
