@@ -284,11 +284,12 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert '".light-task-row-status-trigger"' in source
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
-    assert 'assert(!detailState.sections.includes("details")' in source
     assert 'assert(!detailState.sections.includes("people")' in source
+    assert 'detailState.sections.includes("description")' in source
     assert 'detailState.sections.includes("checklist")' in source
+    assert 'detailState.sections.includes("connected")' in source
     assert 'detailState.createdMeta' in source
-    assert 'detailState.checklistImmediatelyAfterDescription' in source
+    assert 'detailState.descriptionIsFirstSection' in source
     assert "light-task-detail-body" not in source
     assert "lightHtmlFrame" not in source
     assert ".light-task-detail-toggle" not in source
