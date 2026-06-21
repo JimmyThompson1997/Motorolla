@@ -98,6 +98,26 @@ HOSTED_RELEASE_NODE_CHECKS = [
     "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
     "tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs",
 ]
+HOSTED_RELEASE_PROOF_SCRIPTS = [
+    (
+        "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+        lambda report_root, extra_args: [
+            "--base-url",
+            append_refresh_param("https://pucky.fly.dev", current_git_head() or str(int(time.time()))),
+            "--report-dir",
+            str((report_root / "universal-feed-tiles").resolve()),
+            *extra_args,
+        ],
+    ),
+    (
+        "tools/proofs/cover/cover_live_user_session_playwright.mjs",
+        lambda report_root, extra_args: [
+            "--report-dir",
+            str((report_root / "live-user-session").resolve()),
+            *extra_args,
+        ],
+    ),
+]
 
 
 def has_arg(args: list[str], option: str) -> bool:
@@ -641,7 +661,13 @@ def run_release_hosted_web(extra_args: list[str]) -> int:
     if status:
         return status
     verify_live_manifest_matches_head()
-    return run_live_web_proof(extra_args)
+    node_binary = require_binary("node")
+    report_root = (ROOT / ".tmp" / "release-hosted-web").resolve()
+    scripts = [
+        (script, build_args(report_root, extra_args))
+        for script, build_args in HOSTED_RELEASE_PROOF_SCRIPTS
+    ]
+    return run_node_proofs(node_binary, scripts, env=proof_env())
 
 
 def powershell_command() -> list[str]:
