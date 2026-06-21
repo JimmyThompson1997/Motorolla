@@ -241,9 +241,10 @@ def build_local_workspace_proof_server_command(port: int, *, state_dir: Path | N
 def run_local_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
-    local_light_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&reset_nav=1"
-    local_dark_feed_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1"
-    local_dark_meetings_url = "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1"
+    refresh_seed = f"proof-local-web-{int(time.time() * 1000)}"
+    local_light_url = append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=light&reset_nav=1", refresh_seed)
+    local_dark_feed_url = append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1", refresh_seed)
+    local_dark_meetings_url = append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1", refresh_seed)
     servers = [
         run_server(LOCAL_PROOF_SERVER),
         run_server(LOCAL_INBOX_MEDIA_PROOF_SERVER),
@@ -259,14 +260,14 @@ def run_local_web_proof(extra_args: list[str]) -> int:
                     maybe_with_default(
                         [
                             "--page-url",
-                            "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+                            append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1", refresh_seed),
                             "--report-dir",
                             str((ROOT / ".tmp" / "proof-local-web" / "inbox-audio-light").resolve()),
                             "--skip-canonical-check",
                             *extra_args,
                         ],
                         "--page-url",
-                        "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+                        append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1", refresh_seed),
                     ),
                 ),
                 (
@@ -274,14 +275,14 @@ def run_local_web_proof(extra_args: list[str]) -> int:
                     maybe_with_default(
                         [
                             "--page-url",
-                            "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
+                            append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1", refresh_seed),
                             "--report-dir",
                             str((ROOT / ".tmp" / "proof-local-web" / "inbox-audio-dark").resolve()),
                             "--skip-canonical-check",
                             *extra_args,
                         ],
                         "--page-url",
-                        "http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
+                        append_refresh_param("http://127.0.0.1:8768/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1", refresh_seed),
                     ),
                 ),
                 (

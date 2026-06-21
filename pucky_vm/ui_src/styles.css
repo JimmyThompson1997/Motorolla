@@ -5918,6 +5918,101 @@ button {
   align-items: center;
 }
 
+.light-feed-surface.is-flat-feed {
+  gap: 0;
+}
+
+.light-feed-section.is-flat-feed {
+  gap: 0;
+}
+
+.light-feed-section.is-flat-feed:not(.light-notes-section) + .light-feed-section.is-flat-feed:not(.light-notes-section) {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-feed-list.is-flat-feed {
+  gap: 0;
+}
+
+.light-feed-row.is-flat-feed {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 12px 0;
+}
+
+.light-feed-row.is-flat-feed + .light-feed-row.is-flat-feed {
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-feed-row.is-flat-feed:active {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 72%, transparent);
+}
+
+.light-feed-row.is-flat-feed:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.light-graph-row.is-flat-feed {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.light-reminder-row.is-flat-feed {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.light-project-row.is-flat-feed {
+  min-height: 88px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-block: 14px;
+}
+
+.card-wrap.is-flat-feed {
+  margin: 0;
+}
+
+.card.is-flat-feed {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.card.is-flat-feed:focus-visible,
+.card.is-flat-feed:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.card.is-flat-feed:active {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 72%, transparent);
+}
+
+.card.is-flat-feed .card-body.is-flat-feed {
+  padding-left: 12px;
+}
+
+.card.card-meeting-list.is-flat-feed .card-body.is-flat-feed {
+  padding-left: 0;
+}
+
+.card-wrap.is-flat-feed + .card-wrap.is-flat-feed .card.is-flat-feed {
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
 .light-project-chip-row {
   grid-column: 2;
   display: flex;

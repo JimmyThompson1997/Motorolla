@@ -393,6 +393,8 @@ def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     assert 'const RESULT_SCHEMA = "pucky.universal_feed_tiles_browser_proof.v1";' in source
     assert "const MOBILE_VIEWPORT = { width: 430, height: 932 };" in source
     assert "const DESKTOP_VIEWPORT = { width: 1440, height: 980 };" in source
+    assert 'themes: ["light", "dark"]' in source
+    assert 'viewportModes: ["mobile", "desktop"]' in source
     assert 'route: "notes"' in source
     assert 'route: "meeting-notes"' in source
     assert 'route: "reminders"' in source
@@ -407,12 +409,24 @@ def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-route-top.png`));' in source
     assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-detail-open.png`));' in source
     assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-back-to-list.png`));' in source
+    assert 'saveScreenshot(page, path.join(routeDir, `${prefix}-archive-reveal.png`));' in source
     assert "document.documentElement.scrollWidth" in source
+    assert "window.getComputedStyle(firstRow)" in source
+    assert "borderTopWidth" in source
+    assert "borderTopLeftRadius" in source
+    assert "boxShadow" in source
+    assert "backgroundColor" in source
+    assert "paddingLeft" in source
+    assert "paddingRight" in source
+    assert "dividerColor" in source
     assert ".light-feed-page" in source
     assert ".light-feed-surface" in source
     assert ".light-feed-section" in source
+    assert ".is-flat-feed" in source
     assert '.card-wrap > article.card' in source
     assert ".card.card-meeting-list" in source
+    assert "assertFlatShellState(" in source
+    assert "revealArchiveWithoutMutating(" in source
     assert package["scripts"]["test:cover-universal-feed-tiles"] == "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs"
     assert '"proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle."' in dev_source
     assert '"proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts."' in dev_source

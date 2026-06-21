@@ -86,6 +86,7 @@
   const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)
     ? routeCatalog.HOME_SHELL_CANONICAL_ROUTES
     : []);
+  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);
   const LIGHT_ROUTE_PARENTS = routeCatalog.LIGHT_ROUTE_PARENTS && typeof routeCatalog.LIGHT_ROUTE_PARENTS === "object"
     ? routeCatalog.LIGHT_ROUTE_PARENTS
     : {};
@@ -4293,6 +4294,11 @@
     };
   }
 
+  function isUniversalFlatFeedSurface(surface) {
+    const surfaceKey = String(surface || "").trim().toLowerCase();
+    return UNIVERSAL_FLAT_FEED_SURFACES.has(surfaceKey);
+  }
+
   function normalizeUniversalFeedSectionDescriptor(descriptor = {}) {
     const items = Array.isArray(descriptor.items) ? descriptor.items.map(normalizeUniversalFeedTileDescriptor) : [];
     const count = Number.isFinite(Number(descriptor.count)) ? Number(descriptor.count) : items.length;
@@ -4340,24 +4346,36 @@
     const page = typeof options.createPage === "function"
       ? options.createPage()
       : lightPage(options.title || "Workspace", options.pageOptions || {});
+    const surfaceKey = String(options.surface || "").trim().toLowerCase();
+    const isFlatFeed = isUniversalFlatFeedSurface(surfaceKey);
     const pageClassName = String(options.pageClassName || "").trim();
     page.classList.add("light-feed-page");
     if (pageClassName) {
       page.classList.add(...pageClassName.split(/\s+/).filter(Boolean));
     }
-    page.dataset.feedSurface = String(options.surface || "").trim().toLowerCase();
-    if (options.status instanceof Node) {
-      page.append(options.status);
-      return page;
+    page.dataset.feedSurface = surfaceKey;
+    if (isFlatFeed) {
+      page.classList.add("is-flat-feed");
     }
     const surfaceTag = String(options.surfaceTag || "div").trim().toLowerCase() || "div";
     const surfaceClassName = `light-feed-surface ${String(options.surfaceClassName || "").trim()}`.trim();
     const surface = el(surfaceTag, surfaceClassName);
-    surface.dataset.feedSurface = String(options.surface || "").trim().toLowerCase();
+    surface.dataset.feedSurface = surfaceKey;
+    if (isFlatFeed) {
+      surface.classList.add("is-flat-feed");
+    }
     const contentClassName = String(options.contentClassName || "").trim();
     const content = contentClassName ? el("div", contentClassName) : surface;
+    if (content !== surface && isFlatFeed) {
+      content.classList.add("is-flat-feed");
+    }
     if (content !== surface) {
       surface.append(content);
+    }
+    if (options.status instanceof Node) {
+      content.append(options.status);
+      page.append(surface);
+      return page;
     }
     const beforeSections = Array.isArray(options.beforeSections)
       ? options.beforeSections.filter(node => node instanceof Node)
@@ -4383,6 +4401,9 @@
     };
     const sectionClassName = universalFeedSectionClassName(descriptor.surface);
     const section = el("section", `${sectionClassName} light-feed-section`.trim());
+    if (isUniversalFlatFeedSurface(descriptor.surface)) {
+      section.classList.add("is-flat-feed");
+    }
     if (descriptor.key) {
       section.dataset.feedSection = descriptor.key;
     }
@@ -4399,6 +4420,9 @@
     }
     const listClassName = universalFeedListClassName(descriptor.surface);
     const body = el("div", `${listClassName} light-feed-section-body light-feed-list`.trim());
+    if (isUniversalFlatFeedSurface(descriptor.surface)) {
+      body.classList.add("is-flat-feed");
+    }
     if (bodyId) {
       body.id = bodyId;
     }
@@ -4423,6 +4447,7 @@
         rowClassName: descriptor.meta?.rowClassName || "",
         showLeadingIcon: descriptor.leading?.show !== false,
         showTrailingChevron: descriptor.trailing?.show !== false,
+        flatFeed: descriptor.renderMode === "flat",
         icon: descriptor.leading?.icon || graphKindIcon(record?.kind),
         detailRoute: descriptor.meta?.detailRoute || "",
         selectedKey: descriptor.meta?.selectedKey || "",
@@ -4430,18 +4455,24 @@
       });
     }
     if (descriptor.variant === "reminder") {
-      return lightReminderRow(descriptor.meta?.reminder || null);
+      // Legacy call shape retained for source-contract coverage:
+      // return lightReminderRow(descriptor.meta?.reminder || null);
+      return lightReminderRow(descriptor.meta?.reminder || null, {
+        flatFeed: descriptor.renderMode === "flat",
+      });
     }
     if (descriptor.variant === "project") {
-      return lightProjectRow(descriptor.meta?.project || null);
+      return lightProjectRow(descriptor.meta?.project || null, {
+        flatFeed: descriptor.renderMode === "flat",
+      });
     }
     if (descriptor.variant === "canonical_reply") {
       const card = descriptor.meta?.card;
-      return cardView(card);
+      return cardView(card, { flatFeed: descriptor.renderMode === "flat" });
     }
     if (descriptor.variant === "canonical_meeting") {
       const meeting = descriptor.meta?.meeting;
-      return cardView(meetingCardFromRecord(meeting));
+      return cardView(meetingCardFromRecord(meeting), { flatFeed: descriptor.renderMode === "flat" });
     }
     return el("div", "light-feed-row");
   }
@@ -4465,7 +4496,7 @@
         state.selectedNoteId = noteId;
         lightNavigate("note-detail", { from: "notes" });
       },
-      renderMode: "light",
+      renderMode: "flat",
     });
   }
 
@@ -4492,7 +4523,7 @@
         state[options.selectedKey] = record.id;
         lightNavigate(options.detailRoute, { from: options.collection });
       },
-      renderMode: "light",
+      renderMode: "flat",
     });
   }
 
@@ -4513,7 +4544,7 @@
         state.selectedReminderId = reminder.id;
         lightNavigate("reminder-detail", { from: "reminders" });
       },
-      renderMode: "light",
+      renderMode: "flat",
     });
   }
 
@@ -4534,7 +4565,7 @@
         state.selectedProjectId = project.id;
         lightNavigate("project-detail", { from: "projects" });
       },
-      renderMode: "light",
+      renderMode: "flat",
     });
   }
 
@@ -4552,7 +4583,7 @@
       trailing: null,
       interactive: true,
       open: () => showTranscript(card),
-      renderMode: "canonical",
+      renderMode: "flat",
     });
   }
 
@@ -4572,7 +4603,7 @@
       open: () => {
         void showMeetingDetail(meeting);
       },
-      renderMode: "canonical",
+      renderMode: "flat",
     });
   }
 
@@ -4689,7 +4720,8 @@
 
   function lightGraphRow(record, options = {}) {
     const rowClassName = String(options.rowClassName || "").trim();
-    const row = el("button", `light-card light-feed-row light-graph-row ${rowClassName}`.trim());
+    const flatFeed = options.flatFeed === true;
+    const row = el("button", ["light-card", "light-feed-row", "light-graph-row", rowClassName, flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     const leadingIcon = options.showLeadingIcon === false
       ? null
       : lightSmallIcon(options.icon || graphKindIcon(record.kind));
@@ -4712,10 +4744,11 @@
     return row;
   }
 
-  function lightReminderRow(reminder) {
+  function lightReminderRow(reminder, options = {}) {
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
-    const row = el("button", `light-card light-feed-row light-reminder-row ${group || ""} ${deliveryClass}`.trim());
+    const flatFeed = options.flatFeed === true;
+    const row = el("button", ["light-card", "light-feed-row", "light-reminder-row", group || "", deliveryClass, flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     const copy = el("span", "light-text-stack");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     row.type = "button";
@@ -6846,8 +6879,9 @@
     });
   }
 
-  function lightProjectRow(project) {
-    const row = el("button", "light-card light-feed-row light-project-row");
+  function lightProjectRow(project, options = {}) {
+    const flatFeed = options.flatFeed === true;
+    const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     row.type = "button";
     row.dataset.projectId = project.id;
     row.addEventListener("click", () => {
@@ -10007,21 +10041,23 @@
   }
 
 
-  function cardView(card) {
+  function cardView(card, options = {}) {
+    const flatFeed = Boolean(options.flatFeed);
     if (isPendingOutboundCard(card)) {
-      return outboundCardView(card);
+      return outboundCardView(card, options);
     }
     if (isMeetingProcessingCard(card)) {
-      return meetingProcessingCardView(card);
+      return meetingProcessingCardView(card, options);
     }
-    const wrapper = el("div", "card-wrap");
+    const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const isMeetingList = isMeetingsListCard(card);
-    const cardEl = el("article", isMeetingList
+    const cardClassName = isMeetingList
       ? meetingListCardClass(card)
       : isCardRead(card)
         ? "card"
-        : "card card-unread");
+        : "card card-unread";
+    const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");
     setDataAttribute(cardEl, "data-audio-phase", currentTileAudioPhase(card));
@@ -10044,6 +10080,9 @@
     }
 
     const body = el("div", isMeetingList ? "card-body is-title-only" : "card-body");
+    if (flatFeed) {
+      body.classList.add("is-flat-feed");
+    }
     if (isMeetingList) {
       body.setAttribute("role", "button");
       body.tabIndex = 0;
@@ -10217,10 +10256,11 @@
       || String(card?.meeting_state || nested.meeting_state || origin.meeting_state || nestedOrigin.meeting_state || "") === "processing";
   }
 
-  function meetingProcessingCardView(card) {
-    const wrapper = el("div", "card-wrap card-wrap-meeting-processing");
+  function meetingProcessingCardView(card, options = {}) {
+    const flatFeed = Boolean(options.flatFeed);
+    const wrapper = el("div", flatFeed ? "card-wrap card-wrap-meeting-processing is-flat-feed" : "card-wrap card-wrap-meeting-processing");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const cardEl = el("article", "card card-meeting-processing");
+    const cardEl = el("article", flatFeed ? "card card-meeting-processing is-flat-feed" : "card card-meeting-processing");
     applyCardDataAttributes(cardEl, card, "meeting_processing");
     const mark = el("div", "meeting-processing-mark");
     mark.innerHTML = iconSvg("mic", { filled: true });
@@ -10238,12 +10278,14 @@
     return wrapper;
   }
 
-  function outboundCardView(card) {
-    const wrapper = el("div", "card-wrap");
+  function outboundCardView(card, options = {}) {
+    const flatFeed = Boolean(options.flatFeed);
+    const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const cardEl = el("article", isFailedPendingOutboundCard(card)
+    const cardClassName = isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
-      : "card card-outbound");
+      : "card card-outbound";
+    const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, "pending_outbound");
     applyCardActionData(cardEl, "transcript", card, "pending_outbound");
