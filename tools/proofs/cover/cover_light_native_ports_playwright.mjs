@@ -505,11 +505,19 @@ async function openAudioControls(page, selector, timeoutMs) {
   const controls = page.locator("#detail .detail-audio-action").filter({ hasText: "Open audio controls" }).first();
   const controlCount = await controls.count();
   assert(controlCount > 0, "Card detail did not expose an \"Open audio controls\" action");
-  await controls.click();
-  await page.waitForFunction(() => {
+  await clickLocator(page, controls, timeoutMs, "Open audio controls");
+  const openedAudioControls = await page.waitForFunction(() => {
     const detail = document.getElementById("detail");
     return String(detail?.getAttribute("data-detail-type") || "") === "audio";
-  }, { timeout: timeoutMs });
+  }, { timeout: Math.min(2_500, timeoutMs) }).then(() => true).catch(() => false);
+  if (!openedAudioControls) {
+    const retryControls = page.locator("#detail .detail-audio-action").filter({ hasText: "Open audio controls" }).first();
+    await clickLocator(page, retryControls, timeoutMs, "Open audio controls retry");
+    await page.waitForFunction(() => {
+      const detail = document.getElementById("detail");
+      return String(detail?.getAttribute("data-detail-type") || "") === "audio";
+    }, { timeout: timeoutMs });
+  }
   const after = await readDetailState(page);
   await closeDetail(page, timeoutMs);
   return {
@@ -519,8 +527,12 @@ async function openAudioControls(page, selector, timeoutMs) {
 }
 
 async function clickSelector(page, selector, timeoutMs) {
+  await clickLocator(page, page.locator(selector).first(), timeoutMs, selector);
+}
+
+async function clickLocator(page, locator, timeoutMs, label) {
   const clickTimeout = Math.min(5_000, timeoutMs);
-  const target = page.locator(selector).first();
+  const target = locator.first();
   await target.waitFor({ state: "visible", timeout: timeoutMs });
   await target.scrollIntoViewIfNeeded({ timeout: Math.min(2_000, timeoutMs) }).catch(() => {});
   try {
@@ -531,7 +543,7 @@ async function clickSelector(page, selector, timeoutMs) {
       await target.click({ timeout: clickTimeout, force: true });
       return;
     } catch (forceClickError) {
-      const freshTarget = page.locator(selector).first();
+      const freshTarget = locator.first();
       const box = await freshTarget.boundingBox();
       if (!box) {
         throw forceClickError;
@@ -539,7 +551,7 @@ async function clickSelector(page, selector, timeoutMs) {
       try {
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       } catch (mouseClickError) {
-        throw new Error(`Could not click ${selector}: ${normalClickError}; ${forceClickError}; ${mouseClickError}`);
+        throw new Error(`Could not click ${label}: ${normalClickError}; ${forceClickError}; ${mouseClickError}`);
       }
     }
   }
