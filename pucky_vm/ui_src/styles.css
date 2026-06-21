@@ -3811,6 +3811,8 @@ button {
   position: sticky;
   top: 0;
   z-index: 12;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   padding: var(--safe-area-top) 0 8px;
   background: color-mix(in srgb, var(--surface-sheet) 98%, white 2%);
@@ -3818,6 +3820,11 @@ button {
   border-bottom: 1px solid rgba(198, 210, 232, 0.26);
   -webkit-backdrop-filter: blur(18px);
   backdrop-filter: blur(18px);
+}
+
+.light-page-header-shell.has-chrome {
+  gap: 8px;
+  padding-bottom: 10px;
 }
 
 .light-page-header {
@@ -3830,6 +3837,13 @@ button {
   max-width: var(--light-shell-column-max);
   margin: 0 auto;
   padding: 0 var(--light-shell-column-padding);
+  box-sizing: border-box;
+}
+
+.light-page-header-chrome {
+  width: 100%;
+  max-width: var(--light-shell-column-max);
+  margin: 0 auto;
   box-sizing: border-box;
 }
 
@@ -4756,17 +4770,16 @@ button {
 }
 
 .light-date-picker {
-  position: sticky;
-  top: var(--light-page-header-offset);
-  z-index: 11;
+  width: 100%;
   display: grid;
   gap: 10px;
-  padding: 8px 0 10px;
-  background: color-mix(in srgb, var(--surface-sheet) 96%, white 4%);
-  border-bottom: 1px solid rgba(198, 210, 232, 0.26);
-  box-shadow: 0 8px 22px rgba(201, 212, 232, 0.14);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
+  padding: 0;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .light-calendar-strip-top {
@@ -4774,6 +4787,7 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+  width: 100%;
 }
 
 .light-date-picker-title {
@@ -4844,11 +4858,13 @@ button {
 
 .light-calendar-day-strip {
   display: grid;
+  width: 100%;
   grid-auto-flow: column;
   grid-auto-columns: 58px;
   gap: 8px;
   overflow-x: auto;
   padding: 2px max(0px, calc((100% - 58px) / 2)) 4px;
+  box-sizing: border-box;
   scroll-snap-type: x proximity;
   scroll-padding-inline: calc(50% - 29px);
   overscroll-behavior-x: contain;
@@ -6011,6 +6027,24 @@ button {
   background: transparent;
   box-shadow: none;
   padding-block: 14px;
+}
+
+.light-linked-records-section.is-flat-feed {
+  gap: 10px;
+}
+
+.light-linked-record-list.is-flat-feed {
+  gap: 0;
+}
+
+.light-linked-record-feed-row.is-flat-feed {
+  padding: 12px 14px;
+}
+
+.light-linked-records-empty-shell.is-flat-feed {
+  min-height: 74px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .card-wrap.is-flat-feed {

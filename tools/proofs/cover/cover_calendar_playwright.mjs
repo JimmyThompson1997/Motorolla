@@ -347,6 +347,12 @@ async function saveShot(page, reportDir, name, summary) {
   summary.screenshots[name] = target;
 }
 
+async function saveLocatorShot(locator, reportDir, name, summary) {
+  const target = path.join(reportDir, name);
+  await locator.screenshot({ path: target });
+  summary.screenshots[name] = target;
+}
+
 async function openHomeCalendar(page) {
   await page.locator('.light-app-tile[data-route="calendar"]').click();
   await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -414,11 +420,15 @@ async function stickyMetrics(page) {
     if (feed && typeof feed.scrollTo === "function") {
       feed.scrollTo({ top: 420, left: 0, behavior: "instant" });
     }
+    const headerShell = document.querySelector(".light-page-header-shell");
     const header = document.querySelector(".light-page-header");
-    const controls = document.querySelector(".light-date-picker");
+    const chrome = document.querySelector(".light-date-picker");
     return {
+      headerShellTop: Math.round(headerShell?.getBoundingClientRect().top ?? -999),
+      headerShellBottom: Math.round(headerShell?.getBoundingClientRect().bottom ?? -999),
       headerTop: Math.round(header?.getBoundingClientRect().top ?? -999),
-      controlsTop: Math.round(controls?.getBoundingClientRect().top ?? -999),
+      chromeTop: Math.round(chrome?.getBoundingClientRect().top ?? -999),
+      chromeBottom: Math.round(chrome?.getBoundingClientRect().bottom ?? -999),
       feedScrollTop: Math.round(feed?.scrollTop ?? -1)
     };
   });
@@ -433,6 +443,46 @@ async function calendarChromeText(page) {
 
 async function calendarLaneWidth(page) {
   return page.evaluate(() => Math.round(document.querySelector(".light-calendar-page")?.getBoundingClientRect().width ?? 0));
+}
+
+async function calendarChromeLayoutMetrics(page) {
+  return page.evaluate(() => {
+    const lane = document.querySelector(".light-calendar-page");
+    const headerShell = document.querySelector(".light-page-header-shell");
+    const header = document.querySelector(".light-page-header");
+    const chrome = document.querySelector(".light-date-picker");
+    const topRow = document.querySelector(".light-calendar-strip-top");
+    const strip = document.querySelector(".light-calendar-day-strip");
+    const rect = node => {
+      if (!node) {
+        return null;
+      }
+      const box = node.getBoundingClientRect();
+      return {
+        top: Math.round(box.top),
+        right: Math.round(box.right),
+        bottom: Math.round(box.bottom),
+        left: Math.round(box.left),
+        width: Math.round(box.width),
+        height: Math.round(box.height)
+      };
+    };
+    return {
+      laneWidth: Math.round(lane?.getBoundingClientRect().width ?? 0),
+      headerShellWidth: Math.round(headerShell?.getBoundingClientRect().width ?? 0),
+      chromeWidth: Math.round(chrome?.getBoundingClientRect().width ?? 0),
+      topRowWidth: Math.round(topRow?.getBoundingClientRect().width ?? 0),
+      stripWidth: Math.round(strip?.getBoundingClientRect().width ?? 0),
+      chromePosition: String(chrome ? getComputedStyle(chrome).position : ""),
+      chromeInHeaderShell: Boolean(headerShell && chrome && headerShell.contains(chrome)),
+      laneRect: rect(lane),
+      headerRect: rect(header),
+      headerShellRect: rect(headerShell),
+      chromeRect: rect(chrome),
+      topRowRect: rect(topRow),
+      stripRect: rect(strip)
+    };
+  });
 }
 
 async function calendarStripMetrics(page) {
@@ -603,6 +653,11 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(!chromeText.includes("Jump to date"), "Expected compact calendar chrome without Jump to date copy.");
     assert(!chromeText.includes("Busy window"), "Expected calendar chrome to drop Busy window copy.");
     assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected Today chip to stay hidden when the selected day is already today.");
+    const chromeMetrics = await calendarChromeLayoutMetrics(page);
+    assert(chromeMetrics.chromeInHeaderShell, `Expected calendar chrome to live inside the sticky header shell, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.chromePosition !== "sticky", `Expected calendar chrome to stop using its own sticky positioning, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.topRowWidth >= chromeMetrics.laneWidth - 2, `Expected calendar top row to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.stripWidth >= chromeMetrics.laneWidth - 2, `Expected calendar day rail to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
     const stripMetrics = await calendarStripMetrics(page);
     assert(stripMetrics.childCount === 21, `Expected the desktop day strip to render twenty-one chips, got ${stripMetrics.childCount}.`);
     assert(await page.locator(".light-calendar-strip-nav-button").count() === 2, "Expected desktop calendar arrows for strip navigation.");
@@ -629,6 +684,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await assertChipContrast(page, `${eventSelector} .light-attendee-chip.is-link`);
     assert(await page.locator(eventSelector).evaluate(node => node.className.includes("blue")), "Expected the freelance review card to use the shared blue tone.");
     assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
+    await saveLocatorShot(page.locator(".light-page-header-shell"), reportDir, `calendar-desktop-${theme}-chrome.png`, summary);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-today.png`, summary);
     await scrollDayStripWithButton(page, 1);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-day-rail-scroll.png`, summary);
@@ -729,8 +785,9 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     summary.assertions.push(`desktop ${theme} calendar home entry resets to today`);
 
     const scrollMetrics = await stickyMetrics(page);
+    assert(scrollMetrics.headerShellTop <= 1, `Expected sticky header shell to pin at top, got ${JSON.stringify(scrollMetrics)}`);
     assert(scrollMetrics.headerTop <= 1, `Expected sticky header to pin at top, got ${scrollMetrics.headerTop}`);
-    assert(scrollMetrics.controlsTop >= 0 && scrollMetrics.controlsTop < 140, `Expected sticky controls to remain visible, got ${scrollMetrics.controlsTop}`);
+    assert(scrollMetrics.chromeTop >= 0 && scrollMetrics.chromeBottom <= scrollMetrics.headerShellBottom + 2, `Expected sticky calendar chrome to remain inside the header shell, got ${JSON.stringify(scrollMetrics)}`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-scrolled.png`, summary);
     summary.assertions.push(`desktop ${theme} sticky header and controls stayed pinned`);
 
@@ -793,6 +850,11 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await openHomeCalendar(page);
     const chromeText = await calendarChromeText(page);
     assert(await page.locator(".light-date-input").count() === 1, "Expected a native date input on mobile.");
+    const chromeMetrics = await calendarChromeLayoutMetrics(page);
+    assert(chromeMetrics.chromeInHeaderShell, `Expected calendar chrome to live inside the sticky header shell, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.chromePosition !== "sticky", `Expected calendar chrome to stop using its own sticky positioning, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.topRowWidth >= chromeMetrics.laneWidth - 2, `Expected calendar top row to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.stripWidth >= chromeMetrics.laneWidth - 2, `Expected calendar day rail to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
     const stripMetrics = await calendarStripMetrics(page);
     assert(stripMetrics.childCount === 15, `Expected the mobile day strip to render fifteen chips, got ${stripMetrics.childCount}.`);
     assert(!chromeText.includes("Pinned"), "Expected mobile calendar chrome to hide Pinned copy.");
@@ -817,6 +879,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     const mobileGap = await gapMetrics(page);
     assert(/^Free .+ - .+$/.test(mobileGap.label), `Expected mobile free-range copy, got ${mobileGap.label}.`);
     await assertChipContrast(page, `${eventSelector} .light-attendee-chip.is-link`);
+    await saveLocatorShot(page.locator(".light-page-header-shell"), reportDir, `calendar-mobile-${theme}-chrome.png`, summary);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-top.png`, summary);
     await scrollDayStripDirect(page, 220);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-day-rail-scroll.png`, summary);
@@ -849,8 +912,9 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     const metrics = await stickyMetrics(page);
+    assert(metrics.headerShellTop <= 1, `Expected mobile header shell to stay pinned, got ${JSON.stringify(metrics)}`);
     assert(metrics.headerTop <= 1, `Expected mobile header to stay pinned, got ${metrics.headerTop}`);
-    assert(metrics.controlsTop >= 0 && metrics.controlsTop < 140, `Expected mobile controls row to stay pinned, got ${metrics.controlsTop}`);
+    assert(metrics.chromeTop >= 0 && metrics.chromeBottom <= metrics.headerShellBottom + 2, `Expected mobile calendar chrome to remain inside the header shell, got ${JSON.stringify(metrics)}`);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-scrolled.png`, summary);
     await openCalendarSettings(page);
     assert(await page.locator(".calendar-type-filter-row").count() === 6, "Expected six mobile semantic event-type filter rows.");
