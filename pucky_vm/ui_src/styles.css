@@ -6029,6 +6029,24 @@ button {
   padding-block: 14px;
 }
 
+.light-linked-records-section.is-flat-feed {
+  gap: 10px;
+}
+
+.light-linked-record-list.is-flat-feed {
+  gap: 0;
+}
+
+.light-linked-record-feed-row.is-flat-feed {
+  padding: 12px 14px;
+}
+
+.light-linked-records-empty-shell.is-flat-feed {
+  min-height: 74px;
+  background: transparent;
+  box-shadow: none;
+}
+
 .card-wrap.is-flat-feed {
   margin: 0;
 }

@@ -5722,6 +5722,7 @@
     const related = entry?.related || null;
     const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
     const showChips = options.showChips !== false;
+    const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
     const row = el(
       isInteractive ? "button" : "div",
       [
@@ -5730,6 +5731,7 @@
         "light-graph-row",
         "light-linked-record-feed-row",
         showChips ? "" : "is-no-chips",
+        flatFeed ? "is-flat-feed" : "",
         String(options.rowClassName || "").trim(),
       ].filter(Boolean).join(" ")
     );
@@ -5768,6 +5770,7 @@
   function lightLinkedRecordSection(record, options = {}) {
     const title = options.title || "Linked records";
     const showWhenEmpty = options.showWhenEmpty === true;
+    const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
     const entries = workspaceLinkedEntries(record, {
       includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
       excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
@@ -5777,13 +5780,19 @@
       return null;
     }
     const section = el("section", "light-linked-records-section light-feed-section");
+    if (flatFeed) {
+      section.classList.add("is-flat-feed");
+    }
     section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();
     const header = el("div", "light-feed-section-header");
     header.append(lightSectionTitle(title));
     const body = el("div", "light-linked-record-list light-feed-section-body light-feed-list");
+    if (flatFeed) {
+      body.classList.add("light-card", "is-flat-feed");
+    }
     body.dataset.linkedRecordsCount = String(entries.length);
     if (!entries.length) {
-      body.append(el("div", "light-card light-linked-records-empty-shell"));
+      body.append(el("div", flatFeed ? "light-linked-records-empty-shell is-flat-feed" : "light-card light-linked-records-empty-shell"));
     } else {
       entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {
         fromRoute: options.fromRoute || state.route || "",
@@ -5791,6 +5800,7 @@
         openOptions: options.openOptions || {},
         detailResolver: typeof options.detailResolver === "function" ? options.detailResolver : null,
         showChips: options.showChips !== false,
+        variant: flatFeed ? "flat" : "",
       })));
     }
     section.append(header, body);
@@ -6890,6 +6900,7 @@
       fromRoute: "project-detail",
       dedupeTargets: true,
       showChips: false,
+      variant: "flat",
       detailResolver: projectConnectedDetail,
     }));
     return page;
