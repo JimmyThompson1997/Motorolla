@@ -571,8 +571,30 @@ async function revealArchiveWithoutMutating(page, routeConfig, timeoutMs, routeD
       reason: "Archive reveal not required for this route",
     };
   }
-  const wrapper = page.locator(".card-wrap").filter({ has: page.locator(".archive-reveal-action") }).first();
-  if (await wrapper.count() === 0) {
+
+  let lastResolveError = null;
+  let wrapper = null;
+  for (let attemptIndex = 0; attemptIndex < 8; attemptIndex += 1) {
+    const candidate = page.locator(".card-wrap").filter({ has: page.locator(".archive-reveal-action") }).first();
+    if (await candidate.count() === 0) {
+      await page.waitForTimeout(100 + attemptIndex * 50);
+      continue;
+    }
+    try {
+      await candidate.locator("article.card").first().waitFor({ state: "visible", timeout: Math.min(2000, timeoutMs) });
+      await candidate.scrollIntoViewIfNeeded({ timeout: Math.min(2000, timeoutMs) });
+      wrapper = candidate;
+      break;
+    } catch (error) {
+      lastResolveError = error;
+      await page.waitForTimeout(100 + attemptIndex * 50);
+    }
+  }
+
+  if (!wrapper) {
+    if (lastResolveError) {
+      throw lastResolveError;
+    }
     return {
       attempted: false,
       opened: false,
@@ -580,7 +602,6 @@ async function revealArchiveWithoutMutating(page, routeConfig, timeoutMs, routeD
       reason: "No archivable wrapper found",
     };
   }
-  await wrapper.scrollIntoViewIfNeeded();
   const card = wrapper.locator("article.card").first();
   const box = await card.boundingBox();
   assert(box, `${routeConfig.surface}: could not read the first archivable card bounds`);
