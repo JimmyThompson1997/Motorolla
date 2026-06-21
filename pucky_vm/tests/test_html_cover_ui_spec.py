@@ -1244,7 +1244,7 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'const previousAllDone = checklist.length > 0 && checklist.every(item => Boolean(item?.done));' in toggle_task_checklist_item
     assert 'const nextAllDone = nextChecklist.length > 0 && nextChecklist.every(item => Boolean(item?.done));' in toggle_task_checklist_item
     assert 'const currentStatus = normalizedTaskStatus(current);' in toggle_task_checklist_item
-    assert 'const nextStatus = nextAllDone ? "done" : (previousAllDone && currentStatus === "done" ? "in_progress" : "");' in toggle_task_checklist_item
+    assert 'const nextStatus = nextAllDone ? "done" : (previousAllDone ? "in_progress" : "");' in toggle_task_checklist_item
     assert 'const payload = nextStatus ? { checklist: nextChecklist, status: nextStatus } : { checklist: nextChecklist };' in toggle_task_checklist_item
     assert 'const optimisticStatus = nextStatus || currentStatus;' in toggle_task_checklist_item
     assert "status: optimisticStatus," in toggle_task_checklist_item
