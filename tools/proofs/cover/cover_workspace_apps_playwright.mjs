@@ -20,9 +20,13 @@ const require = createRequire(import.meta.url);
 function loadPlaywrightCore() {
   const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
   const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
+  const bundledPlaywright = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright");
   const candidates = [
     () => require("playwright-core"),
+    () => require("playwright"),
     () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright")) : null,
+    () => require(bundledPlaywright),
     () => require(bundled)
   ];
   for (const candidate of candidates) {
@@ -223,6 +227,7 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
     runId,
     linkIds: [
       `${runId}-alpha-note`,
+      `${runId}-alpha-note-duplicate`,
       `${runId}-alpha-task`,
       `${runId}-alpha-calendar`,
       `${runId}-alpha-feed`,
@@ -529,6 +534,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
 
     for (const link of [
       ["alpha-note", "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["alpha-note-duplicate", "note", `${runId}-pinned-note`, "Proof Pinned Note copy"],
       ["alpha-task", "task", `${runId}-future-task`, "Proof Future Task"],
       ["alpha-calendar", "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
       ["alpha-feed", "feed_item", `${runId}-project-decision`, "Proof Project Decision"],
@@ -1492,7 +1498,7 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   screenshots[`${theme}_projects`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-list`);
   if (seed.writeEnabled) {
     await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).click();
-    for (const text of ["Alpha kickoff", "Alpha launch", "Proof Future Task", "Proof Today Roadmap", "Proof Project Decision", "Proof Contact One"]) {
+    for (const text of ["Proof Pinned Note", "Proof Future Task", "Proof Today Roadmap", "Proof Project Decision", "Proof Contact One", "Proof Graph Reminder"]) {
       await page.getByText(text).waitFor({ state: "visible", timeout: config.timeoutMs });
     }
     await expectFrameHeading(page, "Proof Alpha Project", config.timeoutMs);
@@ -1502,8 +1508,20 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
   const htmlState = await assertNoWorkspaceHtmlDocument(page, "Project detail");
+  const projectState = await readProjectDetailState(page, seed.runId || PROOF_RUN_ID);
+  assert(projectState.shellRoute === "project-detail", `Expected project-detail route, got ${projectState.shellRoute}`);
+  assert(projectState.heroCount === 0, "Project detail should not render the legacy hero card");
+  assert(projectState.chipCloudCount === 0, "Project detail should not render the top chip cloud");
+  assert(projectState.sectionGridCount === 0, "Project detail should not render the legacy per-kind grid");
+  assert(projectState.connectedSectionCount === 1, "Project detail should render one Connected section");
+  assert(projectState.connectedRows > 0, "Project detail should render connected feed rows");
+  if (seed.writeEnabled) {
+    assert(projectState.pinnedNoteRows === 1, "Project detail should collapse duplicate linked-note targets into one row");
+  }
   summary.noHtmlDetails = summary.noHtmlDetails || [];
   summary.noHtmlDetails.push({ theme, route: "project-detail", htmlState });
+  summary.projects = summary.projects || [];
+  summary.projects.push({ theme, projectState });
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   if (seed.writeEnabled) {
     for (const [route, id, text] of [
@@ -1899,6 +1917,28 @@ async function readGraphDetailState(page) {
   }));
 }
 
+async function readProjectDetailState(page, runId) {
+  return page.evaluate(({ runId: currentRunId }) => {
+    const connectedSection = [...document.querySelectorAll(".light-linked-records-section")]
+      .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === "connected");
+    const connectedRows = connectedSection
+      ? connectedSection.querySelectorAll(".light-linked-record-feed-row").length
+      : 0;
+    const pinnedNoteRows = connectedSection
+      ? connectedSection.querySelectorAll(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${currentRunId}-pinned-note"]`).length
+      : 0;
+    return {
+      heroCount: document.querySelectorAll(".light-detail-hero").length,
+      chipCloudCount: document.querySelectorAll(".light-project-detail-page .light-chip-cloud").length,
+      sectionGridCount: document.querySelectorAll(".light-project-section-grid").length,
+      connectedSectionCount: connectedSection ? 1 : 0,
+      connectedRows,
+      pinnedNoteRows,
+      shellRoute: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
+    };
+  }, { runId });
+}
+
 async function waitForGraphText(page, text, timeoutMs) {
   await page.waitForFunction((targetText) => {
     const shell = document.querySelector(".light-shell");
@@ -1924,6 +1964,14 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   await openTile(page, "Meeting Notes", "meeting-notes", config.timeoutMs);
   await page.locator(`[data-record-id="${meeting}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  const meetingNotesListState = await page.evaluate(() => ({
+    chipRows: document.querySelectorAll('.light-shell[data-light-route="meeting-notes"] .light-graph-row .light-graph-chip-row').length,
+    leadingIcons: document.querySelectorAll('.light-shell[data-light-route="meeting-notes"] .light-graph-row .light-small-icon').length,
+    chevrons: document.querySelectorAll('.light-shell[data-light-route="meeting-notes"] .light-graph-row .light-chevron').length,
+  }));
+  assert(meetingNotesListState.chipRows === 0, "Meeting Notes list should not render right-side pill chips");
+  assert(meetingNotesListState.leadingIcons === 0, "Meeting Notes list should not render leading icons");
+  assert(meetingNotesListState.chevrons === 0, "Meeting Notes list should not render trailing chevrons");
   screenshots[`${theme}_graph_meetings`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-notes-list`);
   await page.locator(`[data-record-id="${meeting}"]`).click();
   await expectFrameHeading(page, "Proof Graph Meeting", config.timeoutMs);

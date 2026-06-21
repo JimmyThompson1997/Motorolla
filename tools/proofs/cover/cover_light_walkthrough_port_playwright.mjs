@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -19,6 +19,30 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
 const DEFAULT_PAGE_URL = "http://127.0.0.1:8766/index.html?theme=light&reset_nav=1";
 const VIEWPORT = { width: 430, height: 932 };
+const require = createRequire(import.meta.url);
+
+function loadPlaywright() {
+  const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
+  const candidates = [
+    () => require("playwright-core"),
+    () => require("playwright"),
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright")) : null,
+  ];
+  for (const candidate of candidates) {
+    try {
+      const resolved = candidate();
+      if (resolved?.chromium) {
+        return resolved;
+      }
+    } catch {
+      // Try the next resolution path.
+    }
+  }
+  throw new Error("Could not resolve playwright-core or playwright from local tools or bundled runtime");
+}
+
+const { chromium } = loadPlaywright();
 
 function parseArgs(argv) {
   const config = {
@@ -49,7 +73,7 @@ function proofMeetings() {
     {
       meeting_id: "meeting-light-proof",
       state: "completed",
-      title: "Light Proof Meeting",
+      title: "Light proof meeting title that should wrap cleanly without colliding with the audio rail",
       recording_title: "light-proof-meeting-2026-06-08",
       started_at: "2026-06-08T18:23:00Z",
       stopped_at: "2026-06-08T18:38:00Z",
@@ -62,7 +86,7 @@ function proofMeetings() {
     {
       meeting_id: "meeting-light-proof-processing",
       state: "processing",
-      title: "Light Proof Processing",
+      title: "Light proof processing meeting with another intentionally long row title",
       recording_title: "light-proof-processing",
       started_at: "2026-06-08T17:15:00Z",
       duration_ms: 180000,
@@ -258,6 +282,84 @@ async function clickTile(page, route) {
   await page.locator(`.light-app-tile[data-route="${route}"]`).click();
 }
 
+async function assertMeetingsLayout(page, label, { expectWrapped = false } = {}) {
+  const layout = await page.evaluate(() => {
+    const card = document.querySelector('.light-shell[data-light-route="meetings"] .card-meeting-list');
+    const title = card?.querySelector('.title');
+    const meta = card?.querySelector('.card-meeting-meta');
+    const stamp = card?.querySelector('.card-timestamp');
+    const actions = card?.querySelector('.card-actions');
+    if (!(card && title && meta && stamp && actions)) {
+      return null;
+    }
+    const rect = (node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+        width: box.width,
+        height: box.height,
+      };
+    };
+    const titleStyle = window.getComputedStyle(title);
+    const lineHeight = Number.parseFloat(titleStyle.lineHeight || "0") || 0;
+    return {
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      card: rect(card),
+      title: rect(title),
+      meta: rect(meta),
+      stamp: rect(stamp),
+      actions: rect(actions),
+      titleLineHeight: lineHeight,
+    };
+  });
+  if (!layout) {
+    throw new Error(`${label}: could not read meetings layout`);
+  }
+  if (layout.scrollWidth > layout.innerWidth + 1) {
+    throw new Error(`${label}: meetings introduced horizontal overflow (${layout.scrollWidth} > ${layout.innerWidth})`);
+  }
+  const railLeft = Math.min(layout.meta.left, layout.stamp.left, layout.actions.left);
+  if (layout.title.right > railLeft + 2) {
+    throw new Error(`${label}: meeting title overlapped the right rail`);
+  }
+  if (layout.title.left < layout.card.left - 1) {
+    throw new Error(`${label}: meeting title clipped past the left edge`);
+  }
+  if (expectWrapped && !(layout.title.height > layout.titleLineHeight * 1.5)) {
+    throw new Error(`${label}: long meeting title did not wrap onto a second line`);
+  }
+}
+
+async function assertProjectConnectedLayout(page) {
+  const state = await page.evaluate(() => {
+    const connectedSection = [...document.querySelectorAll(".light-linked-records-section")]
+      .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === "connected");
+    return {
+      heroCount: document.querySelectorAll(".light-detail-hero").length,
+      chipCloudCount: document.querySelectorAll(".light-project-detail-page .light-chip-cloud").length,
+      gridCount: document.querySelectorAll(".light-project-section-grid").length,
+      connectedSectionCount: connectedSection ? 1 : 0,
+      connectedRows: connectedSection ? connectedSection.querySelectorAll(".light-linked-record-feed-row").length : 0,
+    };
+  });
+  if (state.heroCount !== 0) {
+    throw new Error("Projects: legacy hero card still rendered in detail");
+  }
+  if (state.chipCloudCount !== 0) {
+    throw new Error("Projects: top chip cloud still rendered in detail");
+  }
+  if (state.gridCount !== 0) {
+    throw new Error("Projects: legacy section grid still rendered in detail");
+  }
+  if (state.connectedSectionCount !== 1 || state.connectedRows < 1) {
+    throw new Error("Projects: unified Connected feed did not render");
+  }
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -275,7 +377,7 @@ async function main() {
     await waitForHome(page);
     await assertVisible(page, "#voiceStatus", "voice status");
     const homeTileCount = await page.locator(".light-app-tile").count();
-    if (homeTileCount !== 10) {
+    if (homeTileCount !== 11) {
       throw new Error(`Expected full light app grid, found ${homeTileCount} tiles`);
     }
     if (await page.locator(".light-status-bar, .light-status-time, .light-status-battery, .light-status-signal").count()) {
@@ -291,10 +393,10 @@ async function main() {
     await assertVisible(page, ".light-app-tile[data-route=\"meetings\"]", "meetings tile");
     screenshots.home = await screenshot(page, config.reportDir, "01-light-home-full-grid");
 
-    await clickTile(page, "apps");
-    await assertVisible(page, ".light-shell[data-light-route=\"apps\"] .links-page", "apps links page");
+    await clickTile(page, "connect");
+    await assertVisible(page, ".light-shell[data-light-route=\"connect\"] .links-page", "connect links page");
     if (await page.locator(".page-tabs:visible").count()) {
-      throw new Error("Dark page tabs are visible in light Apps");
+      throw new Error("Dark page tabs are visible in light Connect");
     }
     await page.waitForSelector(".links-app-row", { timeout: 8000 });
     screenshots.apps = await screenshot(page, config.reportDir, "02-light-apps-catalog");
@@ -343,7 +445,14 @@ async function main() {
     if ((await page.locator(".light-shell[data-light-route=\"meetings\"] .card-meeting-list").count()) < 1) {
       throw new Error("Light Meetings did not render canonical meeting cards");
     }
+    await assertMeetingsLayout(page, "meetings-430");
     screenshots.meetings = await screenshot(page, config.reportDir, "08-light-meetings-fixture-cards");
+    await page.setViewportSize({ width: 320, height: 740 });
+    await assertVisible(page, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list", "meetings page 320");
+    await assertMeetingsLayout(page, "meetings-320", { expectWrapped: true });
+    screenshots.meetingsNarrow = await screenshot(page, config.reportDir, "08b-light-meetings-fixture-cards-320");
+    await page.setViewportSize(VIEWPORT);
+    await assertVisible(page, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list", "meetings page reset");
     await page.locator(".light-shell[data-light-route=\"meetings\"] .card-meeting-list .card-body").first().click();
     await assertVisible(page, ".detail-panel.is-open", "meeting detail");
     screenshots.meetingsDetail = await screenshot(page, config.reportDir, "09-light-meetings-detail");
@@ -378,15 +487,24 @@ async function main() {
     screenshots.calendar = await screenshot(page, config.reportDir, "13-light-calendar-event-detail");
     await backToHome(page);
 
-    await clickTile(page, "feed");
-    await page.locator(".light-feed-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"feed-detail\"] .light-feed-document", "feed detail");
-    screenshots.feed = await screenshot(page, config.reportDir, "14-light-feed-detail");
+    await clickTile(page, "meeting-notes");
+    await assertVisible(page, ".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row", "meeting notes");
+    if (await page.locator(".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row .light-graph-chip-row").count()) {
+      throw new Error("Meeting Notes list still renders right-side pill chips");
+    }
+    if (await page.locator(".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row .light-small-icon, .light-shell[data-light-route=\"meeting-notes\"] .light-graph-row .light-chevron").count()) {
+      throw new Error("Meeting Notes list regressed its icon/chevron cleanup");
+    }
+    screenshots.meetingNotes = await screenshot(page, config.reportDir, "14-light-meeting-notes-list");
+    await page.locator(".light-shell[data-light-route=\"meeting-notes\"] .light-graph-row").first().click();
+    await assertVisible(page, ".light-shell[data-light-route=\"meeting-note-detail\"]", "meeting note detail");
+    screenshots.meetingNoteDetail = await screenshot(page, config.reportDir, "14b-light-meeting-note-detail");
     await backToHome(page);
 
     await clickTile(page, "projects");
     await page.locator(".light-project-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"project-detail\"] .light-project-section-grid", "project detail");
+    await assertVisible(page, ".light-shell[data-light-route=\"project-detail\"] .light-linked-records-section", "project detail");
+    await assertProjectConnectedLayout(page);
     screenshots.projects = await screenshot(page, config.reportDir, "15-light-project-detail");
     await backToHome(page);
 

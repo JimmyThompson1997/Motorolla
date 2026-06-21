@@ -144,21 +144,25 @@ def test_meeting_notes_rows_drop_leading_icon_and_trailing_chevron_only_for_that
     assert 'surface: "meeting-notes",' in meeting_notes_page
     assert "showLeadingIcon: false," in meeting_notes_page
     assert "showTrailingChevron: false" in meeting_notes_page
+    assert "showChips: false," in meeting_notes_page
     assert "return renderUniversalFeedPage({" in light_graph_list_page
     assert 'surface: String(options.surface || options.collection || "workspace"),' in light_graph_list_page
     assert 'surfaceClassName: "light-list-surface",' in light_graph_list_page
     assert "items: workspaceItems(options.collection).map(record => universalGraphFeedTileDescriptor(record, options))" in light_graph_list_page
     assert 'renderMode: "flat",' in graph_descriptor
+    assert "showChips: options.showChips !== false," in graph_descriptor
     assert 'return lightGraphRow(record, {' in render_universal_tile
     assert "rowClassName: descriptor.meta?.rowClassName || \"\"," in render_universal_tile
     assert "showLeadingIcon: descriptor.leading?.show !== false," in render_universal_tile
     assert "showTrailingChevron: descriptor.trailing?.show !== false" in render_universal_tile
+    assert "showChips: descriptor.meta?.showChips !== false," in render_universal_tile
     assert 'flatFeed: descriptor.renderMode === "flat",' in render_universal_tile
     assert 'const rowClassName = String(options.rowClassName || "").trim();' in light_graph_row
     assert "const flatFeed = options.flatFeed === true;" in light_graph_row
     assert 'const leadingIcon = options.showLeadingIcon === false' in light_graph_row
     assert 'const trailingChevron = options.showTrailingChevron === false' in light_graph_row
     assert "if (leadingIcon) {" in light_graph_row
+    assert 'if (options.showChips !== false) {' in light_graph_row
     assert "if (trailingChevron) {" in light_graph_row
     assert 'flatFeed ? "is-flat-feed" : ""' in light_graph_row
     assert ".light-feed-page {" in styles
@@ -200,7 +204,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     light_back = function_block(app, "lightBack")
     light_event_block = function_block(app, "lightCalendarEventBlock")
     light_info_section = function_block(app, "lightInfoSection")
-    light_project_section_item = function_block(app, "lightProjectSectionItem")
+    light_linked_record_feed_row = function_block(app, "lightLinkedRecordFeedRow")
     light_record_chip = function_block(app, "lightRecordChip")
 
     assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
@@ -257,7 +261,8 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     light_info_row = function_block(app, "lightInfoRow")
     assert 'openWorkspaceTarget(' in light_info_row
     assert 'row.fromRoute || state.route || ""' in light_info_row
-    assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
+    assert 'openWorkspaceTarget(' in light_linked_record_feed_row
+    assert 'options.fromRoute || state.route || ""' in light_linked_record_feed_row
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
 
@@ -974,6 +979,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
 
     workspace_html = function_block(app, "workspaceHtml")
     linked_entries = function_block(app, "workspaceLinkedEntries")
+    linked_feed_row = function_block(app, "lightLinkedRecordFeedRow")
     linked_rows = function_block(app, "workspaceLinkedRows")
     linked_notes = function_block(app, "lightLinkedNotesSection")
     linked_record_section = function_block(app, "lightLinkedRecordSection")
@@ -987,10 +993,16 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "workspace.assets" not in app
     assert "const includeKinds =" in linked_entries
     assert "const excludeKinds = new Set(" in linked_entries
+    assert "const dedupeTargets = options.dedupeTargets === true;" in linked_entries
+    assert "const seenTargets = dedupeTargets ? new Set() : null;" in linked_entries
     assert 'if ((includeKinds && !includeKinds.has(normalizedKind)) || excludeKinds.has(normalizedKind)) {' in linked_entries
     assert 'return workspaceLinkedEntries(record, options).map(entry => {' in linked_rows
     assert 'includeKinds: ["note"],' in linked_notes
     assert 'valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"' in linked_notes
+    assert "const showChips = options.showChips !== false;" in linked_feed_row
+    assert 'showChips ? "" : "is-no-chips",' in linked_feed_row
+    assert 'typeof options.detailResolver === "function"' in linked_feed_row
+    assert "if (showChips) {" in linked_feed_row
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
     assert "page.append(lightLinkedRecordSection(contact, {" in contact_detail
@@ -1000,12 +1012,27 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "const title = options.title || \"Linked records\";" in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert 'const entries = workspaceLinkedEntries(record, {' in linked_record_section
+    assert "dedupeTargets: options.dedupeTargets === true," in linked_record_section
+    assert "detailResolver: typeof options.detailResolver === \"function\" ? options.detailResolver : null," in linked_record_section
+    assert "showChips: options.showChips !== false," in linked_record_section
     assert "lightHtmlDocument(contact" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
     assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
     assert "lightHtmlDocument(item" not in feed_detail
     assert '["Artifacts", "attachment", projectAssets(project)]' not in project_detail
     assert "lightHtmlDocument(project" not in project_detail
+    assert "page.append(lightDetailHero(" not in project_detail
+    assert "page.append(lightChipCloud(projectChips(project)));" not in project_detail
+    assert "light-project-section-grid" not in project_detail
+    assert 'page.classList.add("light-project-detail-page");' in project_detail
+    assert "page.append(lightLinkedRecordSection(project, {" in project_detail
+    assert 'title: "Connected"' in project_detail
+    assert "showWhenEmpty: true" in project_detail
+    assert 'fromRoute: "project-detail"' in project_detail
+    assert "dedupeTargets: true," in project_detail
+    assert "showChips: false," in project_detail
+    assert "detailResolver: projectConnectedDetail," in project_detail
+    assert "function projectConnectedDetail(entry) {" in app
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
     assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
     assert "lightHtmlDocument(record" not in graph_detail
@@ -1350,9 +1377,14 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'const cardClassName = isMeetingList' in card_view
     assert 'const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);' in card_view
     assert 'body.classList.add("is-flat-feed");' in card_view
+    assert 'const copy = el("div", "card-meeting-copy");' in card_view
+    assert 'const meta = el("div", "card-meeting-meta");' in card_view
+    assert "meta.append(actions);" in card_view
     assert ".light-canonical-port-surface {" in styles
     assert ".card {" in styles
     assert ".card.card-meeting-list {" in styles
+    assert ".card-meeting-copy {" in styles
+    assert ".card-meeting-meta {" in styles
     assert ".light-feed-surface.is-flat-feed {" in styles
     assert ".light-feed-section.is-flat-feed {" in styles
     assert ".light-feed-list.is-flat-feed {" in styles

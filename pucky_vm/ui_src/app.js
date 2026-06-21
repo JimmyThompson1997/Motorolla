@@ -4447,6 +4447,7 @@
         rowClassName: descriptor.meta?.rowClassName || "",
         showLeadingIcon: descriptor.leading?.show !== false,
         showTrailingChevron: descriptor.trailing?.show !== false,
+        showChips: descriptor.meta?.showChips !== false,
         flatFeed: descriptor.renderMode === "flat",
         icon: descriptor.leading?.icon || graphKindIcon(record?.kind),
         detailRoute: descriptor.meta?.detailRoute || "",
@@ -4512,7 +4513,8 @@
         rowClassName: String(options.rowClassName || "").trim(),
         detailRoute: String(options.detailRoute || "").trim(),
         selectedKey: String(options.selectedKey || "").trim(),
-        collection: String(options.collection || "").trim()
+        collection: String(options.collection || "").trim(),
+        showChips: options.showChips !== false,
       },
       summary: graphListLabel(record),
       chips: graphObjectChipValues(record),
@@ -4618,7 +4620,8 @@
       emptyTitle: "No meeting notes yet",
       rowClassName: "light-graph-row-meeting-notes",
       showLeadingIcon: false,
-      showTrailingChevron: false
+      showTrailingChevron: false,
+      showChips: false,
     });
   }
 
@@ -4737,7 +4740,10 @@
     if (leadingIcon) {
       row.append(leadingIcon);
     }
-    row.append(lightTextStack(record.title, graphListLabel(record)), graphObjectChips(record));
+    row.append(lightTextStack(record.title, graphListLabel(record)));
+    if (options.showChips !== false) {
+      row.append(graphObjectChips(record));
+    }
     if (trailingChevron) {
       row.append(trailingChevron);
     }
@@ -5612,6 +5618,8 @@
     const excludeKinds = new Set(
       Array.isArray(options.excludeKinds) ? options.excludeKinds.map(value => String(value || "").trim()).filter(Boolean) : []
     );
+    const dedupeTargets = options.dedupeTargets === true;
+    const seenTargets = dedupeTargets ? new Set() : null;
     const rows = [];
     links.forEach(link => {
       const isSource = String(link.source_kind) === currentKind && String(link.source_id) === currentId;
@@ -5622,6 +5630,15 @@
       }
       const relatedId = String(isSource ? link.target_id : link.source_id || "").trim();
       const related = workspaceRecordByKind(relatedKind, relatedId);
+      if (seenTargets) {
+        const dedupeKey = `${normalizedKind}:${String(related?.id || relatedId).trim()}`;
+        if (!dedupeKey.endsWith(":") && seenTargets.has(dedupeKey)) {
+          return;
+        }
+        if (!dedupeKey.endsWith(":")) {
+          seenTargets.add(dedupeKey);
+        }
+      }
       const label = String(related?.title || link.label || relatedId || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
       rows.push({
@@ -5682,6 +5699,7 @@
     const target = entry?.target || null;
     const related = entry?.related || null;
     const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
+    const showChips = options.showChips !== false;
     const row = el(
       isInteractive ? "button" : "div",
       [
@@ -5689,13 +5707,16 @@
         "light-feed-row",
         "light-graph-row",
         "light-linked-record-feed-row",
+        showChips ? "" : "is-no-chips",
         String(options.rowClassName || "").trim(),
       ].filter(Boolean).join(" ")
     );
     const title = String(related?.title || entry?.label || entry?.relatedId || graphKindLabel(kind)).trim() || graphKindLabel(kind);
-    const detail = related
-      ? graphListLabel(related)
-      : String(entry?.relation || graphKindLabel(kind)).trim() || graphKindLabel(kind);
+    const detail = typeof options.detailResolver === "function"
+      ? String(options.detailResolver(entry) || "").trim()
+      : related
+        ? graphListLabel(related)
+        : String(entry?.relation || graphKindLabel(kind)).trim() || graphKindLabel(kind);
     row.dataset.recordId = String(related?.id || entry?.relatedId || "").trim();
     row.dataset.linkedRecordKind = kind;
     row.dataset.linkedRecordId = String(entry?.relatedId || "").trim();
@@ -5710,12 +5731,15 @@
         options.openOptions || {}
       ));
     }
-    row.append(
-      lightSmallIcon(graphKindIcon(kind), graphKindAccentKey(kind)),
-      lightTextStack(title, detail),
-      lightLinkedRecordChips(entry),
-      isInteractive ? el("span", "light-chevron", ">") : el("span", "")
-    );
+    row.append(lightSmallIcon(graphKindIcon(kind), graphKindAccentKey(kind)), lightTextStack(title, detail));
+    if (showChips) {
+      row.append(lightLinkedRecordChips(entry));
+    }
+    if (isInteractive) {
+      row.append(el("span", "light-chevron", ">"));
+    } else if (showChips) {
+      row.append(el("span", ""));
+    }
     return row;
   }
 
@@ -5724,7 +5748,8 @@
     const showWhenEmpty = options.showWhenEmpty === true;
     const entries = workspaceLinkedEntries(record, {
       includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
-      excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : []
+      excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
+      dedupeTargets: options.dedupeTargets === true,
     });
     if (!entries.length && !showWhenEmpty) {
       return null;
@@ -5741,7 +5766,9 @@
       entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {
         fromRoute: options.fromRoute || state.route || "",
         rowClassName: options.rowClassName || "",
-        openOptions: options.openOptions || {}
+        openOptions: options.openOptions || {},
+        detailResolver: typeof options.detailResolver === "function" ? options.detailResolver : null,
+        showChips: options.showChips !== false,
       })));
     }
     section.append(header, body);
@@ -6898,6 +6925,26 @@
     return row;
   }
 
+  function projectConnectedDetail(entry) {
+    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
+    const kindLabel = graphKindLabel(kind);
+    const related = entry?.related || null;
+    if (!related) {
+      return String(entry?.relation || kindLabel).trim() || kindLabel;
+    }
+    if (kind === "calendar_event") {
+      return [kindLabel, calendarEventDayLabel(related), calendarEventTimeRange(related)].filter(Boolean).join(DOT);
+    }
+    if (kind === "contact") {
+      return [kindLabel, String(related.summary || "").trim()].filter(Boolean).join(DOT);
+    }
+    const timestamp = workspaceTimestamp(
+      related.event_at_ms || related.start_at_ms || related.due_at_ms || related.updated_at_ms,
+      ""
+    );
+    return [kindLabel, timestamp, String(related.summary || "").trim()].filter(Boolean).join(DOT);
+  }
+
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
@@ -6905,51 +6952,16 @@
     }
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
-    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`, "folder"));
-    page.append(lightChipCloud(projectChips(project)));
-    const grid = el("div", "light-project-section-grid");
-    [
-      ["Threads", "chat", projectThreads(project)],
-      ["Meetings", "record_voice_over", projectLinked(project, "meeting_note")],
-      ["Notes", "note", projectLinked(project, "note")],
-      ["Tasks", "checklist", projectLinked(project, "task")],
-      ["Calendar", "calendar", projectLinked(project, "calendar_event")],
-      ["Inbox", "text", projectLinked(project, "feed_item")],
-      ["People", "contacts", projectLinked(project, "contact")],
-      ["Reminders", "bell", projectLinked(project, "reminder")]
-    ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
-    page.append(grid);
+    page.classList.add("light-project-detail-page");
+    page.append(lightLinkedRecordSection(project, {
+      title: "Connected",
+      showWhenEmpty: true,
+      fromRoute: "project-detail",
+      dedupeTargets: true,
+      showChips: false,
+      detailResolver: projectConnectedDetail,
+    }));
     return page;
-  }
-
-  function lightProjectSection(title, icon, items) {
-    const section = el("section", "light-card light-project-section");
-    section.append(lightSmallIcon(icon), el("h3", "", title));
-    const list = el("div", "light-project-section-items");
-    const values = Array.isArray(items) && items.length ? items : ["Nothing linked yet"];
-    values.forEach(item => list.append(lightProjectSectionItem(item)));
-    section.append(list);
-    return section;
-  }
-
-  function lightProjectSectionItem(item) {
-    if (!item || typeof item !== "object") {
-      return el("span", "light-project-section-item", String(item || ""));
-    }
-    const interactive = Boolean(item.target?.route && item.target?.id && item.target?.selectedKey);
-    const row = el(interactive ? "button" : "span", interactive ? "light-project-section-item is-clickable" : "light-project-section-item");
-    if (interactive) {
-      row.type = "button";
-      row.dataset.workspaceTargetRoute = item.target.route;
-      row.dataset.workspaceTargetId = item.target.id;
-      row.dataset.workspaceTargetKind = item.target.kind || "";
-      row.addEventListener("click", () => openWorkspaceTarget(item.target, "project-detail"));
-    }
-    row.append(
-      el("span", "", item.label || ""),
-      interactive ? el("span", "light-chevron", ">") : el("span", "", item.detail || "")
-    );
-    return row;
   }
 
   function lightSettingsSurface() {
@@ -8052,27 +8064,6 @@
   function projectAssets(project) {
     const assets = project?.metadata?.assets;
     return Array.isArray(assets) ? assets.map(String).filter(Boolean) : [];
-  }
-
-  function projectLinked(project, kind) {
-    const links = Array.isArray(project?.links) ? project.links : [];
-    return links
-      .filter(link => (
-        String(link.source_kind) === "project" && String(link.target_kind) === kind
-      ) || (
-        String(link.target_kind) === "project" && String(link.source_kind) === kind
-      ))
-      .map(link => {
-        const isSource = String(link.source_kind) === "project";
-        const relatedKind = isSource ? link.target_kind : link.source_kind;
-        const relatedId = isSource ? link.target_id : link.source_id;
-        const related = workspaceRecordByKind(relatedKind, relatedId);
-        return {
-          label: String(related?.title || link.label || relatedId || kind),
-          detail: graphKindLabel(relatedKind),
-          target: workspaceTargetForKind(relatedKind, related?.id || relatedId)
-        };
-      });
   }
 
   function isLightDetailRoute(route) {
@@ -10099,7 +10090,9 @@
           void showMeetingDetail(card.meeting_record);
         }
       });
-      body.append(el("h2", "title", card.title || "Pucky"));
+      const copy = el("div", "card-meeting-copy");
+      copy.append(el("h2", "title", card.title || "Pucky"));
+      body.append(copy);
     } else {
       const title = el("button", "card-title-trigger title", card.title || "Pucky");
       title.type = "button";
@@ -10199,10 +10192,19 @@
 
     if (identity) {
       cardEl.append(identity, body, actions);
+    } else if (isMeetingList) {
+      const meta = el("div", "card-meeting-meta");
+      if (cardStamp) {
+        const stamp = el("time", "card-timestamp", cardStamp.text);
+        stamp.dateTime = cardStamp.iso;
+        meta.append(stamp);
+      }
+      meta.append(actions);
+      cardEl.append(body, meta);
     } else {
       cardEl.append(body, actions);
     }
-    if (cardStamp) {
+    if (cardStamp && !isMeetingList) {
       const stamp = el("time", "card-timestamp", cardStamp.text);
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
