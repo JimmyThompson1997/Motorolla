@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -19,7 +20,7 @@ def test_shipped_workspace_apps_are_marked_real() -> None:
         '{ route: "notes", label: "Notes", semantic: "notes", kind: "real" }',
         '{ route: "tasks", label: "Tasks", semantic: "tasks", kind: "real" }',
         '{ route: "calendar", label: "Calendar", semantic: "calendar", kind: "real" }',
-        '{ route: "projects", label: "Projects", semantic: "projects", kind: "real" }',
+        '{ route: "tags", label: "Tags", semantic: "tags", kind: "real" }',
         '{ route: "contacts", label: "Contacts", semantic: "contacts", kind: "real" }',
         '{ route: "connect", label: "Connect", semantic: "connect", kind: "real" }',
         '{ route: "settings", label: "Settings", semantic: "settings", kind: "real" }',
@@ -45,7 +46,36 @@ def test_shipped_workspace_semantic_ids_exist_in_registry() -> None:
         "notes",
         "tasks",
         "calendar",
-        "projects",
+        "tags",
         "contacts",
     ):
         assert f"{semantic_key}: {{ icon:" in ICON_SOURCE
+
+
+def test_shipped_semantic_registry_colors_are_unique_and_conservative() -> None:
+    entries = {
+        match.group("key"): (match.group("dark"), match.group("light"))
+        for match in re.finditer(
+            r'(?P<key>[a-z_]+): \{ icon: "[^"]+", colors: \{ dark: "(?P<dark>#[0-9a-f]{6})", light: "(?P<light>#[0-9a-f]{6})" \} \}',
+            ICON_SOURCE,
+        )
+    }
+    expected = {
+        "inbox": "#2563eb",
+        "connect": "#6366f1",
+        "meetings": "#0ea5e9",
+        "settings": "#64748b",
+        "messages": "#10b981",
+        "meeting_notes": "#14b8a6",
+        "reminders": "#f59e0b",
+        "notes": "#eab308",
+        "tasks": "#22c55e",
+        "calendar": "#ef4444",
+        "tags": "#f97316",
+        "contacts": "#f43f5e",
+    }
+    assert expected.keys() <= entries.keys()
+    for semantic_key, color in expected.items():
+        assert entries[semantic_key] == (color, color)
+    shipped_colors = [entries[semantic_key][0] for semantic_key in expected]
+    assert len(shipped_colors) == len(set(shipped_colors))

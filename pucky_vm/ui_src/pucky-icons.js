@@ -174,17 +174,17 @@ window.PUCKY_UI_ICONS = {
     }
   },
   SEMANTIC_ICON_REGISTRY: {
-    inbox: { icon: "mail", colors: { dark: "#8b63ff", light: "#8b63ff" } },
-    connect: { icon: "link", colors: { dark: "#4f61d8", light: "#4f61d8" } },
-    meetings: { icon: "mic", colors: { dark: "#0a84ff", light: "#0a84ff" } },
+    inbox: { icon: "mail", colors: { dark: "#2563eb", light: "#2563eb" } },
+    connect: { icon: "link", colors: { dark: "#6366f1", light: "#6366f1" } },
+    meetings: { icon: "mic", colors: { dark: "#0ea5e9", light: "#0ea5e9" } },
     settings: { icon: "settings", colors: { dark: "#64748b", light: "#64748b" } },
-    messages: { icon: "chat", colors: { dark: "#226fe8", light: "#226fe8" } },
-    meeting_notes: { icon: "record_voice_over", colors: { dark: "#0ea5e9", light: "#0ea5e9" } },
+    messages: { icon: "chat", colors: { dark: "#10b981", light: "#10b981" } },
+    meeting_notes: { icon: "record_voice_over", colors: { dark: "#14b8a6", light: "#14b8a6" } },
     reminders: { icon: "bell", colors: { dark: "#f59e0b", light: "#f59e0b" } },
-    notes: { icon: "note", colors: { dark: "#f2a000", light: "#f2a000" } },
+    notes: { icon: "note", colors: { dark: "#eab308", light: "#eab308" } },
     tasks: { icon: "checklist", colors: { dark: "#22c55e", light: "#22c55e" } },
-    calendar: { icon: "calendar", colors: { dark: "#ff443a", light: "#ff443a" } },
-    tags: { icon: "sell", colors: { dark: "#0f9fb8", light: "#0f9fb8" } },
-    contacts: { icon: "contacts", colors: { dark: "#f43f68", light: "#f43f68" } }
+    calendar: { icon: "calendar", colors: { dark: "#ef4444", light: "#ef4444" } },
+    tags: { icon: "sell", colors: { dark: "#f97316", light: "#f97316" } },
+    contacts: { icon: "contacts", colors: { dark: "#f43f5e", light: "#f43f5e" } }
   }
 };
