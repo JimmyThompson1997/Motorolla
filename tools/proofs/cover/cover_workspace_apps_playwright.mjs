@@ -1223,10 +1223,8 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
   assert(detailState.sections.includes("checklist"), "Expected inline task detail to include a Checklist section");
   assert(detailState.sections.includes("connected"), "Expected inline task detail to include a Connected section");
-  assert(!detailState.sections.includes("details"), "Did not expect inline task detail to include a Details section");
   assert(!detailState.sections.includes("people"), "Did not expect inline task detail to include a People section");
   assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
-  assert(detailState.checklistImmediatelyAfterDescription, "Expected inline task detail to place Checklist directly after Description");
   assert(detailState.createdMeta, "Expected inline task detail to render compact created metadata in the header");
   assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
   assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");

@@ -4160,17 +4160,39 @@
   function lightCalendarEventBlock(event, index = 0) {
     const block = el("article", `light-event-block ${calendarEventColor(event, index)}`);
     block.dataset.eventId = event.id;
-    const open = el("button", "light-event-main");
-    open.type = "button";
-    open.addEventListener("click", () => {
+    block.setAttribute("role", "button");
+    block.tabIndex = 0;
+    block.setAttribute("aria-label", event.title || "Open event");
+    const openEvent = () => {
       state.selectedMeetingId = event.id;
       lightNavigate("meeting-detail", { from: "calendar" });
+    };
+    block.addEventListener("click", event => {
+      if (event.target instanceof Element && event.target.closest(".light-attendee-chip")) {
+        return;
+      }
+      openEvent();
     });
-    open.append(
+    block.addEventListener("keydown", event => {
+      if (event.target !== block) {
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openEvent();
+      }
+    });
+    const main = el("button", "light-event-main");
+    main.type = "button";
+    main.addEventListener("click", event => {
+      event.stopPropagation();
+      openEvent();
+    });
+    main.append(
       el("span", "light-event-time", calendarEventTimeRange(event)),
       el("strong", "light-event-title", event.title || "Untitled event"),
     );
-    block.append(open);
+    block.append(main);
     const chips = lightCalendarEventChips(event, { fromRoute: "calendar", contactsOnly: true });
     if (chips) {
       block.append(chips);
@@ -4469,11 +4491,11 @@
     }
     if (descriptor.variant === "canonical_reply") {
       const card = descriptor.meta?.card;
-      return cardView(card, { flatFeed: descriptor.renderMode === "flat" });
+      return cardView(card, { surface: descriptor.surface, flatFeed: descriptor.renderMode === "flat" });
     }
     if (descriptor.variant === "canonical_meeting") {
       const meeting = descriptor.meta?.meeting;
-      return cardView(meetingCardFromRecord(meeting), { flatFeed: descriptor.renderMode === "flat" });
+      return cardView(meetingCardFromRecord(meeting), { surface: descriptor.surface, flatFeed: descriptor.renderMode === "flat" });
     }
     return el("div", "light-feed-row");
   }
@@ -9960,6 +9982,7 @@
 
   function cardView(card, options = {}) {
     const flatFeed = Boolean(options.flatFeed);
+    const surface = String(options.surface || "").trim().toLowerCase();
     if (isPendingOutboundCard(card)) {
       return outboundCardView(card, options);
     }
@@ -9967,6 +9990,7 @@
       return meetingProcessingCardView(card, options);
     }
     const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");
+    setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const isMeetingList = isMeetingsListCard(card);
     const cardClassName = isMeetingList
@@ -9975,6 +9999,7 @@
         ? "card"
         : "card card-unread";
     const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);
+    setDataAttribute(cardEl, "data-card-surface", surface);
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, isMeetingList ? "meeting" : "reply");
     setDataAttribute(cardEl, "data-audio-phase", currentTileAudioPhase(card));
@@ -10058,6 +10083,7 @@
     }
 
     const actions = el("div", "card-actions");
+    setDataAttribute(actions, "data-card-surface", surface);
     if (hasAudio(card)) {
       const audioPhase = currentTileAudioPhase(card);
       const audio = el("button", audioPhase === "playing_confirmed"
@@ -10115,6 +10141,7 @@
         actions.append(file);
       }
     }
+    actions.classList.add(`action-count-${Math.min(2, actions.childElementCount)}`);
 
     if (identity) {
       cardEl.append(identity, body, actions);
@@ -10186,9 +10213,12 @@
 
   function meetingProcessingCardView(card, options = {}) {
     const flatFeed = Boolean(options.flatFeed);
+    const surface = String(options.surface || "").trim().toLowerCase();
     const wrapper = el("div", flatFeed ? "card-wrap card-wrap-meeting-processing is-flat-feed" : "card-wrap card-wrap-meeting-processing");
+    setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardEl = el("article", flatFeed ? "card card-meeting-processing is-flat-feed" : "card card-meeting-processing");
+    setDataAttribute(cardEl, "data-card-surface", surface);
     applyCardDataAttributes(cardEl, card, "meeting_processing");
     const mark = el("div", "meeting-processing-mark");
     mark.innerHTML = iconSvg("mic", { filled: true });
@@ -10208,12 +10238,15 @@
 
   function outboundCardView(card, options = {}) {
     const flatFeed = Boolean(options.flatFeed);
+    const surface = String(options.surface || "").trim().toLowerCase();
     const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");
+    setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const cardClassName = isFailedPendingOutboundCard(card)
       ? "card card-outbound is-failed"
       : "card card-outbound";
     const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);
+    setDataAttribute(cardEl, "data-card-surface", surface);
     cardEl.style.setProperty("--accent", card.accent || "#72c2ff");
     applyCardDataAttributes(cardEl, card, "pending_outbound");
     applyCardActionData(cardEl, "transcript", card, "pending_outbound");

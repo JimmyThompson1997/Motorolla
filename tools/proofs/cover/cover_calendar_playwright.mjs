@@ -598,6 +598,16 @@ async function selectCalendarEventById(page, seed, eventSuffix, expectedTitle) {
   await waitForHeaderText(page, expectedTitle);
 }
 
+async function selectCalendarEventByContainer(page, seed) {
+  const eventCard = page.locator(proofEventSelector(seed)).first();
+  await eventCard.scrollIntoViewIfNeeded();
+  const box = await eventCard.boundingBox();
+  assert(box, "Expected the calendar proof event to expose a clickable container box.");
+  await page.mouse.click(box.x + (box.width * 0.88), box.y + (box.height * 0.78));
+  await waitForHeaderText(page, "Proof freelance review call");
+  assert(await currentLightRoute(page) === "meeting-detail", `Expected calendar body click to open meeting-detail, got ${await currentLightRoute(page)}.`);
+}
+
 async function selectCalendarDetailTarget(page, route, targetId, expectedText) {
   await page.locator(
     `.light-linked-records-section[data-linked-records-title="connected"] [data-workspace-target-route="${route}"][data-workspace-target-id="${targetId}"]`
@@ -767,7 +777,13 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected event-detail Back to preserve the selected day.");
-    summary.assertions.push(`desktop ${theme} calendar detail kept Connected feed-row navigation, empty shells, and Back restoration`);
+    await selectCalendarEventByContainer(page, seed);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-container-click.png`, summary);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from container-tap event detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected container-tap Back to preserve the selected day.");
+    summary.assertions.push(`desktop ${theme} calendar detail kept Connected feed-row navigation, container taps, empty shells, and Back restoration`);
 
     await setCalendarDate(page, seed.emptyDay);
     await page.locator(".light-empty-state").waitFor({ state: "visible" });
@@ -909,6 +925,10 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     }
     assert(await mobileConnectedRows.count() === 5, `Expected mobile Connected to render five linked rows, got ${await mobileConnectedRows.count()}.`);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    await selectCalendarEventByContainer(page, seed);
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-container-click.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     const metrics = await stickyMetrics(page);

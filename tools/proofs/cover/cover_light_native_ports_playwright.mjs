@@ -918,6 +918,7 @@ async function main() {
     assert(rowsMatch(darkFeedRows, inboxRows), "Light Inbox cards did not match the canonical dark Home feed rows");
     const lightInboxCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card");
     assertFlatCardShell(lightInboxCardStyle, "Light Inbox");
+    assert(lightInboxCardStyle.color !== darkFeedCardStyle.color, "Light Inbox cards should still switch to light-theme text contrast");
     const lightInboxScroll = await readScrollReachability(
       lightPage,
       ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card",

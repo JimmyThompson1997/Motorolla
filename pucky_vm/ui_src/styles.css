@@ -6074,6 +6074,58 @@ button {
   padding-left: 12px;
 }
 
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  column-gap: 4px;
+  padding: 8px 8px 8px 6px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .identity {
+  width: 38px;
+  height: 48px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .identity .material-icon {
+  width: 27px;
+  height: 27px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-body.is-flat-feed {
+  padding: 0 4px 0 6px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions {
+  min-width: 0;
+  gap: 4px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-0 {
+  width: 0;
+  min-width: 0;
+  gap: 0;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-1 {
+  width: 38px;
+  min-width: 38px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-2 {
+  width: 80px;
+  min-width: 80px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .action {
+  width: 38px;
+  height: 38px;
+  padding: 5px;
+}
+
+.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .action .material-icon {
+  width: 24px;
+  height: 24px;
+}
+
 .card.card-meeting-list.is-flat-feed .card-body.is-flat-feed {
   padding-left: 0;
 }
