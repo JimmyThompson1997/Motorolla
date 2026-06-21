@@ -242,7 +242,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'title: "Connected"' in light_meeting_detail
     assert 'excludeKinds: ["contact"]' in light_meeting_detail
     assert "showWhenEmpty: true" in light_meeting_detail
+    assert 'showChips: false,' in light_meeting_detail
     assert 'showChevron: false,' in light_meeting_detail
+    assert 'variant: "flat",' in light_meeting_detail
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' not in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     linked_record_section = function_block(app, "lightLinkedRecordSection")
@@ -406,6 +408,7 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
+    light_date_picker = function_block(app, "lightDatePicker")
     light_header = function_block(app, "lightHeader")
 
     assert 'notes: "Notes"' in routes
@@ -423,11 +426,13 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (bucket.loaded && !workspaceItems(collection).length) {' in light_workspace_status
     assert 'headerChrome: lightDatePicker()' in light_calendar_page
     assert 'page.append(lightDatePicker())' not in light_calendar_page
+    assert 'const today = el("button", "light-calendar-today-button", "Today");' not in light_date_picker
     assert 'action: lightIconButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' in light_calendar_page
     assert 'action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' not in light_calendar_page
     assert "if (options.headerChrome)" in light_header
     assert 'if (bucket.error) {' in light_calendar_page
     assert 'if (!bucket.loaded) {' in light_calendar_page
+    assert ".light-calendar-today-button" not in styles
     calendar_settings_button = css_block(styles, ".light-calendar-settings-button")
     assert "background: transparent;" in calendar_settings_button
     assert "border: none;" in calendar_settings_button

@@ -4011,15 +4011,6 @@
       lightCalendarStripNavButton(1)
     );
     controls.append(nav, field);
-    if (selectedCalendarDateKey() !== calendarTodayDateKey()) {
-      const today = el("button", "light-calendar-today-button", "Today");
-      today.type = "button";
-      today.addEventListener("click", () => {
-        state.selectedCalendarDate = calendarTodayDateKey();
-        render();
-      });
-      controls.append(today);
-    }
     top.append(el("h2", "light-date-picker-title", calendarMonthHeading()), controls);
     const strip = el("div", "light-calendar-day-strip");
     strip.setAttribute("aria-label", "Calendar days");
@@ -4267,7 +4258,9 @@
       title: "Connected",
       excludeKinds: ["contact"],
       showWhenEmpty: true,
+      showChips: false,
       showChevron: false,
+      variant: "flat",
       fromRoute: "meeting-detail"
     }));
     if (Array.isArray(meta.agenda) && meta.agenda.length) {

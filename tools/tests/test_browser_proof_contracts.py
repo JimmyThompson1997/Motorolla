@@ -159,9 +159,19 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "Expected calendar settings button to drop the circular shell border" in source
     assert "Expected calendar settings button to drop the circular shell fill" in source
     assert "Expected calendar settings button to drop the circular shell shadow" in source
+    assert "Expected off-today calendar header to stay free of Today CTA" in source
+    assert "Expected mobile off-today calendar header to stay free of Today CTA" in source
+    assert "Expected Connected rows to omit linked-record chips on desktop detail" in source
+    assert "Expected mobile Connected rows to omit linked-record chips" in source
+    assert "Expected Connected section to render inside one shared flat-feed shell on desktop detail" in source
+    assert "Expected mobile Connected section to render inside one shared flat-feed shell" in source
     assert 'calendar-desktop-${theme}-chrome.png' in source
+    assert 'calendar-desktop-${theme}-off-today.png' in source
+    assert 'calendar-desktop-${theme}-connected.png' in source
     assert 'calendar-desktop-${theme}-settings-button.png' in source
     assert 'calendar-mobile-${theme}-chrome.png' in source
+    assert 'calendar-mobile-${theme}-off-today.png' in source
+    assert 'calendar-mobile-${theme}-connected.png' in source
     assert 'calendar-mobile-${theme}-settings-button.png' in source
     assert "scrollDayStripWithButton(page, 1)" in source
     assert "scrollDayStripDirect(page, 220)" in source
