@@ -387,10 +387,22 @@ function assertDetailParity(label, left, right) {
 }
 
 async function closeDetail(page, timeoutMs) {
-  if (!await page.locator(".detail-panel.is-open").count()) {
+  const openPanel = page.locator(".detail-panel.is-open").first();
+  if (!await openPanel.count()) {
     return;
   }
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  let closed = await page.locator(".detail-panel.is-open").waitFor({ state: "hidden", timeout: 1_500 }).then(() => true).catch(() => false);
+  if (!closed) {
+    const back = page.locator("#detail .light-back-button, #detail .detail-back").first();
+    if (await back.count()) {
+      await back.click({ timeout: Math.min(2_000, timeoutMs), force: true }).catch(() => {});
+    }
+    closed = await page.locator(".detail-panel.is-open").waitFor({ state: "hidden", timeout: 1_500 }).then(() => true).catch(() => false);
+  }
+  if (!closed) {
+    await page.keyboard.press("Escape").catch(() => {});
+  }
   await page.locator(".detail-panel.is-open").waitFor({ state: "hidden", timeout: timeoutMs });
 }
 
