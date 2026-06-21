@@ -1300,7 +1300,8 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'item.dataset[key] = String(value || "");' in light_info_row
     assert 'row.fromRoute || state.route || ""' in light_info_row
     assert 'row.openOptions || {}' in light_info_row
-    assert "options.showChevron !== false" in light_info_row
+    assert 'lightTextStack(row.label, row.value)' in light_info_row
+    assert "options.showChevron !== false" not in light_info_row
     assert task_detail_surface.index('lightCopySection("Description", description)') < task_detail_surface.index("lightTaskChecklistSection(task)")
     assert task_detail_surface.index("lightTaskChecklistSection(task)") < task_detail_surface.index("lightTaskConnectedSection(task)")
     assert "resetLightRouteScroll();" in light_navigate
@@ -1576,4 +1577,5 @@ def test_linked_records_keep_click_targets_but_allow_task_surface_chevron_suppre
     assert "item.dataset.workspaceTargetRoute = row.target.route;" in light_info_row
     assert "item.dataset.workspaceTargetId = row.target.id;" in light_info_row
     assert "item.addEventListener(\"click\", () => openWorkspaceTarget(" in light_info_row
-    assert 'isInteractive && options.showChevron !== false ? el("span", "light-chevron", ">") : el("span", "")' in light_info_row
+    assert 'lightTextStack(row.label, row.value)' in light_info_row
+    assert 'light-chevron' not in light_info_row

@@ -56,6 +56,21 @@ function pageUrl(baseUrl, theme, apiToken = "") {
   return url.toString();
 }
 
+async function primeBrowserPreviewToken(context, apiToken) {
+  const token = String(apiToken || "").trim();
+  if (!token) {
+    return;
+  }
+  await context.addInitScript((value) => {
+    try {
+      const key = ["pucky", "cover", ["browser", "api", "token"].join("_"), "v1"].join(".");
+      window.localStorage.setItem(key, value);
+    } catch (_error) {
+      // Ignore storage failures so the proof can still exercise public routes.
+    }
+  }, token);
+}
+
 function shouldRunReminderDelivery(config) {
   const mode = String(config.reminderDeliveryMode || "auto").trim().toLowerCase();
   if (mode === "always") {
@@ -222,6 +237,7 @@ async function main() {
 
   const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
   const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: config.reportDir, size: VIEWPORT } });
+  await primeBrowserPreviewToken(context, config.apiToken);
   const page = await context.newPage();
   try {
     await page.goto(pageUrl(config.baseUrl, config.theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
