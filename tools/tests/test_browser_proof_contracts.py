@@ -115,6 +115,13 @@ def test_live_notes_centering_proof_seeds_saved_browser_token_and_verifies_patch
     assert "second PATCH returned 401" in source
 
 
+def test_task_workspace_proof_page_url_seeds_api_token_for_preview_writes() -> None:
+    source = read_source("task_workspace_proof_shared.mjs")
+
+    assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' in source
+    assert "void apiToken;" not in source
+
+
 def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:
     source = read_source("cover_notes_detail_flash_playwright.mjs")
     scoring = read_source("notes_detail_flash_scoring.mjs")

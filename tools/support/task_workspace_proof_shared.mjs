@@ -561,7 +561,9 @@ export function proofPageUrl(baseUrl, apiToken, options = {}) {
   if (String(options.refreshKey || "").trim()) {
     url.searchParams.set("_pucky_refresh", String(options.refreshKey || "").trim());
   }
-  void apiToken;
+  if (String(apiToken || "").trim()) {
+    url.searchParams.set("api_token", String(apiToken || "").trim());
+  }
   return url.toString();
 }
 

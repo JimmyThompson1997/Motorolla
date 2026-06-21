@@ -1091,6 +1091,7 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     task_group = function_block(app, "lightTaskGroup")
     task_detail_rows = function_block(app, "taskDetailRows")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
+    task_checklist_section = function_block(app, "lightTaskChecklistSection")
     task_people_section = function_block(app, "lightTaskPeopleSection")
     task_connected_rows = function_block(app, "taskConnectedRows")
     task_connected_section = function_block(app, "lightTaskConnectedSection")
@@ -1158,9 +1159,19 @@ def test_tasks_use_people_rows_connected_section_single_status_trigger_and_reset
     assert 'const connected = lightTaskConnectedSection(task);' in task_detail_surface
     assert "surface.append(connected);" in task_detail_surface
     assert "lightHtmlDocument(task" not in task_detail_surface
+    assert "taskMutationPending: {}," in app
     assert "function updateTaskStatus(taskId, nextStatus)" in app
-    assert "function toggleTaskChecklistItem" not in app
+    assert "function taskMutationPending(taskId, scope)" in app
+    assert "function setTaskMutationPending(taskId, scope, pending)" in app
+    assert "async function toggleTaskChecklistItem(task, itemId)" in app
     assert "function openTaskStatusSelector(task, source)" in app
+    assert 'const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");' in task_checklist_section
+    assert 'row.type = "button";' in task_checklist_section
+    assert 'row.dataset.checklistDone = item.done ? "true" : "false";' in task_checklist_section
+    assert 'row.setAttribute("aria-pressed", item.done ? "true" : "false");' in task_checklist_section
+    assert 'row.disabled = taskMutationPending(taskRecordId(task), item.id);' in task_checklist_section
+    assert 'row.addEventListener("click", event => {' in task_checklist_section
+    assert 'void toggleTaskChecklistItem(task, item.id);' in task_checklist_section
     task_detail_card = function_block(app, "lightTaskDetailCard")
     assert "function lightTaskStatusControl" not in app
     assert 'const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
