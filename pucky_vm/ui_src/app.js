@@ -3916,7 +3916,7 @@
       return page;
     }
     list.append(...contactsListItems().map(contact => {
-      const row = el("button", "light-card light-contact-row");
+      const row = el("button", "light-contact-row light-feed-row is-flat-feed");
       row.type = "button";
       row.dataset.contactId = contact.id;
       row.addEventListener("click", () => {

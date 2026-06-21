@@ -4653,39 +4653,26 @@ button {
 }
 
 .light-contacts-page {
-  gap: 18px;
+  gap: 0;
 }
 
 .light-contact-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 0 4px 84px;
+  gap: 0;
+  padding: 0 0 84px;
 }
 
 .light-contact-row {
-  min-height: 88px;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 18px;
-  padding: 13px 20px;
-  border-radius: 19px;
-}
-
-.light-contact-row .light-avatar {
-  width: 60px;
-  height: 60px;
-  font-size: 20px;
-}
-
-.light-contact-row .light-text-stack strong {
-  font-size: 22px;
-  line-height: 1.02;
-  font-weight: 860;
-}
-
-.light-contact-row .light-text-stack span {
-  font-size: 16px;
-  line-height: 1.15;
+  min-height: 74px;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .light-profile-card {
