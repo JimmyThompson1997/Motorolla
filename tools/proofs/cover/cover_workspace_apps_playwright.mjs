@@ -2289,8 +2289,8 @@ async function readGraphDetailState(page) {
 
 async function readMeetingNoteDetailState(page) {
   return page.evaluate(() => {
-    const shell = document.querySelector(".light-shell");
-    const detail = shell?.querySelector('.light-page[data-light-route="meeting-note-detail"]') || shell;
+    const shell = document.querySelector('.light-shell[data-light-route="meeting-note-detail"]') || document.querySelector(".light-shell");
+    const detail = shell?.querySelector(".light-page") || shell;
     const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
       .map(node => String(node.textContent || "").trim().toUpperCase())
       .filter(Boolean);
