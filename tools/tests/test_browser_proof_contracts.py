@@ -173,8 +173,9 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert 'calendar-mobile-${theme}-off-today.png' in source
     assert 'calendar-mobile-${theme}-connected.png' in source
     assert 'calendar-mobile-${theme}-settings-button.png' in source
-    assert "scrollDayStripWithButton(page, 1)" in source
-    assert "scrollDayStripDirect(page, 220)" in source
+    assert "scrollDayStripToDay(page, firstDayKey, \"start\")" in source
+    assert "continueDayStripBeyondEdge(page, \"left\")" in source
+    assert "continueDayStripBeyondEdge(page, \"right\")" in source
 
 
 def test_task_workspace_proof_page_url_keeps_hosted_page_access_token_free() -> None:
@@ -585,3 +586,25 @@ def test_calendar_and_hosted_bug_hunt_proofs_cover_event_container_clicks() -> N
     assert "calendar-mobile-${theme}-detail-container-click.png" in calendar_source
     assert "Expected calendar body click to open meeting-detail" in calendar_source
     assert 'openerSelector: ".light-event-block"' in hosted_source
+
+
+def test_calendar_browser_proof_covers_continuous_month_rail_contract() -> None:
+    calendar_source = read_source("cover_calendar_playwright.mjs")
+
+    assert "rendered_month_keys" in calendar_source
+    assert "visible_day_keys" in calendar_source
+    assert "selected_day_before_scroll" in calendar_source
+    assert "selected_month_before_scroll" in calendar_source
+    assert "calendar-desktop-${theme}-selected-month-left-edge.png" in calendar_source
+    assert "calendar-desktop-${theme}-selected-month-right-edge.png" in calendar_source
+    assert "calendar-desktop-${theme}-continued-prev-month.png" in calendar_source
+    assert "calendar-desktop-${theme}-continued-next-month.png" in calendar_source
+    assert "calendar-desktop-${theme}-adjacent-month-selected.png" in calendar_source
+    assert "calendar-mobile-${theme}-selected-month-left-edge.png" in calendar_source
+    assert "calendar-mobile-${theme}-selected-month-right-edge.png" in calendar_source
+    assert "calendar-mobile-${theme}-continued-prev-month.png" in calendar_source
+    assert "calendar-mobile-${theme}-continued-next-month.png" in calendar_source
+    assert "calendar-mobile-${theme}-adjacent-month-selected.png" in calendar_source
+    assert "Expected the selected month to expose day 1 on the rail" in calendar_source
+    assert "Expected passive rail scrolling to keep the selected date input stable" in calendar_source
+    assert "Expected no desktop calendar rail chevrons to remain" in calendar_source

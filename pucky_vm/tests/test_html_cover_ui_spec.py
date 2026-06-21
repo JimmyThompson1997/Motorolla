@@ -202,12 +202,15 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     app = read("app.js")
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
+    light_date_picker = function_block(app, "lightDatePicker")
     light_event_block = function_block(app, "lightCalendarEventBlock")
     light_attendee_chip = function_block(app, "lightAttendeeChip")
     light_info_section = function_block(app, "lightInfoSection")
     light_project_row = function_block(app, "lightProjectRow")
     light_linked_record_feed_row = function_block(app, "lightLinkedRecordFeedRow")
     light_record_chip = function_block(app, "lightRecordChip")
+    build_calendar_day_rail = function_block(app, "buildCalendarDayRail")
+    continue_calendar_day_rail = function_block(app, "continueCalendarDayRail")
 
     assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
     assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)," in app
@@ -268,7 +271,18 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "calendarEventTypeFiltersCard()" in app
     assert 'const sheet = el("section", "settings-selector-sheet calendar-settings-panel");' in app
     assert "trace-sheet settings-sheet calendar-settings-sheet" not in app
-    assert 'return typeof window !== "undefined" && window.innerWidth >= 768 ? 21 : 15;' in app
+    assert "lightCalendarStripNavButton" not in light_date_picker
+    assert "buildCalendarDayRail(strip, selectedCalendarDateKey());" in light_date_picker
+    assert 'strip.addEventListener("scroll", () => queueCalendarDayRailContinuation(strip));' in light_date_picker
+    assert "function calendarMonthKey(value = selectedCalendarDateKey()) {" in app
+    assert "function calendarMonthDayKeys(monthKey) {" in app
+    assert "function calendarDayRailMonthKeys(dayKey = selectedCalendarDateKey()) {" in app
+    assert "state.calendarDayRailStartMonth" in app
+    assert "state.calendarDayRailEndMonth" in app
+    assert "calendarStripWindowSize" not in app
+    assert "calendarStripDays(" not in app
+    assert "queueCalendarDayStripCenter(strip, targetDayKey);" in build_calendar_day_rail
+    assert "state.selectedCalendarDate" not in continue_calendar_day_rail
     assert 'localStorage.setItem("pucky.cover.calendar_type_filters.v1"' in app
     light_info_row = function_block(app, "lightInfoRow")
     assert 'openWorkspaceTarget(' in light_info_row
@@ -279,6 +293,20 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'lightNavigate("project-detail", { from: "projects" });' in light_project_row
     assert "event.stopPropagation();" in light_attendee_chip
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
+
+
+def test_calendar_day_rail_styles_and_contracts_follow_continuous_month_model() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert ".light-calendar-day-strip {" in styles
+    assert "overflow-x: auto;" in styles
+    assert "padding: 2px max(0px, calc((100% - 58px) / 2)) 4px;" not in styles
+    assert ".light-calendar-strip-nav" not in styles
+    assert ".light-calendar-strip-nav-button" not in styles
+    assert 'chip.dataset.month = calendarMonthKey(dayKey);' in app
+    assert "function appendCalendarDayRailMonth(strip, monthKey) {" in app
+    assert "function prependCalendarDayRailMonth(strip, monthKey) {" in app
 
 
 def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None:
@@ -315,7 +343,7 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert "overflow-y: visible;" in styles
     assert ".light-page-header-shell {\n  position: sticky;" in styles
     assert ".light-date-picker {\n  position: sticky;" not in styles
-    assert ".light-calendar-strip-nav-button" in styles
+    assert ".light-calendar-strip-nav-button" not in styles
     assert "grid-auto-columns: 58px;" in styles
     assert "scroll-snap-type: x proximity;" in styles
     assert ".settings-selector-overlay.calendar-settings-overlay" in styles

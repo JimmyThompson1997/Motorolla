@@ -162,6 +162,7 @@ def test_tools_package_exposes_live_user_session_script() -> None:
 
     assert payload["scripts"]["test:cover-live-user-session"] == "node ./proofs/cover/cover_live_user_session_playwright.mjs"
     assert payload["scripts"]["test:cover-universal-feed-tiles"] == "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs"
+    assert payload["scripts"]["test:cover-calendar"] == "node ./proofs/cover/cover_calendar_playwright.mjs"
 
 
 def test_tools_package_exposes_inbox_related_proofs() -> None:
@@ -176,6 +177,7 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
 
     assert "cover_light_native_ports_playwright.mjs" in source
     assert "cover_inbox_tile_audio_truth_playwright.mjs" in source
+    assert "cover_calendar_playwright.mjs" in source
     assert "cover_live_user_session_playwright.mjs" in source
     assert "--skip-canonical-check" in source
     assert "127.0.0.1:8768" in source
@@ -191,6 +193,8 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
     assert 'live_root / "light-native-ports" / browser_name / run_name' in source
     assert "cover_universal_feed_tiles_playwright.mjs" in source
+    assert 'proof-local-calendar' in source
+    assert 'proof-live-calendar' in source
     assert 'proof-local-universal-tiles' in source
     assert 'proof-live-universal-tiles' in source
 
@@ -207,4 +211,8 @@ def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_
     assert "selectCalendarEventByContainer" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-container-click.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-container-click.png" in calendar_source
+    assert "Expected no desktop calendar rail chevrons to remain" in calendar_source
+    assert "Expected passive rail scrolling to keep the selected date input stable" in calendar_source
+    assert "calendar-desktop-${theme}-adjacent-month-selected.png" in calendar_source
+    assert "calendar-mobile-${theme}-adjacent-month-selected.png" in calendar_source
     assert 'openerSelector: ".light-event-block"' in hosted_source
