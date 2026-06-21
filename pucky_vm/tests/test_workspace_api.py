@@ -236,11 +236,12 @@ def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> No
 
         project = request_json(
             base_url,
-            "/api/workspace/projects",
+            "/api/workspace/tags",
             method="POST",
             token="test-token",
             body={"id": "api-project", "title": "API Project", "metadata": {"threads": ["Thread A", "Thread B"]}},
         )
+        assert project["collection"] == "tags"
         assert project["metadata"]["threads"] == ["Thread A", "Thread B"]
 
         link = request_json(
@@ -258,8 +259,10 @@ def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> No
             },
         )
         assert link["target_id"] == "api-note"
-        linked_project = request_json(base_url, "/api/workspace/projects/api-project")
+        linked_project = request_json(base_url, "/api/workspace/tags/api-project")
         assert any(item["target_id"] == "api-note" for item in linked_project["links"])
+        linked_project_alias = request_json(base_url, "/api/workspace/projects/api-project")
+        assert linked_project_alias["id"] == "api-project"
 
         contact = request_json(
             base_url,
@@ -340,7 +343,7 @@ def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> No
         assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_reminder["links"])
         assert any(item["target_kind"] == "meeting_note" and item["target_id"] == "api-meeting-note" for item in linked_reminder["links"])
 
-        linked_project = request_json(base_url, "/api/workspace/projects/api-project")
+        linked_project = request_json(base_url, "/api/workspace/tags/api-project")
         assert any(item["target_kind"] == "contact" and item["target_id"] == "api-contact" for item in linked_project["links"])
         assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_project["links"])
         assert any(item["target_kind"] == "note" and item["target_id"] == "api-note" for item in linked_project["links"])

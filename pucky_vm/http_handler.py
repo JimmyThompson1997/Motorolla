@@ -22,7 +22,7 @@ from .http_surface import (
 from .links_portal import _links_portal_document
 from .ui_bundle import UI_SRC, bundle_config_script
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
-from .workspace_store import WORKSPACE_COLLECTIONS
+from .workspace_store import WORKSPACE_COLLECTIONS, canonical_collection_name
 
 if TYPE_CHECKING:
     from .server import PuckyVoiceService
@@ -735,7 +735,10 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             suffix = str(path or "").removeprefix("/api/workspace/").strip("/")
             if not suffix:
                 return []
-            return [unquote(part).strip() for part in suffix.split("/") if part.strip()]
+            parts = [unquote(part).strip() for part in suffix.split("/") if part.strip()]
+            if parts:
+                parts[0] = canonical_collection_name(parts[0])
+            return parts
 
         def _allows_public_browser_user_read(self, path: str) -> bool:
             value = str(path or "").strip()

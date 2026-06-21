@@ -28,7 +28,7 @@ def test_hosted_bug_hunt_runner_writes_required_artifacts_and_route_order() -> N
     assert '"Notes"' in source
     assert '"Tasks"' in source
     assert '"Calendar"' in source
-    assert '"Projects"' in source
+    assert '"Tags"' in source
     assert '"Contacts"' in source
     assert '"Connect"' in source
     assert '"Settings"' in source

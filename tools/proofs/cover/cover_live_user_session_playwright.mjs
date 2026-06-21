@@ -31,7 +31,7 @@ const REQUIRED_HOME_ROUTES = [
   "notes",
   "tasks",
   "calendar",
-  "projects",
+  "tags",
   "contacts",
 ];
 const UNIVERSAL_FEED_TILE_ROUTES = [
@@ -40,7 +40,7 @@ const UNIVERSAL_FEED_TILE_ROUTES = [
   "meeting-notes",
   "reminders",
   "notes",
-  "projects",
+  "tags",
 ];
 const LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"];
 const TASK_LINKS = [
@@ -60,8 +60,8 @@ const TASK_LINKS = [
   },
   {
     kind: "project",
-    label: "project",
-    route: "project-detail",
+    label: "tag",
+    route: "tag-detail",
     idKey: "projectId",
     titleKey: "projectTitle",
   },
@@ -147,6 +147,7 @@ function parseArgs(argv) {
     runId: `live-user-session-${Date.now()}`,
     keepSeed: false,
     reportDir: path.resolve(".tmp", "live-user-session-proof", timestampSlug()),
+    routes: [],
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -160,6 +161,11 @@ function parseArgs(argv) {
       config.reportDir = path.resolve(String(argv[++index] || config.reportDir));
     } else if (arg === "--run-id" && argv[index + 1]) {
       config.runId = String(argv[++index] || config.runId);
+    } else if (arg === "--routes" && argv[index + 1]) {
+      config.routes = String(argv[++index] || "")
+        .split(",")
+        .map(value => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
     } else if (arg === "--keep-seed") {
       config.keepSeed = true;
     }
@@ -323,6 +329,14 @@ function seriousConsoleErrors(messages) {
     /unhandled/i,
   ];
   return messages.filter(message => patterns.some(pattern => pattern.test(String(message || ""))));
+}
+
+function shouldRunRoute(config, route) {
+  const requested = Array.isArray(config?.routes) ? config.routes : [];
+  if (!requested.length) {
+    return true;
+  }
+  return requested.includes(String(route || "").trim().toLowerCase());
 }
 
 async function waitForRoute(page, route, timeoutMs) {
@@ -611,6 +625,49 @@ async function readContactsListFlatness(page) {
   });
 }
 
+async function readContactsSearchState(page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector(".light-shell");
+    const search = document.querySelector(".light-contacts-search");
+    const rows = Array.from(document.querySelectorAll(".light-contact-row"));
+    const empty = document.querySelector(".light-empty-state");
+    return {
+      route: shell?.getAttribute("data-light-route") || "",
+      search_visible: Boolean(search),
+      query: search instanceof HTMLInputElement ? search.value : "",
+      row_ids: rows.map(node => String(node.getAttribute("data-contact-id") || "").trim()).filter(Boolean),
+      row_titles: rows
+        .map(node => String(node.querySelector(".light-text-stack strong")?.textContent || "").trim())
+        .filter(Boolean),
+      empty_text: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
+    };
+  });
+}
+
+async function setContactsSearchQuery(page, query, timeoutMs) {
+  const search = page.locator(".light-contacts-search").first();
+  await search.waitFor({ state: "visible", timeout: timeoutMs });
+  await search.fill(query);
+  await page.waitForFunction(expectedQuery => {
+    const input = document.querySelector(".light-contacts-search");
+    return input instanceof HTMLInputElement && input.value === expectedQuery;
+  }, query, { timeout: timeoutMs });
+}
+
+async function expectContactsSearchRows(page, query, expectedIds, timeoutMs) {
+  await setContactsSearchQuery(page, query, timeoutMs);
+  await page.waitForFunction(({ expectedQuery, ids }) => {
+    const input = document.querySelector(".light-contacts-search");
+    const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
+      .map(node => String(node.getAttribute("data-contact-id") || "").trim())
+      .filter(Boolean);
+    return input instanceof HTMLInputElement
+      && input.value === expectedQuery
+      && JSON.stringify(rowIds) === JSON.stringify(ids);
+  }, { expectedQuery: query, ids: expectedIds }, { timeout: timeoutMs });
+  return readContactsSearchState(page);
+}
+
 async function waitForSeededCalendarEvent(page, seed, timeoutMs) {
   const selector = `.light-event-block[data-event-id="${seed.calendarEventId}"] .light-event-main`;
   const locator = page.locator(selector).first();
@@ -696,301 +753,412 @@ async function runRouteTour(page, config, mode, seed) {
   await recorder.capture({
     route: "home",
     action: "Open launcher",
-    expected: "Launcher tiles for inbox, meetings, meeting notes, reminders, connect, settings, notes, tasks, calendar, projects, and contacts are visible.",
+    expected: "Launcher tiles for inbox, meetings, meeting notes, reminders, connect, settings, notes, tasks, calendar, tags, and contacts are visible.",
     confirmation: "Required launcher tiles are present.",
     observed: { tiles: homeTiles },
   });
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "inbox", config.timeoutMs);
-  await waitForInboxReady(page, config.timeoutMs);
-  const feedError = await page.locator(".feed-load-error").count();
-  assert(feedError === 0, `${mode}: inbox route reported a feed load error`);
-  const inboxCards = page.locator("article[data-card-id] .card-body");
-  if (await inboxCards.count()) {
-    const firstTitle = normalizeText(await page.locator("article[data-card-id] .title").first().textContent());
-    await inboxCards.first().click();
-    await waitForDetailOpen(page, config.timeoutMs);
-    const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
+  if (shouldRunRoute(config, "inbox")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "inbox", config.timeoutMs);
+    await waitForInboxReady(page, config.timeoutMs);
+    const feedError = await page.locator(".feed-load-error").count();
+    assert(feedError === 0, `${mode}: inbox route reported a feed load error`);
+    const inboxCards = page.locator("article[data-card-id] .card-body");
+    if (await inboxCards.count()) {
+      const firstTitle = normalizeText(await page.locator("article[data-card-id] .title").first().textContent());
+      await inboxCards.first().click();
+      await waitForDetailOpen(page, config.timeoutMs);
+      const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
+      await recorder.capture({
+        route: "inbox",
+        action: "Open first inbox card",
+        expected: "The first inbox card opens its detail panel.",
+        confirmation: "Inbox detail panel opened.",
+        observed: { empty: false, first_card_title: firstTitle, detail_title: detailTitle },
+      });
+      await closeDetailPanel(page, config.timeoutMs);
+    } else {
+      const emptyText = normalizeText(await page.locator(".empty").first().textContent().catch(() => "No replies yet."));
+      await recorder.capture({
+        route: "inbox",
+        action: "Check empty inbox state",
+        expected: "An empty inbox is reported honestly when no live cards are available.",
+        confirmation: "Inbox empty state was shown.",
+        observed: { empty: true, message: emptyText },
+      });
+    }
+  }
+
+  if (shouldRunRoute(config, "connect")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "connect", config.timeoutMs);
+    const backendConnect = await fetchConnectMyApps(config.baseUrl, config.refreshKey);
+    await waitForConnectReady(page, config.timeoutMs);
+    await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
+    const connectState = await readConnectState(page);
+    assertConnectMatchesBackend(mode, connectState, backendConnect, config.baseUrl);
     await recorder.capture({
-      route: "inbox",
-      action: "Open first inbox card",
-      expected: "The first inbox card opens its detail panel.",
-      confirmation: "Inbox detail panel opened.",
-      observed: { empty: false, first_card_title: firstTitle, detail_title: detailTitle },
+      route: "connect",
+      action: "Inspect connect connected apps",
+      expected: "Connect stays read-only, no auth CTA is pressed, and the top connected-apps strip matches the live backend account state.",
+      confirmation: "Connect rendered the expected connected apps without clicking any integration CTA.",
+      observed: {
+        ...connectState,
+        backend_user_id: String(backendConnect.payload?.user_id || ""),
+        backend_active_apps: backendConnect.activeApps,
+        my_apps_url: backendConnect.myAppsUrl,
+      },
     });
-    await closeDetailPanel(page, config.timeoutMs);
-  } else {
-    const emptyText = normalizeText(await page.locator(".empty").first().textContent().catch(() => "No replies yet."));
+
+    await goHome(page, config);
+    await openRouteFromHome(page, "connect", config.timeoutMs);
+    await waitForConnectReady(page, config.timeoutMs);
+    await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
+    const connectRevisitState = await readConnectState(page);
+    assertConnectMatchesBackend(mode, connectRevisitState, backendConnect, config.baseUrl);
     await recorder.capture({
-      route: "inbox",
-      action: "Check empty inbox state",
-      expected: "An empty inbox is reported honestly when no live cards are available.",
-      confirmation: "Inbox empty state was shown.",
-      observed: { empty: true, message: emptyText },
+      route: "connect",
+      action: "Reopen connect from home",
+      expected: "Leaving Connect and coming back from Home repopulates the same connected-app strip.",
+      confirmation: "Connect repopulated the connected-app strip after re-entry.",
+      observed: connectRevisitState,
+    });
+
+    const reloadUrl = buildRouteUrl(config, "connect");
+    logStep(config, `${mode}: reloading connect route ${reloadUrl}`);
+    await gotoAndWaitForRoute(page, reloadUrl, "connect", config.timeoutMs);
+    await waitForConnectReady(page, config.timeoutMs);
+    await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
+    const connectReloadState = await readConnectState(page);
+    assertConnectMatchesBackend(mode, connectReloadState, backendConnect, config.baseUrl);
+    await recorder.capture({
+      route: "connect",
+      action: "Reload connect directly",
+      expected: "A full reload back into Connect repopulates the same connected-app strip without any unlock step.",
+      confirmation: "Connect repopulated the connected-app strip after full reload.",
+      observed: connectReloadState,
     });
   }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "connect", config.timeoutMs);
-  const backendConnect = await fetchConnectMyApps(config.baseUrl, config.refreshKey);
-  await waitForConnectReady(page, config.timeoutMs);
-  await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
-  const connectState = await readConnectState(page);
-  assertConnectMatchesBackend(mode, connectState, backendConnect, config.baseUrl);
-  await recorder.capture({
-    route: "connect",
-    action: "Inspect connect connected apps",
-    expected: "Connect stays read-only, no auth CTA is pressed, and the top connected-apps strip matches the live backend account state.",
-    confirmation: "Connect rendered the expected connected apps without clicking any integration CTA.",
-    observed: {
-      ...connectState,
-      backend_user_id: String(backendConnect.payload?.user_id || ""),
-      backend_active_apps: backendConnect.activeApps,
-      my_apps_url: backendConnect.myAppsUrl,
-    },
-  });
+  if (shouldRunRoute(config, "meetings")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "meetings", config.timeoutMs);
+    await waitForMeetingsReady(page, config.timeoutMs);
+    const meetingsError = await page.locator(".meetings-empty.is-error").count();
+    assert(meetingsError === 0, `${mode}: meetings route reported an error`);
+    const meetingCards = page.locator("article[data-card-session-id] .card-body");
+    if (await meetingCards.count()) {
+      const firstTitle = normalizeText(await page.locator("article[data-card-session-id] .title").first().textContent());
+      await meetingCards.first().click();
+      await waitForDetailOpen(page, config.timeoutMs);
+      const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
+      await recorder.capture({
+        route: "meetings",
+        action: "Open first meeting record",
+        expected: "The first meeting record opens its detail panel.",
+        confirmation: "Meeting detail panel opened.",
+        observed: { empty: false, first_meeting_title: firstTitle, detail_title: detailTitle },
+      });
+      await closeDetailPanel(page, config.timeoutMs);
+    } else {
+      const emptyText = normalizeText(await page.locator(".meetings-empty").first().textContent().catch(() => "No meeting recordings yet."));
+      assert(!/loading meetings/i.test(emptyText), `${mode}: meetings route never resolved past loading`);
+      await recorder.capture({
+        route: "meetings",
+        action: "Check empty meetings state",
+        expected: "An empty meetings surface is reported honestly when no recordings exist.",
+        confirmation: "Meetings empty state was shown.",
+        observed: { empty: true, message: emptyText },
+      });
+    }
+  }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "connect", config.timeoutMs);
-  await waitForConnectReady(page, config.timeoutMs);
-  await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
-  const connectRevisitState = await readConnectState(page);
-  assertConnectMatchesBackend(mode, connectRevisitState, backendConnect, config.baseUrl);
-  await recorder.capture({
-    route: "connect",
-    action: "Reopen connect from home",
-    expected: "Leaving Connect and coming back from Home repopulates the same connected-app strip.",
-    confirmation: "Connect repopulated the connected-app strip after re-entry.",
-    observed: connectRevisitState,
-  });
-
-  const reloadUrl = buildRouteUrl(config, "connect");
-  logStep(config, `${mode}: reloading connect route ${reloadUrl}`);
-  await gotoAndWaitForRoute(page, reloadUrl, "connect", config.timeoutMs);
-  await waitForConnectReady(page, config.timeoutMs);
-  await waitForConnectChips(page, backendConnect.activeApps, config.timeoutMs);
-  const connectReloadState = await readConnectState(page);
-  assertConnectMatchesBackend(mode, connectReloadState, backendConnect, config.baseUrl);
-  await recorder.capture({
-    route: "connect",
-    action: "Reload connect directly",
-    expected: "A full reload back into Connect repopulates the same connected-app strip without any unlock step.",
-    confirmation: "Connect repopulated the connected-app strip after full reload.",
-    observed: connectReloadState,
-  });
-
-  await goHome(page, config);
-  await openRouteFromHome(page, "meetings", config.timeoutMs);
-  await waitForMeetingsReady(page, config.timeoutMs);
-  const meetingsError = await page.locator(".meetings-empty.is-error").count();
-  assert(meetingsError === 0, `${mode}: meetings route reported an error`);
-  const meetingCards = page.locator("article[data-card-session-id] .card-body");
-  if (await meetingCards.count()) {
-    const firstTitle = normalizeText(await page.locator("article[data-card-session-id] .title").first().textContent());
-    await meetingCards.first().click();
-    await waitForDetailOpen(page, config.timeoutMs);
-    const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
+  if (shouldRunRoute(config, "meeting-notes")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "meeting-notes", config.timeoutMs);
+    await waitForSeededMeetingNote(page, seed, config.timeoutMs);
+    await page.locator(`.light-graph-row[data-record-id="${seed.meetingNoteId}"]`).first().click();
+    await waitForRoute(page, "meeting-note-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.meetingNoteTitle, config.timeoutMs);
+    await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
     await recorder.capture({
-      route: "meetings",
-      action: "Open first meeting record",
-      expected: "The first meeting record opens its detail panel.",
-      confirmation: "Meeting detail panel opened.",
-      observed: { empty: false, first_meeting_title: firstTitle, detail_title: detailTitle },
-    });
-    await closeDetailPanel(page, config.timeoutMs);
-  } else {
-    const emptyText = normalizeText(await page.locator(".meetings-empty").first().textContent().catch(() => "No meeting recordings yet."));
-    assert(!/loading meetings/i.test(emptyText), `${mode}: meetings route never resolved past loading`);
-    await recorder.capture({
-      route: "meetings",
-      action: "Check empty meetings state",
-      expected: "An empty meetings surface is reported honestly when no recordings exist.",
-      confirmation: "Meetings empty state was shown.",
-      observed: { empty: true, message: emptyText },
+      route: "meeting-note-detail",
+      action: "Open seeded meeting note detail",
+      expected: "The seeded meeting note opens from the Meeting Notes route and surfaces its linked note.",
+      confirmation: "Seeded meeting note detail opened with linked note context.",
+      observed: { meeting_note_title: seed.meetingNoteTitle, linked_note_title: seed.noteTitle },
     });
   }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "meeting-notes", config.timeoutMs);
-  await waitForSeededMeetingNote(page, seed, config.timeoutMs);
-  await page.locator(`.light-graph-row[data-record-id="${seed.meetingNoteId}"]`).first().click();
-  await waitForRoute(page, "meeting-note-detail", config.timeoutMs);
-  await waitForTextInBody(page, seed.meetingNoteTitle, config.timeoutMs);
-  await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
-  await recorder.capture({
-    route: "meeting-note-detail",
-    action: "Open seeded meeting note detail",
-    expected: "The seeded meeting note opens from the Meeting Notes route and surfaces its linked note.",
-    confirmation: "Seeded meeting note detail opened with linked note context.",
-    observed: { meeting_note_title: seed.meetingNoteTitle, linked_note_title: seed.noteTitle },
-  });
+  if (shouldRunRoute(config, "reminders")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "reminders", config.timeoutMs);
+    await waitForSeededReminder(page, seed, config.timeoutMs);
+    await page.locator(`.light-reminder-row[data-reminder-id="${seed.reminderId}"]`).first().click();
+    await waitForRoute(page, "reminder-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.reminderTitle, config.timeoutMs);
+    await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
+    await recorder.capture({
+      route: "reminder-detail",
+      action: "Open seeded reminder detail",
+      expected: "The seeded reminder opens from the Reminders route and surfaces its linked note.",
+      confirmation: "Seeded reminder detail opened with linked note context.",
+      observed: { reminder_title: seed.reminderTitle, linked_note_title: seed.noteTitle },
+    });
+  }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "reminders", config.timeoutMs);
-  await waitForSeededReminder(page, seed, config.timeoutMs);
-  await page.locator(`.light-reminder-row[data-reminder-id="${seed.reminderId}"]`).first().click();
-  await waitForRoute(page, "reminder-detail", config.timeoutMs);
-  await waitForTextInBody(page, seed.reminderTitle, config.timeoutMs);
-  await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
-  await recorder.capture({
-    route: "reminder-detail",
-    action: "Open seeded reminder detail",
-    expected: "The seeded reminder opens from the Reminders route and surfaces its linked note.",
-    confirmation: "Seeded reminder detail opened with linked note context.",
-    observed: { reminder_title: seed.reminderTitle, linked_note_title: seed.noteTitle },
-  });
+  if (shouldRunRoute(config, "settings")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "settings", config.timeoutMs);
+    await page.locator(".light-settings-surface").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const settingsTitle = normalizeText(await page.locator(".light-settings-page .light-page-title").first().textContent());
+    await recorder.capture({
+      route: "settings",
+      action: "Render settings surface",
+      expected: "Settings renders without changing any persistent preference.",
+      confirmation: "Settings surface rendered.",
+      observed: { title: settingsTitle },
+    });
+  }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "settings", config.timeoutMs);
-  await page.locator(".light-settings-surface").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  const settingsTitle = normalizeText(await page.locator(".light-settings-page .light-page-title").first().textContent());
-  await recorder.capture({
-    route: "settings",
-    action: "Render settings surface",
-    expected: "Settings renders without changing any persistent preference.",
-    confirmation: "Settings surface rendered.",
-    observed: { title: settingsTitle },
-  });
+  if (shouldRunRoute(config, "notes")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "notes", config.timeoutMs);
+    await waitForSeededNote(page, seed, config.timeoutMs);
+    await page.locator(".light-note-row").filter({ hasText: seed.noteTitle }).first().click();
+    await waitForRoute(page, "note-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
+    await recorder.capture({
+      route: "note-detail",
+      action: "Open seeded note detail",
+      expected: "The seeded note opens from the Notes route.",
+      confirmation: "Seeded note detail opened.",
+      observed: { note_title: seed.noteTitle },
+    });
+  }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "notes", config.timeoutMs);
-  await waitForSeededNote(page, seed, config.timeoutMs);
-  await page.locator(".light-note-row").filter({ hasText: seed.noteTitle }).first().click();
-  await waitForRoute(page, "note-detail", config.timeoutMs);
-  await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
-  await recorder.capture({
-    route: "note-detail",
-    action: "Open seeded note detail",
-    expected: "The seeded note opens from the Notes route.",
-    confirmation: "Seeded note detail opened.",
-    observed: { note_title: seed.noteTitle },
-  });
+  if (shouldRunRoute(config, "tasks")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "tasks", config.timeoutMs);
+    await waitForSeededTask(page, seed, config.timeoutMs);
+    await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
+    await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+    const taskState = await readTaskDetailState(page);
+    ["description", "people", "checklist", "notes", "attached"].forEach(section => {
+      assert(taskState.sections.includes(section), `${mode}: task detail missing ${section} section`);
+    });
+    assert(taskState.people.includes(seed.contactTitle), `${mode}: task detail missing created-by contact`);
+    assert(taskState.people.includes(seed.ownerContactTitle), `${mode}: task detail missing owner contact`);
+    assert(taskState.notes.includes(seed.noteTitle), `${mode}: task detail missing linked note section entry`);
+    assert(taskState.attachments.includes(seed.calendarEventTitle), `${mode}: task detail missing linked calendar event`);
+    assert(taskState.attachments.includes(seed.contactTitle), `${mode}: task detail missing linked contact`);
+    assert(taskState.attachments.includes(seed.projectTitle), `${mode}: task detail missing linked project`);
+    assert(taskState.checklist.includes("Prep the room summary"), `${mode}: task detail missing expected checklist item`);
+    assert(taskState.description.includes(seed.primaryDescription), `${mode}: task detail missing seeded description`);
+    await recorder.capture({
+      route: taskState.route || "tasks",
+      action: "Open seeded task detail",
+      expected: "The seeded primary task shows description, people, checklist, and attached linked records.",
+      confirmation: "Task detail rendered the seeded structured sections.",
+      observed: taskState,
+    });
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "tasks", config.timeoutMs);
-  await waitForSeededTask(page, seed, config.timeoutMs);
-  await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
-  await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
-  const taskState = await readTaskDetailState(page);
-  ["description", "people", "checklist", "notes", "attached"].forEach(section => {
-    assert(taskState.sections.includes(section), `${mode}: task detail missing ${section} section`);
-  });
-  assert(taskState.people.includes(seed.contactTitle), `${mode}: task detail missing created-by contact`);
-  assert(taskState.people.includes(seed.ownerContactTitle), `${mode}: task detail missing owner contact`);
-  assert(taskState.notes.includes(seed.noteTitle), `${mode}: task detail missing linked note section entry`);
-  assert(taskState.attachments.includes(seed.calendarEventTitle), `${mode}: task detail missing linked calendar event`);
-  assert(taskState.attachments.includes(seed.contactTitle), `${mode}: task detail missing linked contact`);
-  assert(taskState.attachments.includes(seed.projectTitle), `${mode}: task detail missing linked project`);
-  assert(taskState.checklist.includes("Prep the room summary"), `${mode}: task detail missing expected checklist item`);
-  assert(taskState.description.includes(seed.primaryDescription), `${mode}: task detail missing seeded description`);
-  await recorder.capture({
-    route: taskState.route || "tasks",
-    action: "Open seeded task detail",
-    expected: "The seeded primary task shows description, people, checklist, and attached linked records.",
-    confirmation: "Task detail rendered the seeded structured sections.",
-    observed: taskState,
-  });
+    for (const link of TASK_LINKS) {
+      const targetId = seed[link.idKey];
+      const targetTitle = seed[link.titleKey];
+      const locator = page.locator(
+        `[data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
+      ).first();
+      await locator.waitFor({ state: "visible", timeout: config.timeoutMs });
+      await locator.click();
+      await waitForRoute(page, link.route, config.timeoutMs);
+      await waitForTextInBody(page, targetTitle, config.timeoutMs);
+      const pageTitle = normalizeText(await page.locator(".light-page-title").last().textContent().catch(() => targetTitle));
+      if (link.route === "tag-detail" || link.route === "contact-detail") {
+        await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
+      }
+      await recorder.capture({
+        route: link.route,
+        action: `Open task-linked ${link.label}`,
+        expected: `The task-linked ${link.label} opens from the task detail surface.`,
+        confirmation: `Task-linked ${link.label} detail opened.`,
+        observed: { target_kind: link.kind, target_title: targetTitle, page_title: pageTitle },
+      });
+      await clickBack(page, config.timeoutMs);
+      await waitForRoute(page, expectedTaskReturnRoute(mode), config.timeoutMs);
+      await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+    }
+  }
 
-  for (const link of TASK_LINKS) {
-    const targetId = seed[link.idKey];
-    const targetTitle = seed[link.titleKey];
-    const locator = page.locator(
-      `[data-workspace-target-route="${link.route}"][data-workspace-target-id="${targetId}"]`
-    ).first();
-    await locator.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await locator.click();
-    await waitForRoute(page, link.route, config.timeoutMs);
-    await waitForTextInBody(page, targetTitle, config.timeoutMs);
-    const pageTitle = normalizeText(await page.locator(".light-page-title").last().textContent().catch(() => targetTitle));
-    if (link.route === "project-detail" || link.route === "contact-detail") {
-      await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
+  if (shouldRunRoute(config, "calendar")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "calendar", config.timeoutMs);
+    await waitForSeededCalendarEvent(page, seed, config.timeoutMs);
+    await page.locator(`.light-event-block[data-event-id="${seed.calendarEventId}"] .light-event-main`).first().click();
+    await waitForRoute(page, "meeting-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.calendarEventTitle, config.timeoutMs);
+    await recorder.capture({
+      route: "meeting-detail",
+      action: "Open seeded calendar event",
+      expected: "The seeded calendar event opens from the Calendar route.",
+      confirmation: "Seeded calendar event detail opened.",
+      observed: { event_title: seed.calendarEventTitle },
+    });
+  }
+
+  if (shouldRunRoute(config, "tags")) {
+    await goHome(page, config);
+    await openRouteFromHome(page, "tags", config.timeoutMs);
+    await waitForSeededProject(page, seed, config.timeoutMs);
+    await page.locator(`.light-project-row[data-project-id="${seed.projectId}"]`).first().click();
+    await waitForRoute(page, "tag-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.projectTitle, config.timeoutMs);
+    await recorder.capture({
+      route: "tag-detail",
+      action: "Open seeded tag detail",
+      expected: "The seeded tag opens from the Tags route.",
+      confirmation: "Seeded tag detail opened.",
+      observed: { project_title: seed.projectTitle },
+    });
+  }
+
+  if (shouldRunRoute(config, "contacts")) {
+    const phraseQuery = "Linked to live alpha";
+    const phoneQuery = "0188";
+    const reminderQuery = "reminder";
+    const noMatchQuery = "zzzz-no-match";
+
+    await goHome(page, config);
+    await openRouteFromHome(page, "contacts", config.timeoutMs);
+    await waitForSeededContact(page, seed, config.timeoutMs);
+    const contactsListFlatness = await readContactsListFlatness(page);
+    const baselineSearchState = await readContactsSearchState(page);
+    const baselineRowIds = baselineSearchState.row_ids.slice();
+    assert(contactsListFlatness.route === "contacts", `${mode}: expected Contacts route before detail, got ${contactsListFlatness.route}`);
+    assert(contactsListFlatness.first_contact_id === "contact-me", `${mode}: Me contact should remain pinned first in Contacts (saw ${contactsListFlatness.first_contact_id || "none"})`);
+    assert(baselineSearchState.search_visible, `${mode}: Contacts search should be visible once contacts load`);
+    assert(baselineSearchState.query === "", `${mode}: Contacts search should start empty, got ${baselineSearchState.query}`);
+    assert(contactsListFlatness.row_class_list.includes("is-flat-feed"), `${mode}: Contacts list should render flat-feed rows (${contactsListFlatness.row_class_list.join(" ")})`);
+    assert(isTransparentColor(contactsListFlatness.row_background), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_background})`);
+    assert(isNoShadow(contactsListFlatness.row_box_shadow), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_box_shadow})`);
+    assert(
+      isZeroishPx(contactsListFlatness.row_border_top_left_radius) && isZeroishPx(contactsListFlatness.row_border_top_right_radius),
+      `${mode}: Contacts list should remove rounded row corners (${contactsListFlatness.row_border_top_left_radius}, ${contactsListFlatness.row_border_top_right_radius})`
+    );
+    assert(isZeroishPx(contactsListFlatness.list_gap), `${mode}: Contacts list should remove inter-row card gaps (${contactsListFlatness.list_gap})`);
+    assert(
+      isZeroishPx(contactsListFlatness.row_padding_left) && isZeroishPx(contactsListFlatness.row_padding_right),
+      `${mode}: Contacts list should remove detached side padding (${contactsListFlatness.row_padding_left}, ${contactsListFlatness.row_padding_right})`
+    );
+    if (contactsListFlatness.row_count > 1) {
+      assert(
+        !isZeroishPx(contactsListFlatness.divider_width) && !isTransparentColor(contactsListFlatness.divider_color),
+        `${mode}: Contacts list should keep divider separation between rows (${contactsListFlatness.divider_width}, ${contactsListFlatness.divider_color})`
+      );
     }
     await recorder.capture({
-      route: link.route,
-      action: `Open task-linked ${link.label}`,
-      expected: `The task-linked ${link.label} opens from the task detail surface.`,
-      confirmation: `Task-linked ${link.label} detail opened.`,
-      observed: { target_kind: link.kind, target_title: targetTitle, page_title: pageTitle },
+      route: "contacts",
+      action: "Inspect Contacts list",
+      expected: "The Contacts list stays flat on the deployed hosted UI before opening detail.",
+      confirmation: "Contacts list stayed flat, exposed search, and kept Me first.",
+      observed: {
+        contact_title: seed.contactTitle,
+        first_contact_id: contactsListFlatness.first_contact_id,
+        contacts_list_flatness: contactsListFlatness,
+        contacts_search: baselineSearchState,
+      },
     });
-    await clickBack(page, config.timeoutMs);
-    await waitForRoute(page, expectedTaskReturnRoute(mode), config.timeoutMs);
-    await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
-  }
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "calendar", config.timeoutMs);
-  await waitForSeededCalendarEvent(page, seed, config.timeoutMs);
-  await page.locator(`.light-event-block[data-event-id="${seed.calendarEventId}"] .light-event-main`).first().click();
-  await waitForRoute(page, "meeting-detail", config.timeoutMs);
-  await waitForTextInBody(page, seed.calendarEventTitle, config.timeoutMs);
-  await recorder.capture({
-    route: "meeting-detail",
-    action: "Open seeded calendar event",
-    expected: "The seeded calendar event opens from the Calendar route.",
-    confirmation: "Seeded calendar event detail opened.",
-    observed: { event_title: seed.calendarEventTitle },
-  });
+    const phraseSearchState = await expectContactsSearchRows(page, phraseQuery, [seed.contactId], config.timeoutMs);
+    assert(phraseSearchState.row_titles.includes(seed.contactTitle), `${mode}: phrase query should return the seeded contact, got ${phraseSearchState.row_titles.join(", ")}`);
+    await recorder.capture({
+      route: "contacts",
+      action: "Filter Contacts by activity phrase",
+      expected: "Searching by a contact activity phrase narrows the Contacts list to the matching contact.",
+      confirmation: "Activity phrase filtering returned only the seeded contact.",
+      observed: { query: phraseQuery, contacts_search: phraseSearchState },
+    });
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "projects", config.timeoutMs);
-  await waitForSeededProject(page, seed, config.timeoutMs);
-  await page.locator(`.light-project-row[data-project-id="${seed.projectId}"]`).first().click();
-  await waitForRoute(page, "project-detail", config.timeoutMs);
-  await waitForTextInBody(page, seed.projectTitle, config.timeoutMs);
-  await recorder.capture({
-    route: "project-detail",
-    action: "Open seeded project detail",
-    expected: "The seeded project opens from the Projects route.",
-    confirmation: "Seeded project detail opened.",
-    observed: { project_title: seed.projectTitle },
-  });
+    const phoneSearchState = await expectContactsSearchRows(page, phoneQuery, [seed.contactId], config.timeoutMs);
+    assert(phoneSearchState.row_titles.includes(seed.contactTitle), `${mode}: phone query should return the seeded contact, got ${phoneSearchState.row_titles.join(", ")}`);
 
-  await goHome(page, config);
-  await openRouteFromHome(page, "contacts", config.timeoutMs);
-  await waitForSeededContact(page, seed, config.timeoutMs);
-  const contactsListFlatness = await readContactsListFlatness(page);
-  assert(contactsListFlatness.route === "contacts", `${mode}: expected Contacts route before detail, got ${contactsListFlatness.route}`);
-  assert(contactsListFlatness.first_contact_id === "contact-me", `${mode}: Me contact should remain pinned first in Contacts (saw ${contactsListFlatness.first_contact_id || "none"})`);
-  assert(contactsListFlatness.row_class_list.includes("is-flat-feed"), `${mode}: Contacts list should render flat-feed rows (${contactsListFlatness.row_class_list.join(" ")})`);
-  assert(isTransparentColor(contactsListFlatness.row_background), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_background})`);
-  assert(isNoShadow(contactsListFlatness.row_box_shadow), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_box_shadow})`);
-  assert(
-    isZeroishPx(contactsListFlatness.row_border_top_left_radius) && isZeroishPx(contactsListFlatness.row_border_top_right_radius),
-    `${mode}: Contacts list should remove rounded row corners (${contactsListFlatness.row_border_top_left_radius}, ${contactsListFlatness.row_border_top_right_radius})`
-  );
-  assert(isZeroishPx(contactsListFlatness.list_gap), `${mode}: Contacts list should remove inter-row card gaps (${contactsListFlatness.list_gap})`);
-  assert(
-    isZeroishPx(contactsListFlatness.row_padding_left) && isZeroishPx(contactsListFlatness.row_padding_right),
-    `${mode}: Contacts list should remove detached side padding (${contactsListFlatness.row_padding_left}, ${contactsListFlatness.row_padding_right})`
-  );
-  if (contactsListFlatness.row_count > 1) {
+    await setContactsSearchQuery(page, reminderQuery, config.timeoutMs);
+    await page.waitForFunction(expectedQuery => {
+      const input = document.querySelector(".light-contacts-search");
+      const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
+        .map(node => String(node.getAttribute("data-contact-id") || "").trim())
+        .filter(Boolean);
+      return input instanceof HTMLInputElement
+        && input.value === expectedQuery
+        && rowIds.includes("contact-me")
+        && rowIds[0] === "contact-me";
+    }, reminderQuery, { timeout: config.timeoutMs });
+    const reminderSearchState = await readContactsSearchState(page);
+    assert(reminderSearchState.row_ids[0] === "contact-me", `${mode}: reminder query should keep Me first, got ${reminderSearchState.row_ids.join(", ")}`);
+
+    const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
+    assert(emptySearchState.search_visible, `${mode}: Contacts search should remain visible when no results match`);
     assert(
-      !isZeroishPx(contactsListFlatness.divider_width) && !isTransparentColor(contactsListFlatness.divider_color),
-      `${mode}: Contacts list should keep divider separation between rows (${contactsListFlatness.divider_width}, ${contactsListFlatness.divider_color})`
+      emptySearchState.empty_text.includes("No contacts match your search."),
+      `${mode}: expected empty Contacts search copy, got ${emptySearchState.empty_text}`
+    );
+    await recorder.capture({
+      route: "contacts",
+      action: "Show Contacts search empty state",
+      expected: "A no-match Contacts search keeps the search field visible and shows an honest empty state.",
+      confirmation: "Contacts search empty state appeared while keeping the field visible.",
+      observed: { query: noMatchQuery, contacts_search: emptySearchState },
+    });
+
+    const clearedSearchState = await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
+    assert(clearedSearchState.row_ids[0] === "contact-me", `${mode}: clearing Contacts search should restore Me first, got ${clearedSearchState.row_ids[0] || "none"}`);
+    await recorder.capture({
+      route: "contacts",
+      action: "Clear Contacts search",
+      expected: "Clearing the Contacts search restores the baseline list and order immediately.",
+      confirmation: "Contacts list returned to its baseline order after clearing search.",
+      observed: { contacts_search: clearedSearchState },
+    });
+
+    await expectContactsSearchRows(page, phraseQuery, [seed.contactId], config.timeoutMs);
+    await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
+    await waitForRoute(page, "contact-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
+    await recorder.capture({
+      route: "contact-detail",
+      action: "Open seeded contact detail from filtered list",
+      expected: "A filtered Contacts result still opens its contact detail normally.",
+      confirmation: "Seeded contact detail opened from the filtered Contacts list.",
+      observed: { contact_title: seed.contactTitle, query: phraseQuery },
+    });
+
+    await clickBack(page, config.timeoutMs);
+    await waitForRoute(page, "contacts", config.timeoutMs);
+    const backToFilteredState = await readContactsSearchState(page);
+    assert(backToFilteredState.query === phraseQuery, `${mode}: expected Back to preserve the Contacts query, got ${backToFilteredState.query}`);
+    assert(
+      JSON.stringify(backToFilteredState.row_ids) === JSON.stringify([seed.contactId]),
+      `${mode}: expected Back to restore the filtered Contacts list, got ${backToFilteredState.row_ids.join(", ")}`
+    );
+    await recorder.capture({
+      route: "contacts",
+      action: "Return to filtered Contacts list",
+      expected: "Back from contact detail returns to the same filtered Contacts list with the same query.",
+      confirmation: "Contacts Back restored the same filtered list and query.",
+      observed: { query: phraseQuery, contacts_search: backToFilteredState },
+    });
+
+    await goHome(page, config);
+    await openRouteFromHome(page, "contacts", config.timeoutMs);
+    await waitForSeededContact(page, seed, config.timeoutMs);
+    const reenteredSearchState = await readContactsSearchState(page);
+    assert(reenteredSearchState.query === "", `${mode}: Contacts search should reset after leaving the Contacts surface, got ${reenteredSearchState.query}`);
+    assert(
+      JSON.stringify(reenteredSearchState.row_ids) === JSON.stringify(baselineRowIds),
+      `${mode}: Contacts re-entry should restore the baseline list, got ${reenteredSearchState.row_ids.join(", ")}`
     );
   }
-  await recorder.capture({
-    route: "contacts",
-    action: "Inspect Contacts list",
-    expected: "The Contacts list stays flat on the deployed hosted UI before opening detail.",
-    confirmation: "Contacts list stayed flat and kept Me first.",
-    observed: {
-      contact_title: seed.contactTitle,
-      first_contact_id: contactsListFlatness.first_contact_id,
-      contacts_list_flatness: contactsListFlatness,
-    },
-  });
-  await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
-  await waitForRoute(page, "contact-detail", config.timeoutMs);
-  await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
-  await recorder.capture({
-    route: "contact-detail",
-    action: "Open seeded contact detail",
-    expected: "The seeded contact opens from the Contacts route.",
-    confirmation: "Seeded contact detail opened.",
-    observed: { contact_title: seed.contactTitle },
-  });
 
   return {
     steps: recorder.steps,
@@ -1048,6 +1216,7 @@ function renderReport(summary) {
     "",
     `- Schema: ${summary.schema}`,
     `- Base URL: ${summary.base_url}`,
+    `- Requested routes: ${summary.requested_routes.length ? summary.requested_routes.join(", ") : "all"}`,
     `- Manifest URL: ${summary.manifest_url}`,
     `- Source commit: ${summary.source_commit_full}`,
     `- UI version: ${summary.ui_version}`,
@@ -1142,6 +1311,7 @@ async function main() {
     cleanup_ok: config.keepSeed ? true : cleanupOk,
     cleanup_error: cleanupError || "",
     cleanup_skipped: Boolean(config.keepSeed),
+    requested_routes: Array.isArray(config.routes) ? config.routes.slice() : [],
     universal_feed_tile_routes: UNIVERSAL_FEED_TILE_ROUTES.slice(),
     mobile,
     desktop,

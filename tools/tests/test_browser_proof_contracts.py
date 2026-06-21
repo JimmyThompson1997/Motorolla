@@ -72,7 +72,7 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert '"notes"' in source
-    assert '"projects"' in source
+    assert '"tags"' in source
 
 
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
@@ -141,6 +141,31 @@ def test_workspace_apps_browser_proof_captures_contacts_flat_list_contract() -> 
     assert "Me contact should remain pinned first in Contacts" in source
 
 
+def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+    shared = read_source("task_workspace_proof_shared.mjs")
+
+    assert "readContactsSearchState" in source
+    assert "setContactsSearchQuery" in source
+    assert "expectContactsSearchRows" in source
+    assert 'const emailQuery = "one@example";' in source
+    assert 'const phoneQuery = "0101000";' in source
+    assert 'const phraseQuery = "Linked to Alpha";' in source
+    assert 'const reminderQuery = "reminder";' in source
+    assert 'const noMatchQuery = "zzzz-no-match";' in source
+    assert "No contacts match your search." in source
+    assert "Expected active Contacts search query to survive contact-detail Back" in source
+    assert "Expected Contacts search to reset after leaving the Contacts surface" in source
+    assert "contacts-search-filtered-email" in source
+    assert "contacts-search-filtered-phone" in source
+    assert "contacts-search-filtered-phrase" in source
+    assert "contacts-search-empty" in source
+    assert "contacts-search-cleared" in source
+    assert "contacts-search-detail-from-filter" in source
+    assert 'phone: "+1 (415) 555-0188"' in shared
+    assert 'activity: ["Linked to live alpha"]' in shared
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
@@ -178,13 +203,27 @@ def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
 
     assert "pucky.home_app_labels_browser_proof.v1" in source
     assert "const VIEWPORT = { width: 395, height: 786 };" in source
+    assert 'const THEMES = ["light", "dark"];' in source
     assert ".light-app-label" in source
     assert "Meeting Notes" in source
+    assert "SEMANTIC_ICON_REGISTRY" in source
+    assert "data-semantic-icon" in source
+    assert "iconAccentVar" in source
+    assert "iconBackground" in source
+    assert "registryColors" in source
     assert "assertNoSameRowLabelOverlap(metrics);" in source
     assert "horizontalOverlap > OVERLAP_EPSILON" in source
     assert "Math.abs(item.icon.centerX - tileCenter)" in source
     assert "Math.abs(item.label.centerX - tileCenter)" in source
     assert '"test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs"' in package
+
+
+def test_home_app_label_proof_is_wired_into_local_and_live_web_sweeps() -> None:
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+
+    assert '"tools/proofs/cover/cover_home_app_labels_playwright.mjs"' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-web" / "home-app-labels").resolve())' in dev_source
+    assert 'str((live_root / "home-app-labels").resolve())' in dev_source
 
 
 def test_settings_quiet_list_proof_checks_compact_live_rows() -> None:
@@ -353,6 +392,26 @@ def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:
     assert "Notes flash browser proof (local): `python -m tools.dev proof-local-notes-flash-browser`" in docs_readme
 
 
+def test_contacts_search_browser_proof_task_runner_and_docs_are_first_class() -> None:
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+    assert '"proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-contacts-search-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contacts-search-browser").resolve())' in dev_source
+    assert '"--sections",' in dev_source
+    assert '"contacts",' in dev_source
+    assert '"--routes",' in dev_source
+    assert 'return run_local_contacts_search_browser_proof(args.extra_args)' in dev_source
+    assert 'return run_live_contacts_search_browser_proof(args.extra_args)' in dev_source
+    assert "python -m tools.dev proof-local-contacts-search-browser" in readme
+    assert "python -m tools.dev proof-live-contacts-search-browser" in readme
+    assert "Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`" in docs_readme
+    assert "Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`" in docs_readme
+
+
 def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     source = read_source("cover_universal_feed_tiles_playwright.mjs")
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
@@ -366,7 +425,7 @@ def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     assert 'route: "notes"' in source
     assert 'route: "meeting-notes"' in source
     assert 'route: "reminders"' in source
-    assert 'route: "projects"' in source
+    assert 'route: "tags"' in source
     assert 'route: "inbox"' in source
     assert 'route: "meetings"' in source
     assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
@@ -437,3 +496,25 @@ def test_calendar_and_hosted_bug_hunt_proofs_cover_event_container_clicks() -> N
     assert "calendar-mobile-${theme}-detail-container-click.png" in calendar_source
     assert "Expected calendar body click to open meeting-detail" in calendar_source
     assert 'openerSelector: ".light-event-block"' in hosted_source
+
+
+def test_calendar_browser_proof_covers_continuous_month_rail_contract() -> None:
+    calendar_source = read_source("cover_calendar_playwright.mjs")
+
+    assert "rendered_month_keys" in calendar_source
+    assert "visible_day_keys" in calendar_source
+    assert "selected_day_before_scroll" in calendar_source
+    assert "selected_month_before_scroll" in calendar_source
+    assert "calendar-desktop-${theme}-selected-month-left-edge.png" in calendar_source
+    assert "calendar-desktop-${theme}-selected-month-right-edge.png" in calendar_source
+    assert "calendar-desktop-${theme}-continued-prev-month.png" in calendar_source
+    assert "calendar-desktop-${theme}-continued-next-month.png" in calendar_source
+    assert "calendar-desktop-${theme}-adjacent-month-selected.png" in calendar_source
+    assert "calendar-mobile-${theme}-selected-month-left-edge.png" in calendar_source
+    assert "calendar-mobile-${theme}-selected-month-right-edge.png" in calendar_source
+    assert "calendar-mobile-${theme}-continued-prev-month.png" in calendar_source
+    assert "calendar-mobile-${theme}-continued-next-month.png" in calendar_source
+    assert "calendar-mobile-${theme}-adjacent-month-selected.png" in calendar_source
+    assert "Expected the selected month to expose day 1 on the rail" in calendar_source
+    assert "Expected passive rail scrolling to keep the selected date input stable" in calendar_source
+    assert "Expected no desktop calendar rail chevrons to remain" in calendar_source

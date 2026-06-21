@@ -135,13 +135,13 @@ const ROUTE_SWEEP_ORDER = [
     requiresHeader: true,
   },
   {
-    surface: "Projects",
-    route: "projects",
+    surface: "Tags",
+    route: "tags",
     primarySelector: ".light-project-row",
     emptySelector: ".light-empty-state",
     detail: {
       openerSelector: ".light-project-row",
-      expectedRoute: "project-detail",
+      expectedRoute: "tag-detail",
       htmlPolicy: "forbid",
     },
     desktop: true,

@@ -19,7 +19,11 @@ def css_block(styles: str, selector: str) -> str:
 
 
 def function_block(source: str, name: str) -> str:
-    match = re.search(rf"function {re.escape(name)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
+    match = re.search(
+        rf"function {re.escape(name)}\((?:[^)(]+|\([^)(]*\))*\)\s*\{{(?P<body>.*?)\n  \}}",
+        source,
+        re.S,
+    )
     assert match, f"Missing function {name}"
     return match.group("body")
 
@@ -31,8 +35,9 @@ def test_material_icon_registry_remains_bundled() -> None:
 
     assert "window.PUCKY_UI_ICONS = {" in icons
     assert "MATERIAL_SYMBOLS:" in icons
-    assert "SEMANTIC_ICON_ACCENT_PALETTE:" in icons
+    assert "SEMANTIC_ICON_REGISTRY:" in icons
     assert "const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS" in app
+    assert "const SEMANTIC_ICON_REGISTRY = iconCatalog.SEMANTIC_ICON_REGISTRY" in app
     assert "function iconSvg(" in app
     assert "function replyCardIconSvg(" in app
     assert "function loadCardIconRegistry(" in app
@@ -78,6 +83,37 @@ def test_home_shell_registry_exposes_modern_routes_only() -> None:
     assert "const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)" in app
 
 
+def test_semantic_icon_registry_drives_home_tiles_and_reverse_lookup() -> None:
+    app = read("app.js")
+    routes = read("pucky-routes.js")
+    light_app_tile = function_block(app, "lightAppTile")
+    semantic_icon_accent_key = function_block(app, "semanticIconAccentKey")
+    semantic_icon_name = function_block(app, "semanticIconName")
+    canonical_icon_accent_key = function_block(app, "canonicalIconAccentKey")
+    light_app_icon = function_block(app, "lightAppIcon")
+    reminder_channel_accent_key = function_block(app, "reminderChannelAccentKey")
+    graph_kind_accent_key = function_block(app, "graphKindAccentKey")
+
+    assert "const SEMANTIC_ICON_KEY_BY_ICON = Object.freeze(Object.entries(SEMANTIC_ICON_REGISTRY)" in app
+    assert 'tile.dataset.semanticIcon = app.semantic;' in light_app_tile
+    assert "return SEMANTIC_ICON_REGISTRY[key] ? key : \"\";" in semantic_icon_accent_key
+    assert "const entry = SEMANTIC_ICON_REGISTRY[key] || SEMANTIC_ICON_REGISTRY.inbox;" in semantic_icon_name
+    assert "return String(entry.icon || SEMANTIC_ICON_REGISTRY.inbox?.icon || \"mail\").trim();" in semantic_icon_name
+    assert "function semanticIconAccentValue(accentKey, theme = effectiveTheme()) {" in app
+    assert "const colors = entry.colors" in app
+    assert "return String(colors[mode] || colors.dark || colors.light || \"#8b63ff\").trim();" in app
+    assert 'return SEMANTIC_ICON_KEY_BY_ICON[key] || "";' in canonical_icon_accent_key
+    assert 'if (key === "mail") return "inbox";' not in canonical_icon_accent_key
+    assert "applySemanticIconAccent(wrap, app?.semantic);" in light_app_icon
+    assert "wrap.innerHTML = iconSvg(semanticIconName(app?.semantic), { filled: false });" in light_app_icon
+    assert '"email": "inbox"' in reminder_channel_accent_key or 'email: "inbox"' in reminder_channel_accent_key
+    assert '"sms": "inbox"' in reminder_channel_accent_key or 'sms: "inbox"' in reminder_channel_accent_key
+    assert '"call": "contacts"' in reminder_channel_accent_key or 'call: "contacts"' in reminder_channel_accent_key
+    assert '"connected_app": "connect"' in reminder_channel_accent_key or 'connected_app: "connect"' in reminder_channel_accent_key
+    assert "return canonicalIconAccentKey(graphKindIcon(kind));" in graph_kind_accent_key
+    assert '{ route: "inbox", label: "Inbox", semantic: "inbox", kind: "real" }' in routes
+
+
 def test_route_aliases_collapse_legacy_entry_points() -> None:
     app = read("app.js")
     routes = read("pucky-routes.js")
@@ -86,7 +122,8 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     route_for_theme = function_block(app, "resolveRouteForTheme")
     route_sync = function_block(app, "syncRouteQueryParam")
 
-    assert 'ROUTE_ALIASES: {}' in routes
+    assert 'projects: "tags"' in routes
+    assert '"project-detail": "tag-detail"' in routes
     assert "const ROUTE_ALIASES = routeCatalog.ROUTE_ALIASES && typeof routeCatalog.ROUTE_ALIASES === \"object\"" in app
     assert 'feed: "inbox"' not in routes
     assert 'links: "connect"' not in routes
@@ -198,12 +235,15 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     app = read("app.js")
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
+    light_date_picker = function_block(app, "lightDatePicker")
     light_event_block = function_block(app, "lightCalendarEventBlock")
     light_attendee_chip = function_block(app, "lightAttendeeChip")
     light_info_section = function_block(app, "lightInfoSection")
     light_info_row = function_block(app, "lightInfoRow")
     light_project_section_item = function_block(app, "lightProjectSectionItem")
     light_record_chip = function_block(app, "lightRecordChip")
+    build_calendar_day_rail = function_block(app, "buildCalendarDayRail")
+    continue_calendar_day_rail = function_block(app, "continueCalendarDayRail")
 
     assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
     assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)," in app
@@ -243,14 +283,39 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "calendarEventTypeFiltersCard()" in app
     assert 'const sheet = el("section", "settings-selector-sheet calendar-settings-panel");' in app
     assert "trace-sheet settings-sheet calendar-settings-sheet" not in app
-    assert 'return typeof window !== "undefined" && window.innerWidth >= 768 ? 21 : 15;' in app
+    assert "lightCalendarStripNavButton" not in light_date_picker
+    assert "buildCalendarDayRail(strip, selectedCalendarDateKey());" in light_date_picker
+    assert 'strip.addEventListener("scroll", () => queueCalendarDayRailContinuation(strip));' in light_date_picker
+    assert "function calendarMonthKey(value = selectedCalendarDateKey()) {" in app
+    assert "function calendarMonthDayKeys(monthKey) {" in app
+    assert "function calendarDayRailMonthKeys(dayKey = selectedCalendarDateKey()) {" in app
+    assert "state.calendarDayRailStartMonth" in app
+    assert "state.calendarDayRailEndMonth" in app
+    assert "calendarStripWindowSize" not in app
+    assert "calendarStripDays(" not in app
+    assert "queueCalendarDayRailContinuation(strip);" in build_calendar_day_rail
+    assert "state.selectedCalendarDate" not in continue_calendar_day_rail
     assert 'localStorage.setItem("pucky.cover.calendar_type_filters.v1"' in app
     assert "lightInfoRow(row)" in light_info_section
     assert "openWorkspaceTarget(" in light_info_row
     assert "row.fromRoute || state.route || \"\"" in light_info_row
-    assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
+    assert 'openWorkspaceTarget(item.target, "tag-detail")' in light_project_section_item
     assert "event.stopPropagation();" in light_attendee_chip
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
+
+
+def test_calendar_day_rail_styles_and_contracts_follow_continuous_month_model() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    assert ".light-calendar-day-strip {" in styles
+    assert "overflow-x: auto;" in styles
+    assert "padding: 2px max(0px, calc((100% - 58px) / 2)) 4px;" not in styles
+    assert ".light-calendar-strip-nav" not in styles
+    assert ".light-calendar-strip-nav-button" not in styles
+    assert 'chip.dataset.month = calendarMonthKey(dayKey);' in app
+    assert "function appendCalendarDayRailMonth(strip, monthKey) {" in app
+    assert "function prependCalendarDayRailMonth(strip, monthKey) {" in app
 
 
 def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None:
@@ -286,7 +351,7 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert "overflow-y: visible;" in styles
     assert ".light-page-header-shell {\n  position: sticky;" in styles
     assert ".light-date-picker {\n  position: sticky;" in styles
-    assert ".light-calendar-strip-nav-button" in styles
+    assert ".light-calendar-strip-nav-button" not in styles
     assert "grid-auto-columns: 58px;" in styles
     assert "scroll-snap-type: x proximity;" in styles
     assert ".settings-selector-overlay.calendar-settings-overlay" in styles
@@ -397,9 +462,12 @@ def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flo
     assert "webPreviewSettingsCard" not in app
     assert "openBrowserUnlockSheet" not in app
     assert 'cards.push(phoneRoleSettingsCard(), advancedSettingsCard());' in settings_page
-    assert 'showToast("Connect stays read-only in hosted web.");' in create_links_row
+    assert 'hostedConnectReadOnlyMode() && !String(state.links.apiToken || state.links.token || "").trim()' in create_links_row
+    assert 'state.links.message = "Add PUCKY_WEB_UI_TOKEN to open app auth flows in browser.";' in create_links_row
     assert "hostedConnectReadOnlyMode()" in hydrate_links_session
     assert 'state.links.available = true;' in hydrate_links_session
+    assert 'await ensureLinksApiConfig();' in hydrate_links_session
+    assert 'if (state.links.apiToken) {' in hydrate_links_session
     assert 'await loadLinksConnected({ render: false, force: Boolean(options.force) });' in hydrate_links_session
     assert 'const query = new URLSearchParams();' in load_links_connected
     assert '`/api/links/composio/my-apps${query.toString() ? `?${query}` : ""}`' in load_links_connected
@@ -413,6 +481,7 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     app = read("app.js")
     resolve_browser_preview_api_token = function_block(app, "resolveBrowserPreviewApiToken")
     resolve_browser_preview_device_id = function_block(app, "resolveBrowserPreviewDeviceId")
+    hydrate_links_session = function_block(app, "hydrateLinksSession")
 
     assert 'const browserStateCatalog = window.PUCKY_UI_BROWSER_STATE && typeof window.PUCKY_UI_BROWSER_STATE === "object"' in app
     assert 'if (typeof browserStateCatalog.resolveBrowserApiToken === "function") {' in resolve_browser_preview_api_token
@@ -420,6 +489,18 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     assert 'return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();' in resolve_browser_preview_api_token
     assert 'if (typeof browserStateCatalog.resolveBrowserDeviceId === "function") {' in resolve_browser_preview_device_id
     assert 'return String(browserStateCatalog.resolveBrowserDeviceId() || "").trim();' in resolve_browser_preview_device_id
+    assert 'browser_preview: true' in hydrate_links_session
+
+
+def test_bridge_connect_surfaces_missing_provisioning_token() -> None:
+    app = read("app.js")
+    hydrate_links_session = function_block(app, "hydrateLinksSession")
+    links_debug_metrics = function_block(app, "linksDebugMetrics")
+
+    assert 'state.links.error = "Device provisioning missing pucky_api_token.";' in hydrate_links_session
+    assert 'api_token_present: Boolean(String(state.links.apiToken || "").trim())' in links_debug_metrics
+    assert 'portal_token_present: Boolean(String(state.links.token || "").trim())' in links_debug_metrics
+    assert 'inline_message: String(state.links.error || state.links.message || "")' in links_debug_metrics
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
@@ -757,7 +838,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
-    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);' in app
+    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);' in app
     assert "return UNIVERSAL_FLAT_FEED_SURFACES.has(surfaceKey);" in flat_feed_surface
     assert "notesSectionsExpanded: { pinned: true, recent: true }," in app
     assert "return renderUniversalFeedPage({" in light_notes
@@ -1310,12 +1391,12 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert "function lightInboxSection(" in app
     assert "function lightMeetingsSection(" in app
     assert "return renderUniversalFeedPage({" in projects_page
-    assert 'surface: "projects",' in projects_page
-    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))' in projects_page
+    assert 'surface: "tags",' in projects_page
+    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))' in projects_page
     assert 'renderMode: "flat",' in project_descriptor
     assert "const flatFeed = options.flatFeed === true;" in project_row
     assert 'flatFeed ? "is-flat-feed" : ""' in project_row
-    assert 'const chips = el("span", "light-project-chip-row");' in project_row
+    assert 'const chips = el("span", "light-project-chip-row");' not in project_row
     assert "return renderUniversalFeedPage({" in inbox_page
     assert 'surface: "inbox",' in inbox_page
     assert 'surfaceTag: "section",' in inbox_page
@@ -1368,17 +1449,46 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     contacts_page = function_block(app, "lightContactsPage")
+    contacts_search = function_block(app, "lightContactsSearchField")
+    contact_search_terms = function_block(app, "contactSearchTerms")
+    contact_matches_search = function_block(app, "contactMatchesSearch")
+    filtered_contacts = function_block(app, "filteredContactsListItems")
     contact_detail = function_block(app, "lightContactDetailPage")
     styles = read("styles.css")
+    contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
+    contact_search_input = css_block(styles, ".light-contacts-search")
     contact_list = css_block(styles, ".light-contact-list")
     contact_row = css_block(styles, ".light-contact-row")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
+    assert "function normalizeSearchDigits(value)" in app
     assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" not in app
     assert '"contact-edit"' not in app
-    assert "list.append(...contactsListItems().map(contact => {" in contacts_page
+    assert "const searchWrap = lightContactsSearchField();" in contacts_page
+    assert "const contacts = filteredContactsListItems();" in contacts_page
+    assert "page.append(searchWrap);" in contacts_page
+    assert "list.append(...contacts.map(contact => {" in contacts_page
+    assert "contactsListItems().map(contact => {" not in contacts_page
+    assert 'search.type = "search";' in contacts_search
+    assert 'search.setAttribute("aria-label", "Search contacts");' in contacts_search
+    assert 'search.placeholder = "Search contacts";' in contacts_search
+    assert 'search.addEventListener("input", onSearchInput);' in contacts_search
+    assert 'search.addEventListener("search", onSearchInput);' in contacts_search
+    assert "state.contacts.search = nextValue;" in contacts_search
+    assert "resetLightRouteScroll();" in contacts_search
+    assert "queueContactsSearchFieldFocus(selectionStart, selectionEnd);" in contacts_search
+    assert "return contactsListItems().filter(contact => contactMatchesSearch(contact));" in filtered_contacts
+    assert "meta.display_name" in contact_search_terms
+    assert "meta.first_name" in contact_search_terms
+    assert "meta.last_name" in contact_search_terms
+    assert "meta.email" in contact_search_terms
+    assert "meta.phone" in contact_search_terms
+    assert "...activity," in contact_search_terms
+    assert "phoneDigits.includes(queryDigits)" in contact_matches_search
+    assert 'No contacts match your search.' in contacts_page
+    assert 'Clear the search field to see every contact again.' in contacts_page
     assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in contacts_page
     assert 'const row = el("button", "light-card light-contact-row");' not in contacts_page
     assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
@@ -1390,6 +1500,14 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app
+    assert "display: flex;" in contact_search_wrap
+    assert "padding: 0;" in contact_search_wrap
+    assert "border-bottom:" in contact_search_wrap
+    assert "background:" not in contact_search_wrap
+    assert "width: 100%;" in contact_search_input
+    assert "min-height: 50px;" in contact_search_input
+    assert "background: transparent;" in contact_search_input
+    assert "font-size: 17px;" in contact_search_input
     assert "gap: 0;" in contact_list
     assert "padding: 0 0 84px;" in contact_list
     assert "gap: 12px;" not in contact_list
@@ -1402,3 +1520,20 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert ".light-contact-row .light-avatar {" not in styles
     assert ".light-contact-row .light-text-stack strong {" not in styles
     assert ".light-contact-row .light-text-stack span {" not in styles
+
+
+def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:
+    app = read("app.js")
+    reset_contacts_search = function_block(app, "resetContactsSearchIfLeavingContacts")
+    is_contacts_surface_route = function_block(app, "isContactsSurfaceRoute")
+    restore_light_route_snapshot = function_block(app, "restoreLightRouteSnapshot")
+    light_navigate = function_block(app, "lightNavigate")
+    light_back = function_block(app, "lightBack")
+
+    assert "function isContactsSurfaceRoute(route) {" in app
+    assert 'return value === "contacts" || value === "contact-detail";' in is_contacts_surface_route
+    assert "if (!isContactsSurfaceRoute(currentRoute) || isContactsSurfaceRoute(nextRoute)) {" in reset_contacts_search
+    assert 'state.contacts.search = "";' in reset_contacts_search
+    assert "resetContactsSearchIfLeavingContacts(normalized.route);" in restore_light_route_snapshot
+    assert "resetContactsSearchIfLeavingContacts(nextRoute);" in light_navigate
+    assert 'resetContactsSearchIfLeavingContacts(parent === state.route ? "home" : parent);' in light_back

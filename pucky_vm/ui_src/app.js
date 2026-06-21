@@ -48,6 +48,7 @@
   const WORKSPACE_REMINDER_REFRESH_MS = 15000;
   const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
   const CALENDAR_CLUSTER_WINDOW_MS = 15 * 60 * 1000;
+  const CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX = 180;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -75,9 +76,16 @@
   const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS && typeof iconCatalog.MATERIAL_SYMBOLS === "object"
     ? iconCatalog.MATERIAL_SYMBOLS
     : {};
-  const SEMANTIC_ICON_ACCENT_PALETTE = iconCatalog.SEMANTIC_ICON_ACCENT_PALETTE && typeof iconCatalog.SEMANTIC_ICON_ACCENT_PALETTE === "object"
-    ? iconCatalog.SEMANTIC_ICON_ACCENT_PALETTE
+  const SEMANTIC_ICON_REGISTRY = iconCatalog.SEMANTIC_ICON_REGISTRY && typeof iconCatalog.SEMANTIC_ICON_REGISTRY === "object"
+    ? iconCatalog.SEMANTIC_ICON_REGISTRY
     : {};
+  const SEMANTIC_ICON_KEY_BY_ICON = Object.freeze(Object.entries(SEMANTIC_ICON_REGISTRY).reduce((registry, [semanticKey, entry]) => {
+    const icon = String(entry && entry.icon || "").trim().toLowerCase();
+    if (icon && MATERIAL_SYMBOLS[icon] && !registry[icon]) {
+      registry[icon] = semanticKey;
+    }
+    return registry;
+  }, {}));
   const LIGHT_APPS = Array.isArray(routeCatalog.LIGHT_APPS)
     ? routeCatalog.LIGHT_APPS
     : [];
@@ -87,7 +95,7 @@
   const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)
     ? routeCatalog.HOME_SHELL_CANONICAL_ROUTES
     : []);
-  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);
+  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);
   const LIGHT_ROUTE_PARENTS = routeCatalog.LIGHT_ROUTE_PARENTS && typeof routeCatalog.LIGHT_ROUTE_PARENTS === "object"
     ? routeCatalog.LIGHT_ROUTE_PARENTS
     : {};
@@ -124,7 +132,7 @@
     "selectedReminderId",
     "selectedNoteId",
     "selectedTaskId",
-    "selectedProjectId",
+    "selectedTagId",
     "selectedFeedId"
   ];
   const LINKS_AUTH_SCHEME_LABELS = {
@@ -158,9 +166,11 @@
     selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
     selectedTaskId: String(persistedNavState.selected_task_id || "").trim() || "demo-task-do-paint-samples",
-    selectedProjectId: "aurora",
+    selectedTagId: String(persistedNavState.selected_tag_id || persistedNavState.selected_project_id || "").trim() || "aurora",
     selectedFeedId: "maya-budget",
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
+    calendarDayRailStartMonth: "",
+    calendarDayRailEndMonth: "",
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
     taskMutationPending: {},
@@ -175,7 +185,7 @@
       tasks: { items: [], loaded: false, loading: false, error: "" },
       "calendar-events": { items: [], loaded: false, loading: false, error: "" },
       "feed-items": { items: [], loaded: false, loading: false, error: "" },
-      projects: { items: [], loaded: false, loading: false, error: "" },
+      tags: { items: [], loaded: false, loading: false, error: "" },
       contacts: { items: [], loaded: false, loading: false, error: "" },
       messages: { items: [], loaded: false, loading: false, error: "" },
       "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
@@ -222,6 +232,7 @@
     lastRenderedTurnVisualState: "",
     lastRenderedTurnId: "",
     waveHistory: new Map(),
+    contacts: { search: "" },
     links: initialLinksState(),
     meetings: initialMeetingsState(),
     meetingRecording: initialMeetingRecordingStatus(),
@@ -1620,11 +1631,14 @@
 
     row.append(icon, name, auth, mark);
     row.addEventListener("click", () => {
-      if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-        showToast("Connect stays read-only in hosted web.");
+      if (hostedConnectReadOnlyMode() && !String(state.links.apiToken || state.links.token || "").trim()) {
+        state.links.error = "";
+        state.links.message = "Add PUCKY_WEB_UI_TOKEN to open app auth flows in browser.";
+        state.links.messageKind = "";
+        render();
         return;
       }
-      openLinksAuthFlow(app);
+      void openLinksAuthFlow(app);
     });
     return row;
   }
@@ -1875,12 +1889,37 @@
           state.links.portal_url = "";
           state.links.token = "";
           state.links.auth_mode = "browser";
+          await ensureLinksApiConfig();
+          if (state.links.apiToken) {
+            linksDebugRecord("portal_url_start", { force: Boolean(options.force), browser_preview: true }, "route");
+            payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+            state.links.portal_url = payload.portal_url;
+            state.links.token = payload.token;
+            state.links.auth_mode = payload.auth_mode;
+            state.links.available = payload.available;
+            linksDebugRecord(
+              "portal_url_end",
+              {
+                auth_mode: payload.auth_mode,
+                available: payload.available,
+                browser_preview: true,
+                server_timing: String(payload && payload._server_timing || "")
+              },
+              "route"
+            );
+          }
           await loadLinksConnected({ render: false, force: Boolean(options.force) });
           return;
         }
         if (!state.links.token) {
           linksDebugRecord("portal_url_start", { force: Boolean(options.force) }, "route");
           await ensureLinksApiConfig();
+          if (!state.links.apiToken) {
+            state.links.available = false;
+            state.links.error = "Device provisioning missing pucky_api_token.";
+            linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
+            return;
+          }
           payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
           state.links.portal_url = payload.portal_url;
           state.links.token = payload.token;
@@ -2898,10 +2937,14 @@
       filtered_app_count: filtered.length,
       rendered_row_count: linksPageRefs?.rows ? linksPageRefs.rows.querySelectorAll(".links-app-row").length : 0,
       connected_loaded: Boolean(state.links.connectedLoaded),
+      api_token_present: Boolean(String(state.links.apiToken || "").trim()),
+      portal_token_present: Boolean(String(state.links.token || "").trim()),
       session_ready: Boolean(state.links.token || state.links.userId || state.links.connectedLoaded),
       loading: Boolean(state.links.loading),
       logo_loads: safeNumber(state.links.logoLoads),
       logo_errors: safeNumber(state.links.logoErrors),
+      inline_message: String(state.links.error || state.links.message || ""),
+      toast_message: String(state.lastToast.message || ""),
       first_visible_slug: String(firstVisible && firstVisible.slug || ""),
       last_visible_slug: String(lastVisible && lastVisible.slug || ""),
       feed: {
@@ -3653,9 +3696,11 @@
         view.append(lightTaskDetailPage());
         break;
       case "projects":
+      case "tags":
         view.append(lightProjectsPage());
         break;
       case "project-detail":
+      case "tag-detail":
         view.append(lightProjectDetailPage());
         break;
       case "home":
@@ -3686,6 +3731,7 @@
     tile.dataset.route = app.route;
     tile.dataset.lightAppRoute = app.route;
     tile.dataset.appLabel = app.label;
+    tile.dataset.semanticIcon = app.semantic;
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => openLightApp(app.route));
     const icon = lightAppIcon(app);
@@ -3727,14 +3773,21 @@
 
   function semanticIconAccentKey(accentKey) {
     const key = String(accentKey || "").trim().toLowerCase();
-    return SEMANTIC_ICON_ACCENT_PALETTE[key] ? key : "";
+    return SEMANTIC_ICON_REGISTRY[key] ? key : "";
+  }
+
+  function semanticIconName(accentKey) {
+    const key = semanticIconAccentKey(accentKey) || "inbox";
+    const entry = SEMANTIC_ICON_REGISTRY[key] || SEMANTIC_ICON_REGISTRY.inbox;
+    return String(entry.icon || SEMANTIC_ICON_REGISTRY.inbox?.icon || "mail").trim();
   }
 
   function semanticIconAccentValue(accentKey, theme = effectiveTheme()) {
     const key = semanticIconAccentKey(accentKey) || "inbox";
-    const palette = SEMANTIC_ICON_ACCENT_PALETTE[key] || SEMANTIC_ICON_ACCENT_PALETTE.inbox;
+    const entry = SEMANTIC_ICON_REGISTRY[key] || SEMANTIC_ICON_REGISTRY.inbox;
+    const colors = entry.colors && typeof entry.colors === "object" ? entry.colors : {};
     const mode = normalizeTheme(theme) === "light" ? "light" : "dark";
-    return String(palette[mode] || palette.dark || palette.light || "#8b63ff").trim();
+    return String(colors[mode] || colors.dark || colors.light || "#8b63ff").trim();
   }
 
   function applySemanticIconAccent(node, accentKey, options = {}) {
@@ -3754,20 +3807,7 @@
 
   function canonicalIconAccentKey(iconKey) {
     const key = normalizeReplyCardIcon(iconKey);
-    if (key === "mail") return "inbox";
-    if (key === "link") return "connect";
-    if (key === "mic") return "meetings";
-    if (key === "settings") return "settings";
-    if (key === "chat") return "messages";
-    if (key === "record_voice_over") return "meeting_notes";
-    if (key === "bell") return "reminders";
-    if (key === "note") return "notes";
-    if (key === "checklist") return "tasks";
-    if (key === "calendar") return "calendar";
-    if (key === "text") return "inbox";
-    if (key === "folder") return "projects";
-    if (key === "contacts") return "contacts";
-    return "";
+    return SEMANTIC_ICON_KEY_BY_ICON[key] || "";
   }
 
   function resolvedFilterAccentValue(filter, theme = effectiveTheme()) {
@@ -3778,10 +3818,16 @@
     return String(filter?.accent || "#f5f9ff");
   }
 
-  function lightAppIcon(app) {
+  function lightAppIcon(app, accentKey = "") {
     const wrap = el("span", "light-app-icon");
-    applySemanticIconAccent(wrap, app?.accent);
-    wrap.innerHTML = iconSvg(app.icon, { filled: false });
+    if (app && typeof app === "object" && !Array.isArray(app)) {
+      wrap.dataset.semanticIcon = app.semantic;
+      applySemanticIconAccent(wrap, app?.semantic);
+      wrap.innerHTML = iconSvg(semanticIconName(app?.semantic), { filled: false });
+      return wrap;
+    }
+    applySemanticIconAccent(wrap, accentKey, { allowEmpty: true });
+    wrap.innerHTML = iconSvg(app, { filled: false });
     return wrap;
   }
 
@@ -3819,16 +3865,114 @@
       });
   }
 
+  function normalizeSearchDigits(value) {
+    return String(value || "").replace(/\D+/g, "");
+  }
+
+  function contactSearchTerms(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    const activity = Array.isArray(meta.activity) ? meta.activity : [];
+    return [
+      contact?.title,
+      contact?.summary,
+      meta.display_name,
+      meta.first_name,
+      meta.last_name,
+      meta.email,
+      meta.phone,
+      ...activity,
+    ]
+      .map(value => String(value || "").trim())
+      .filter(Boolean);
+  }
+
+  function contactMatchesSearch(contact, needle = state.contacts.search) {
+    const query = String(needle || "").trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    if (contactSearchTerms(contact).some(value => value.toLowerCase().includes(query))) {
+      return true;
+    }
+    const phoneDigits = normalizeSearchDigits(contact?.metadata?.phone);
+    const queryDigits = normalizeSearchDigits(query);
+    return Boolean(phoneDigits && queryDigits && phoneDigits.includes(queryDigits));
+  }
+
+  function filteredContactsListItems() {
+    return contactsListItems().filter(contact => contactMatchesSearch(contact));
+  }
+
+  function queueContactsSearchFieldFocus(selectionStart = null, selectionEnd = null) {
+    const restore = () => {
+      const search = document.getElementById("contactsSearch");
+      if (!(search instanceof HTMLInputElement)) {
+        return;
+      }
+      search.focus({ preventScroll: true });
+      if (Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
+        try {
+          search.setSelectionRange(selectionStart, selectionEnd);
+        } catch (_error) {
+          // Ignore selection restore failures on search inputs that reject manual ranges.
+        }
+      }
+    };
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(restore);
+      return;
+    }
+    restore();
+  }
+
+  function lightContactsSearchField() {
+    const searchWrap = el("label", "light-contacts-search-wrap");
+    searchWrap.setAttribute("for", "contactsSearch");
+    const search = el("input", "light-contacts-search");
+    search.id = "contactsSearch";
+    search.type = "search";
+    search.setAttribute("aria-label", "Search contacts");
+    search.placeholder = "Search contacts";
+    search.autocomplete = "off";
+    search.spellcheck = false;
+    search.value = String(state.contacts.search || "");
+    const onSearchInput = () => {
+      const nextValue = search.value;
+      if (String(state.contacts.search || "") === nextValue) {
+        return;
+      }
+      const selectionStart = search.selectionStart;
+      const selectionEnd = search.selectionEnd;
+      state.contacts.search = nextValue;
+      resetLightRouteScroll();
+      render();
+      queueContactsSearchFieldFocus(selectionStart, selectionEnd);
+    };
+    search.addEventListener("input", onSearchInput);
+    search.addEventListener("search", onSearchInput);
+    searchWrap.append(search);
+    return searchWrap;
+  }
+
   function lightContactsPage() {
     const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
     page.classList.add("light-contacts-page");
-    const list = el("div", "light-contact-list");
     const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
     if (status) {
       page.append(status);
       return page;
     }
-    list.append(...contactsListItems().map(contact => {
+    const searchWrap = lightContactsSearchField();
+    const contacts = filteredContactsListItems();
+    page.append(searchWrap);
+    if (!contacts.length) {
+      page.append(lightEmptyState("search", "No contacts match your search.", "Clear the search field to see every contact again."));
+      return page;
+    }
+    const list = el("div", "light-contact-list");
+    list.append(...contacts.map(contact => {
       const row = el("button", "light-contact-row light-feed-row is-flat-feed");
       row.type = "button";
       row.dataset.contactId = contact.id;
@@ -3907,7 +4051,6 @@
     const picker = el("section", "light-date-picker");
     const top = el("div", "light-calendar-strip-top");
     const controls = el("div", "light-date-picker-controls");
-    const nav = el("div", "light-calendar-strip-nav");
     const field = el("div", "light-date-input-wrap");
     const input = el("input", "light-date-input");
     input.type = "date";
@@ -3918,11 +4061,7 @@
       render();
     });
     field.append(input);
-    nav.append(
-      lightCalendarStripNavButton(-1),
-      lightCalendarStripNavButton(1)
-    );
-    controls.append(nav, field);
+    controls.append(field);
     if (selectedCalendarDateKey() !== calendarTodayDateKey()) {
       const today = el("button", "light-calendar-today-button", "Today");
       today.type = "button";
@@ -3935,34 +4074,87 @@
     top.append(el("h2", "light-date-picker-title", calendarMonthHeading()), controls);
     const strip = el("div", "light-calendar-day-strip");
     strip.setAttribute("aria-label", "Calendar days");
-    calendarStripDays().forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));
+    strip.addEventListener("scroll", () => queueCalendarDayRailContinuation(strip));
+    buildCalendarDayRail(strip, selectedCalendarDateKey());
     picker.append(top, strip);
-    queueCalendarDayStripCenter(strip, selectedCalendarDateKey());
     return picker;
   }
 
-  function lightCalendarStripNavButton(direction = 1) {
-    const button = el(
-      "button",
-      direction < 0 ? "light-calendar-strip-nav-button is-prev" : "light-calendar-strip-nav-button is-next",
-      direction < 0 ? "‹" : "›"
-    );
-    button.type = "button";
-    button.setAttribute("aria-label", direction < 0 ? "Earlier days" : "Later days");
-    button.addEventListener("click", event => {
-      const strip = event.currentTarget?.closest(".light-date-picker")?.querySelector(".light-calendar-day-strip");
-      scrollCalendarDayStrip(strip, direction);
-    });
-    return button;
-  }
-
-  function scrollCalendarDayStrip(strip, direction = 1) {
+  function buildCalendarDayRail(strip, dayKey = selectedCalendarDateKey()) {
     if (!(strip instanceof HTMLElement)) {
       return;
     }
-    const chip = strip.querySelector(".light-calendar-day-chip");
-    const chipWidth = Math.max(58, Math.round(chip?.getBoundingClientRect().width || 58));
-    strip.scrollBy({ left: (chipWidth + 8) * (direction < 0 ? -5 : 5), behavior: "smooth" });
+    const monthKeys = calendarDayRailMonthKeys(dayKey);
+    strip.replaceChildren();
+    state.calendarDayRailStartMonth = "";
+    state.calendarDayRailEndMonth = "";
+    monthKeys.forEach(monthKey => appendCalendarDayRailMonth(strip, monthKey));
+    queueCalendarDayStripCenter(strip, dayKey);
+    queueCalendarDayRailContinuation(strip);
+  }
+
+  function appendCalendarDayRailMonth(strip, monthKey) {
+    if (!(strip instanceof HTMLElement)) {
+      return;
+    }
+    const normalized = normalizeCalendarMonthKey(monthKey);
+    if (!normalized || normalized === state.calendarDayRailEndMonth) {
+      return;
+    }
+    calendarMonthDayKeys(normalized).forEach(dayKey => strip.append(lightCalendarDayChip(dayKey)));
+    if (!state.calendarDayRailStartMonth) {
+      state.calendarDayRailStartMonth = normalized;
+    }
+    state.calendarDayRailEndMonth = normalized;
+  }
+
+  function prependCalendarDayRailMonth(strip, monthKey) {
+    if (!(strip instanceof HTMLElement)) {
+      return;
+    }
+    const normalized = normalizeCalendarMonthKey(monthKey);
+    if (!normalized || normalized === state.calendarDayRailStartMonth) {
+      return;
+    }
+    const previousWidth = strip.scrollWidth;
+    const fragment = document.createDocumentFragment();
+    calendarMonthDayKeys(normalized).forEach(dayKey => fragment.append(lightCalendarDayChip(dayKey)));
+    strip.prepend(fragment);
+    state.calendarDayRailStartMonth = normalized;
+    if (!state.calendarDayRailEndMonth) {
+      state.calendarDayRailEndMonth = normalized;
+    }
+    strip.scrollLeft += Math.max(0, strip.scrollWidth - previousWidth);
+  }
+
+  function queueCalendarDayRailContinuation(strip) {
+    if (!(strip instanceof HTMLElement) || strip.dataset.railContinuationQueued === "1") {
+      return;
+    }
+    strip.dataset.railContinuationQueued = "1";
+    const flush = () => {
+      strip.dataset.railContinuationQueued = "0";
+      continueCalendarDayRail(strip);
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(flush);
+      return;
+    }
+    flush();
+  }
+
+  function continueCalendarDayRail(strip) {
+    if (!(strip instanceof HTMLElement)) {
+      return;
+    }
+    const threshold = Math.max(96, Math.min(CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX, Math.round(strip.clientWidth * 0.2) || CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX));
+    if (strip.scrollLeft <= threshold && state.calendarDayRailStartMonth) {
+      prependCalendarDayRailMonth(strip, shiftCalendarMonthKey(state.calendarDayRailStartMonth, -1));
+    }
+    const remaining = Math.max(0, strip.scrollWidth - strip.clientWidth - strip.scrollLeft);
+    if (remaining <= threshold && state.calendarDayRailEndMonth) {
+      appendCalendarDayRailMonth(strip, shiftCalendarMonthKey(state.calendarDayRailEndMonth, 1));
+    }
   }
 
   function queueCalendarDayStripCenter(strip, dayKey = selectedCalendarDateKey()) {
@@ -4035,6 +4227,7 @@
     chip.type = "button";
     chip.setAttribute("aria-pressed", selected ? "true" : "false");
     chip.dataset.day = dayKey;
+    chip.dataset.month = calendarMonthKey(dayKey);
     chip.addEventListener("click", () => {
       state.selectedCalendarDate = dayKey;
       render();
@@ -4299,7 +4492,7 @@
     if (surface === "reminders") {
       return "light-list light-graph-list";
     }
-    if (surface === "projects") {
+    if (surface === "tags") {
       return "light-list";
     }
     if (surface === "meetings") {
@@ -4517,19 +4710,19 @@
   function universalProjectFeedTileDescriptor(project, sectionKey = "") {
     return normalizeUniversalFeedTileDescriptor({
       id: String(project?.id || "").trim(),
-      surface: "projects",
+      surface: "tags",
       variant: "project",
       sectionKey: String(sectionKey || "").trim().toLowerCase(),
-      title: project?.title || "Untitled project",
+      title: project?.title || "Untitled tag",
       meta: { project },
-      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
+      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Tag"}`,
       chips: projectChips(project),
-      leading: { icon: "folder", show: true },
+      leading: { icon: "sell", show: true },
       trailing: null,
       interactive: true,
       open: () => {
-        state.selectedProjectId = project.id;
-        lightNavigate("project-detail", { from: "projects" });
+        state.selectedTagId = project.id;
+        lightNavigate("tag-detail", { from: "tags" });
       },
       renderMode: "flat",
     });
@@ -5501,7 +5694,7 @@
       task: "Task",
       calendar_event: "Calendar",
       feed_item: "Inbox",
-      project: "Project",
+      project: "Tag",
       contact: "Contact",
       message: "Message",
       meeting_note: "Meeting note",
@@ -5520,7 +5713,7 @@
       task: "checklist",
       calendar_event: "calendar",
       feed_item: "text",
-      project: "folder",
+      project: "sell",
       contact: "contacts",
       message: "chat",
       meeting_note: "record_voice_over",
@@ -5549,7 +5742,7 @@
       task: "task-detail",
       calendar_event: "meeting-detail",
       feed_item: "inbox-detail",
-      project: "project-detail",
+      project: "tag-detail",
       contact: "contact-detail",
       meeting_note: "meeting-note-detail",
       reminder: "reminder-detail"
@@ -5559,7 +5752,7 @@
       task: "selectedTaskId",
       calendar_event: "selectedMeetingId",
       feed_item: "selectedFeedId",
-      project: "selectedProjectId",
+      project: "selectedTagId",
       contact: "selectedContactId",
       meeting_note: "selectedMeetingNoteId",
       reminder: "selectedReminderId"
@@ -7204,19 +7397,19 @@
   }
 
   function lightProjectsPage() {
-    const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
+    const status = lightWorkspaceStatus("tags", "sell", "No tags yet");
     return renderUniversalFeedPage({
-      title: "Projects",
-      surface: "projects",
+      title: "Tags",
+      surface: "tags",
       status,
       sections: [{
-        key: "projects",
+        key: "tags",
         label: "",
         count: allProjects().length,
         collapsible: false,
         expanded: true,
         emptyState: null,
-        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))
+        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))
       }],
     });
   }
@@ -7226,16 +7419,14 @@
     const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     row.type = "button";
     row.dataset.projectId = project.id;
+    row.dataset.tagId = project.id;
     row.addEventListener("click", () => {
-      state.selectedProjectId = project.id;
-      lightNavigate("project-detail", { from: "projects" });
+      state.selectedTagId = project.id;
+      lightNavigate("tag-detail", { from: "tags" });
     });
-    const chips = el("span", "light-project-chip-row");
-    projectChips(project).forEach(chip => chips.append(el("span", "light-project-chip", chip)));
     row.append(
-      lightSmallIcon("folder"),
-      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`),
-      chips
+      lightSmallIcon("sell"),
+      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`),
     );
     return row;
   }
@@ -7243,11 +7434,11 @@
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
-      return lightPage("Project", { subtitle: "Project not found.", detail: true });
+      return lightPage("Tag", { subtitle: "Tag not found.", detail: true });
     }
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
-    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`, "folder"));
+    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`, "sell"));
     page.append(lightChipCloud(projectChips(project)));
     const grid = el("div", "light-project-section-grid");
     [
@@ -7285,7 +7476,7 @@
       row.dataset.workspaceTargetRoute = item.target.route;
       row.dataset.workspaceTargetId = item.target.id;
       row.dataset.workspaceTargetKind = item.target.kind || "";
-      row.addEventListener("click", () => openWorkspaceTarget(item.target, "project-detail"));
+      row.addEventListener("click", () => openWorkspaceTarget(item.target, "tag-detail"));
     }
     row.append(
       el("span", "", item.label || ""),
@@ -7464,7 +7655,7 @@
       "reminder-detail": "selectedReminderId",
       "note-detail": "selectedNoteId",
       "task-detail": "selectedTaskId",
-      "project-detail": "selectedProjectId",
+      "tag-detail": "selectedTagId",
       "contact-detail": "selectedContactId"
     })[String(route || "")] || "";
   }
@@ -7494,6 +7685,9 @@
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       normalized[key] = String(snapshot[key] || "");
     });
+    if (!normalized.selectedTagId) {
+      normalized.selectedTagId = String(snapshot.selectedProjectId || "");
+    }
     return normalized;
   }
 
@@ -7576,6 +7770,22 @@
         state[key] = String(selectionPatch[key] || "");
       }
     });
+    if (!Object.prototype.hasOwnProperty.call(selectionPatch, "selectedTagId")
+      && Object.prototype.hasOwnProperty.call(selectionPatch, "selectedProjectId")) {
+      state.selectedTagId = String(selectionPatch.selectedProjectId || "");
+    }
+  }
+
+  function isContactsSurfaceRoute(route) {
+    const value = String(route || "").trim();
+    return value === "contacts" || value === "contact-detail";
+  }
+
+  function resetContactsSearchIfLeavingContacts(nextRoute, currentRoute = state.route) {
+    if (!isContactsSurfaceRoute(currentRoute) || isContactsSurfaceRoute(nextRoute)) {
+      return;
+    }
+    state.contacts.search = "";
   }
 
   function restoreLightRouteScroll(snapshot) {
@@ -7619,6 +7829,7 @@
     if (!normalized) {
       return false;
     }
+    resetContactsSearchIfLeavingContacts(normalized.route);
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       state[key] = String(normalized[key] || "");
     });
@@ -7675,6 +7886,7 @@
       reason: options.from || "light_app_click"
     });
     const commitNavigation = (reason = "light_app_click") => {
+      resetContactsSearchIfLeavingContacts(nextRoute);
       applyLightRouteSelectionPatch(selectionPatch || {});
       state.route = nextRoute;
       state.lightReturnRoute = state.route === "home" ? "" : "home";
@@ -7727,6 +7939,7 @@
     const parent = isHomeShellCanonicalRoute()
       ? "home"
       : detailParent || LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
+    resetContactsSearchIfLeavingContacts(parent === state.route ? "home" : parent);
     state.route = parent === state.route ? "home" : parent;
     state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
     state.lightReturnRoute = state.route === "home" ? "" : "home";
@@ -8247,14 +8460,54 @@
     return formatCalendarDateKey(dayKey, { month: "long", year: "numeric" });
   }
 
-  function calendarStripWindowSize() {
-    return typeof window !== "undefined" && window.innerWidth >= 768 ? 21 : 15;
+  function normalizeCalendarMonthKey(value) {
+    return /^\d{4}-\d{2}$/.test(String(value || "").trim()) ? String(value || "").trim() : "";
   }
 
-  function calendarStripDays(dayKey = selectedCalendarDateKey()) {
-    const count = calendarStripWindowSize();
-    const start = -Math.floor(count / 2);
-    return Array.from({ length: count }, (_, index) => shiftCalendarDateKey(dayKey, start + index));
+  function calendarMonthKey(value = selectedCalendarDateKey()) {
+    const dayKey = normalizeCalendarDateKey(value);
+    return dayKey ? dayKey.slice(0, 7) : calendarTodayDateKey().slice(0, 7);
+  }
+
+  function calendarMonthDateFromKey(value) {
+    const key = normalizeCalendarMonthKey(value);
+    if (!key) {
+      return null;
+    }
+    const [year, month] = key.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, 1, 12, 0, 0));
+  }
+
+  function shiftCalendarMonthKey(value, offsetMonths = 0) {
+    const date = calendarMonthDateFromKey(value);
+    if (!date) {
+      return calendarMonthKey();
+    }
+    date.setUTCMonth(date.getUTCMonth() + Number(offsetMonths || 0), 1);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function calendarMonthDayKeys(monthKey) {
+    const date = calendarMonthDateFromKey(monthKey);
+    if (!date) {
+      return [];
+    }
+    const targetMonth = date.getUTCMonth();
+    const keys = [];
+    while (date.getUTCMonth() === targetMonth) {
+      keys.push(utcDateKey(date));
+      date.setUTCDate(date.getUTCDate() + 1);
+    }
+    return keys;
+  }
+
+  function calendarDayRailMonthKeys(dayKey = selectedCalendarDateKey()) {
+    const currentMonth = calendarMonthKey(dayKey);
+    return [
+      shiftCalendarMonthKey(currentMonth, -1),
+      currentMonth,
+      shiftCalendarMonthKey(currentMonth, 1)
+    ];
   }
 
   function calendarDayWeekdayLabel(dayKey) {
@@ -8342,11 +8595,11 @@
   }
 
   function selectedProject() {
-    return selectedWorkspaceRecord("projects", state.selectedProjectId);
+    return selectedWorkspaceRecord("tags", state.selectedTagId);
   }
 
   function allProjects() {
-    return workspaceItems("projects");
+    return workspaceItems("tags");
   }
 
   function projectChips(project) {
@@ -8398,7 +8651,7 @@
       "reminder-detail",
       "note-detail",
       "task-detail",
-      "project-detail",
+      "tag-detail",
       "contact-detail"
     ].includes(String(route || ""));
   }
@@ -16170,6 +16423,7 @@
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         selected_task_id: state.selectedTaskId || null,
+        selected_tag_id: state.selectedTagId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),

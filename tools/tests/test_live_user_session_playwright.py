@@ -31,7 +31,7 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert '"reminders"' in source
     assert "const UNIVERSAL_FEED_TILE_ROUTES = [" in source
     assert '"notes"' in source
-    assert '"projects"' in source
+    assert '"tags"' in source
     assert '"inbox"' in source
     assert '"meetings"' in source
     assert 'url.searchParams.set("api_token"' not in source
@@ -50,7 +50,7 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'await openRouteFromHome(page, "meeting-notes", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "notes", config.timeoutMs);' in source
-    assert 'await openRouteFromHome(page, "projects", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "tags", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "contacts", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source
@@ -76,6 +76,30 @@ def test_live_user_session_runner_captures_contacts_list_before_detail() -> None
     assert "contact_title" in source
 
 
+def test_live_user_session_runner_supports_contacts_route_filter_and_search_contract() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "routes: []" in source
+    assert 'arg === "--routes"' in source
+    assert "function shouldRunRoute(config, route) {" in source
+    assert 'shouldRunRoute(config, "contacts")' in source
+    assert "readContactsSearchState" in source
+    assert "setContactsSearchQuery" in source
+    assert "expectContactsSearchRows" in source
+    assert 'const phraseQuery = "Linked to live alpha";' in source
+    assert 'const phoneQuery = "0188";' in source
+    assert 'const reminderQuery = "reminder";' in source
+    assert 'const noMatchQuery = "zzzz-no-match";' in source
+    assert 'action: "Filter Contacts by activity phrase"' in source
+    assert 'action: "Show Contacts search empty state"' in source
+    assert 'action: "Clear Contacts search"' in source
+    assert 'action: "Open seeded contact detail from filtered list"' in source
+    assert 'action: "Return to filtered Contacts list"' in source
+    assert "Contacts search should reset after leaving the Contacts surface" in source
+    assert "Requested routes" in source
+    assert "requested_routes:" in source
+
+
 def test_live_user_session_wrapper_targets_nested_runner() -> None:
     source = WRAPPER_PATH.read_text(encoding="utf-8")
 
@@ -87,6 +111,7 @@ def test_tools_package_exposes_live_user_session_script() -> None:
 
     assert payload["scripts"]["test:cover-live-user-session"] == "node ./proofs/cover/cover_live_user_session_playwright.mjs"
     assert payload["scripts"]["test:cover-universal-feed-tiles"] == "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs"
+    assert payload["scripts"]["test:cover-calendar"] == "node ./proofs/cover/cover_calendar_playwright.mjs"
 
 
 def test_tools_package_exposes_inbox_related_proofs() -> None:
@@ -101,6 +126,7 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
 
     assert "cover_light_native_ports_playwright.mjs" in source
     assert "cover_inbox_tile_audio_truth_playwright.mjs" in source
+    assert "cover_calendar_playwright.mjs" in source
     assert "cover_live_user_session_playwright.mjs" in source
     assert "--skip-canonical-check" in source
     assert "127.0.0.1:8768" in source
@@ -116,6 +142,10 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
     assert 'live_root / "light-native-ports" / browser_name / run_name' in source
     assert "cover_universal_feed_tiles_playwright.mjs" in source
+    assert 'proof-local-contacts-search-browser' in source
+    assert 'proof-live-contacts-search-browser' in source
+    assert 'proof-local-calendar' in source
+    assert 'proof-live-calendar' in source
     assert 'proof-local-universal-tiles' in source
     assert 'proof-live-universal-tiles' in source
 
@@ -132,4 +162,8 @@ def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_
     assert "selectCalendarEventByContainer" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-container-click.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-container-click.png" in calendar_source
+    assert "Expected no desktop calendar rail chevrons to remain" in calendar_source
+    assert "Expected passive rail scrolling to keep the selected date input stable" in calendar_source
+    assert "calendar-desktop-${theme}-adjacent-month-selected.png" in calendar_source
+    assert "calendar-mobile-${theme}-adjacent-month-selected.png" in calendar_source
     assert 'openerSelector: ".light-event-block"' in hosted_source

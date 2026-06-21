@@ -54,15 +54,15 @@ const ROUTES = [
     },
   },
   {
-    surface: "Projects",
-    route: "projects",
+    surface: "Tags",
+    route: "tags",
     themes: ["light", "dark"],
     primarySelector: ".light-project-row",
     emptySelector: ".light-empty-state",
     viewportModes: ["mobile", "desktop"],
     detail: {
       openerSelector: ".light-project-row",
-      expectedRoute: "project-detail",
+      expectedRoute: "tag-detail",
     },
   },
   {
@@ -409,7 +409,7 @@ async function collectRouteMetrics(page, routeConfig) {
         graphChevrons: count(".light-graph-row .light-chevron"),
         reminderChips: count(".light-reminder-row .light-graph-chip-row"),
         reminderSnoozedRows: count(".light-reminder-row.delivery-snoozed"),
-        projectChipRows: count(".light-project-chip-row"),
+        listRowPills: count(".light-project-chip-row"),
         inboxCards: count(".card-wrap > article.card"),
         archiveActions: count(".archive-reveal-action"),
         inlineAudioTriggers: count(".card-inline-audio-trigger"),
@@ -496,8 +496,8 @@ function assertRouteSpecificState(routeConfig, metrics) {
     }
     assert(metrics.selectorCounts.reminderChips === 0, "Reminders: chips should stay hidden");
   }
-  if (routeConfig.route === "projects") {
-    assert(metrics.selectorCounts.projectChipRows > 0, "Projects: chip rows should remain visible");
+  if (routeConfig.route === "tags") {
+    assert(metrics.selectorCounts.listRowPills === 0, "Tags: list rows should not render gray pills");
   }
   if (routeConfig.route === "inbox" && metrics.selectorCounts.primary > 0) {
     assert(metrics.selectorCounts.inboxCards > 0, "Inbox: canonical cards should render");
@@ -596,8 +596,8 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
     assert(detailMetrics.reminderActionRows > 0, "Reminders: action row should render");
     assert(detailMetrics.reminderDetailChevrons === 0, "Reminders: mixed feed rows should drop trailing chevrons");
   }
-  if (routeConfig.route === "projects") {
-    assert(detailMetrics.projectGridCount > 0, "Projects: detail grid should render");
+  if (routeConfig.route === "tags") {
+    assert(detailMetrics.projectGridCount > 0, "Tags: detail grid should render");
   }
   const detailScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-detail-open.png`));
   const returned = await backToList(page, routeConfig, timeoutMs);
