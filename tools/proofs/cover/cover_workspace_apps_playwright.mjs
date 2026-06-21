@@ -65,6 +65,31 @@ function assert(condition, message) {
   }
 }
 
+function isZeroishPx(value) {
+  return Math.abs(Number.parseFloat(String(value || "0")) || 0) <= 0.5;
+}
+
+function isTransparentColor(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text || text === "transparent") {
+    return true;
+  }
+  const rgba = text.match(/^rgba?\((.+)\)$/);
+  if (!rgba) {
+    return false;
+  }
+  const parts = rgba[1].split(",").map(part => part.trim());
+  if (parts.length === 4) {
+    return Math.abs(Number.parseFloat(parts[3]) || 0) <= 0.01;
+  }
+  return parts.slice(0, 3).every(part => Number.parseFloat(part) === 0);
+}
+
+function isNoShadow(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return !text || text === "none" || text === "rgba(0, 0, 0, 0) 0px 0px 0px 0px";
+}
+
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -1437,13 +1462,64 @@ async function assertNoContactEndpoints(page, config, contactId, label) {
   return detailState;
 }
 
+async function readContactsListFlatness(page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector(".light-shell");
+    const list = document.querySelector(".light-contact-list");
+    const rows = Array.from(document.querySelectorAll(".light-contact-row"));
+    const firstRow = rows[0] || null;
+    const secondRow = rows[1] || null;
+    const listStyle = list ? getComputedStyle(list) : null;
+    const firstRowStyle = firstRow ? getComputedStyle(firstRow) : null;
+    const secondRowStyle = secondRow ? getComputedStyle(secondRow) : null;
+    return {
+      route: shell?.getAttribute("data-light-route") || "",
+      rowCount: rows.length,
+      firstContactId: firstRow?.getAttribute("data-contact-id") || "",
+      listGap: listStyle?.gap || "",
+      listPaddingLeft: listStyle?.paddingLeft || "",
+      listPaddingRight: listStyle?.paddingRight || "",
+      rowClassList: firstRow ? Array.from(firstRow.classList) : [],
+      rowBackground: firstRowStyle?.backgroundColor || "",
+      rowBoxShadow: firstRowStyle?.boxShadow || "",
+      rowBorderTopLeftRadius: firstRowStyle?.borderTopLeftRadius || "",
+      rowBorderTopRightRadius: firstRowStyle?.borderTopRightRadius || "",
+      rowPaddingLeft: firstRowStyle?.paddingLeft || "",
+      rowPaddingRight: firstRowStyle?.paddingRight || "",
+      dividerWidth: secondRowStyle?.borderTopWidth || "",
+      dividerColor: secondRowStyle?.borderTopColor || "",
+    };
+  });
+}
+
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
   const firstContact = page.locator("button[data-contact-id]").first();
   await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
   const firstContactId = String(await firstContact.getAttribute("data-contact-id") || "");
-  assert(firstContactId === "contact-me", `Expected Me contact to be pinned first, saw ${firstContactId}`);
+  const contactsListFlatness = await readContactsListFlatness(page);
+  assert(firstContactId === "contact-me", `Me contact should remain pinned first in Contacts (saw ${firstContactId || "none"})`);
+  assert(contactsListFlatness.route === "contacts", `Expected contacts route before detail, got ${contactsListFlatness.route}`);
+  assert(contactsListFlatness.rowClassList.includes("is-flat-feed"), `Contacts list should render flat-feed rows (${contactsListFlatness.rowClassList.join(" ")})`);
+  assert(isTransparentColor(contactsListFlatness.rowBackground), `Contacts list should stay visually flat (${contactsListFlatness.rowBackground})`);
+  assert(isNoShadow(contactsListFlatness.rowBoxShadow), `Contacts list should stay visually flat (${contactsListFlatness.rowBoxShadow})`);
+  assert(
+    isZeroishPx(contactsListFlatness.rowBorderTopLeftRadius) && isZeroishPx(contactsListFlatness.rowBorderTopRightRadius),
+    `Contacts list should remove rounded row corners (${contactsListFlatness.rowBorderTopLeftRadius}, ${contactsListFlatness.rowBorderTopRightRadius})`
+  );
+  assert(isZeroishPx(contactsListFlatness.listGap), `Contacts list should remove inter-row card gaps (${contactsListFlatness.listGap})`);
+  assert(
+    isZeroishPx(contactsListFlatness.rowPaddingLeft) && isZeroishPx(contactsListFlatness.rowPaddingRight),
+    `Contacts list should remove detached side padding (${contactsListFlatness.rowPaddingLeft}, ${contactsListFlatness.rowPaddingRight})`
+  );
+  if (contactsListFlatness.rowCount > 1) {
+    assert(
+      !isZeroishPx(contactsListFlatness.dividerWidth) && !isTransparentColor(contactsListFlatness.dividerColor),
+      `Contacts list should keep divider separation between rows (${contactsListFlatness.dividerWidth}, ${contactsListFlatness.dividerColor})`
+    );
+  }
+  screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
@@ -1459,7 +1535,6 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
   if (seed.writeEnabled) {
     await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1491,7 +1566,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   }
   await backHome(page, theme, config.timeoutMs);
   summary.contactProfiles = summary.contactProfiles || [];
-  summary.contactProfiles.push({ theme, selfContactId: firstContactId });
+  summary.contactProfiles.push({ theme, selfContactId: firstContactId, contacts_list_flatness: contactsListFlatness });
 }
 
 async function proveReminders(page, config, seed, theme, screenshots, summary) {

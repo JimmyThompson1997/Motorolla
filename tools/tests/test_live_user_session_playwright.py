@@ -51,6 +51,7 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "notes", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "projects", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "contacts", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source
     assert "contacts-edit" not in source
@@ -62,6 +63,17 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert "Reload connect directly" in source
     assert 'LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"]' in source
     assert 'localStorage.removeItem("pucky.cover.browser_device_id.v1");' in source
+
+
+def test_live_user_session_runner_captures_contacts_list_before_detail() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "readContactsListFlatness(" in source
+    assert 'action: "Inspect Contacts list"' in source
+    assert "Contacts list stays flat on the deployed hosted UI before opening detail." in source
+    assert "contacts_list_flatness" in source
+    assert "first_contact_id" in source
+    assert "contact_title" in source
 
 
 def test_live_user_session_wrapper_targets_nested_runner() -> None:

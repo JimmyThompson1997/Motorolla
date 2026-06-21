@@ -129,6 +129,18 @@ def test_workspace_apps_browser_proof_removes_contact_endpoints_contract() -> No
     assert "endpoints: [{" not in source
 
 
+def test_workspace_apps_browser_proof_captures_contacts_flat_list_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "readContactsListFlatness" in source
+    assert "contacts_list_flatness" in source
+    assert "Contacts list should render flat-feed rows" in source
+    assert "Contacts list should stay visually flat" in source
+    assert "Contacts list should remove detached side padding" in source
+    assert "Contacts list should keep divider separation between rows" in source
+    assert "Me contact should remain pinned first in Contacts" in source
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

@@ -1369,6 +1369,9 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     contacts_page = function_block(app, "lightContactsPage")
     contact_detail = function_block(app, "lightContactDetailPage")
+    styles = read("styles.css")
+    contact_list = css_block(styles, ".light-contact-list")
+    contact_row = css_block(styles, ".light-contact-row")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
@@ -1376,6 +1379,8 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" not in app
     assert '"contact-edit"' not in app
     assert "list.append(...contactsListItems().map(contact => {" in contacts_page
+    assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in contacts_page
+    assert 'const row = el("button", "light-card light-contact-row");' not in contacts_page
     assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
     assert 'lightInfoSection("Endpoints"' not in contact_detail
     assert "meta.endpoints" not in contact_detail
@@ -1385,3 +1390,15 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app
+    assert "gap: 0;" in contact_list
+    assert "padding: 0 0 84px;" in contact_list
+    assert "gap: 12px;" not in contact_list
+    assert "padding: 0 4px 84px;" not in contact_list
+    assert "grid-template-columns: 48px minmax(0, 1fr);" in contact_row
+    assert "padding: 12px 0;" in contact_row
+    assert "border-radius: 0;" in contact_row
+    assert "background: transparent;" in contact_row
+    assert "box-shadow: none;" in contact_row
+    assert ".light-contact-row .light-avatar {" not in styles
+    assert ".light-contact-row .light-text-stack strong {" not in styles
+    assert ".light-contact-row .light-text-stack span {" not in styles
