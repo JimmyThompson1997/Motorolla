@@ -4251,9 +4251,9 @@ button {
   min-height: 74px;
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 13px 14px;
   text-align: left;
 }
 
@@ -4261,7 +4261,7 @@ button {
   gap: 4px;
 }
 
-.light-reminder-row .light-text-stack > span:not(.light-graph-chip-row) {
+.light-reminder-row-summary {
   white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -4274,8 +4274,10 @@ button {
   line-height: 1.1;
   font-weight: 700;
   white-space: nowrap;
-  align-self: start;
-  padding-top: 2px;
+  align-self: center;
+  justify-self: end;
+  text-align: right;
+  min-width: 72px;
 }
 
 .light-reminder-row.delivery-sent .light-reminder-time {
@@ -4291,34 +4293,41 @@ button {
   gap: 12px;
 }
 
+.light-reminder-detail-surface {
+  display: grid;
+  gap: 12px;
+}
+
 .light-reminder-detail-card {
   display: grid;
-  gap: 14px;
-  padding: 16px 18px;
+  gap: 16px;
+  padding: 20px 18px 18px;
 }
 
 .light-reminder-detail-identity {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
   align-items: start;
 }
 
-.light-reminder-detail-identity .light-graph-icon {
-  width: 48px;
-  height: 48px;
+.light-reminder-detail-identity .light-small-icon {
+  width: 40px;
+  height: 40px;
+  margin-top: 2px;
 }
 
 .light-reminder-detail-copy {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  padding-top: 2px;
 }
 
 .light-reminder-detail-eyebrow {
   color: var(--home-shell-text-muted);
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 1.25;
   font-weight: 760;
 }
 
@@ -4337,22 +4346,79 @@ button {
   line-height: 1.45;
 }
 
-.light-reminder-detail-card .light-reminder-actions {
-  margin-top: 0;
-  justify-content: flex-start;
+.light-reminder-status-row,
+.light-reminder-action-row {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.light-reminder-detail-card .light-reminder-dismiss,
-.light-reminder-detail-card .light-reminder-snooze {
-  min-height: 36px;
-  padding: 0 12px;
-  font-size: 13px;
+.light-reminder-status-row {
+  justify-content: flex-start;
 }
 
-.light-reminder-channels-section .light-info-row .light-text-stack > span:last-child {
-  color: color-mix(in srgb, var(--home-shell-text-muted) 82%, transparent);
+.light-reminder-status-row .light-pill {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.light-reminder-action-button {
+  min-height: 38px;
+  padding: 0 14px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.light-reminder-action-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 26%, transparent);
+  outline-offset: 2px;
+}
+
+.light-reminder-action-button.is-primary {
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 16%, var(--home-shell-card));
+}
+
+.light-reminder-action-button.is-selector {
+  border-style: dashed;
+}
+
+.light-reminder-action-button:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+.light-reminder-detail-feed .light-info-row {
+  min-height: 68px;
+  align-items: start;
+  padding: 12px 14px;
+}
+
+.light-reminder-detail-feed .light-text-stack {
+  gap: 4px;
+}
+
+.light-reminder-detail-feed .light-text-stack strong,
+.light-reminder-detail-feed .light-text-stack span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.light-reminder-detail-feed .light-text-stack strong {
+  font-size: 16px;
+  line-height: 1.18;
+}
+
+.light-reminder-detail-feed .light-text-stack span {
+  line-height: 1.3;
+}
+
+.light-reminder-detail-feed .light-small-icon {
+  margin-top: 1px;
 }
 
 .light-reminder-history-divider {
@@ -4397,20 +4463,8 @@ button {
   color: var(--home-shell-text);
 }
 
-.light-reminder-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: -2px 0 10px;
-}
-
 .light-reminder-row .light-graph-chip-row {
   margin-top: 2px;
-}
-
-.light-reminder-dismiss,
-.light-reminder-snooze {
-  min-width: 118px;
 }
 
 .light-graph-document .light-info-section {
@@ -4604,7 +4658,7 @@ button {
 .light-info-row {
   min-height: 62px;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 42px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 10px 14px;

@@ -99,8 +99,15 @@ function reminderMeta(reminder) {
     : {};
   return {
     deliveryState: String(metadata.delivery_state || "").trim().toLowerCase(),
+    snoozedUntilMs: Number(metadata.snoozed_until_ms || 0),
     lastFiredDueAtMs: Number(metadata.last_fired_due_at_ms || 0)
   };
+}
+
+function reminderIsSnoozed(reminder) {
+  const meta = reminderMeta(reminder);
+  const dueAtMs = Number(reminder?.due_at_ms || 0);
+  return meta.snoozedUntilMs > Date.now() && meta.snoozedUntilMs === dueAtMs;
 }
 
 function reminderIsActive(reminder) {
@@ -109,6 +116,9 @@ function reminderIsActive(reminder) {
   }
   const meta = reminderMeta(reminder);
   const dueAtMs = Number(reminder?.due_at_ms || 0);
+  if (reminderIsSnoozed(reminder)) {
+    return false;
+  }
   return !(meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs);
 }
 
@@ -251,7 +261,7 @@ async function main() {
 
     await page.locator('[data-reminder-id^="demo-reminder-"]').first().click({ force: true });
     await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    await page.waitForFunction(() => (document.body.innerText || "").toUpperCase().includes("LINKED RECORDS"), { timeout: config.timeoutMs });
+    await page.waitForFunction(() => Boolean(document.querySelector('[data-reminder-detail-feed="true"]')), { timeout: config.timeoutMs });
     summary.screenshots.reminder_linked_detail = await saveScreenshot(page, config.reportDir, "reminder-linked-detail");
     await backToHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, expectedActive, config.timeoutMs);
@@ -262,22 +272,69 @@ async function main() {
     await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
     await page.waitForFunction(() => {
       const text = (document.body.innerText || "").toUpperCase();
-      return text.includes("SCHEDULE")
-        && text.includes("RECIPIENTS")
-        && text.includes("CHANNELS")
-        && text.includes("STATUS:")
+      const sectionTitles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim().toUpperCase());
+      return text.includes("STATUS:")
         && text.includes("DELIVERY:")
+        && text.includes("DONE")
+        && text.includes("SNOOZE 10 MIN")
+        && text.includes("SNOOZE...")
         && text.includes("ME")
         && !text.includes("SELF")
-        && !text.includes("MARK DONE")
-        && !text.includes("SNOOZE 10 MIN")
-        && !text.includes("DISMISS");
+        && !sectionTitles.includes("SCHEDULE")
+        && !sectionTitles.includes("RECIPIENTS")
+        && !sectionTitles.includes("CHANNELS")
+        && !sectionTitles.includes("LINKED RECORDS")
+        && Boolean(document.querySelector('[data-reminder-action-row="true"]'))
+        && Boolean(document.querySelector('[data-reminder-detail-feed="true"]'))
+        && !document.querySelector(".light-reminder-detail-feed .light-chevron");
     }, { timeout: config.timeoutMs });
     await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
     summary.screenshots.reminder_detail = await saveScreenshot(page, config.reportDir, "reminder-detail");
+
+    await page.locator('[data-reminder-action="snooze_10"]').click();
+    await waitForReminderState(
+      config,
+      manageReminderId,
+      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + (8 * 60 * 1000),
+      "manage reminder should quick-snooze",
+      30_000
+    );
+    expectedActive -= 1;
+    await page.waitForFunction(() => {
+      const text = (document.body.innerText || "").toLowerCase();
+      return text.includes("delivery: snoozed") && text.includes("snoozed until");
+    }, { timeout: config.timeoutMs });
+    summary.screenshots.reminder_snoozed = await saveScreenshot(page, config.reportDir, "reminder-snoozed");
+
+    await page.locator('[data-reminder-action="snooze_selector"]').click();
+    await page.locator(".settings-selector-overlay.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.waitForFunction(() => {
+      const text = String(document.querySelector(".settings-selector-sheet")?.textContent || "").toLowerCase();
+      return text.includes("1 hour") && text.includes("this evening") && text.includes("tomorrow morning");
+    }, { timeout: config.timeoutMs });
+    summary.screenshots.reminder_snooze_selector = await saveScreenshot(page, config.reportDir, "reminder-snooze-selector");
+    await page.locator('[data-selector-value="1_hour"]').click();
+    await waitForReminderState(
+      config,
+      manageReminderId,
+      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + (55 * 60 * 1000),
+      "manage reminder should accept preset snooze",
+      30_000
+    );
+    await page.locator('[data-reminder-action="done"]').click();
+    await waitForReminderState(
+      config,
+      manageReminderId,
+      reminder => String(reminder?.status || "").trim().toLowerCase() === "done",
+      "manage reminder should mark done",
+      30_000
+    );
+    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
+    summary.screenshots.reminder_done = await saveScreenshot(page, config.reportDir, "reminder-done");
     await backToHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, expectedActive, config.timeoutMs);
-    summary.screenshots.reminder_readonly = await saveScreenshot(page, config.reportDir, "reminder-readonly");
+    summary.screenshots.reminder_actions = await saveScreenshot(page, config.reportDir, "reminder-actions");
 
     if (deliveryEnabled) {
       await openTile(page, "Reminders", "reminders", config.timeoutMs);
@@ -296,8 +353,8 @@ async function main() {
       summary.phone_delivery = sentPhone?.metadata?.last_delivery_results || [];
     }
 
-    summary.assertions.push("Me is pinned first in Contacts and exposes editable reminder delivery fields");
-    summary.assertions.push("Reminders stay active-only, hide row chips, and keep schedule/recipients/channels/linked-records on detail only");
+    summary.assertions.push("Me is pinned first in Contacts and remains the default personal reminder target");
+    summary.assertions.push("Reminders regroup into Now/Upcoming/Snoozed, expose Done plus snooze actions, hide Channels, and collapse detail into one mixed connected feed without chevrons");
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
   } finally {
     try {
