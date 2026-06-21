@@ -107,19 +107,35 @@ function pageUrl(baseUrl, theme) {
   return url.toString();
 }
 
-async function primeBrowserPreviewToken(context, apiToken) {
+async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
   const token = String(apiToken || "").trim();
   if (!token) {
     return;
   }
-  await context.addInitScript((value) => {
-    try {
-      const key = ["pucky", "cover", ["browser", "api", "token"].join("_"), "v1"].join(".");
-      window.localStorage.setItem(key, value);
-    } catch (_error) {
-      // Ignore storage failures so the proof can still exercise public routes.
+  const apiBase = `${String(baseUrl || "").replace(/\/+$/, "")}/api/**`;
+  await context.route(apiBase, async route => {
+    const request = route.request();
+    const headers = { ...request.headers() };
+    delete headers.origin;
+    if (!headers.authorization) {
+      headers.authorization = `Bearer ${token}`;
     }
-  }, token);
+    try {
+      const response = await route.fetch({
+        method: request.method(),
+        headers,
+        postData: request.postDataBuffer() || undefined
+      });
+      await route.fulfill({ response });
+    } catch (error) {
+      const detail = String(error?.message || error || "");
+      if (/Request context disposed|Target page, context or browser has been closed/i.test(detail)) {
+        await route.abort("failed");
+        return;
+      }
+      throw error;
+    }
+  });
 }
 
 async function apiRequest(config, method, apiPath, body = undefined) {
@@ -1653,7 +1669,18 @@ async function assertNoContactHtmlDocument(page, config, contactId, label) {
   return htmlState;
 }
 
-async function assertContactPhotoThumbnails(page, label) {
+async function assertContactPhotoThumbnails(page, label, timeoutMs) {
+  await page.waitForFunction(() => {
+    const rows = Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]"))
+      .filter(row => String(row.getAttribute("data-contact-id") || "").trim() !== "contact-me");
+    if (!rows.length) {
+      return false;
+    }
+    return rows.every(row => {
+      const img = row.querySelector(".light-avatar.has-photo img");
+      return Boolean(img) && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
+    });
+  }, undefined, { timeout: timeoutMs });
   const rows = await page.evaluate(() => {
     const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
     return {
@@ -1732,7 +1759,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`);
+  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`, config.timeoutMs);
   summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
   summary.contactPhotoThumbnails.push({ theme, ...photoState });
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
@@ -2258,7 +2285,7 @@ async function main() {
       viewport: VIEWPORT,
       recordVideo: { dir: config.reportDir, size: VIEWPORT }
     });
-    await primeBrowserPreviewToken(context, config.apiToken);
+    await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     const page = await context.newPage();
     attachPageLogging(page, consoleLog);
