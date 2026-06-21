@@ -734,7 +734,7 @@ async function readTaskDetailState(page) {
   return page.evaluate(() => {
     const detail = document.querySelector(".light-task-detail-surface");
     const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
-    const pageText = document.querySelector(".light-shell")?.textContent || "";
+    const detailText = detail?.textContent || "";
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
     const statusCard = document.querySelector(".light-task-detail-card");
@@ -746,12 +746,12 @@ async function readTaskDetailState(page) {
       done: "Done"
     };
     const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || statusLabels[statusValue] || "";
-    const sectionTitles = Array.from(document.querySelectorAll(".light-section-title"))
+    const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
       .map(node => String(node.textContent || "").trim().toLowerCase());
-    const hasConnected = sectionTitles.includes("connected") || /\bconnected\b/i.test(pageText);
-    const hasNotes = sectionTitles.includes("notes") || /\bnotes\b/i.test(pageText);
-    const hasRelated = sectionTitles.includes("related") || /\brelated\b/i.test(pageText);
-    const hasGeneratedPage = sectionTitles.includes("generated page") || /\bgenerated page\b/i.test(pageText);
+    const hasConnected = sectionTitles.includes("connected") || /\bconnected\b/i.test(detailText);
+    const hasNotes = sectionTitles.includes("notes") || /\bnotes\b/i.test(detailText);
+    const hasRelated = sectionTitles.includes("related") || /\brelated\b/i.test(detailText);
+    const hasGeneratedPage = sectionTitles.includes("generated page") || /\bgenerated page\b/i.test(detailText);
     const contentSections = Array.from(detail?.children || [])
       .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
     const contentSectionTitles = contentSections
@@ -1374,7 +1374,10 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   if (expandedForDone?.sectionExpanded?.done !== true) {
     throw new Error("Expected Done section to be expanded before opening done task detail");
   }
-  await taskRowControl(page, doneId).click();
+  const doneTaskControl = taskRowControl(page, doneId).first();
+  await doneTaskControl.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await doneTaskControl.scrollIntoViewIfNeeded({ timeout: Math.min(2000, config.timeoutMs) });
+  await doneTaskControl.click({ timeout: config.timeoutMs });
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.statusValue === "done", `Expected done task status value to be done, got ${detailState.statusValue}`);
