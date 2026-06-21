@@ -128,6 +128,10 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     source = read_source("cover_calendar_playwright.mjs")
 
     assert "async function calendarChromeLayoutMetrics(page)" in source
+    assert "settingsButtonClassName" in source
+    assert "settingsButtonBackground" in source
+    assert "settingsButtonBorderWidth" in source
+    assert "settingsButtonBoxShadow" in source
     assert 'const headerShell = document.querySelector(".light-page-header-shell");' in source
     assert "chromeInHeaderShell" in source
     assert "chromePosition" in source
@@ -138,8 +142,14 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "Expected calendar chrome to stop using its own sticky positioning" in source
     assert "Expected calendar top row to span the full calendar lane" in source
     assert "Expected calendar day rail to span the full calendar lane" in source
+    assert "Expected calendar settings button to use the plain icon-button class" in source
+    assert "Expected calendar settings button to drop the circular shell border" in source
+    assert "Expected calendar settings button to drop the circular shell fill" in source
+    assert "Expected calendar settings button to drop the circular shell shadow" in source
     assert 'calendar-desktop-${theme}-chrome.png' in source
+    assert 'calendar-desktop-${theme}-settings-button.png' in source
     assert 'calendar-mobile-${theme}-chrome.png' in source
+    assert 'calendar-mobile-${theme}-settings-button.png' in source
     assert "scrollDayStripWithButton(page, 1)" in source
     assert "scrollDayStripDirect(page, 220)" in source
 

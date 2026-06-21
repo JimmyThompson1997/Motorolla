@@ -453,6 +453,7 @@ async function calendarChromeLayoutMetrics(page) {
     const chrome = document.querySelector(".light-date-picker");
     const topRow = document.querySelector(".light-calendar-strip-top");
     const strip = document.querySelector(".light-calendar-day-strip");
+    const settingsButton = document.querySelector(".light-calendar-settings-button");
     const rect = node => {
       if (!node) {
         return null;
@@ -474,11 +475,16 @@ async function calendarChromeLayoutMetrics(page) {
       topRowWidth: Math.round(topRow?.getBoundingClientRect().width ?? 0),
       stripWidth: Math.round(strip?.getBoundingClientRect().width ?? 0),
       chromePosition: String(chrome ? getComputedStyle(chrome).position : ""),
+      settingsButtonClassName: String(settingsButton?.className || ""),
+      settingsButtonBackground: String(settingsButton ? getComputedStyle(settingsButton).backgroundColor : ""),
+      settingsButtonBorderWidth: String(settingsButton ? getComputedStyle(settingsButton).borderTopWidth : ""),
+      settingsButtonBoxShadow: String(settingsButton ? getComputedStyle(settingsButton).boxShadow : ""),
       chromeInHeaderShell: Boolean(headerShell && chrome && headerShell.contains(chrome)),
       laneRect: rect(lane),
       headerRect: rect(header),
       headerShellRect: rect(headerShell),
       chromeRect: rect(chrome),
+      settingsButtonRect: rect(settingsButton),
       topRowRect: rect(topRow),
       stripRect: rect(strip)
     };
@@ -510,6 +516,10 @@ async function settingsPanelMetrics(page) {
 
 function normalizeTexts(values) {
   return values.map(value => String(value || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+
+function isTransparentBackground(value) {
+  return /transparent|rgba\(0,\s*0,\s*0,\s*0\)/i.test(String(value || ""));
 }
 
 async function assertChipContrast(page, selector) {
@@ -668,6 +678,10 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(chromeMetrics.chromePosition !== "sticky", `Expected calendar chrome to stop using its own sticky positioning, got ${JSON.stringify(chromeMetrics)}.`);
     assert(chromeMetrics.topRowWidth >= chromeMetrics.laneWidth - 2, `Expected calendar top row to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
     assert(chromeMetrics.stripWidth >= chromeMetrics.laneWidth - 2, `Expected calendar day rail to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.settingsButtonClassName.includes("light-icon-button") && !chromeMetrics.settingsButtonClassName.includes("light-circle-button"), `Expected calendar settings button to use the plain icon-button class, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.settingsButtonBorderWidth === "0px", `Expected calendar settings button to drop the circular shell border, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(isTransparentBackground(chromeMetrics.settingsButtonBackground), `Expected calendar settings button to drop the circular shell fill, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.settingsButtonBoxShadow === "none", `Expected calendar settings button to drop the circular shell shadow, got ${JSON.stringify(chromeMetrics)}.`);
     const stripMetrics = await calendarStripMetrics(page);
     assert(stripMetrics.childCount === 21, `Expected the desktop day strip to render twenty-one chips, got ${stripMetrics.childCount}.`);
     assert(await page.locator(".light-calendar-strip-nav-button").count() === 2, "Expected desktop calendar arrows for strip navigation.");
@@ -695,6 +709,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await page.locator(eventSelector).evaluate(node => node.className.includes("blue")), "Expected the freelance review card to use the shared blue tone.");
     assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
     await saveLocatorShot(page.locator(".light-page-header-shell"), reportDir, `calendar-desktop-${theme}-chrome.png`, summary);
+    await saveLocatorShot(page.locator(".light-calendar-settings-button"), reportDir, `calendar-desktop-${theme}-settings-button.png`, summary);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-today.png`, summary);
     await scrollDayStripWithButton(page, 1);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-day-rail-scroll.png`, summary);
@@ -872,6 +887,10 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(chromeMetrics.chromePosition !== "sticky", `Expected calendar chrome to stop using its own sticky positioning, got ${JSON.stringify(chromeMetrics)}.`);
     assert(chromeMetrics.topRowWidth >= chromeMetrics.laneWidth - 2, `Expected calendar top row to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
     assert(chromeMetrics.stripWidth >= chromeMetrics.laneWidth - 2, `Expected calendar day rail to span the full calendar lane, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.settingsButtonClassName.includes("light-icon-button") && !chromeMetrics.settingsButtonClassName.includes("light-circle-button"), `Expected calendar settings button to use the plain icon-button class, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.settingsButtonBorderWidth === "0px", `Expected calendar settings button to drop the circular shell border, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(isTransparentBackground(chromeMetrics.settingsButtonBackground), `Expected calendar settings button to drop the circular shell fill, got ${JSON.stringify(chromeMetrics)}.`);
+    assert(chromeMetrics.settingsButtonBoxShadow === "none", `Expected calendar settings button to drop the circular shell shadow, got ${JSON.stringify(chromeMetrics)}.`);
     const stripMetrics = await calendarStripMetrics(page);
     assert(stripMetrics.childCount === 15, `Expected the mobile day strip to render fifteen chips, got ${stripMetrics.childCount}.`);
     assert(!chromeText.includes("Pinned"), "Expected mobile calendar chrome to hide Pinned copy.");
@@ -897,6 +916,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(/^Free .+ - .+$/.test(mobileGap.label), `Expected mobile free-range copy, got ${mobileGap.label}.`);
     await assertChipContrast(page, `${eventSelector} .light-attendee-chip.is-link`);
     await saveLocatorShot(page.locator(".light-page-header-shell"), reportDir, `calendar-mobile-${theme}-chrome.png`, summary);
+    await saveLocatorShot(page.locator(".light-calendar-settings-button"), reportDir, `calendar-mobile-${theme}-settings-button.png`, summary);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-top.png`, summary);
     await scrollDayStripDirect(page, 220);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-day-rail-scroll.png`, summary);

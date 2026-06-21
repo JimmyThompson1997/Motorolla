@@ -398,6 +398,7 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
 
 def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -> None:
     app = read("app.js")
+    styles = read("styles.css")
     index_html = read("index.html")
     routes = read("pucky-routes.js")
     legacy_browser_state = "pucky-browser" + "-state.js"
@@ -422,9 +423,15 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (bucket.loaded && !workspaceItems(collection).length) {' in light_workspace_status
     assert 'headerChrome: lightDatePicker()' in light_calendar_page
     assert 'page.append(lightDatePicker())' not in light_calendar_page
+    assert 'action: lightIconButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' in light_calendar_page
+    assert 'action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' not in light_calendar_page
     assert "if (options.headerChrome)" in light_header
     assert 'if (bucket.error) {' in light_calendar_page
     assert 'if (!bucket.loaded) {' in light_calendar_page
+    calendar_settings_button = css_block(styles, ".light-calendar-settings-button")
+    assert "background: transparent;" in calendar_settings_button
+    assert "border: none;" in calendar_settings_button
+    assert "box-shadow: none;" in calendar_settings_button
 
 
 def test_hosted_workspace_writes_use_token_free_browser_state_and_public_same_origin_fallback() -> None:

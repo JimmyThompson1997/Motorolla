@@ -3914,7 +3914,7 @@
 
   function lightCalendarPage() {
     const page = lightPage("Calendar", {
-      action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button"),
+      action: lightIconButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button"),
       headerChrome: lightDatePicker()
     });
     page.classList.add("light-calendar-page");

@@ -3946,6 +3946,12 @@ button {
   box-shadow: none;
 }
 
+.light-calendar-settings-button {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
 .light-circle-button:active,
 .light-icon-button:active,
 .light-app-tile:active,
