@@ -483,6 +483,15 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "openAudioControls(" in source
     assert "inbox_audio_controls" in source
     assert "scrollability" in source
+    assert "readInboxActionLayout(" in source
+    assert "inbox_action_layout" in source
+    assert "unread_page_action.contrast_ratio >= 3" in source
+    assert "document.body || current === document.documentElement" in source
+    assert '"--surface-card"' in source
+    assert "background_source" in source
+    assert 'unread_page_action.color !== "rgb(245, 249, 255)"' in source
+    assert "audio_only_mic_right_aligned" in source
+    assert "action-count-1" in source
 
 
 def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:

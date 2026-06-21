@@ -373,6 +373,158 @@ async function readUnreadMarkerStyle(page) {
   });
 }
 
+async function readInboxActionLayout(page) {
+  return page.evaluate(() => {
+    const rect = (node) => {
+      if (!(node instanceof HTMLElement || node instanceof SVGElement)) {
+        return null;
+      }
+      const bounds = node.getBoundingClientRect();
+      return {
+        x: Number(bounds.x.toFixed(2)),
+        y: Number(bounds.y.toFixed(2)),
+        width: Number(bounds.width.toFixed(2)),
+        height: Number(bounds.height.toFixed(2)),
+        right: Number(bounds.right.toFixed(2)),
+        bottom: Number(bounds.bottom.toFixed(2))
+      };
+    };
+    const parseColor = (value) => {
+      const match = String(value || "").match(/rgba?\(([^)]+)\)/i);
+      if (!match) {
+        return null;
+      }
+      const parts = match[1].split(",").map(part => Number.parseFloat(part.trim()));
+      if (parts.length < 3 || parts.slice(0, 3).some(part => Number.isNaN(part))) {
+        return null;
+      }
+      return {
+        r: parts[0],
+        g: parts[1],
+        b: parts[2],
+        a: parts.length >= 4 && !Number.isNaN(parts[3]) ? parts[3] : 1
+      };
+    };
+    const luminance = (color) => {
+      const channels = [color.r, color.g, color.b].map(channel => {
+        const value = Math.max(0, Math.min(255, channel)) / 255;
+        return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const contrastRatio = (foreground, background) => {
+      if (!foreground || !background) {
+        return 0;
+      }
+      const light = Math.max(luminance(foreground), luminance(background));
+      const dark = Math.min(luminance(foreground), luminance(background));
+      return Number(((light + 0.05) / (dark + 0.05)).toFixed(2));
+    };
+    const inheritedSurfaceBackground = (node) => {
+      const style = getComputedStyle(node);
+      for (const token of ["--surface-card", "--surface-app"]) {
+        const value = style.getPropertyValue(token).trim();
+        const color = parseColor(value);
+        if (color && color.a > 0.05) {
+          return {
+            color: value,
+            source: `token:${token}`
+          };
+        }
+      }
+      return null;
+    };
+    const nearestPaintedBackground = (node) => {
+      let current = node;
+      while (current instanceof Element) {
+        if (current === document.body || current === document.documentElement) {
+          break;
+        }
+        const color = parseColor(getComputedStyle(current).backgroundColor);
+        if (color && color.a > 0.05) {
+          return {
+            color: getComputedStyle(current).backgroundColor,
+            source: current === node ? "self" : `${current.tagName.toLowerCase()}.${String(current.className || "").trim()}`
+          };
+        }
+        current = current.parentElement;
+      }
+      const surface = inheritedSurfaceBackground(node);
+      if (surface) {
+        return surface;
+      }
+      const bodyColor = parseColor(getComputedStyle(document.body).backgroundColor);
+      return {
+        color: bodyColor && bodyColor.a > 0.05
+          ? getComputedStyle(document.body).backgroundColor
+          : "rgb(255, 255, 255)",
+        source: bodyColor && bodyColor.a > 0.05 ? "body" : "fallback:white"
+      };
+    };
+    const readButton = (node) => {
+      if (!(node instanceof HTMLElement)) {
+        return null;
+      }
+      const style = getComputedStyle(node);
+      const icon = node.querySelector(".material-icon");
+      const iconStyle = icon ? getComputedStyle(icon) : null;
+      const background = nearestPaintedBackground(node);
+      const color = style.color;
+      return {
+        action: String(node.getAttribute("data-card-action") || ""),
+        class_name: String(node.className || ""),
+        aria_label: String(node.getAttribute("aria-label") || ""),
+        rect: rect(node),
+        color,
+        icon_fill: iconStyle ? iconStyle.fill : "",
+        background_color: background.color,
+        background_source: background.source,
+        contrast_ratio: contrastRatio(parseColor(color), parseColor(background.color))
+      };
+    };
+    const cardTitle = (card) => String(card?.querySelector(".title")?.textContent || "").trim();
+    const cardInfo = (card) => card instanceof HTMLElement
+      ? {
+        title: cardTitle(card),
+        class_name: String(card.className || ""),
+        grid_template_columns: getComputedStyle(card).gridTemplateColumns,
+        rect: rect(card)
+      }
+      : null;
+    const lightCards = Array.from(document.querySelectorAll(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card"));
+    const unreadPageAction = document.querySelector(
+      ".light-shell[data-light-route=\"inbox\"] article.card .action.is-unread[data-card-action=\"page\"], " +
+      ".light-shell[data-light-route=\"inbox\"] article.card .action.is-unread[data-card-action=\"attachment\"]"
+    );
+    const twoActionCard = unreadPageAction?.closest("article.card") || lightCards.find(card =>
+      card.querySelector("[data-card-action=\"audio\"]")
+        && card.querySelector("[data-card-action=\"page\"], [data-card-action=\"attachment\"]")
+    );
+    const audioOnlyCard = lightCards.find(card =>
+      card.querySelector("[data-card-action=\"audio\"]")
+        && !card.querySelector("[data-card-action=\"page\"], [data-card-action=\"attachment\"]")
+    );
+    const audioOnlyActions = audioOnlyCard?.querySelector(".card-actions");
+    const audioOnlyAudio = audioOnlyCard?.querySelector("[data-card-action=\"audio\"]");
+    const audioOnlyActionRect = rect(audioOnlyActions);
+    const audioOnlyAudioRect = rect(audioOnlyAudio);
+    return {
+      unread_page_action: readButton(unreadPageAction),
+      two_action_card: cardInfo(twoActionCard),
+      two_action_audio: readButton(twoActionCard?.querySelector("[data-card-action=\"audio\"]")),
+      two_action_attachment: readButton(twoActionCard?.querySelector("[data-card-action=\"page\"], [data-card-action=\"attachment\"]")),
+      audio_only_card: cardInfo(audioOnlyCard),
+      audio_only_actions: {
+        class_name: String(audioOnlyActions?.className || ""),
+        rect: audioOnlyActionRect
+      },
+      audio_only_audio: readButton(audioOnlyAudio),
+      audio_only_mic_right_aligned: Boolean(audioOnlyActionRect && audioOnlyAudioRect && Math.abs(audioOnlyActionRect.right - audioOnlyAudioRect.right) <= 1),
+      audio_only_action_width_px: audioOnlyActionRect ? audioOnlyActionRect.width : 0
+    };
+  });
+}
+
 async function readDetailState(page) {
   return page.locator("#detail").evaluate(panel => ({
     detail_type: String(panel.getAttribute("data-detail-type") || "").trim(),
@@ -982,6 +1134,18 @@ async function main() {
       assert(unreadMarker.backgroundColor === "rgba(0, 0, 0, 0)" || unreadMarker.backgroundColor === "transparent", "Light Inbox unread icon should not keep the old background chip");
       assert(unreadMarker.color !== unreadMarker.readColor, "Light Inbox unread icon should keep a distinct emphasized treatment");
     }
+    const inboxActionLayout = await readInboxActionLayout(lightPage);
+    assert(inboxActionLayout.unread_page_action, "Light Inbox did not expose an unread page or attachment action for contrast proof");
+    assert(
+      inboxActionLayout.unread_page_action.contrast_ratio >= 3,
+      `Light Inbox unread page/attachment action did not have readable contrast (${inboxActionLayout.unread_page_action.color} on ${inboxActionLayout.unread_page_action.background_color}; ratio ${inboxActionLayout.unread_page_action.contrast_ratio})`
+    );
+    assert(inboxActionLayout.unread_page_action.color !== "rgb(245, 249, 255)", "Light Inbox unread page/attachment action should not inherit the dark-theme white icon token");
+    assert(inboxActionLayout.two_action_audio?.rect?.right <= inboxActionLayout.two_action_attachment?.rect?.x, "Light Inbox two-action card should keep the mic left of the page/attachment icon");
+    assert(inboxActionLayout.audio_only_card, "Light Inbox did not expose an audio-only card for alignment proof");
+    assert(inboxActionLayout.audio_only_actions.class_name.includes("action-count-1"), "Light Inbox audio-only card did not use the one-action layout class");
+    assert(inboxActionLayout.audio_only_action_width_px >= 37 && inboxActionLayout.audio_only_action_width_px <= 39, `Light Inbox audio-only action column should be 38px wide, got ${inboxActionLayout.audio_only_action_width_px}px`);
+    assert(inboxActionLayout.audio_only_mic_right_aligned, "Light Inbox audio-only mic should align to the far-right action edge");
     screenshots.inboxList = await saveScreenshot(lightPage, config.reportDir, "04-light-inbox-list");
 
     logAction(actions, "open_transcript_title_detail");
@@ -1128,6 +1292,7 @@ async function main() {
       feed_card_count: inboxRows.length,
       meetings_card_count: lightMeetingsRows.length,
       inbox_unread_marker: unreadMarker,
+      inbox_action_layout: inboxActionLayout,
       scrollability: {
         dark_feed: darkFeedScroll,
         light_inbox: lightInboxScroll,

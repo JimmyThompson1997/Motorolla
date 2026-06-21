@@ -362,6 +362,47 @@
       "html_artifact": "night.html"
     },
     {
+      "session_id": "fixture_audio_only",
+      "title": "Audio only check",
+      "icon": "mic",
+      "accent": "#3a84ff",
+      "created_at": "2026-05-18T18:42:00-07:00",
+      "summary": "A short voice reply with no page attachment, used to prove single-action alignment.",
+      "transcript_messages": [
+        {
+          "role": "user",
+          "text": "Send only the voice recap.",
+          "time": "6:41 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "Voice recap is ready. No page or attachment is attached to this card.",
+          "time": "6:42 PM"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_audio_only",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Checking media shape.",
+            "items": [
+              {
+                "label": "audio_reply",
+                "status": "completed"
+              },
+              {
+                "label": "page_attachment",
+                "status": "skipped"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "night.wav"
+    },
+    {
       "session_id": "fixture_book",
       "title": "Pocket Computers",
       "icon": "book",

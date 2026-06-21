@@ -33,6 +33,7 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
     assert "public_audio_playlist_path" not in encoded
 
     artifacts = set()
+    assert any(card.get("audio_artifact") and not card.get("html_artifact") for card in spec["cards"])
     for card in spec["cards"]:
         if card["session_id"] == "fixture_book":
             assert "audio_artifact" not in card
@@ -44,8 +45,10 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
             assert card["audio_timestamps"][0]["title"].startswith("Prologue")
             assert card["audio_timestamps"][-1]["kind"] == "postscript"
         else:
-            artifacts.add(card["audio_artifact"])
-        artifacts.add(card["html_artifact"])
+            if card.get("audio_artifact"):
+                artifacts.add(card["audio_artifact"])
+        if card.get("html_artifact"):
+            artifacts.add(card["html_artifact"])
         assert "images" not in card
         for message in card.get("transcript_messages", []):
             for image in message.get("images", []):

@@ -1589,6 +1589,14 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert '.light-meetings-surface .card.is-flat-feed[data-card-surface="meetings"]' not in styles
 
 
+def test_light_inbox_unread_attachment_actions_use_light_theme_icon_color() -> None:
+    styles = read("styles.css")
+    light_shell = css_block(styles, '.app-shell[data-theme="light"]')
+
+    assert "--icon-card-neutral: #101624;" in light_shell
+    assert "--icon-card-action-unread: #101624;" in light_shell
+
+
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     styles = read("styles.css")

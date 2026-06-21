@@ -3651,6 +3651,7 @@ button {
   --icon-subtle: rgba(16, 22, 36, 0.58);
   --icon-detail-muted: rgba(16, 22, 36, 0.54);
   --icon-card-neutral: #101624;
+  --icon-card-action-unread: #101624;
   --border-card: rgba(17, 24, 39, 0.08);
   --border-subtle: rgba(17, 24, 39, 0.08);
   --border-soft: rgba(17, 24, 39, 0.08);
