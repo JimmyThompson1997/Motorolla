@@ -3938,10 +3938,10 @@
 
   function lightCalendarPage() {
     const page = lightPage("Calendar", {
-      action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")
+      action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button"),
+      headerChrome: lightDatePicker()
     });
     page.classList.add("light-calendar-page");
-    page.append(lightDatePicker());
     page.append(lightCalendarAgendaHeading());
     const bucket = workspaceBucket("calendar-events");
     if (bucket.error) {
@@ -7021,6 +7021,12 @@
     const right = options.action || el("div", "light-nav-slot");
     header.append(left, heading, right);
     shell.append(header);
+    if (options.headerChrome) {
+      shell.classList.add("has-chrome");
+      const chrome = el("div", "light-page-header-chrome");
+      chrome.append(options.headerChrome);
+      shell.append(chrome);
+    }
     return shell;
   }
 

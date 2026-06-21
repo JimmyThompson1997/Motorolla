@@ -294,11 +294,12 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-shell[data-light-route=\"connect\"]" in styles
     assert ".light-shell[data-light-route=\"inbox\"] .light-canonical-port-surface" in styles
     assert ".light-page-header-shell" in styles
+    assert ".light-page-header-shell.has-chrome" in styles
     assert ".light-canonical-port-surface" in styles
     assert "overflow-x: clip;" in styles
     assert "overflow-y: visible;" in styles
     assert ".light-page-header-shell {\n  position: sticky;" in styles
-    assert ".light-date-picker {\n  position: sticky;" in styles
+    assert ".light-date-picker {\n  position: sticky;" not in styles
     assert ".light-calendar-strip-nav-button" in styles
     assert "grid-auto-columns: 58px;" in styles
     assert "scroll-snap-type: x proximity;" in styles
@@ -387,6 +388,7 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     load_workspace = function_block(app, "loadWorkspaceCollection")
     light_workspace_status = function_block(app, "lightWorkspaceStatus")
     light_calendar_page = function_block(app, "lightCalendarPage")
+    light_header = function_block(app, "lightHeader")
 
     assert 'notes: "Notes"' in routes
     assert '"calendar-events": "Calendar"' in routes
@@ -401,6 +403,9 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (bucket.error) {' in light_workspace_status
     assert 'if (!bucket.loaded) {' in light_workspace_status
     assert 'if (bucket.loaded && !workspaceItems(collection).length) {' in light_workspace_status
+    assert 'headerChrome: lightDatePicker()' in light_calendar_page
+    assert 'page.append(lightDatePicker())' not in light_calendar_page
+    assert "if (options.headerChrome)" in light_header
     assert 'if (bucket.error) {' in light_calendar_page
     assert 'if (!bucket.loaded) {' in light_calendar_page
 

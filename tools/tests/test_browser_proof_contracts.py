@@ -115,6 +115,26 @@ def test_live_notes_centering_proof_seeds_saved_browser_token_and_verifies_patch
     assert "second PATCH returned 401" in source
 
 
+def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert "async function calendarChromeLayoutMetrics(page)" in source
+    assert 'const headerShell = document.querySelector(".light-page-header-shell");' in source
+    assert "chromeInHeaderShell" in source
+    assert "chromePosition" in source
+    assert "topRowWidth" in source
+    assert "stripWidth" in source
+    assert "laneWidth" in source
+    assert "Expected calendar chrome to live inside the sticky header shell" in source
+    assert "Expected calendar chrome to stop using its own sticky positioning" in source
+    assert "Expected calendar top row to span the full calendar lane" in source
+    assert "Expected calendar day rail to span the full calendar lane" in source
+    assert 'calendar-desktop-${theme}-chrome.png' in source
+    assert 'calendar-mobile-${theme}-chrome.png' in source
+    assert "scrollDayStripWithButton(page, 1)" in source
+    assert "scrollDayStripDirect(page, 220)" in source
+
+
 def test_task_workspace_proof_page_url_seeds_api_token_for_preview_writes() -> None:
     source = read_source("task_workspace_proof_shared.mjs")
 
