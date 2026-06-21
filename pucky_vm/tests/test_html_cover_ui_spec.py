@@ -1698,17 +1698,46 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     styles = read("styles.css")
     contacts_page = function_block(app, "lightContactsPage")
+    contacts_search = function_block(app, "lightContactsSearchField")
+    contact_search_terms = function_block(app, "contactSearchTerms")
+    contact_matches_search = function_block(app, "contactMatchesSearch")
+    filtered_contacts = function_block(app, "filteredContactsListItems")
     contact_detail = function_block(app, "lightContactDetailPage")
     contact_profile_card = css_block(styles, ".light-contact-detail-page .light-profile-card")
+    contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
+    contact_search_input = css_block(styles, ".light-contacts-search")
     contact_list = css_block(styles, ".light-contact-list")
     contact_row = css_block(styles, ".light-contact-row")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
+    assert "function normalizeSearchDigits(value)" in app
     assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" not in app
     assert '"contact-edit"' not in app
-    assert "list.append(...contactsListItems().map(contact => {" in contacts_page
+    assert "const searchWrap = lightContactsSearchField();" in contacts_page
+    assert "const contacts = filteredContactsListItems();" in contacts_page
+    assert "page.append(searchWrap);" in contacts_page
+    assert "list.append(...contacts.map(contact => {" in contacts_page
+    assert "contactsListItems().map(contact => {" not in contacts_page
+    assert 'search.type = "search";' in contacts_search
+    assert 'search.setAttribute("aria-label", "Search contacts");' in contacts_search
+    assert 'search.placeholder = "Search contacts";' in contacts_search
+    assert 'search.addEventListener("input", onSearchInput);' in contacts_search
+    assert 'search.addEventListener("search", onSearchInput);' in contacts_search
+    assert "state.contacts.search = nextValue;" in contacts_search
+    assert "resetLightRouteScroll();" in contacts_search
+    assert "queueContactsSearchFieldFocus(selectionStart, selectionEnd);" in contacts_search
+    assert "return contactsListItems().filter(contact => contactMatchesSearch(contact));" in filtered_contacts
+    assert "meta.display_name" in contact_search_terms
+    assert "meta.first_name" in contact_search_terms
+    assert "meta.last_name" in contact_search_terms
+    assert "meta.email" in contact_search_terms
+    assert "meta.phone" in contact_search_terms
+    assert "...activity," in contact_search_terms
+    assert "phoneDigits.includes(queryDigits)" in contact_matches_search
+    assert 'No contacts match your search.' in contacts_page
+    assert 'Clear the search field to see every contact again.' in contacts_page
     assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in contacts_page
     assert 'const row = el("button", "light-card light-contact-row");' not in contacts_page
     assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
@@ -1725,6 +1754,14 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app
+    assert "display: flex;" in contact_search_wrap
+    assert "padding: 0;" in contact_search_wrap
+    assert "border-bottom:" in contact_search_wrap
+    assert "background:" not in contact_search_wrap
+    assert "width: 100%;" in contact_search_input
+    assert "min-height: 50px;" in contact_search_input
+    assert "background: transparent;" in contact_search_input
+    assert "font-size: 17px;" in contact_search_input
     assert "gap: 0;" in contact_list
     assert "padding: 0 0 84px;" in contact_list
     assert "gap: 12px;" not in contact_list
@@ -1741,6 +1778,23 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "border: 0;" in contact_profile_card
     assert "box-shadow: none;" in contact_profile_card
     assert "border-radius: 0;" in contact_profile_card
+
+
+def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:
+    app = read("app.js")
+    reset_contacts_search = function_block(app, "resetContactsSearchIfLeavingContacts")
+    is_contacts_surface_route = function_block(app, "isContactsSurfaceRoute")
+    restore_light_route_snapshot = function_block(app, "restoreLightRouteSnapshot")
+    light_navigate = function_block(app, "lightNavigate")
+    light_back = function_block(app, "lightBack")
+
+    assert "function isContactsSurfaceRoute(route) {" in app
+    assert 'return value === "contacts" || value === "contact-detail";' in is_contacts_surface_route
+    assert "if (!isContactsSurfaceRoute(currentRoute) || isContactsSurfaceRoute(nextRoute)) {" in reset_contacts_search
+    assert 'state.contacts.search = "";' in reset_contacts_search
+    assert "resetContactsSearchIfLeavingContacts(normalized.route);" in restore_light_route_snapshot
+    assert "resetContactsSearchIfLeavingContacts(nextRoute);" in light_navigate
+    assert 'resetContactsSearchIfLeavingContacts(parent === state.route ? "home" : parent);' in light_back
 
 
 def test_linked_records_keep_click_targets_but_allow_task_surface_chevron_suppression() -> None:

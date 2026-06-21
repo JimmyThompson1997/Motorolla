@@ -4675,6 +4675,29 @@ button {
   gap: 0;
 }
 
+.light-contacts-search-wrap {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-contacts-search {
+  width: 100%;
+  min-height: 50px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--home-shell-text);
+  font-size: 17px;
+}
+
+.light-contacts-search::placeholder {
+  color: var(--home-shell-text-muted);
+}
+
 .light-contact-list {
   display: flex;
   flex-direction: column;

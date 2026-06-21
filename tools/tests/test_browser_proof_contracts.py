@@ -317,6 +317,31 @@ def test_workspace_apps_browser_proof_rejects_contact_html_document_contract() -
     assert "No generated contact page yet." not in source
 
 
+def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+    shared = read_source("task_workspace_proof_shared.mjs")
+
+    assert "readContactsSearchState" in source
+    assert "setContactsSearchQuery" in source
+    assert "expectContactsSearchRows" in source
+    assert 'const emailQuery = "one@example";' in source
+    assert 'const phoneQuery = "0101000";' in source
+    assert 'const phraseQuery = "Linked to Alpha";' in source
+    assert 'const reminderQuery = "reminder";' in source
+    assert 'const noMatchQuery = "zzzz-no-match";' in source
+    assert "No contacts match your search." in source
+    assert "Expected active Contacts search query to survive contact-detail Back" in source
+    assert "Expected Contacts search to reset after leaving the Contacts surface" in source
+    assert "contacts-search-filtered-email" in source
+    assert "contacts-search-filtered-phone" in source
+    assert "contacts-search-filtered-phrase" in source
+    assert "contacts-search-empty" in source
+    assert "contacts-search-cleared" in source
+    assert "contacts-search-detail-from-filter" in source
+    assert 'phone: "+1 (415) 555-0188"' in shared
+    assert 'activity: ["Linked to live alpha"]' in shared
+
+
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
@@ -516,6 +541,24 @@ def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:
     assert 'mock_artifact_prefix="fixtures/artifacts"' in source
     assert '"/ui/pucky/fixtures/reply_cards.json"' in source
 
+def test_contacts_search_browser_proof_task_runner_and_docs_are_first_class() -> None:
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+    assert '"proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-contacts-search-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contacts-search-browser").resolve())' in dev_source
+    assert '"--sections",' in dev_source
+    assert '"contacts",' in dev_source
+    assert '"--routes",' in dev_source
+    assert 'return run_local_contacts_search_browser_proof(args.extra_args)' in dev_source
+    assert 'return run_live_contacts_search_browser_proof(args.extra_args)' in dev_source
+    assert "python -m tools.dev proof-local-contacts-search-browser" in readme
+    assert "python -m tools.dev proof-live-contacts-search-browser" in readme
+    assert "Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`" in docs_readme
+    assert "Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`" in docs_readme
 def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     source = read_source("cover_universal_feed_tiles_playwright.mjs")
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))

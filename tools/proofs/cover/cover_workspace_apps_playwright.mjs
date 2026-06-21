@@ -1776,6 +1776,49 @@ async function readContactsListFlatness(page) {
   });
 }
 
+async function readContactsSearchState(page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector(".light-shell");
+    const search = document.querySelector(".light-contacts-search");
+    const rows = Array.from(document.querySelectorAll(".light-contact-row"));
+    const empty = document.querySelector(".light-empty-state");
+    return {
+      route: shell?.getAttribute("data-light-route") || "",
+      searchVisible: Boolean(search),
+      query: search instanceof HTMLInputElement ? search.value : "",
+      rowIds: rows.map(node => String(node.getAttribute("data-contact-id") || "").trim()).filter(Boolean),
+      rowTitles: rows
+        .map(node => String(node.querySelector(".light-text-stack strong")?.textContent || "").trim())
+        .filter(Boolean),
+      emptyText: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
+    };
+  });
+}
+
+async function setContactsSearchQuery(page, query, timeoutMs) {
+  const search = page.locator(".light-contacts-search").first();
+  await search.waitFor({ state: "visible", timeout: timeoutMs });
+  await search.fill(query);
+  await page.waitForFunction(expectedQuery => {
+    const input = document.querySelector(".light-contacts-search");
+    return input instanceof HTMLInputElement && input.value === expectedQuery;
+  }, query, { timeout: timeoutMs });
+}
+
+async function expectContactsSearchRows(page, query, expectedIds, timeoutMs) {
+  await setContactsSearchQuery(page, query, timeoutMs);
+  await page.waitForFunction(({ expectedQuery, ids }) => {
+    const input = document.querySelector(".light-contacts-search");
+    const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
+      .map(node => String(node.getAttribute("data-contact-id") || "").trim())
+      .filter(Boolean);
+    return input instanceof HTMLInputElement
+      && input.value === expectedQuery
+      && JSON.stringify(rowIds) === JSON.stringify(ids);
+  }, { expectedQuery: query, ids: expectedIds }, { timeout: timeoutMs });
+  return readContactsSearchState(page);
+}
+
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
@@ -1783,8 +1826,13 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
   const firstContactId = String(await firstContact.getAttribute("data-contact-id") || "");
   const contactsListFlatness = await readContactsListFlatness(page);
+  const baselineSearchState = await readContactsSearchState(page);
+  const baselineRowIds = baselineSearchState.rowIds.slice();
   assert(firstContactId === "contact-me", `Me contact should remain pinned first in Contacts (saw ${firstContactId || "none"})`);
   assert(contactsListFlatness.route === "contacts", `Expected contacts route before detail, got ${contactsListFlatness.route}`);
+  assert(baselineSearchState.searchVisible, "Contacts search should be visible once contacts have loaded");
+  assert(baselineSearchState.query === "", `Expected Contacts search to start empty, got ${baselineSearchState.query}`);
+  assert(baselineRowIds[0] === "contact-me", `Expected Contacts baseline list to keep Me first, got ${baselineRowIds[0] || "none"}`);
   assert(contactsListFlatness.rowClassList.includes("is-flat-feed"), `Contacts list should render flat-feed rows (${contactsListFlatness.rowClassList.join(" ")})`);
   assert(isTransparentColor(contactsListFlatness.rowBackground), `Contacts list should stay visually flat (${contactsListFlatness.rowBackground})`);
   assert(isNoShadow(contactsListFlatness.rowBoxShadow), `Contacts list should stay visually flat (${contactsListFlatness.rowBoxShadow})`);
@@ -1803,7 +1851,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
       `Contacts list should keep divider separation between rows (${contactsListFlatness.dividerWidth}, ${contactsListFlatness.dividerColor})`
     );
   }
-  screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-list`);
+  screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-baseline`);
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
@@ -1827,11 +1875,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
   assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
-  if (seed.writeEnabled) {
-    await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-  } else if (contacts.length) {
-    await page.locator(`button[data-contact-id="${contacts[0].id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-  } else {
+  if (!seed.writeEnabled && !contacts.length) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
@@ -1839,51 +1883,145 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
   summary.contactPhotoThumbnails.push({ theme, ...photoState });
   if (seed.writeEnabled) {
-    await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
+    const proofContactId = `${seed.runId}-contact-one`;
+    const emailQuery = "one@example";
+    const phoneQuery = "0101000";
+    const phraseQuery = "Linked to Alpha";
+    const reminderQuery = "reminder";
+    const noMatchQuery = "zzzz-no-match";
+
+    const emailSearchState = await expectContactsSearchRows(page, emailQuery, [proofContactId], config.timeoutMs);
+    assert(emailSearchState.rowTitles.includes("Proof Contact One"), `Expected email query to return Proof Contact One, got ${emailSearchState.rowTitles.join(", ")}`);
+    screenshots[`${theme}_contacts_search_email`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-email`);
+
+    const phoneSearchState = await expectContactsSearchRows(page, phoneQuery, [proofContactId], config.timeoutMs);
+    assert(phoneSearchState.rowTitles.includes("Proof Contact One"), `Expected phone query to return Proof Contact One, got ${phoneSearchState.rowTitles.join(", ")}`);
+    screenshots[`${theme}_contacts_search_phone`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-phone`);
+
+    const phraseSearchState = await expectContactsSearchRows(page, phraseQuery, [proofContactId], config.timeoutMs);
+    assert(phraseSearchState.rowTitles.includes("Proof Contact One"), `Expected phrase query to return Proof Contact One, got ${phraseSearchState.rowTitles.join(", ")}`);
+    screenshots[`${theme}_contacts_search_phrase`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-phrase`);
+
+    await setContactsSearchQuery(page, reminderQuery, config.timeoutMs);
+    await page.waitForFunction(expectedQuery => {
+      const input = document.querySelector(".light-contacts-search");
+      const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
+        .map(node => String(node.getAttribute("data-contact-id") || "").trim())
+        .filter(Boolean);
+      return input instanceof HTMLInputElement
+        && input.value === expectedQuery
+        && rowIds.includes("contact-me")
+        && rowIds[0] === "contact-me";
+    }, reminderQuery, { timeout: config.timeoutMs });
+    const reminderSearchState = await readContactsSearchState(page);
+    assert(reminderSearchState.rowIds[0] === "contact-me", `Expected reminder query to keep Me first, got ${reminderSearchState.rowIds.join(", ")}`);
+
+    const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
+    assert(emptySearchState.searchVisible, "Contacts search should stay visible when there are no matching results");
+    assert(
+      emptySearchState.emptyText.includes("No contacts match your search."),
+      `Expected no-results state to mention missing contacts, got ${emptySearchState.emptyText}`
+    );
+    screenshots[`${theme}_contacts_search_empty`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-empty`);
+
+    const clearedSearchState = await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
+    assert(clearedSearchState.rowIds[0] === "contact-me", `Expected clearing Contacts search to restore Me first, got ${clearedSearchState.rowIds[0] || "none"}`);
+    screenshots[`${theme}_contacts_search_cleared`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-cleared`);
+
+    await expectContactsSearchRows(page, emailQuery, [proofContactId], config.timeoutMs);
+    await page.locator(`button[data-contact-id="${proofContactId}"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
     const contactProfileCard = await assertFlatContactProfileCard(page, "Proof Contact One detail");
-    await assertNoContactEndpoints(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail", { requireActivity: true });
-    await assertNoContactHtmlDocument(page, config, `${seed.runId}-contact-one`, "Proof Contact One detail");
-    summary.contactProfileCards.push({ theme, contact: `${seed.runId}-contact-one`, profile: contactProfileCard });
-  } else {
-    const firstContact = contacts[0];
-    await page.locator(`button[data-contact-id="${firstContact.id}"]`).click();
-    await waitForGraphText(page, firstContact.title, config.timeoutMs);
-    const contactProfileCard = await assertFlatContactProfileCard(page, `${firstContact.title} detail`);
-    await assertNoContactEndpoints(page, config, firstContact.id, `${firstContact.title} detail`);
-    await assertNoContactHtmlDocument(page, config, firstContact.id, `${firstContact.title} detail`);
-    summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
-  }
-  const linkedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
-  await linkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
-  assert(await page.getByText("NOTES").count() === 0, "Expected populated contact detail to avoid a separate Notes section.");
-  assert(await linkedSection.locator(".light-linked-record-feed-row").count() >= 3, "Expected populated contact detail to show mixed linked-record rows.");
-  assert(await linkedSection.locator(".light-info-row").count() === 0, "Expected linked records to use feed rows instead of legacy info rows.");
-  const connectedState = await readLinkedRecordSectionState(page, "connected");
-  assert(connectedState.bodyIsFlat, "Expected populated contact Connected section to render inside one shared flat-feed shell.");
-  assert(connectedState.flatRowCount === connectedState.rowCount, "Expected populated contact Connected rows to all use flat-feed styling.");
-  assert(connectedState.contiguousRows, "Expected populated contact Connected rows to render contiguously with no inter-row gaps.");
-  assert(connectedState.chevronCount === 0, "Expected populated contact Connected rows to omit trailing chevrons.");
-  assert(connectedState.chipCount === 0, "Expected populated contact Connected rows to omit pills.");
-  const linkedTexts = await linkedSection.locator(".light-linked-record-feed-row").allTextContents();
-  for (const label of ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"]) {
-    assert(linkedTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${linkedTexts.join(", ")}.`);
-  }
-  screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
-  if (seed.writeEnabled) {
+    await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail", { requireActivity: true });
+    await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
+    summary.contactProfileCards.push({ theme, contact: proofContactId, profile: contactProfileCard });
+    const linkedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
+    await linkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
+    assert(await page.getByText("NOTES").count() === 0, "Expected populated contact detail to avoid a separate Notes section.");
+    assert(await linkedSection.locator(".light-linked-record-feed-row").count() >= 3, "Expected populated contact detail to show mixed linked-record rows.");
+    assert(await linkedSection.locator(".light-info-row").count() === 0, "Expected linked records to use feed rows instead of legacy info rows.");
+    const connectedState = await readLinkedRecordSectionState(page, "connected");
+    assert(connectedState.bodyIsFlat, "Expected populated contact Connected section to render inside one shared flat-feed shell.");
+    assert(connectedState.flatRowCount === connectedState.rowCount, "Expected populated contact Connected rows to all use flat-feed styling.");
+    assert(connectedState.contiguousRows, "Expected populated contact Connected rows to render contiguously with no inter-row gaps.");
+    assert(connectedState.chevronCount === 0, "Expected populated contact Connected rows to omit trailing chevrons.");
+    assert(connectedState.chipCount === 0, "Expected populated contact Connected rows to omit pills.");
+    const linkedTexts = await linkedSection.locator(".light-linked-record-feed-row").allTextContents();
+    for (const label of ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"]) {
+      assert(linkedTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${linkedTexts.join(", ")}.`);
+    }
+    const filteredDetailState = await readGraphDetailState(page);
+    assert(filteredDetailState.route === "contact-detail", `Expected contact-detail route, got ${filteredDetailState.route}`);
+    assert(!filteredDetailState.hasHtmlFrame, "Did not expect contact detail to render a generated HTML iframe");
+    screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-detail-from-filter`);
+
+    await topBackToRoute(page, "contacts", "", config.timeoutMs);
+    const backToFilteredState = await readContactsSearchState(page);
+    assert(backToFilteredState.query === emailQuery, `Expected active Contacts search query to survive contact-detail Back, got ${backToFilteredState.query}`);
+    assert(
+      JSON.stringify(backToFilteredState.rowIds) === JSON.stringify([proofContactId]),
+      `Expected Back to restore the same filtered Contacts list, got ${backToFilteredState.rowIds.join(", ")}`
+    );
+
+    await backHome(page, theme, config.timeoutMs);
+    await openTile(page, "Contacts", "contacts", config.timeoutMs);
+    await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
+    const reenteredSearchState = await readContactsSearchState(page);
+    assert(reenteredSearchState.query === "", `Expected Contacts search to reset after leaving the Contacts surface, got ${reenteredSearchState.query}`);
+    assert(
+      JSON.stringify(reenteredSearchState.rowIds) === JSON.stringify(baselineRowIds),
+      `Expected Contacts re-entry to restore the baseline list, got ${reenteredSearchState.rowIds.join(", ")}`
+    );
+
+    await page.locator(`button[data-contact-id="${proofContactId}"]`).click();
+    await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
+    await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail", { requireActivity: true });
+    await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
+    screenshots[`${theme}_contacts_detail_reopened`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
+    await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     for (const [route, id, text] of [
       ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
       ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
-      await linkedSection.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
+      await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
       await waitForLightRoute(page, route, config.timeoutMs);
       await waitForGraphText(page, text, config.timeoutMs);
       await topBackToRoute(page, "contact-detail", "Proof Contact One", config.timeoutMs);
     }
     screenshots[`${theme}_contact_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-after-back`);
+    await backHome(page, theme, config.timeoutMs);
+    summary.contactProfiles = summary.contactProfiles || [];
+    summary.contactProfiles.push({
+      theme,
+      selfContactId: firstContactId,
+      contacts_list_flatness: contactsListFlatness,
+      contacts_search: {
+        baseline_row_ids: baselineRowIds,
+        queries: {
+          email: emailQuery,
+          phone: phoneQuery,
+          phrase: phraseQuery,
+          reminder: reminderQuery,
+          no_match: noMatchQuery,
+        }
+      }
+    });
+    return;
   }
+  const firstVisibleContact = contacts[0];
+  await page.locator(`button[data-contact-id="${firstVisibleContact.id}"]`).click();
+  await waitForGraphText(page, firstVisibleContact.title, config.timeoutMs);
+  const contactProfileCard = await assertFlatContactProfileCard(page, `${firstVisibleContact.title} detail`);
+  await assertNoContactEndpoints(page, config, firstVisibleContact.id, `${firstVisibleContact.title} detail`);
+  await assertNoContactHtmlDocument(page, config, firstVisibleContact.id, `${firstVisibleContact.title} detail`);
+  summary.contactProfileCards.push({ theme, contact: firstVisibleContact.id, profile: contactProfileCard });
+  const detailState = await readGraphDetailState(page);
+  assert(detailState.route === "contact-detail", `Expected contact-detail route, got ${detailState.route}`);
+  assert(!detailState.hasHtmlFrame, "Did not expect contact detail to render a generated HTML iframe");
+  screenshots[`${theme}_contacts_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
   await backHome(page, theme, config.timeoutMs);
   summary.contactProfiles = summary.contactProfiles || [];
   summary.contactProfiles.push({ theme, selfContactId: firstContactId, contacts_list_flatness: contactsListFlatness });
@@ -2439,11 +2577,8 @@ async function main() {
   let context;
   let lightSeed = null;
   let darkSeed = null;
+  const cleanupResults = [];
   try {
-    lightSeed = await seedWorkspace(config, `${PROOF_RUN_ID}-light`);
-    darkSeed = await seedWorkspace(config, `${PROOF_RUN_ID}-dark`);
-    summary.seed = lightSeed;
-    summary.seeds = { light: lightSeed, dark: darkSeed };
     browser = await chromium.launch({
       executablePath: resolveChromePath(),
       headless: true
@@ -2469,10 +2604,28 @@ async function main() {
       }
     });
 
+    lightSeed = await seedWorkspace(config, `${PROOF_RUN_ID}-light`);
+    summary.seed = lightSeed;
+    summary.seeds = { light: lightSeed };
     summary.screenshots = {
-      ...(await runTheme(page, config, lightSeed, "light", summary, networkLog)),
+      ...summary.screenshots,
+      ...(await runTheme(page, config, lightSeed, "light", summary, networkLog))
+    };
+    if (lightSeed?.writeEnabled) {
+      cleanupResults.push(await cleanupWorkspaceSeed(config, lightSeed));
+      lightSeed = null;
+    }
+
+    darkSeed = await seedWorkspace(config, `${PROOF_RUN_ID}-dark`);
+    summary.seeds = { ...(summary.seeds || {}), dark: darkSeed };
+    summary.screenshots = {
+      ...summary.screenshots,
       ...(await runTheme(page, config, darkSeed, "dark", summary, networkLog))
     };
+    if (darkSeed?.writeEnabled) {
+      cleanupResults.push(await cleanupWorkspaceSeed(config, darkSeed));
+      darkSeed = null;
+    }
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
     summary.assertions.push("generated HTML iframes rendered for notes while non-note workspace details stayed structured");
@@ -2509,7 +2662,6 @@ async function main() {
     throw error;
   } finally {
     try {
-      const cleanupResults = [];
       if (lightSeed?.writeEnabled) {
         cleanupResults.push(await cleanupWorkspaceSeed(config, lightSeed));
       }

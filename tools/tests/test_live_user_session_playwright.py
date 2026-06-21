@@ -151,6 +151,30 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert 'assert(taskRecordAfterChecklistReopen.status === "in_progress"' in source
 
 
+def test_live_user_session_runner_supports_contacts_route_filter_and_search_contract() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "routes: []" in source
+    assert 'arg === "--routes"' in source
+    assert "function shouldRunRoute(config, route) {" in source
+    assert 'shouldRunRoute(config, "contacts")' in source
+    assert "readContactsSearchState" in source
+    assert "setContactsSearchQuery" in source
+    assert "expectContactsSearchRows" in source
+    assert 'const phraseQuery = "Linked to live alpha";' in source
+    assert 'const phoneQuery = "0188";' in source
+    assert 'const reminderQuery = "reminder";' in source
+    assert 'const noMatchQuery = "zzzz-no-match";' in source
+    assert 'action: "Filter Contacts by activity phrase"' in source
+    assert 'action: "Show Contacts search empty state"' in source
+    assert 'action: "Clear Contacts search"' in source
+    assert 'action: "Open seeded contact detail from filtered list"' in source
+    assert 'action: "Return to filtered Contacts list"' in source
+    assert "Contacts search should reset after leaving the Contacts surface" in source
+    assert "Requested routes" in source
+    assert "requested_routes:" in source
+
+
 def test_live_user_session_wrapper_targets_nested_runner() -> None:
     source = WRAPPER_PATH.read_text(encoding="utf-8")
 
@@ -195,6 +219,8 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert "cover_universal_feed_tiles_playwright.mjs" in source
     assert 'proof-local-calendar' in source
     assert 'proof-live-calendar' in source
+    assert 'proof-local-contacts-search-browser' in source
+    assert 'proof-live-contacts-search-browser' in source
     assert 'proof-local-universal-tiles' in source
     assert 'proof-live-universal-tiles' in source
 
