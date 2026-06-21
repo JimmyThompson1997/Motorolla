@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,7 +22,7 @@ const ROUTES = [
   {
     surface: "Notes",
     route: "notes",
-    theme: "light",
+    themes: ["light", "dark"],
     primarySelector: ".light-note-row",
     emptySelector: ".light-empty-state",
     viewportModes: ["mobile", "desktop"],
@@ -35,7 +34,7 @@ const ROUTES = [
   {
     surface: "Meeting Notes",
     route: "meeting-notes",
-    theme: "light",
+    themes: ["light", "dark"],
     primarySelector: ".light-graph-row",
     emptySelector: ".light-empty-state",
     viewportModes: ["mobile", "desktop"],
@@ -47,10 +46,10 @@ const ROUTES = [
   {
     surface: "Reminders",
     route: "reminders",
-    theme: "light",
+    themes: ["light", "dark"],
     primarySelector: ".light-reminder-row",
     emptySelector: ".light-empty-state",
-    viewportModes: ["mobile"],
+    viewportModes: ["mobile", "desktop"],
     detail: {
       openerSelector: ".light-reminder-row",
       expectedRoute: "reminder-detail",
@@ -59,7 +58,7 @@ const ROUTES = [
   {
     surface: "Projects",
     route: "projects",
-    theme: "light",
+    themes: ["light", "dark"],
     primarySelector: ".light-project-row",
     emptySelector: ".light-empty-state",
     viewportModes: ["mobile", "desktop"],
@@ -71,10 +70,10 @@ const ROUTES = [
   {
     surface: "Inbox",
     route: "inbox",
-    theme: "dark",
+    themes: ["light", "dark"],
     primarySelector: ".card-wrap > article.card",
     emptySelector: ".empty, .feed-load-error",
-    viewportModes: ["mobile"],
+    viewportModes: ["mobile", "desktop"],
     detail: {
       openerSelector: ".card-wrap > article.card .card-body",
       expectedSelector: `${DETAIL_SELECTOR}[aria-hidden="false"], ${DETAIL_SELECTOR}.is-open`,
@@ -83,10 +82,10 @@ const ROUTES = [
   {
     surface: "Meetings",
     route: "meetings",
-    theme: "dark",
+    themes: ["light", "dark"],
     primarySelector: ".card.card-meeting-list",
     emptySelector: ".meetings-empty",
-    viewportModes: ["mobile"],
+    viewportModes: ["mobile", "desktop"],
     detail: {
       openerSelector: ".card.card-meeting-list .card-body",
       expectedSelector: `${DETAIL_SELECTOR}[aria-hidden="false"], ${DETAIL_SELECTOR}.is-open`,
@@ -130,7 +129,7 @@ function parseArgs(argv) {
     } else if (arg === "--report-dir" && argv[index + 1]) {
       config.reportDir = path.resolve(String(argv[++index] || config.reportDir));
     } else if (arg === "--refresh-key" && argv[index + 1]) {
-      config.refreshKey = String(argv[++index] || config.refreshKey).trim() || config.refreshKey;
+      config.refreshKey = String(argv[++index] || "").trim() || config.refreshKey;
     } else if (arg === "--headed") {
       config.headless = false;
     }
@@ -144,9 +143,9 @@ function assert(condition, message) {
   }
 }
 
-function buildRouteUrl(config, routeConfig) {
+function buildRouteUrl(config, routeConfig, theme) {
   const url = new URL("/ui/pucky/latest/index.html", `${String(config.baseUrl || "").replace(/\/+$/, "")}/`);
-  url.searchParams.set("theme", String(routeConfig.theme || "light"));
+  url.searchParams.set("theme", String(theme || "light"));
   url.searchParams.set("route", String(routeConfig.route || "home"));
   url.searchParams.set("reset_nav", "1");
   if (String(config.refreshKey || "").trim()) {
@@ -185,6 +184,35 @@ async function saveScreenshot(page, filePath) {
   return filePath;
 }
 
+function timeoutMsFor(_routeConfig, config) {
+  return Math.max(1000, Number(config.timeoutMs || 30000) || 30000);
+}
+
+function isZeroishPx(value) {
+  return Math.abs(Number.parseFloat(String(value || "0")) || 0) <= 0.5;
+}
+
+function isTransparentColor(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text || text === "transparent") {
+    return true;
+  }
+  const rgba = text.match(/^rgba?\((.+)\)$/);
+  if (!rgba) {
+    return false;
+  }
+  const parts = rgba[1].split(",").map(part => part.trim());
+  if (parts.length === 4) {
+    return Math.abs(Number.parseFloat(parts[3]) || 0) <= 0.01;
+  }
+  return parts.slice(0, 3).every(part => Number.parseFloat(part) === 0);
+}
+
+function isNoShadow(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return !text || text === "none" || text === "rgba(0, 0, 0, 0) 0px 0px 0px 0px";
+}
+
 async function waitForRoute(page, route, timeoutMs) {
   await page.waitForFunction(
     expectedRoute => document.querySelector(".light-shell")?.getAttribute("data-light-route") === expectedRoute,
@@ -212,9 +240,9 @@ async function unlockPreviewIfNeeded(page, apiToken, timeoutMs) {
   return true;
 }
 
-async function waitForSurfaceReady(page, routeConfig, timeoutMs) {
+async function waitForSurfaceReady(page, routeConfig, apiToken, timeoutMs) {
   await waitForRoute(page, routeConfig.route, timeoutMs);
-  await unlockPreviewIfNeeded(page, routeConfig.apiToken, timeoutMs);
+  await unlockPreviewIfNeeded(page, apiToken, timeoutMs);
   await waitForRoute(page, routeConfig.route, timeoutMs);
   await page.waitForFunction(
     ({ primarySelector, emptySelector }) => {
@@ -270,6 +298,17 @@ async function collectRouteMetrics(page, routeConfig) {
         height: Number(rect.height.toFixed(2)),
       };
     }
+    function classList(node) {
+      return node ? [...node.classList] : [];
+    }
+    function hasVisibleDivider(node) {
+      if (!node) {
+        return false;
+      }
+      const style = window.getComputedStyle(node);
+      return (Number.parseFloat(style.borderTopWidth) || 0) > 0.5
+        && String(style.borderTopColor || "").trim() !== "transparent";
+    }
     const shell = document.querySelector(".light-shell");
     const header = document.querySelector(".light-page-header");
     const title = document.querySelector(".light-page-title, .light-page-title-detail");
@@ -279,15 +318,21 @@ async function collectRouteMetrics(page, routeConfig) {
     const sectionKeys = [...document.querySelectorAll(".light-feed-section")]
       .map(node => node.getAttribute("data-feed-section") || "")
       .filter(Boolean);
+    const matchingRows = [...document.querySelectorAll(config.primarySelector)];
+    const firstRow = matchingRows[0] || null;
+    const firstRowStyle = firstRow ? window.getComputedStyle(firstRow) : null;
+    const dividerNode = matchingRows.slice(1).find(node => hasVisibleDivider(node)) || null;
+    const dividerStyle = dividerNode ? window.getComputedStyle(dividerNode) : null;
+    const wrapper = firstRow?.closest(".card-wrap") || null;
     return {
       routeIdentity: shell?.getAttribute("data-light-route") || "",
       headerPresent: Boolean(header),
       headerText: String(title?.textContent || "").trim(),
       headerMetrics: rectData(".light-page-header"),
       titleMetrics: rectData(".light-page-title, .light-page-title-detail"),
-      pageClasses: feedPage ? [...feedPage.classList] : [],
-      surfaceClasses: feedSurface ? [...feedSurface.classList] : [],
-      firstSectionClasses: firstSection ? [...firstSection.classList] : [],
+      pageClasses: classList(feedPage),
+      surfaceClasses: classList(feedSurface),
+      firstSectionClasses: classList(firstSection),
       sectionKeys,
       scrollMetrics: {
         innerWidth: window.innerWidth,
@@ -296,6 +341,25 @@ async function collectRouteMetrics(page, routeConfig) {
         documentScrollHeight: document.documentElement.scrollHeight,
         documentScrollLeft: window.scrollX || document.documentElement.scrollLeft || 0,
       },
+      firstRowChrome: firstRow ? {
+        tagName: String(firstRow.tagName || "").toLowerCase(),
+        classList: classList(firstRow),
+        wrapperClasses: classList(wrapper),
+        borderTopWidth: firstRowStyle.borderTopWidth,
+        borderRightWidth: firstRowStyle.borderRightWidth,
+        borderBottomWidth: firstRowStyle.borderBottomWidth,
+        borderLeftWidth: firstRowStyle.borderLeftWidth,
+        borderTopLeftRadius: firstRowStyle.borderTopLeftRadius,
+        borderTopRightRadius: firstRowStyle.borderTopRightRadius,
+        borderBottomLeftRadius: firstRowStyle.borderBottomLeftRadius,
+        borderBottomRightRadius: firstRowStyle.borderBottomRightRadius,
+        boxShadow: firstRowStyle.boxShadow,
+        backgroundColor: firstRowStyle.backgroundColor,
+        paddingLeft: firstRowStyle.paddingLeft,
+        paddingRight: firstRowStyle.paddingRight,
+        dividerColor: dividerStyle ? dividerStyle.borderTopColor : "",
+        dividerWidth: dividerStyle ? dividerStyle.borderTopWidth : "",
+      } : null,
       selectorCounts: {
         primary: count(config.primarySelector),
         genericFeedRows: count(".light-feed-row"),
@@ -344,6 +408,34 @@ function assertCommonRouteState(routeConfig, metrics) {
   assert(metrics.selectorCounts.feedPages >= 1, `${routeConfig.surface}: missing .light-feed-page`);
   assert(metrics.selectorCounts.feedSurfaces >= 1, `${routeConfig.surface}: missing .light-feed-surface`);
   assert(metrics.selectorCounts.feedSections >= 1, `${routeConfig.surface}: missing .light-feed-section`);
+  if (metrics.selectorCounts.primary > 0) {
+    assert(Boolean(metrics.firstRowChrome), `${routeConfig.surface}: expected first row chrome metrics`);
+  }
+}
+
+function assertFlatShellState(routeConfig, metrics) {
+  if (metrics.selectorCounts.primary === 0) {
+    return;
+  }
+  const chrome = metrics.firstRowChrome;
+  assert(chrome, `${routeConfig.surface}: missing computed flat shell metrics`);
+  if (routeConfig.route !== "notes") {
+    assert(chrome.classList.includes("is-flat-feed"), `${routeConfig.surface}: first row should opt into .is-flat-feed classes`);
+  }
+  if (routeConfig.route === "inbox" || routeConfig.route === "meetings") {
+    assert(chrome.wrapperClasses.includes("is-flat-feed"), `${routeConfig.surface}: wrapper should opt into .is-flat-feed classes`);
+  }
+  assert(isZeroishPx(chrome.borderLeftWidth), `${routeConfig.surface}: resting shell should not keep a left border (${chrome.borderLeftWidth})`);
+  assert(isZeroishPx(chrome.borderRightWidth), `${routeConfig.surface}: resting shell should not keep a right border (${chrome.borderRightWidth})`);
+  assert(isZeroishPx(chrome.borderBottomWidth), `${routeConfig.surface}: resting shell should not keep a bottom border (${chrome.borderBottomWidth})`);
+  assert(isZeroishPx(chrome.borderTopLeftRadius), `${routeConfig.surface}: resting shell should not keep rounded corners (${chrome.borderTopLeftRadius})`);
+  assert(isZeroishPx(chrome.borderTopRightRadius), `${routeConfig.surface}: resting shell should not keep rounded corners (${chrome.borderTopRightRadius})`);
+  assert(isNoShadow(chrome.boxShadow), `${routeConfig.surface}: resting shell should not keep a shadow (${chrome.boxShadow})`);
+  assert(isTransparentColor(chrome.backgroundColor), `${routeConfig.surface}: resting shell should stay visually flat (${chrome.backgroundColor})`);
+  if (metrics.selectorCounts.primary > 1) {
+    assert(!isZeroishPx(chrome.dividerWidth), `${routeConfig.surface}: divider-based row separation should remain visible`);
+    assert(!isTransparentColor(chrome.dividerColor), `${routeConfig.surface}: divider color should remain visible`);
+  }
 }
 
 function assertRouteSpecificState(routeConfig, metrics) {
@@ -407,8 +499,9 @@ async function backToList(page, routeConfig, timeoutMs) {
 }
 
 async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefix) {
-  const opener = page.locator(routeConfig.detail.openerSelector).first();
-  if (await opener.count() === 0) {
+  const openers = page.locator(routeConfig.detail.openerSelector);
+  const openerCount = await openers.count();
+  if (openerCount === 0) {
     return {
       attempted: false,
       opened: false,
@@ -417,20 +510,36 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
       reason: "No primary rows available for detail open",
     };
   }
-  await opener.waitFor({ state: "visible", timeout: timeoutMs });
-  await opener.click();
-  if (routeConfig.detail.expectedRoute) {
-    await waitForRoute(page, routeConfig.detail.expectedRoute, timeoutMs);
-  } else if (routeConfig.detail.expectedSelector) {
-    await page.locator(routeConfig.detail.expectedSelector).first().waitFor({ state: "visible", timeout: timeoutMs });
+  const attemptLimit = routeConfig.route === "reminders" ? Math.min(openerCount, 4) : 1;
+  let detailMetrics = null;
+  for (let index = 0; index < attemptLimit; index += 1) {
+    const opener = openers.nth(index);
+    await opener.waitFor({ state: "visible", timeout: timeoutMs });
+    await opener.click();
+    if (routeConfig.detail.expectedRoute) {
+      await waitForRoute(page, routeConfig.detail.expectedRoute, timeoutMs);
+    } else if (routeConfig.detail.expectedSelector) {
+      await page.locator(routeConfig.detail.expectedSelector).first().waitFor({ state: "visible", timeout: timeoutMs });
+    }
+    detailMetrics = await collectDetailMetrics(page);
+    const reminderMissingLinkedNote = routeConfig.route === "reminders"
+      && detailMetrics.notesSections === 0
+      && index + 1 < attemptLimit;
+    if (!reminderMissingLinkedNote) {
+      break;
+    }
+    const returned = await backToList(page, routeConfig, timeoutMs);
+    assert(returned, `${routeConfig.surface}: could not return while searching for a reminder with a linked note`);
+    await waitForRoute(page, routeConfig.route, timeoutMs);
   }
-  const detailMetrics = await collectDetailMetrics(page);
+  assert(detailMetrics, `${routeConfig.surface}: detail did not open`);
   if (routeConfig.route === "notes") {
     assert(detailMetrics.noteHtmlFrames > 0, "Notes: detail should stay HTML-backed");
   }
   if (routeConfig.route === "reminders") {
     assert(detailMetrics.scheduleSections > 0, "Reminders: schedule section should render");
     assert(detailMetrics.channelsSections > 0, "Reminders: channels section should render");
+    assert(detailMetrics.notesSections > 0, "Reminders: linked note section should render");
   }
   if (routeConfig.route === "projects") {
     assert(detailMetrics.projectGridCount > 0, "Projects: detail grid should render");
@@ -453,8 +562,81 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
   };
 }
 
-async function captureRoute(browser, config, routeConfig, viewportName, viewport, consoleEvents, networkEvents) {
-  const routeDir = path.join(config.reportDir, `${routeConfig.route}-${viewportName}`);
+async function revealArchiveWithoutMutating(page, routeConfig, timeoutMs, routeDir, prefix) {
+  if (!["inbox", "meetings"].includes(routeConfig.route)) {
+    return {
+      attempted: false,
+      opened: false,
+      closed: false,
+      reason: "Archive reveal not required for this route",
+    };
+  }
+  const wrapper = page.locator(".card-wrap").filter({ has: page.locator(".archive-reveal-action") }).first();
+  if (await wrapper.count() === 0) {
+    return {
+      attempted: false,
+      opened: false,
+      closed: false,
+      reason: "No archivable wrapper found",
+    };
+  }
+  await wrapper.scrollIntoViewIfNeeded();
+  const card = wrapper.locator("article.card").first();
+  const box = await card.boundingBox();
+  assert(box, `${routeConfig.surface}: could not read the first archivable card bounds`);
+  await wrapper.evaluate(node => {
+    const rect = node.getBoundingClientRect();
+    const y = rect.top + rect.height * 0.5;
+    const startX = rect.left + rect.width * 0.78;
+    const endX = rect.left + rect.width * 0.18;
+    const steps = 4;
+    const dispatchTouch = (type, x) => {
+      const touchPoint = [{ clientX: x, clientY: y }];
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : touchPoint });
+      Object.defineProperty(event, "targetTouches", { value: type === "touchend" ? [] : touchPoint });
+      Object.defineProperty(event, "changedTouches", { value: touchPoint });
+      node.dispatchEvent(event);
+    };
+    dispatchTouch("touchstart", startX);
+    for (let step = 1; step <= steps; step += 1) {
+      const progress = step / steps;
+      dispatchTouch("touchmove", startX + (endX - startX) * progress);
+    }
+    dispatchTouch("touchend", endX);
+  });
+  await page.waitForFunction(
+    () => document.querySelectorAll(".card-wrap.is-archive-reveal-open").length > 0,
+    undefined,
+    { timeout: timeoutMs }
+  );
+  const revealMetrics = await page.evaluate(() => {
+    const wrapperNode = document.querySelector(".card-wrap.is-archive-reveal-open");
+    const action = wrapperNode?.querySelector(".archive-reveal-action");
+    return {
+      wrapperClasses: wrapperNode ? [...wrapperNode.classList] : [],
+      actionLabel: String(action?.getAttribute("aria-label") || "").trim(),
+      actionVisible: Boolean(action),
+    };
+  });
+  const archiveScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-archive-reveal.png`));
+  await page.mouse.click(4, Math.max(4, Math.round(box.y + 12)));
+  await page.waitForFunction(
+    () => document.querySelectorAll(".card-wrap.is-archive-reveal-open").length === 0,
+    undefined,
+    { timeout: timeoutMs }
+  );
+  return {
+    attempted: true,
+    opened: true,
+    closed: true,
+    revealMetrics,
+    screenshot: archiveScreenshot,
+  };
+}
+
+async function captureRoute(browser, config, routeConfig, theme, viewportName, viewport, consoleEvents, networkEvents) {
+  const routeDir = path.join(config.reportDir, routeConfig.route, theme, viewportName);
   const videoDir = path.join(routeDir, "video");
   ensureDir(routeDir);
   ensureDir(videoDir);
@@ -471,6 +653,7 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
   page.on("console", message => {
     consoleEvents.push({
       route: routeConfig.route,
+      theme,
       viewport: viewportName,
       type: message.type(),
       text: message.text(),
@@ -479,6 +662,7 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
   page.on("pageerror", error => {
     consoleEvents.push({
       route: routeConfig.route,
+      theme,
       viewport: viewportName,
       type: "pageerror",
       text: error.message || String(error),
@@ -487,6 +671,7 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
   page.on("response", response => {
     networkEvents.push({
       route: routeConfig.route,
+      theme,
       viewport: viewportName,
       url: response.url(),
       status: response.status(),
@@ -498,12 +683,13 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
   const tracePath = path.join(routeDir, `${prefix}-trace.zip`);
   let summary = null;
   try {
-    routeConfig.apiToken = config.apiToken;
-    await page.goto(buildRouteUrl(config, routeConfig), { waitUntil: "domcontentloaded", timeout: timeoutMsFor(routeConfig, config) });
-    await waitForSurfaceReady(page, routeConfig, config.timeoutMs);
+    const pageUrl = buildRouteUrl(config, routeConfig, theme);
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: timeoutMsFor(routeConfig, config) });
+    await waitForSurfaceReady(page, routeConfig, config.apiToken, config.timeoutMs);
     const routeTop = await saveScreenshot(page, path.join(routeDir, `${prefix}-route-top.png`));
     const metrics = await collectRouteMetrics(page, routeConfig);
     assertCommonRouteState(routeConfig, metrics);
+    assertFlatShellState(routeConfig, metrics);
     assertRouteSpecificState(routeConfig, metrics);
     const scrollState = await scrollList(page);
     let secondaryScreenshot = "";
@@ -512,12 +698,13 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
       secondaryScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-scrolled.png`));
     }
     const detailResult = await openDetailAndReturn(page, routeConfig, config.timeoutMs, routeDir, prefix);
+    const archiveRevealResult = await revealArchiveWithoutMutating(page, routeConfig, config.timeoutMs, routeDir, prefix);
     summary = {
       surface: routeConfig.surface,
       route: routeConfig.route,
-      theme: routeConfig.theme,
+      theme,
       viewport: viewportName,
-      page_url: buildRouteUrl(config, routeConfig),
+      page_url: pageUrl,
       container_classes: {
         page: metrics.pageClasses,
         surface: metrics.surfaceClasses,
@@ -527,8 +714,10 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
       header_metrics: metrics.headerMetrics,
       title_metrics: metrics.titleMetrics,
       scroll_metrics: metrics.scrollMetrics,
+      first_row_chrome_metrics: metrics.firstRowChrome,
       section_keys: metrics.sectionKeys,
       first_detail_result: detailResult,
+      archive_reveal_result: archiveRevealResult,
       screenshots: {
         route_top: routeTop,
         scrolled: secondaryScreenshot,
@@ -548,10 +737,6 @@ async function captureRoute(browser, config, routeConfig, viewportName, viewport
   return summary;
 }
 
-function timeoutMsFor(_routeConfig, config) {
-  return Math.max(1000, Number(config.timeoutMs || 30000) || 30000);
-}
-
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -567,17 +752,21 @@ async function main() {
     const routeSummaries = {};
     for (const routeConfig of ROUTES) {
       routeSummaries[routeConfig.route] = {};
-      for (const viewportName of routeConfig.viewportModes) {
-        const viewport = viewportName === "desktop" ? DESKTOP_VIEWPORT : MOBILE_VIEWPORT;
-        routeSummaries[routeConfig.route][viewportName] = await captureRoute(
-          browser,
-          config,
-          routeConfig,
-          viewportName,
-          viewport,
-          consoleEvents,
-          networkEvents,
-        );
+      for (const theme of routeConfig.themes) {
+        routeSummaries[routeConfig.route][theme] = {};
+        for (const viewportName of routeConfig.viewportModes) {
+          const viewport = viewportName === "desktop" ? DESKTOP_VIEWPORT : MOBILE_VIEWPORT;
+          routeSummaries[routeConfig.route][theme][viewportName] = await captureRoute(
+            browser,
+            config,
+            routeConfig,
+            theme,
+            viewportName,
+            viewport,
+            consoleEvents,
+            networkEvents,
+          );
+        }
       }
     }
     const summary = {

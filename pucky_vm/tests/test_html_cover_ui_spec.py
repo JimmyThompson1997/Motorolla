@@ -131,6 +131,7 @@ def test_meeting_notes_rows_drop_leading_icon_and_trailing_chevron_only_for_that
     styles = read("styles.css")
     meeting_notes_page = function_block(app, "lightMeetingNotesPage")
     light_graph_list_page = function_block(app, "lightGraphListPage")
+    graph_descriptor = function_block(app, "universalGraphFeedTileDescriptor")
     render_universal_tile = function_block(app, "renderUniversalFeedTile")
     light_graph_row = function_block(app, "lightGraphRow")
 
@@ -147,16 +148,19 @@ def test_meeting_notes_rows_drop_leading_icon_and_trailing_chevron_only_for_that
     assert 'surface: String(options.surface || options.collection || "workspace"),' in light_graph_list_page
     assert 'surfaceClassName: "light-list-surface",' in light_graph_list_page
     assert "items: workspaceItems(options.collection).map(record => universalGraphFeedTileDescriptor(record, options))" in light_graph_list_page
+    assert 'renderMode: "flat",' in graph_descriptor
     assert 'return lightGraphRow(record, {' in render_universal_tile
     assert "rowClassName: descriptor.meta?.rowClassName || \"\"," in render_universal_tile
     assert "showLeadingIcon: descriptor.leading?.show !== false," in render_universal_tile
     assert "showTrailingChevron: descriptor.trailing?.show !== false" in render_universal_tile
+    assert 'flatFeed: descriptor.renderMode === "flat",' in render_universal_tile
     assert 'const rowClassName = String(options.rowClassName || "").trim();' in light_graph_row
+    assert "const flatFeed = options.flatFeed === true;" in light_graph_row
     assert 'const leadingIcon = options.showLeadingIcon === false' in light_graph_row
     assert 'const trailingChevron = options.showTrailingChevron === false' in light_graph_row
     assert "if (leadingIcon) {" in light_graph_row
     assert "if (trailingChevron) {" in light_graph_row
-    assert 'const row = el("button", `light-card light-feed-row light-graph-row ${rowClassName}`.trim());' in light_graph_row
+    assert 'flatFeed ? "is-flat-feed" : ""' in light_graph_row
     assert ".light-feed-page {" in styles
     assert ".light-feed-surface {" in styles
     assert ".light-feed-section {" in styles
@@ -746,6 +750,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
 
     light_notes = function_block(app, "lightNotesPage")
     light_notes_section = function_block(app, "lightNotesSection")
+    universal_note_descriptor = function_block(app, "universalNoteFeedTileDescriptor")
+    flat_feed_surface = function_block(app, "isUniversalFlatFeedSurface")
     render_universal_page = function_block(app, "renderUniversalFeedPage")
     render_universal_section = function_block(app, "renderUniversalFeedSection")
     render_universal_tile = function_block(app, "renderUniversalFeedTile")
@@ -787,6 +793,8 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
+    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);' in app
+    assert "return UNIVERSAL_FLAT_FEED_SURFACES.has(surfaceKey);" in flat_feed_surface
     assert "notesSectionsExpanded: { pinned: true, recent: true }," in app
     assert "return renderUniversalFeedPage({" in light_notes
     assert 'surface: "notes",' in light_notes
@@ -803,8 +811,18 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "expanded: noteSectionExpanded(sectionKey)," in light_notes_section
     assert "emptyState: null," in light_notes_section
     assert "items: notes.map(note => universalNoteFeedTileDescriptor(note, sectionKey))" in light_notes_section
+    assert 'renderMode: "flat",' in universal_note_descriptor
+    assert 'const surfaceKey = String(options.surface || "").trim().toLowerCase();' in render_universal_page
+    assert "const isFlatFeed = isUniversalFlatFeedSurface(surfaceKey);" in render_universal_page
+    assert 'page.dataset.feedSurface = surfaceKey;' in render_universal_page
+    assert 'surface.dataset.feedSurface = surfaceKey;' in render_universal_page
+    assert 'page.classList.add("is-flat-feed");' in render_universal_page
+    assert 'surface.classList.add("is-flat-feed");' in render_universal_page
     assert 'if (descriptor.collapsible && descriptor.surface === "notes") {' in render_universal_section
+    assert 'if (isUniversalFlatFeedSurface(descriptor.surface)) {' in render_universal_section
+    assert 'section.classList.add("is-flat-feed");' in render_universal_section
     assert "const body = el(\"div\", `${listClassName} light-feed-section-body light-feed-list`.trim());" in render_universal_section
+    assert 'body.classList.add("is-flat-feed");' in render_universal_section
     assert "body.hidden = descriptor.collapsible && !descriptor.expanded;" in render_universal_section
     assert 'body.append(...descriptor.items.map(item => renderUniversalFeedTile(item)));' in render_universal_section
     assert 'return lightNoteRow(descriptor.meta?.note || null);' in render_universal_tile
@@ -1229,6 +1247,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     styles = read("styles.css")
     reminders_page = function_block(app, "lightRemindersPage")
     reminder_section = function_block(app, "lightReminderListSection")
+    reminder_descriptor = function_block(app, "universalReminderFeedTileDescriptor")
     render_universal_tile = function_block(app, "renderUniversalFeedTile")
     reminder_active = function_block(app, "reminderIsActive")
     reminder_row = function_block(app, "lightReminderRow")
@@ -1253,12 +1272,15 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "count: reminders.length," in reminder_section
     assert "collapsible: false," in reminder_section
     assert "items: reminders.map(reminder => universalReminderFeedTileDescriptor(reminder, sectionKey))" in reminder_section
+    assert 'renderMode: "flat",' in reminder_descriptor
     assert "light-reminder-history" not in reminders_page
     assert "&& !reminderIsSnoozed(reminder)" in reminder_active
     assert 'return lightReminderRow(descriptor.meta?.reminder || null);' in render_universal_tile
+    assert 'flatFeed: descriptor.renderMode === "flat",' in render_universal_tile
     assert "lightSmallIcon(\"bell\", \"reminders\")" in reminder_row
+    assert "const flatFeed = options.flatFeed === true;" in reminder_row
     assert "light-graph-chip-row" not in reminder_row
-    assert 'const row = el("button", `light-card light-feed-row light-reminder-row ${group || ""} ${deliveryClass}`.trim());' in reminder_row
+    assert 'flatFeed ? "is-flat-feed" : ""' in reminder_row
     assert 'const page = lightPage("Reminder", { detail: true });' in reminder_detail
     assert "page.append(lightReminderDetailCard(reminder));" in reminder_detail
     assert 'page.append(lightReminderActionRow(reminder));' not in reminder_detail
@@ -1285,10 +1307,14 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     styles = read("styles.css")
 
     projects_page = function_block(app, "lightProjectsPage")
+    project_descriptor = function_block(app, "universalProjectFeedTileDescriptor")
     project_row = function_block(app, "lightProjectRow")
+    reply_descriptor = function_block(app, "universalCanonicalReplyFeedTileDescriptor")
+    meeting_descriptor = function_block(app, "universalCanonicalMeetingFeedTileDescriptor")
     inbox_page = function_block(app, "lightInboxPage")
     meetings_page = function_block(app, "lightMeetingsPage")
     render_universal_tile = function_block(app, "renderUniversalFeedTile")
+    card_view = function_block(app, "cardView")
 
     assert "function lightProjectRow(" in app
     assert "function lightInboxSection(" in app
@@ -1296,7 +1322,9 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert "return renderUniversalFeedPage({" in projects_page
     assert 'surface: "projects",' in projects_page
     assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))' in projects_page
-    assert 'const row = el("button", "light-card light-feed-row light-project-row");' in project_row
+    assert 'renderMode: "flat",' in project_descriptor
+    assert "const flatFeed = options.flatFeed === true;" in project_row
+    assert 'flatFeed ? "is-flat-feed" : ""' in project_row
     assert 'const chips = el("span", "light-project-chip-row");' in project_row
     assert "return renderUniversalFeedPage({" in inbox_page
     assert 'surface: "inbox",' in inbox_page
@@ -1310,13 +1338,31 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'contentClassName: "meetings-page is-embedded-light",' in meetings_page
     assert "const beforeSections = [meetingsEmbeddedToolbar()];" in meetings_page
     assert "sections: [lightMeetingsSection()]" in meetings_page
+    assert 'renderMode: "flat",' in reply_descriptor
+    assert 'renderMode: "flat",' in meeting_descriptor
     assert "const card = descriptor.meta?.card;" in render_universal_tile
-    assert "return cardView(card);" in render_universal_tile
+    assert 'return cardView(card, { flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
     assert "const meeting = descriptor.meta?.meeting;" in render_universal_tile
-    assert "return cardView(meetingCardFromRecord(meeting));" in render_universal_tile
+    assert 'return cardView(meetingCardFromRecord(meeting), { flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
+    assert "function cardView(card, options = {})" in app
+    assert "const flatFeed = Boolean(options.flatFeed);" in card_view
+    assert 'const wrapper = el("div", flatFeed ? "card-wrap is-flat-feed" : "card-wrap");' in card_view
+    assert 'const cardClassName = isMeetingList' in card_view
+    assert 'const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);' in card_view
+    assert 'body.classList.add("is-flat-feed");' in card_view
     assert ".light-canonical-port-surface {" in styles
     assert ".card {" in styles
     assert ".card.card-meeting-list {" in styles
+    assert ".light-feed-surface.is-flat-feed {" in styles
+    assert ".light-feed-section.is-flat-feed {" in styles
+    assert ".light-feed-list.is-flat-feed {" in styles
+    assert ".light-feed-row.is-flat-feed {" in styles
+    assert ".light-graph-row.is-flat-feed {" in styles
+    assert ".light-reminder-row.is-flat-feed {" in styles
+    assert ".light-project-row.is-flat-feed {" in styles
+    assert ".card-wrap.is-flat-feed {" in styles
+    assert ".card.is-flat-feed {" in styles
+    assert ".card-wrap.is-flat-feed + .card-wrap.is-flat-feed .card.is-flat-feed {" in styles
 
 
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:

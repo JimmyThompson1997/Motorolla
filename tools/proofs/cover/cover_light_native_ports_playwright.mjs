@@ -248,10 +248,26 @@ async function readCardStyle(page, selector) {
     return {
       backgroundColor: style.backgroundColor,
       borderColor: style.borderColor,
+      borderTopWidth: style.borderTopWidth,
+      borderLeftWidth: style.borderLeftWidth,
+      borderRadius: style.borderRadius,
       boxShadow: style.boxShadow,
       color: style.color
     };
   });
+}
+
+function assertFlatCardShell(style, label) {
+  const background = String(style?.backgroundColor || "").trim().toLowerCase();
+  const shadow = String(style?.boxShadow || "").trim().toLowerCase();
+  const borderTop = Number.parseFloat(String(style?.borderTopWidth || "0")) || 0;
+  const borderLeft = Number.parseFloat(String(style?.borderLeftWidth || "0")) || 0;
+  const borderRadius = Number.parseFloat(String(style?.borderRadius || "0")) || 0;
+  assert(background === "rgba(0, 0, 0, 0)" || background === "transparent", `${label} should keep a flat transparent resting shell`);
+  assert(shadow === "none" || shadow === "", `${label} should not keep a boxed shadow`);
+  assert(borderTop <= 0.5, `${label} should not keep a boxed top border`);
+  assert(borderLeft <= 0.5, `${label} should not keep a boxed left border`);
+  assert(borderRadius <= 0.5, `${label} should not keep rounded card chrome`);
 }
 
 function assertMeaningfulRows(label, rows) {
@@ -866,6 +882,7 @@ async function main() {
     const darkFeedRows = await extractCardRows(darkFeedPage, ".card-wrap article.card");
     const darkFeedCardStyle = await readCardStyle(darkFeedPage, ".card-wrap article.card");
     assertMeaningfulRows("Dark Feed", darkFeedRows);
+    assertFlatCardShell(darkFeedCardStyle, "Dark Feed");
     const darkFeedScroll = await readScrollReachability(
       darkFeedPage,
       ".card-wrap article.card",
@@ -888,7 +905,7 @@ async function main() {
     assertMeaningfulRows("Light Inbox", inboxRows);
     assert(rowsMatch(darkFeedRows, inboxRows), "Light Inbox cards did not match the canonical dark Home feed rows");
     const lightInboxCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card");
-    assert(lightInboxCardStyle.backgroundColor !== darkFeedCardStyle.backgroundColor, "Light Inbox cards did not switch to a light surface style");
+    assertFlatCardShell(lightInboxCardStyle, "Light Inbox");
     const lightInboxScroll = await readScrollReachability(
       lightPage,
       ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card",
@@ -1005,7 +1022,8 @@ async function main() {
       meetingsRowsMatch = rowsMatch(darkMeetingsRows, lightMeetingsRows);
       assert(meetingsRowsMatch, "Light Meetings rows did not match the canonical dark meetings list");
       const lightMeetingsCardStyle = await readCardStyle(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card");
-      assert(lightMeetingsCardStyle.backgroundColor !== darkMeetingsCardStyle.backgroundColor, "Light Meetings cards did not switch to a light surface style");
+      assertFlatCardShell(darkMeetingsCardStyle, "Dark Meetings");
+      assertFlatCardShell(lightMeetingsCardStyle, "Light Meetings");
       screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-list");
 
       const darkMeetingsDetail = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list .card-body", config.timeoutMs);
