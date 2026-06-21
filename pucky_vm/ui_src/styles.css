@@ -6187,8 +6187,8 @@ button {
 .light-task-detail-card {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 14px 16px;
   color: inherit;
   font: inherit;
   text-align: left;
@@ -6219,7 +6219,7 @@ button {
 .light-task-detail-copy {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .light-task-detail-title {
@@ -6236,6 +6236,13 @@ button {
   line-height: 1.2;
   font-weight: 760;
   white-space: nowrap;
+}
+
+.light-task-detail-created {
+  color: var(--home-shell-text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  font-weight: 650;
 }
 
 .light-task-status-badge {
@@ -6284,6 +6291,10 @@ button {
 
 .light-task-detail-card.done .light-task-detail-due {
   color: #9aa3b2;
+}
+
+.light-task-detail-card.done .light-task-detail-created {
+  color: #8a93a3;
 }
 
 .light-html-frame {

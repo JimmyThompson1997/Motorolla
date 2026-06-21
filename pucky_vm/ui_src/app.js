@@ -6077,7 +6077,6 @@
     if (taskUsesSplitLayout()) {
       return lightTaskWorkspacePage();
     }
-    ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));
     const page = lightPage("Tasks");
     page.classList.add("light-tasks-page");
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
@@ -6458,10 +6457,6 @@
     return status;
   }
 
-  function taskCreatedBy(task) {
-    return String(task?.created_by || task?.metadata?.created_by || "").trim();
-  }
-
   function taskDescription(task) {
     return String(task?.description || task?.summary || task?.metadata?.description || "").trim();
   }
@@ -6472,24 +6467,6 @@
 
   function taskRecordId(task) {
     return String(task?.id || task?.record_id || "").trim();
-  }
-
-  function taskOwners(task) {
-    const owners = [];
-    const append = value => {
-      const name = String(value || "").trim();
-      if (name && !owners.includes(name)) {
-        owners.push(name);
-      }
-    };
-    append(task?.owner);
-    append(task?.metadata?.owner);
-    return owners;
-  }
-
-  function taskPrimaryOwner(task) {
-    const createdBy = taskCreatedBy(task);
-    return taskOwners(task).find(name => name !== createdBy) || "";
   }
 
   function lightTaskStatusBadge(status, options = {}) {
@@ -6550,71 +6527,6 @@
       hour: "numeric",
       minute: "2-digit"
     });
-  }
-
-  function taskCreatedByTarget(task) {
-    const createdBy = taskCreatedBy(task);
-    if (!createdBy) {
-      return null;
-    }
-    return workspaceContactTargetByName(createdBy);
-  }
-
-  function ensureTaskPeopleContacts(task) {
-    ensureTaskPeopleContactsLoaded([task]);
-  }
-
-  function ensureTaskPeopleContactsLoaded(tasks) {
-    const items = Array.isArray(tasks) ? tasks : [];
-    if (!items.some(task => taskCreatedBy(task) || taskPrimaryOwner(task))) {
-      return;
-    }
-    const bucket = workspaceBucket("contacts");
-    if (!bucket.loaded && !bucket.loading) {
-      void loadWorkspaceCollection("contacts", { render: true });
-    }
-  }
-
-  function taskDetailRows(task) {
-    return [
-      { icon: "clock", accentKey: "meetings", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
-      { icon: "calendar", accentKey: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
-    ];
-  }
-
-  function lightTaskPeopleSection(task) {
-    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
-    const rows = [];
-    const createdBy = taskCreatedBy(task);
-    if (createdBy) {
-      rows.push({
-        icon: "contacts",
-        accentKey: "contacts",
-        label: createdBy,
-        value: "Created by",
-        target: taskCreatedByTarget(task),
-        fromRoute: origin.route,
-        openOptions: { taskOrigin: origin },
-        dataset: { taskPersonRole: "created_by" },
-      });
-    }
-    const owner = taskPrimaryOwner(task);
-    if (owner) {
-      rows.push({
-        icon: "contacts",
-        accentKey: "contacts",
-        label: owner,
-        value: "Owner",
-        target: workspaceContactTargetByName(owner),
-        fromRoute: origin.route,
-        openOptions: { taskOrigin: origin },
-        dataset: { taskPersonRole: "owner" },
-      });
-    }
-    if (!rows.length) {
-      return null;
-    }
-    return lightInfoSection("People", rows, { showTrailingChevron: false });
   }
 
   function taskConnectedRows(task) {
@@ -6751,11 +6663,15 @@
     const statusCircle = el("span", "light-task-status-circle");
     statusCircle.setAttribute("aria-hidden", "true");
     statusCircle.append(el("span", taskCheckCircleClass(task)));
+    const createdAt = Number(task?.created_at_ms || 0);
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
+    if (Number.isFinite(createdAt) && createdAt > 0) {
+      copy.append(el("span", "light-task-detail-created", `Created ${taskDateTimeLabel(createdAt, "")}`));
+    }
     card.append(statusCircle, copy);
     return card;
   }
@@ -6765,15 +6681,9 @@
     surface.dataset.taskDetailId = String(task?.id || "");
     surface.dataset.taskStatus = normalizedTaskStatus(task);
     surface.append(lightTaskDetailCard(task));
-    ensureTaskPeopleContacts(task);
     const description = taskDescription(task);
     if (description) {
       surface.append(lightCopySection("Description", description));
-    }
-    surface.append(lightInfoSection("Details", taskDetailRows(task)));
-    const people = lightTaskPeopleSection(task);
-    if (people) {
-      surface.append(people);
     }
     const checklist = lightTaskChecklistSection(task);
     if (checklist) {
@@ -6800,7 +6710,6 @@
         container.append(lightTaskGroup(tasks, group));
       }
     });
-    ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));
   }
 
   function lightTaskWorkspacePage() {
