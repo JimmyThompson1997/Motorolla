@@ -152,10 +152,61 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
         )
         assert patched["status"] == "waiting"
 
+        checklist_only = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={
+                "checklist": [
+                    {"id": "x", "label": "Checklist row", "done": True},
+                    {"id": "y", "label": "Another row", "done": False},
+                ],
+            },
+        )
+        assert [item["done"] for item in checklist_only["checklist"]] == [True, False]
+
+        checklist_done = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={
+                "status": "done",
+                "checklist": [
+                    {"id": "x", "label": "Checklist row", "done": True},
+                    {"id": "y", "label": "Another row", "done": True},
+                ],
+            },
+        )
+        assert checklist_done["status"] == "done"
+        assert [item["done"] for item in checklist_done["checklist"]] == [True, True]
+
+        checklist_reopen = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={
+                "status": "in_progress",
+                "checklist": [
+                    {"id": "x", "label": "Checklist row", "done": True},
+                    {"id": "y", "label": "Another row", "done": False},
+                ],
+            },
+        )
+        assert checklist_reopen["status"] == "in_progress"
+        assert [item["done"] for item in checklist_reopen["checklist"]] == [True, False]
+
         for bad_body in (
             {"status": "open"},
             {"status": "done", "owner": "Jordan"},
-            {"checklist": [{"id": "x", "done": True}]},
+            {"checklist": "not-a-list"},
+            {"status": "done", "checklist": [{"id": "x", "label": "Checklist row", "done": False}]},
+            {"status": "in_progress", "checklist": [{"id": "x", "label": "Checklist row", "done": True}]},
         ):
             with pytest.raises(urllib.error.HTTPError) as caught:
                 request_json(
@@ -209,6 +260,44 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
                 body={"pinned": True},
             )
         assert caught.value.code == 401
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_authenticated_task_patch_persists_checklist_and_status(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        task = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "combined-task",
+                "title": "Combined Task",
+                "status": "todo",
+                "checklist": [
+                    {"id": "one", "label": "First", "done": False},
+                    {"id": "two", "label": "Second", "done": False},
+                ],
+            },
+        )
+
+        patched = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="test-token",
+            body={
+                "status": "done",
+                "checklist": [
+                    {"id": "one", "label": "First", "done": True},
+                    {"id": "two", "label": "Second", "done": True},
+                ],
+            },
+        )
+        assert patched["status"] == "done"
+        assert [item["done"] for item in patched["checklist"]] == [True, True]
     finally:
         server.shutdown()
 

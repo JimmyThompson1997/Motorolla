@@ -772,11 +772,36 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
         ) -> tuple[bool | None, HTTPStatus | None]:
             if method != "PATCH" or len(parts) != 2 or parts[0] != "tasks":
                 return None, None
-            if set(payload.keys()) != {"status"}:
+            payload_keys = set(payload.keys())
+            if payload_keys not in ({"status"}, {"checklist"}, {"checklist", "status"}):
                 return False, HTTPStatus.BAD_REQUEST
-            status = str(payload.get("status") or "").strip()
-            if status not in PUBLIC_BROWSER_TASK_STATUSES:
-                return False, HTTPStatus.BAD_REQUEST
+            if "status" in payload_keys:
+                status = str(payload.get("status") or "").strip()
+                if status not in PUBLIC_BROWSER_TASK_STATUSES:
+                    return False, HTTPStatus.BAD_REQUEST
+            if "checklist" in payload_keys:
+                checklist = payload.get("checklist")
+                if not isinstance(checklist, list):
+                    return False, HTTPStatus.BAD_REQUEST
+                if payload_keys == {"checklist", "status"}:
+                    checklist_done_values = [
+                        bool(item.get("done") or item.get("checked"))
+                        for item in checklist
+                        if isinstance(item, dict)
+                    ]
+                    if len(checklist_done_values) != len(checklist):
+                        return False, HTTPStatus.BAD_REQUEST
+                    all_done = bool(checklist_done_values) and all(checklist_done_values)
+                    any_pending = any(not item for item in checklist_done_values)
+                    status = str(payload.get("status") or "").strip()
+                    if status == "done":
+                        if not all_done:
+                            return False, HTTPStatus.BAD_REQUEST
+                    elif status == "in_progress":
+                        if not checklist_done_values or not any_pending:
+                            return False, HTTPStatus.BAD_REQUEST
+                    else:
+                        return False, HTTPStatus.BAD_REQUEST
             origin = self._origin_signature(self.headers.get("Origin", ""))
             referer = urlsplit(str(self.headers.get("Referer") or "").strip())
             expected = self._origin_signature(self._request_base_url())
