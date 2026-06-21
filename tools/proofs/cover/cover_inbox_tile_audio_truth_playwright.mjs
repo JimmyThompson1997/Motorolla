@@ -251,13 +251,117 @@ function cardLocator(page, title) {
   }).first();
 }
 
-async function clickAudioButton(page, title) {
-  const button = cardLocator(page, title).locator("button.action-audio").first();
-  try {
-    await button.click({ timeout: 5000 });
-  } catch (_) {
-    await cardLocator(page, title).locator("button.action-audio").first().evaluate(node => node.click());
+function audioClickDelivered(before, after, title) {
+  const beforePhase = String(before?.card?.audio_phase || "");
+  const afterPhase = String(after?.card?.audio_phase || "");
+  const afterProbeTitle = String(after?.probe?.target_card?.title || "");
+  const afterPlayerTitle = String(after?.player?.title || "");
+  if (!after?.card?.found) {
+    return false;
   }
+  if (afterPhase && afterPhase !== beforePhase) {
+    return true;
+  }
+  if (String(after?.card?.audio_busy || "") === "true") {
+    return true;
+  }
+  if (beforePhase === "playing_confirmed") {
+    return !after?.player?.is_playing || /^Play\b/.test(String(after?.card?.button_label || ""));
+  }
+  if (afterProbeTitle === title && afterPhase !== "idle") {
+    return true;
+  }
+  if (beforePhase === "idle") {
+    return Boolean(after?.player?.is_playing && afterPlayerTitle === title);
+  }
+  return false;
+}
+
+async function waitForAudioClickDelivery(page, title, before, timeoutMs = 750) {
+  const startedAt = Date.now();
+  let last = await collectDiagnostics(page, title);
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (audioClickDelivered(before, last, title)) {
+      return { delivered: true, diagnostics: last };
+    }
+    await page.waitForTimeout(75);
+    last = await collectDiagnostics(page, title);
+  }
+  return { delivered: audioClickDelivered(before, last, title), diagnostics: last };
+}
+
+async function resolveAudioButton(page, title) {
+  let lastError = null;
+  for (let attemptIndex = 0; attemptIndex < 5; attemptIndex += 1) {
+    const button = cardLocator(page, title).locator("button.action-audio").first();
+    try {
+      await button.waitFor({ state: "visible", timeout: 5000 });
+      await button.scrollIntoViewIfNeeded({ timeout: 1500 });
+      const target = await button.evaluate(node => ({
+        card_id: String(node.getAttribute("data-card-id") || ""),
+        session_id: String(node.getAttribute("data-card-session-id") || ""),
+        label: String(node.getAttribute("aria-label") || "")
+      }));
+      return { button, target };
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(100);
+    }
+  }
+  throw lastError || new Error(`Could not resolve audio button for "${title}"`);
+}
+
+async function clickAudioButton(page, title) {
+  const { button, target } = await resolveAudioButton(page, title);
+  const before = await collectDiagnostics(page, title);
+  const attempts = [];
+  const attempt = async (strategy, action) => {
+    try {
+      await action();
+    } catch (error) {
+      attempts.push({
+        strategy,
+        delivered: false,
+        error: String(error?.message || error || "")
+      });
+      return null;
+    }
+    const delivery = await waitForAudioClickDelivery(page, title, before);
+    attempts.push({
+      strategy,
+      delivered: delivery.delivered,
+      phase: String(delivery.diagnostics?.card?.audio_phase || ""),
+      busy: String(delivery.diagnostics?.card?.audio_busy || ""),
+      player_title: String(delivery.diagnostics?.player?.title || ""),
+      player_source: String(delivery.diagnostics?.player?.source || ""),
+      probe_target_title: String(delivery.diagnostics?.probe?.target_card?.title || ""),
+      probe_phase: String(delivery.diagnostics?.probe?.current_tile_audio_phase || "")
+    });
+    return delivery.delivered ? delivery : null;
+  };
+
+  let delivered = await attempt("locator_click", () => button.click({ timeout: 5000 }));
+  if (!delivered) {
+    delivered = await attempt("force_locator_click", () => button.click({ timeout: 5000, force: true }));
+  }
+  if (!delivered) {
+    delivered = await attempt("mouse_click", async () => {
+      const box = await button.boundingBox();
+      if (!box) {
+        throw new Error("audio button bounding box was unavailable");
+      }
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    });
+  }
+  if (!delivered) {
+    throw new Error(`Audio click did not reach "${title}" (${JSON.stringify({ target, attempts })})`);
+  }
+  return {
+    title,
+    target,
+    attempts,
+    delivered_strategy: attempts.find(item => item.delivered)?.strategy || ""
+  };
 }
 
 async function collectDiagnostics(page, title) {
@@ -385,7 +489,7 @@ async function runStartStopScenario(page, config, title, reportDir) {
   await installInjectionHelpers(page);
   const preClick = await collectDiagnostics(page, title);
   const preClickShot = await saveScreenshot(page, reportDir, "01-pre-click");
-  await clickAudioButton(page, title);
+  const startClick = await clickAudioButton(page, title);
   const timeline = await sampleTimeline(page, title, {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
@@ -405,8 +509,9 @@ async function runStartStopScenario(page, config, title, reportDir) {
   });
   let stopTimeline = null;
   let stopShot = "";
+  let stopClick = null;
   if (phaseSeen(timeline.samples, "playing_confirmed") && lastSample(timeline.samples)?.card?.audio_phase === "playing_confirmed") {
-    await clickAudioButton(page, title);
+    stopClick = await clickAudioButton(page, title);
     stopTimeline = await sampleTimeline(page, title, {
       durationMs: 2500,
       intervalMs: config.sampleIntervalMs,
@@ -417,9 +522,11 @@ async function runStartStopScenario(page, config, title, reportDir) {
   }
   return {
     title,
+    start_click: startClick,
     pre_click: preClick,
     pre_click_screenshot: preClickShot,
     timeline,
+    stop_click: stopClick,
     stop_timeline: stopTimeline,
     stop_screenshot: stopShot
   };
@@ -435,9 +542,9 @@ function requiredPlaybackDeltaMs(durationMs) {
 async function runCrossCardScenario(page, config, primaryTitle, secondaryTitle, reportDir) {
   await loadInbox(page, config);
   await installInjectionHelpers(page);
-  await clickAudioButton(page, primaryTitle);
+  const primaryClick = await clickAudioButton(page, primaryTitle);
   await page.waitForTimeout(600);
-  await clickAudioButton(page, secondaryTitle);
+  const secondaryClick = await clickAudioButton(page, secondaryTitle);
   const timeline = await sampleTimeline(page, secondaryTitle, {
     durationMs: 3000,
     intervalMs: config.sampleIntervalMs,
@@ -448,6 +555,10 @@ async function runCrossCardScenario(page, config, primaryTitle, secondaryTitle, 
   return {
     primary_title: primaryTitle,
     secondary_title: secondaryTitle,
+    clicks: {
+      primary: primaryClick,
+      secondary: secondaryClick
+    },
     timeline,
     primary_state_after_switch: primaryState
   };
@@ -459,7 +570,7 @@ async function runInjectedFailureScenario(page, config, title, reportDir) {
   await page.evaluate(() => {
     window.__codexAudioTruthInjectPlayFailure("Injected browser proof play failure.");
   });
-  await clickAudioButton(page, title);
+  const click = await clickAudioButton(page, title);
   const timeline = await sampleTimeline(page, title, {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
@@ -469,6 +580,7 @@ async function runInjectedFailureScenario(page, config, title, reportDir) {
   await resetInjection(page);
   return {
     title,
+    click,
     timeline
   };
 }
@@ -479,7 +591,7 @@ async function runInjectedEarlyStopScenario(page, config, title, reportDir) {
   await page.evaluate(() => {
     window.__codexAudioTruthInjectEarlyStop(450);
   });
-  await clickAudioButton(page, title);
+  const click = await clickAudioButton(page, title);
   const timeline = await sampleTimeline(page, title, {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
@@ -489,6 +601,7 @@ async function runInjectedEarlyStopScenario(page, config, title, reportDir) {
   await resetInjection(page);
   return {
     title,
+    click,
     timeline
   };
 }
