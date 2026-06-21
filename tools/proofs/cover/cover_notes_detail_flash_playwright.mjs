@@ -35,13 +35,16 @@ import {
   classifyLaneMetrics,
   orderedObservedPhases,
 } from "./notes_detail_flash_scoring.mjs";
+import {
+  loadProofRuntimeEnv,
+  resolveWriteToken,
+} from "../../support/proof_runtime_env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+loadProofRuntimeEnv({ rootDir: ROOT });
 const DEFAULT_BASE_URL = process.env.PUCKY_NOTES_FLASH_BASE_URL || "https://pucky.fly.dev";
 const VIEWPORT = NOTES_DETAIL_FLASH_VIEWPORT;
 const SCORE_CROP = buildScoreCrop(VIEWPORT);
-const LEGACY_WEB_TOKEN_ENV = "PUCKY_" + "WEB_UI_TOKEN";
-const LEGACY_WEB_TOKEN_PLACEHOLDER = ["Paste ", "PUCKY_", "WEB_UI_TOKEN"].join("");
 const LANE_DEBUG_DEFAULTS = Object.freeze({
   natural_click: { routeDelayMs: 0, iframeDelayMs: 0 },
   route_delay: { routeDelayMs: NOTES_DETAIL_FLASH_ROUTE_DELAY_MS, iframeDelayMs: 0 },
@@ -77,23 +80,10 @@ function logStep(config, message) {
 }
 
 function resolveApiToken() {
-  const webToken = String(process.env[LEGACY_WEB_TOKEN_ENV] || "").trim();
-  if (webToken) {
-    return webToken;
-  }
-  const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
-  if (proofToken) {
-    return proofToken;
-  }
-  const liveToken = String(process.env.PUCKY_LIVE_USER_SESSION_TOKEN || "").trim();
-  if (liveToken) {
-    return liveToken;
-  }
-  const operatorToken = String(process.env.PUCKY_OPERATOR_TOKEN || "").trim();
-  if (operatorToken) {
-    return operatorToken;
-  }
-  return String(process.env.PUCKY_API_TOKEN || "").trim();
+  return resolveWriteToken({
+    envKeys: ["PUCKY_WORKSPACE_PROOF_TOKEN", "PUCKY_LIVE_USER_SESSION_TOKEN"],
+    rootDir: ROOT,
+  });
 }
 
 function parseArgs(argv) {

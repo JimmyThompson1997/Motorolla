@@ -555,14 +555,12 @@ export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
 }
 
 export function proofPageUrl(baseUrl, apiToken, options = {}) {
+  void apiToken;
   const url = new URL(`${String(baseUrl || "").replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
   url.searchParams.set("theme", String(options.theme || "light"));
   url.searchParams.set("route", "tasks");
   if (String(options.refreshKey || "").trim()) {
     url.searchParams.set("_pucky_refresh", String(options.refreshKey || "").trim());
-  }
-  if (String(apiToken || "").trim()) {
-    url.searchParams.set("api_token", String(apiToken || "").trim());
   }
   return url.toString();
 }

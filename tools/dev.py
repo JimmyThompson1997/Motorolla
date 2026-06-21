@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -54,6 +55,9 @@ LOCAL_INBOX_MEDIA_PROOF_SERVER = [
 BUNDLED_NODE_CANDIDATES = [
     Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "node" / "bin" / "node",
 ]
+BUNDLED_FLYCTL_CANDIDATES = [
+    Path.home() / ".fly" / "bin" / "flyctl",
+]
 BUNDLED_NODE_MODULES_CANDIDATES = [
     Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "node" / "node_modules",
 ]
@@ -70,10 +74,30 @@ TASK_HELP = {
     "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
+    "release-hosted-web": "Run the hosted-web release lane: parser checks, targeted pytest, VM sync deploy, manifest verification, and live proof.",
     "deploy-apk": "Invoke the canonical APK deploy gate through PowerShell when available.",
     "refresh-links-catalog": "Refresh the generated links catalog fixture used by the hosted UI bundle.",
     "lint": "Run the conservative Ruff check configured in pyproject.toml.",
 }
+HOSTED_RELEASE_TEST_PATHS = [
+    "pucky_vm/tests/test_html_cover_ui_spec.py",
+    "pucky_vm/tests/test_ui_bundle.py",
+    "pucky_vm/tests/test_server.py",
+    "tools/tests/test_browser_proof_contracts.py",
+    "tools/tests/test_live_user_session_playwright.py",
+    "tools/tests/test_task_workspace_phone_real_vm_proof.py",
+    "tools/tests/test_dev_task_runner.py",
+]
+HOSTED_RELEASE_NODE_CHECKS = [
+    "pucky_vm/ui_src/app.js",
+    "pucky_vm/ui_src/pucky-ui-state.js",
+    "tools/support/proof_runtime_env.mjs",
+    "tools/support/task_workspace_proof_shared.mjs",
+    "tools/proofs/cover/cover_live_user_session_playwright.mjs",
+    "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+    "tools/proofs/cover/cover_notes_detail_flash_playwright.mjs",
+    "tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs",
+]
 
 
 def has_arg(args: list[str], option: str) -> bool:
@@ -161,6 +185,10 @@ def require_binary(name: str) -> str:
         for candidate in BUNDLED_NODE_CANDIDATES:
             if candidate.is_file():
                 return str(candidate)
+    if name == "flyctl":
+        for candidate in BUNDLED_FLYCTL_CANDIDATES:
+            if candidate.is_file():
+                return str(candidate)
     raise SystemExit(f"Missing required executable: {name}")
 
 
@@ -178,9 +206,32 @@ def wait_for_http(url: str, *, timeout_seconds: float = 20.0) -> None:
     raise SystemExit(f"Timed out waiting for local proof server at {url}: {last_error or 'unreachable'}")
 
 
+def parse_dotenv_file(dotenv_path: Path) -> dict[str, str]:
+    if not dotenv_path.is_file():
+        return {}
+    payload: dict[str, str] = {}
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.replace("export ", "", 1).strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        payload[key] = value
+    return payload
+
+
 def proof_env() -> dict[str, str]:
     ensure_cover_playwright_shims()
     env = os.environ.copy()
+    for key, value in parse_dotenv_file(ROOT / ".env").items():
+        env.setdefault(key, value)
     if not str(env.get("CODEX_NODE_MODULES") or "").strip():
         for candidate in BUNDLED_NODE_MODULES_CANDIDATES:
             if candidate.is_dir():
@@ -343,7 +394,6 @@ def run_local_workspace_proof(
     node_binary = require_binary("node")
     env = proof_env()
     env.setdefault("PUCKY_API_TOKEN", "proof-token")
-    env.setdefault("PUCKY_" + "WEB_UI_TOKEN", "proof-token")
     server = run_server(server_command or LOCAL_PROOF_SERVER)
     try:
         wait_for_api(health_url)
@@ -551,6 +601,49 @@ def run_hosted_bug_hunt(extra_args: list[str]) -> int:
     )
 
 
+def fetch_live_manifest(vm_base_url: str = "https://pucky.fly.dev") -> dict[str, object]:
+    manifest_url = append_refresh_param(
+        f"{vm_base_url.rstrip('/')}/ui/pucky/latest/manifest.json",
+        current_git_head() or str(int(time.time())),
+    )
+    with urlopen(manifest_url, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def verify_live_manifest_matches_head(vm_base_url: str = "https://pucky.fly.dev") -> None:
+    manifest = fetch_live_manifest(vm_base_url)
+    head = current_git_head()
+    if head and str(manifest.get("source_commit_full") or "").strip() != head:
+        raise SystemExit(
+            "Hosted manifest did not match local HEAD after deploy: "
+            f"expected {head}, saw {manifest.get('source_commit_full')}"
+        )
+
+
+def run_node_checks(paths: list[str]) -> int:
+    node_binary = require_binary("node")
+    env = proof_env()
+    for rel_path in paths:
+        status = run_command([node_binary, "--check", rel_path], env=env)
+        if status:
+            return status
+    return 0
+
+
+def run_release_hosted_web(extra_args: list[str]) -> int:
+    status = run_node_checks(HOSTED_RELEASE_NODE_CHECKS)
+    if status:
+        return status
+    status = run_command([PYTHON, "-m", "pytest", "-q", *HOSTED_RELEASE_TEST_PATHS], env=proof_env())
+    if status:
+        return status
+    status = run_command(build_task_command("deploy-vm"), env=proof_env())
+    if status:
+        return status
+    verify_live_manifest_matches_head()
+    return run_live_web_proof(extra_args)
+
+
 def powershell_command() -> list[str]:
     for candidate in ("pwsh", "powershell"):
         path = shutil.which(candidate)
@@ -567,7 +660,16 @@ def build_task_command(task: str) -> list[str]:
     if task == "test-full":
         return [PYTHON, "-m", "pytest", "-q", *FULL_TEST_PATHS]
     if task == "deploy-vm":
-        return [PYTHON, "tools/sync_pucky_vm_official.py", "--app", "pucky"]
+        return [
+            PYTHON,
+            "tools/sync_pucky_vm_official.py",
+            "--app",
+            "pucky",
+            "--canonical-root",
+            str(ROOT),
+            "--flyctl",
+            require_binary("flyctl"),
+        ]
     if task == "deploy-apk":
         return powershell_command()
     if task == "refresh-links-catalog":
@@ -600,6 +702,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_live_web_proof(args.extra_args)
     if args.task == "qa-hosted-web":
         return run_hosted_bug_hunt(args.extra_args)
+    if args.task == "release-hosted-web":
+        return run_release_hosted_web(args.extra_args)
     return run_command(build_task_command(args.task) + args.extra_args)
 
 

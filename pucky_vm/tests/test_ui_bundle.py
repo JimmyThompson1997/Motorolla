@@ -63,10 +63,13 @@ def test_ui_bundle_contains_manifest_and_entrypoint(tmp_path):
         bundled_manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert bundled_manifest == manifest
         config_script = archive.read("pucky-config.js").decode("utf-8")
+        ui_state_script = archive.read("pucky-ui-state.js").decode("utf-8")
         assert '"schema":"pucky.bundle_config.v1"' in config_script
         assert '"ui_version":"test-ui"' in config_script
         assert '"created_at":"2026-05-20T00:00:00+00:00"' in config_script
         assert "api_token" not in config_script
+        assert "browser_api_token" not in ui_state_script
+        assert "resolveBrowserApiToken" not in ui_state_script
         runtime_fixture = json.loads(archive.read("fixtures/reply_cards.json").decode("utf-8"))
         deploy_fixture = json.loads(archive.read("fixtures/reply_cards_deploy.json").decode("utf-8"))
         assert runtime_fixture == runtime_fixture_from_deploy(deploy_fixture)

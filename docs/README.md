@@ -18,6 +18,7 @@ This folder is the retained documentation set. Treat this file as the top-level 
 - Notes flash browser proof (live): `python -m tools.dev proof-live-notes-flash-browser`
 - Local proof: `python -m tools.dev proof-local-web`
 - Live proof: `python -m tools.dev proof-live-web`
+- Hosted release lane: `python -m tools.dev release-hosted-web`
 - Deploy VM: `python -m tools.dev deploy-vm`
 - Deploy APK: `python -m tools.dev deploy-apk`
 - Refresh generated links catalog: `python -m tools.dev refresh-links-catalog`

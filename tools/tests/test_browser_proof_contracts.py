@@ -29,6 +29,7 @@ def test_browser_facing_proofs_drop_legacy_web_ui_token_precedence() -> None:
         "cover_calendar_playwright.mjs",
         "cover_links_scroll_probe.mjs",
         "cover_notes_feed_centering_real_vm_playwright.mjs",
+        "cover_notes_detail_flash_playwright.mjs",
         "cover_workspace_apps_playwright.mjs",
         "meeting_mode_agent_real_vm_playwright.mjs",
         "meetings_load_probe.mjs",
@@ -88,6 +89,15 @@ def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() ->
     assert LEGACY_BROWSER_TOKEN_KEY not in source
 
 
+def test_universal_feed_tiles_browser_proof_loads_directly_without_browser_unlock() -> None:
+    source = read_source("cover_universal_feed_tiles_playwright.mjs")
+
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
+    assert "unlockPreviewIfNeeded(" not in source
+    assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
+
+
 def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
 
@@ -99,20 +109,19 @@ def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() 
     assert "Notes pin write failed" in source
 
 
-def test_live_notes_centering_proof_seeds_saved_browser_token_and_verifies_patch_auth() -> None:
+def test_notes_centering_write_proof_stays_out_of_release_lane_and_uses_api_token() -> None:
     source = read_source("cover_notes_feed_centering_real_vm_playwright.mjs")
+    package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
+    dev_source = DEV_PY_PATH.read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 
     assert "PUCKY_API_TOKEN" in source
     assert LEGACY_WEB_TOKEN_ENV not in source
-    assert LEGACY_LOCK_TITLE not in source
-    assert LEGACY_UNLOCK_LABEL not in source
-    assert 'localStorage.setItem("pucky.cover.browser_api_token.v1", String(apiToken || "").trim());' in source
-    assert ".light-note-pin-button" in source
-    assert "hasAuthorization" in source
-    assert "first PATCH omitted Authorization" in source
-    assert "first PATCH returned 401" in source
-    assert "second PATCH omitted Authorization" in source
-    assert "second PATCH returned 401" in source
+    assert "test:cover-notes-feed-centering" not in package["scripts"]
+    assert "cover_notes_feed_centering_real_vm_playwright.mjs" not in dev_source
+    assert "cover_notes_feed_centering_real_vm_playwright.mjs" not in readme
+    assert "cover_notes_feed_centering_real_vm_playwright.mjs" not in docs_readme
 
 
 def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() -> None:
@@ -135,11 +144,11 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "scrollDayStripDirect(page, 220)" in source
 
 
-def test_task_workspace_proof_page_url_seeds_api_token_for_preview_writes() -> None:
+def test_task_workspace_proof_page_url_keeps_hosted_page_access_token_free() -> None:
     source = read_source("task_workspace_proof_shared.mjs")
 
-    assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' in source
-    assert "void apiToken;" not in source
+    assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
+    assert "void apiToken;" in source
 
 
 def test_notes_detail_flash_browser_proof_v2_contract_is_first_class() -> None:

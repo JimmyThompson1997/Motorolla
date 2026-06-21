@@ -426,33 +426,33 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (!bucket.loaded) {' in light_calendar_page
 
 
-def test_hosted_workspace_writes_refresh_saved_browser_auth_state() -> None:
+def test_hosted_workspace_writes_use_token_free_browser_state_and_public_same_origin_fallback() -> None:
     app = read("app.js")
     ui_state = read("pucky-ui-state.js")
 
     initial_links = function_block(app, "initialLinksState")
-    resolve_hosted_browser_token = function_block(app, "resolveHostedBrowserApiToken")
-    resolve_browser_token = function_block(ui_state, "resolveBrowserApiToken")
+    resolve_hosted_browser_device = function_block(app, "resolveHostedBrowserDeviceId")
     refresh_hosted_auth = function_block(app, "refreshHostedBrowserAuthState")
     ensure_links = function_block(app, "ensureLinksApiConfig")
     protected_headers = function_block(app, "protectedApiAuthorizationHeaders")
 
-    assert 'apiToken: "",' in initial_links
-    assert 'const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"' in resolve_hosted_browser_token
-    assert 'return String(uiState.resolveBrowserApiToken({ tokenStateKey: BROWSER_API_TOKEN_STATE_KEY }) || "").trim();' in resolve_hosted_browser_token
-    assert 'const tokenStateKey = String(options.tokenStateKey || "pucky.cover.browser_api_token.v1");' in resolve_browser_token
-    assert 'const queryToken = String(params.get("api_token") || "").trim();' in resolve_browser_token
-    assert "localStorage.setItem(tokenStateKey, queryToken);" in resolve_browser_token
-    assert 'return String(localStorage.getItem(tokenStateKey) || "").trim();' in resolve_browser_token
+    assert 'apiToken: "",' not in initial_links
+    assert "function resolveHostedBrowserApiToken(" not in app
+    assert "function resolveBrowserApiToken(" not in ui_state
+    assert "browser_api_token" not in app
+    assert "browser_api_token" not in ui_state
+    assert "api_token" not in app
+    assert "api_token" not in ui_state
+    assert 'const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"' in resolve_hosted_browser_device
+    assert 'return String(uiState.resolveBrowserDeviceId({ deviceStateKey: BROWSER_DEVICE_STATE_KEY }) || "").trim();' in resolve_hosted_browser_device
     assert 'state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\\/$/, "");' in refresh_hosted_auth
-    assert "state.links.apiToken = resolveHostedBrowserApiToken();" in refresh_hosted_auth
     assert "state.links.deviceId = resolveHostedBrowserDeviceId();" in refresh_hosted_auth
     assert "refreshHostedBrowserAuthState();" in ensure_links
-    assert 'state.links.apiToken = "";' in ensure_links
+    assert 'state.links.apiToken = "";' not in ensure_links
     assert "if (!needsAuthorization) {" in protected_headers
     assert "refreshHostedBrowserAuthState();" in protected_headers
-    assert "if (!state.links.apiToken) {" in protected_headers
-    assert 'return { Authorization: `Bearer ${state.links.apiToken}` };' in protected_headers
+    assert 'return { Authorization: `Bearer ${state.links.apiToken}` };' not in protected_headers
+    assert "return {};" in protected_headers
     assert 'const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });' in protected_headers
 
 
