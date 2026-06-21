@@ -359,6 +359,16 @@ def verify_filter_visual(state: dict[str, Any], *, theme: str) -> None:
         assert_or_fail(str(visual.get("chevronColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter chevron is not using the readable neutral color")
 
 
+def verify_filter_selector_options(state: dict[str, Any], *, theme: str) -> None:
+    options = [item for item in list(state.get("filterSelectorOptions") or []) if isinstance(item, dict)]
+    expected_values = ["all", "todo", "in_progress", "waiting", "done"]
+    assert_or_fail(len(options) == len(expected_values), "phone_task_detail_render_failed", f"{theme}: expected {len(expected_values)} task filter selector options")
+    for value in expected_values:
+        option = next((item for item in options if str(item.get("value") or "") == value), None)
+        assert_or_fail(option is not None, "phone_task_detail_render_failed", f"{theme}: missing task filter selector option {value}")
+        assert_or_fail(bool(option.get("hasLeadingVisual")), "phone_task_detail_render_failed", f"{theme}: task filter selector option {value} is missing its leading visual")
+
+
 def verify_people_icon_visual(person: dict[str, Any], *, label: str) -> None:
     icon_color = str(person.get("icon_color") or "").strip().lower()
     icon_background = str(person.get("icon_background") or "").strip().lower()
@@ -483,6 +493,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         assert_or_fail(filter_labels == ["All"], "phone_task_detail_render_failed", "Expected a single visible All task filter trigger")
         verify_filter_visual(list_state, theme="light")
 
+        light_filter_selector_phase = run_phase(
+            args,
+            serial=serial,
+            cdp_url=cdp["cdp_url"],
+            scenario_dir=scenario_dir,
+            name="01b-light-filter-selector",
+            operations=[
+                {"kind": "goto_tasks", "theme": "light"},
+                {"kind": "click_selector", "selector": ".light-task-filter-button"},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "01b-light-filter-selector-browser.png"),
+            ],
+        )
+        light_filter_selector_state = op_state(light_filter_selector_phase, "task_state")
+        verify_filter_selector_options(light_filter_selector_state, theme="light")
+        filter_checks.append({"filter": "light_selector", "options": [str(item.get("value") or "") for item in list(light_filter_selector_state.get("filterSelectorOptions") or []) if isinstance(item, dict)]})
+
         filter_expectations = [
             {"key": "all", "present": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["waitingTaskId"], seed["doneTaskId"], seed["emptyTaskId"]], "absent": []},
             {"key": "todo", "present": [seed["primaryTaskId"], seed["overdueTaskId"], seed["emptyTaskId"]], "absent": [seed["inProgressTaskId"], seed["waitingTaskId"], seed["doneTaskId"]]},
@@ -532,12 +559,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         verify_filter_visual(dark_filter_state, theme="dark")
         filter_checks.append({"filter": "dark_visual", "theme": dark_filter_state.get("filterVisual", {}).get("theme"), "visible": sorted(visible_task_ids(dark_filter_state))})
 
+        dark_filter_selector_phase = run_phase(
+            args,
+            serial=serial,
+            cdp_url=cdp["cdp_url"],
+            scenario_dir=scenario_dir,
+            name="06b-dark-filter-selector",
+            operations=[
+                {"kind": "goto_tasks", "theme": "dark"},
+                {"kind": "click_selector", "selector": ".light-task-filter-button"},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "06b-dark-filter-selector-browser.png"),
+            ],
+        )
+        dark_filter_selector_state = op_state(dark_filter_selector_phase, "task_state")
+        verify_filter_selector_options(dark_filter_selector_state, theme="dark")
+        filter_checks.append({"filter": "dark_selector", "options": [str(item.get("value") or "") for item in list(dark_filter_selector_state.get("filterSelectorOptions") or []) if isinstance(item, dict)]})
+
         reset_light_phase = run_phase(
             args,
             serial=serial,
             cdp_url=cdp["cdp_url"],
             scenario_dir=scenario_dir,
-            name="06b-light-reset",
+            name="06c-light-reset",
             operations=[
                 {"kind": "goto_tasks", "theme": "light"},
                 {"kind": "task_state"},
@@ -702,15 +746,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for item_id in checklist_ids:
             assert_or_fail(checklist_rows.get(item_id) is True, "phone_checklist_persistence_failed", f"Checklist item {item_id} did not persist as done after reload")
         task_after_checklist = fetch_task_record(args.vm_base_url, token, str(seed["primaryTaskId"]))
-        assert_or_fail(str(task_after_checklist.get("status") or "") == "todo", "phone_checklist_persistence_failed", "Checking every checklist item auto-marked the parent task done")
+        assert_or_fail(str(task_after_checklist.get("status") or "") == "done", "phone_checklist_persistence_failed", "Checking every checklist item should auto-mark the parent task done")
         checklist_checks.append({"toggled_all_done": True, "status_after_toggle": task_after_checklist.get("status")})
+        reopen_item_id = checklist_ids[-1] if checklist_ids else ""
+        assert_or_fail(bool(reopen_item_id), "phone_checklist_persistence_failed", "Missing checklist item to reopen the completed task")
+        reopen_phase = run_phase(
+            args,
+            serial=serial,
+            cdp_url=cdp["cdp_url"],
+            scenario_dir=scenario_dir,
+            name="14b-checklist-reopen",
+            operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / "14b-checklist-reopen-task-browser.png") + [
+                {"kind": "click_selector", "selector": checklist_selector(reopen_item_id)},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "14b-checklist-reopen-browser.png"),
+                {"kind": "reload_page"},
+                {"kind": "wait_for_route", "route": "task-detail"},
+                {"kind": "wait_for_task_detail", "task_id": str(seed["primaryTaskId"])},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "14b-checklist-reopen-reload-browser.png"),
+            ],
+        )
+        reopen_state = op_state(reopen_phase, "task_state")
+        reopen_rows = {str(item.get("id") or ""): bool(item.get("done")) for item in list(reopen_state.get("checklist") or []) if isinstance(item, dict)}
+        assert_or_fail(reopen_rows.get(reopen_item_id) is False, "phone_checklist_persistence_failed", f"Checklist item {reopen_item_id} did not reopen after reload")
+        task_after_reopen = fetch_task_record(args.vm_base_url, token, str(seed["primaryTaskId"]))
+        assert_or_fail(str(task_after_reopen.get("status") or "") == "in_progress", "phone_checklist_persistence_failed", "Unchecking a completed checklist item should reopen the parent task to in progress")
+        checklist_checks.append({"toggled_all_done": False, "status_after_reopen": task_after_reopen.get("status")})
 
         transitions = [
             {"status": "in_progress", "group": "do"},
             {"status": "waiting", "group": "do"},
             {"status": "done", "group": "done"},
         ]
-        current_primary_status = "todo"
+        current_primary_status = "in_progress"
         for index, transition in enumerate(transitions, start=15):
             phase = run_phase(
                 args,

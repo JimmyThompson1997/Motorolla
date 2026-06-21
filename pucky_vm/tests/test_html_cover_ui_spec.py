@@ -1108,8 +1108,8 @@ def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
     assert "page.append(lightTaskFilters());" in tasks_page
     assert 'title: "Filter tasks"' in task_filters
     assert 'openSettingsSelector({' in task_filters
-    assert 'options: taskStatusFilterChoices().map(([value, label]) => ({' in task_filters
-    assert 'meta: String(counts[value] || 0),' in task_filters
+    assert 'options: taskStatusFilterSelectorOptions(counts),' in task_filters
+    assert "function taskStatusFilterSelectorOptions(counts)" in app
     assert 'button.dataset.taskFilterCurrent = currentKey;' in task_filters
     assert 'light-task-filter-button' in task_filters
     assert 'light-task-filter-button-chevron' in task_filters
@@ -1137,9 +1137,11 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     task_detail_card = function_block(app, "lightTaskDetailCard")
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
     task_checklist_section = function_block(app, "lightTaskChecklistSection")
+    toggle_task_checklist_item = function_block(app, "toggleTaskChecklistItem")
     task_connected_rows = function_block(app, "taskConnectedRows")
     task_connected_section = function_block(app, "lightTaskConnectedSection")
     task_filters = function_block(app, "lightTaskFilters")
+    task_filter_selector_options = function_block(app, "taskStatusFilterSelectorOptions")
     light_info_row = function_block(app, "lightInfoRow")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
@@ -1201,6 +1203,7 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert "function taskMutationPending(taskId, scope)" in app
     assert "function setTaskMutationPending(taskId, scope, pending)" in app
     assert "async function toggleTaskChecklistItem(task, itemId)" in app
+    assert "function taskStatusFilterSelectorOptions(counts)" in app
     assert "function openTaskStatusSelector(task, source)" in app
     assert 'const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");' in task_checklist_section
     assert 'row.type = "button";' in task_checklist_section
@@ -1209,6 +1212,13 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'row.disabled = taskMutationPending(taskRecordId(task), item.id);' in task_checklist_section
     assert 'row.addEventListener("click", event => {' in task_checklist_section
     assert 'void toggleTaskChecklistItem(task, item.id);' in task_checklist_section
+    assert 'const previousAllDone = checklist.length > 0 && checklist.every(item => Boolean(item?.done));' in toggle_task_checklist_item
+    assert 'const nextAllDone = nextChecklist.length > 0 && nextChecklist.every(item => Boolean(item?.done));' in toggle_task_checklist_item
+    assert 'const currentStatus = normalizedTaskStatus(current);' in toggle_task_checklist_item
+    assert 'const nextStatus = nextAllDone ? "done" : (previousAllDone && currentStatus === "done" ? "in_progress" : "");' in toggle_task_checklist_item
+    assert 'const payload = nextStatus ? { checklist: nextChecklist, status: nextStatus } : { checklist: nextChecklist };' in toggle_task_checklist_item
+    assert 'const optimisticStatus = nextStatus || currentStatus;' in toggle_task_checklist_item
+    assert "status: optimisticStatus," in toggle_task_checklist_item
     assert "function lightTaskStatusControl" not in app
     assert 'const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);' in task_detail_card
     assert 'card.type = "button";' in task_detail_card
@@ -1224,6 +1234,14 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'if (Number.isFinite(createdAt) && createdAt > 0) {' in task_detail_card
     assert 'copy.append(el("span", "light-task-detail-created", `Created ${taskDateTimeLabel(createdAt, "")}`));' in task_detail_card
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
+    assert 'options: taskStatusFilterSelectorOptions(counts),' in task_filters
+    assert 'return taskStatusFilterChoices().map(([value, label]) => {' in task_filter_selector_options
+    assert 'const leadingNode = el("span", "settings-selector-option-task-status");' in task_filter_selector_options
+    assert 'if (value === "all") {' in task_filter_selector_options
+    assert 'leadingNode.innerHTML = iconSvg("tune", { filled: true });' in task_filter_selector_options
+    assert 'leadingNode.append(el("span", taskStatusCircleClass(value)));' in task_filter_selector_options
+    assert "leadingNode," in task_filter_selector_options
+    assert 'meta: String(counts[value] || 0),' in task_filter_selector_options
     assert 'Object.entries(row.dataset).forEach(([key, value]) => {' in light_info_row
     assert 'item.dataset[key] = String(value || "");' in light_info_row
     assert 'row.fromRoute || state.route || ""' in light_info_row

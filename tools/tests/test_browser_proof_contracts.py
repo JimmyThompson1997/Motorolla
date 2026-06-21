@@ -306,6 +306,26 @@ def test_live_user_session_proof_requires_clean_task_detail_layout_and_chevron_f
     assert "for (const link of TASK_LINKS)" in source
 
 
+def test_live_user_session_proof_checks_task_filter_selector_icons_and_checklist_autostatus() -> None:
+    source = read_source("cover_live_user_session_playwright.mjs")
+
+    assert "function readTaskFilterSelectorState(page)" in source
+    assert "function assertTaskFilterSelectorLeadingVisuals(state, context)" in source
+    assert "task_filter_selector_options" in source
+    assert "selector_option_count" in source
+    assert "has_leading_visual" in source
+    assert "Open dark task filter selector" in source
+    assert "Open light task filter selector" in source
+    assert "Task filter selector renders leading visuals for every task category in dark mode." in source
+    assert "Task filter selector renders leading visuals for every task category in light mode." in source
+    assert "Complete final task checklist item" in source
+    assert "Reopen task by unchecking a completed checklist item" in source
+    assert 'assert(taskStateAfterChecklistDone.task_status === "done"' in source
+    assert 'assert(taskStateAfterChecklistReopen.task_status === "in_progress"' in source
+    assert 'assert(taskRecordAfterChecklistDone.status === "done"' in source
+    assert 'assert(taskRecordAfterChecklistReopen.status === "in_progress"' in source
+
+
 def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
     source = read_source("cover_home_app_labels_playwright.mjs")
     package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")

@@ -183,6 +183,15 @@ def test_task_filter_label_maps_visible_selector_copy() -> None:
     assert phone_proof.task_filter_label("waiting") == "Waiting"
 
 
+def test_phone_task_proof_source_requires_checklist_autodone_and_reopen() -> None:
+    source = Path(phone_proof.__file__).read_text(encoding="utf-8")
+
+    assert 'assert_or_fail(str(task_after_checklist.get("status") or "") == "done"' in source
+    assert 'assert_or_fail(str(task_after_reopen.get("status") or "") == "in_progress"' in source
+    assert '"status_after_toggle": task_after_checklist.get("status")' in source
+    assert '"status_after_reopen": task_after_reopen.get("status")' in source
+
+
 def test_fetch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     wrapped_payload = {"task": {"id": "task-1", "title": "Wrapped task"}}
     direct_payload = {"schema": "pucky.workspace.record.v1", "id": "task-2", "title": "Direct task"}

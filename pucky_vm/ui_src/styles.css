@@ -3436,6 +3436,20 @@ button {
   justify-content: center;
 }
 
+.settings-selector-option-task-status {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-selector-option-task-status .material-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
 .settings-selector-option-check {
   width: 18px;
   height: 18px;

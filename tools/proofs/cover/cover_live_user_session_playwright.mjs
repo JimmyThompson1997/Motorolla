@@ -287,9 +287,9 @@ async function loadChromium() {
   throw new Error("Could not resolve playwright-core from bundled or local node_modules");
 }
 
-function buildRouteUrl(config, route) {
+function buildRouteUrl(config, route, theme = "light") {
   const url = new URL("/ui/pucky/latest/index.html", `${String(config.baseUrl || "").replace(/\/+$/, "")}/`);
-  url.searchParams.set("theme", "light");
+  url.searchParams.set("theme", String(theme || "light"));
   url.searchParams.set("route", String(route || "home"));
   url.searchParams.set("reset_nav", "1");
   if (String(config.refreshKey || "").trim()) {
@@ -651,6 +651,36 @@ async function readTaskDetailFocusState(page) {
   });
 }
 
+async function readTaskFilterSelectorState(page) {
+  return page.evaluate(() => {
+    const task_filter_selector_options = Array.from(document.querySelectorAll(".settings-selector-option")).map(option => {
+      const leading = option.querySelector(".settings-selector-option-leading");
+      return {
+        value: String(option.getAttribute("data-selector-value") || ""),
+        label: String(option.querySelector(".settings-selector-option-label")?.textContent || "").trim(),
+        meta: String(option.querySelector(".settings-selector-option-meta")?.textContent || "").trim(),
+        has_leading_visual: Boolean(
+          leading
+          && (
+            leading.children.length > 0
+            || leading.querySelector("svg, .light-check-circle")
+            || String(leading.textContent || "").trim()
+          )
+        ),
+      };
+    });
+    return {
+      theme: String(
+        document.querySelector(".app-shell")?.getAttribute("data-theme")
+        || new URL(window.location.href).searchParams.get("theme")
+        || ""
+      ),
+      selector_option_count: task_filter_selector_options.length,
+      task_filter_selector_options,
+    };
+  });
+}
+
 function assertNoVisibleTaskFocusRing(state, context) {
   const rowHidden = !("task_row_outline_style" in state)
     || String(state.task_row_outline_style || "").toLowerCase() === "none"
@@ -668,6 +698,18 @@ function assertNoVisibleTaskFocusRing(state, context) {
   assert(statusHidden, `${context}: task status icon focus ring is still visible`);
   assert(mainHidden, `${context}: task row main-button focus ring is still visible`);
   assert(detailHidden, `${context}: task detail header focus ring is still visible`);
+}
+
+function assertTaskFilterSelectorLeadingVisuals(state, context) {
+  const expectedValues = ["all", "todo", "in_progress", "waiting", "done"];
+  assert(state.selector_option_count === expectedValues.length, `${context}: expected ${expectedValues.length} task filter selector options`);
+  expectedValues.forEach(value => {
+    const option = Array.isArray(state.task_filter_selector_options)
+      ? state.task_filter_selector_options.find(item => String(item?.value || "") === value)
+      : null;
+    assert(option, `${context}: missing task filter selector option ${value}`);
+    assert(option.has_leading_visual, `${context}: task filter selector option ${value} is missing its leading visual`);
+  });
 }
 
 async function ensureTaskSectionExpanded(page, group) {
@@ -1000,6 +1042,40 @@ async function runRouteTour(page, config, mode, seed) {
     observed: { note_title: seed.noteTitle },
   });
 
+  await page.goto(buildRouteUrl(config, "tasks", "dark"), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await waitForSeededTask(page, seed, config.timeoutMs);
+  await page.locator(".light-task-filter-button").first().click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  const darkTaskFilterSelectorState = await readTaskFilterSelectorState(page);
+  assertTaskFilterSelectorLeadingVisuals(darkTaskFilterSelectorState, `${mode}: dark task filter selector`);
+  await recorder.capture({
+    route: "tasks",
+    action: "Open dark task filter selector",
+    expected: "Opening the task filter sheet in dark mode shows leading visuals for All, To do, In progress, Waiting, and Done.",
+    confirmation: "Task filter selector renders leading visuals for every task category in dark mode.",
+    observed: darkTaskFilterSelectorState,
+  });
+  await page.locator('.settings-selector-option[data-selector-value="all"]').first().click();
+  await waitForSeededTask(page, seed, config.timeoutMs);
+
+  await page.goto(buildRouteUrl(config, "tasks", "light"), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await waitForSeededTask(page, seed, config.timeoutMs);
+  await page.locator(".light-task-filter-button").first().click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  const lightTaskFilterSelectorState = await readTaskFilterSelectorState(page);
+  assertTaskFilterSelectorLeadingVisuals(lightTaskFilterSelectorState, `${mode}: light task filter selector`);
+  await recorder.capture({
+    route: "tasks",
+    action: "Open light task filter selector",
+    expected: "Opening the task filter sheet in light mode shows leading visuals for All, To do, In progress, Waiting, and Done.",
+    confirmation: "Task filter selector renders leading visuals for every task category in light mode.",
+    observed: lightTaskFilterSelectorState,
+  });
+  await page.locator('.settings-selector-option[data-selector-value="all"]').first().click();
+  await waitForSeededTask(page, seed, config.timeoutMs);
+
   await goHome(page, config);
   await openRouteFromHome(page, "tasks", config.timeoutMs);
   await waitForSeededTask(page, seed, config.timeoutMs);
@@ -1052,6 +1128,65 @@ async function runRouteTour(page, config, mode, seed) {
     confirmation: "Task detail keeps the compact header, checklist-first layout, and chevron-free linked rows.",
     observed: taskState,
   });
+
+  const incompleteChecklistIds = Array.isArray(seed.primaryChecklist)
+    ? seed.primaryChecklist.filter(item => item && item.done !== true).map(item => String(item.id || ""))
+    : [];
+  assert(incompleteChecklistIds.length >= 2, `${mode}: expected at least two incomplete checklist items in the seeded task`);
+  await page.locator(`.light-task-checklist-row[data-checklist-item-id="${incompleteChecklistIds[0]}"]`).first().click();
+  await waitForTaskDetailStatus(page, "in_progress", config.timeoutMs);
+  await page.locator(`.light-task-checklist-row[data-checklist-item-id="${incompleteChecklistIds[1]}"]`).first().click();
+  await waitForTaskDetailStatus(page, "done", config.timeoutMs);
+  const taskStateAfterChecklistDone = await readTaskDetailState(page);
+  const taskRecordAfterChecklistDone = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+  assert(taskStateAfterChecklistDone.task_status === "done", `${mode}: completing the final checklist item should mark the task done in the DOM`);
+  assert(taskRecordAfterChecklistDone.status === "done", `${mode}: completing the final checklist item should mark the task done in the API`);
+  await goToTasksList(page, mode, config.timeoutMs);
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await revealTaskRow(page, seed.primaryTaskId);
+  await waitForTaskRowStatus(page, seed.primaryTaskId, "done", config.timeoutMs);
+  const taskGroupAfterChecklistDone = await taskGroupForRow(page, seed.primaryTaskId);
+  assert(taskGroupAfterChecklistDone === "done", `${mode}: completed checklist task should move into the Done group`);
+  await recorder.capture({
+    route: "tasks",
+    action: "Complete final task checklist item",
+    expected: "Checking the final remaining checklist item auto-marks the task Done, persists the API status, and moves the task into the Done group.",
+    confirmation: "The final checklist item auto-completed the task and moved it into Done.",
+    observed: {
+      ...taskStateAfterChecklistDone,
+      api_status: String(taskRecordAfterChecklistDone.status || ""),
+      task_group: taskGroupAfterChecklistDone,
+    },
+  });
+  await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
+  await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+  await page.locator(`.light-task-checklist-row[data-checklist-item-id="${incompleteChecklistIds[1]}"]`).first().click();
+  await waitForTaskDetailStatus(page, "in_progress", config.timeoutMs);
+  const taskStateAfterChecklistReopen = await readTaskDetailState(page);
+  const taskRecordAfterChecklistReopen = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+  assert(taskStateAfterChecklistReopen.task_status === "in_progress", `${mode}: unchecking a completed checklist item should reopen the task in the DOM`);
+  assert(taskRecordAfterChecklistReopen.status === "in_progress", `${mode}: unchecking a completed checklist item should reopen the task in the API`);
+  await goToTasksList(page, mode, config.timeoutMs);
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await revealTaskRow(page, seed.primaryTaskId);
+  await waitForTaskRowStatus(page, seed.primaryTaskId, "in_progress", config.timeoutMs);
+  const taskGroupAfterChecklistReopen = await taskGroupForRow(page, seed.primaryTaskId);
+  assert(taskGroupAfterChecklistReopen === "do", `${mode}: reopened checklist task should leave Done and return to the Today group`);
+  await recorder.capture({
+    route: "tasks",
+    action: "Reopen task by unchecking a completed checklist item",
+    expected: "Unchecking one checklist item after completion reopens the task to In progress, persists the API status, and removes the task from the Done group.",
+    confirmation: "The checklist uncheck reopened the task and moved it back out of Done.",
+    observed: {
+      ...taskStateAfterChecklistReopen,
+      api_status: String(taskRecordAfterChecklistReopen.status || ""),
+      task_group: taskGroupAfterChecklistReopen,
+    },
+  });
+  await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
+  await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
+  taskState = await readTaskDetailState(page);
+  assert(taskState.task_status === "in_progress", `${mode}: task detail should reopen in progress before header selector checks continue`);
 
   await page.locator(".light-task-detail-card").first().click({ position: { x: 16, y: 16 } });
   await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });

@@ -6196,6 +6196,24 @@
     });
   }
 
+  function taskStatusFilterSelectorOptions(counts) {
+    return taskStatusFilterChoices().map(([value, label]) => {
+      const leadingNode = el("span", "settings-selector-option-task-status");
+      leadingNode.setAttribute("aria-hidden", "true");
+      if (value === "all") {
+        leadingNode.innerHTML = iconSvg("tune", { filled: true });
+      } else {
+        leadingNode.append(el("span", taskStatusCircleClass(value)));
+      }
+      return {
+        value,
+        label,
+        leadingNode,
+        meta: String(counts[value] || 0),
+      };
+    });
+  }
+
   function taskMutationKey(taskId, scope) {
     return `${String(taskId || "").trim()}::${String(scope || "").trim()}`;
   }
@@ -6287,13 +6305,39 @@
         done: !Boolean(item?.done),
       };
     });
+    const previousAllDone = checklist.length > 0 && checklist.every(item => Boolean(item?.done));
+    const nextAllDone = nextChecklist.length > 0 && nextChecklist.every(item => Boolean(item?.done));
+    const currentStatus = normalizedTaskStatus(current);
+    const nextStatus = nextAllDone ? "done" : (previousAllDone && currentStatus === "done" ? "in_progress" : "");
+    const optimisticStatus = nextStatus || currentStatus;
+    const optimisticDerivedGroup = (() => {
+      if (optimisticStatus === "done") {
+        return "done";
+      }
+      const dueAtMs = Number(current?.due_at_ms || 0);
+      const nowMs = Date.now();
+      if (Number.isFinite(dueAtMs) && dueAtMs > 0) {
+        if (dueAtMs < nowMs) {
+          return "overdue";
+        }
+        if (dueAtMs <= nowMs + 24 * 60 * 60 * 1000) {
+          return "do";
+        }
+        return "soon";
+      }
+      return "do";
+    })();
+    const payload = nextStatus ? { checklist: nextChecklist, status: nextStatus } : { checklist: nextChecklist };
     const previousItems = bucket.items.slice();
     const optimistic = {
       ...current,
+      status: optimisticStatus,
+      derived_group: optimisticDerivedGroup,
       checklist: nextChecklist,
       metadata: {
         ...(current?.metadata || {}),
         checklist: nextChecklist,
+        status: optimisticStatus,
       },
     };
     setTaskMutationPending(taskId, checklistItemId, true);
@@ -6301,7 +6345,7 @@
     bucket.error = "";
     render();
     try {
-      const result = await patchWorkspaceRecord("tasks", taskId, { checklist: nextChecklist });
+      const result = await patchWorkspaceRecord("tasks", taskId, payload);
       mergeTaskRecordIntoBucket(result);
       state.selectedTaskId = taskRecordId(result) || taskId;
       persistNavState();
@@ -6413,11 +6457,7 @@
       openSettingsSelector({
         title: "Filter tasks",
         currentValue: currentKey,
-        options: taskStatusFilterChoices().map(([value, label]) => ({
-          value,
-          label,
-          meta: String(counts[value] || 0),
-        })),
+        options: taskStatusFilterSelectorOptions(counts),
         onSelect: value => {
           state.taskFilter = String(value || "all");
           render();
