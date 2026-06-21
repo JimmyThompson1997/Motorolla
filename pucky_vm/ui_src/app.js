@@ -3929,8 +3929,11 @@
       }))));
     }
     page.append(lightLinkedRecordSection(contact, {
-      title: "Linked records",
+      title: "Connected",
       showWhenEmpty: true,
+      showChips: false,
+      showChevron: false,
+      variant: "flat",
       fromRoute: "contact-detail"
     }));
     return page;
@@ -4238,6 +4241,7 @@
       title: "Connected",
       excludeKinds: ["contact"],
       showWhenEmpty: true,
+      showChevron: false,
       fromRoute: "meeting-detail"
     }));
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
@@ -5722,6 +5726,7 @@
     const related = entry?.related || null;
     const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
     const showChips = options.showChips !== false;
+    const showChevron = options.showChevron !== false;
     const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
     const row = el(
       isInteractive ? "button" : "div",
@@ -5731,6 +5736,7 @@
         "light-graph-row",
         "light-linked-record-feed-row",
         showChips ? "" : "is-no-chips",
+        showChevron ? "" : "is-no-chevron",
         flatFeed ? "is-flat-feed" : "",
         String(options.rowClassName || "").trim(),
       ].filter(Boolean).join(" ")
@@ -5759,10 +5765,8 @@
     if (showChips) {
       row.append(lightLinkedRecordChips(entry));
     }
-    if (isInteractive) {
+    if (isInteractive && showChevron) {
       row.append(el("span", "light-chevron", ">"));
-    } else if (showChips) {
-      row.append(el("span", ""));
     }
     return row;
   }
@@ -5800,6 +5804,7 @@
         openOptions: options.openOptions || {},
         detailResolver: typeof options.detailResolver === "function" ? options.detailResolver : null,
         showChips: options.showChips !== false,
+        showChevron: options.showChevron !== false,
         variant: flatFeed ? "flat" : "",
       })));
     }
@@ -6940,6 +6945,7 @@
       fromRoute: "project-detail",
       dedupeTargets: true,
       showChips: false,
+      showChevron: false,
       variant: "flat",
       detailResolver: projectConnectedDetail,
     }));

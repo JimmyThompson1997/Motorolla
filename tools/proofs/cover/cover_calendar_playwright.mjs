@@ -734,6 +734,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const connectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     const connectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     assert(await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-attendee-chip').count() === 0, "Expected Connected to switch from attendee pills to standard feed rows.");
+    assert(await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-chevron').count() === 0, "Expected Connected rows to omit trailing chevrons on desktop detail.");
     assert(await connectedRows.count() === 5, `Expected the populated Connected section to render five linked rows, got ${await connectedRows.count()}.`);
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
@@ -918,6 +919,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     const mobileConnectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     const mobileConnectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     assert(await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-attendee-chip').count() === 0, "Expected mobile Connected to render feed rows instead of attendee pills.");
+    assert(await page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-chevron').count() === 0, "Expected mobile Connected rows to omit trailing chevrons.");
     assert(!mobileConnectedRowTexts.some(value => value.includes("Jimmy T.")) && !mobileConnectedRowTexts.some(value => value.includes("Jeff B.")), `Expected mobile Connected rows to exclude contacts, got ${mobileConnectedRowTexts.join(", ")}.`);
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");

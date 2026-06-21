@@ -242,6 +242,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'title: "Connected"' in light_meeting_detail
     assert 'excludeKinds: ["contact"]' in light_meeting_detail
     assert "showWhenEmpty: true" in light_meeting_detail
+    assert 'showChevron: false,' in light_meeting_detail
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' not in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     linked_record_section = function_block(app, "lightLinkedRecordSection")
@@ -1008,6 +1009,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
 
 def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     app = read("app.js")
+    styles = read("styles.css")
 
     workspace_html = function_block(app, "workspaceHtml")
     linked_entries = function_block(app, "workspaceLinkedEntries")
@@ -1032,16 +1034,22 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'includeKinds: ["note"],' in linked_notes
     assert 'valueResolver: ({ related, relation }) => String(related?.summary || relation || "Note").trim() || "Note"' in linked_notes
     assert "const showChips = options.showChips !== false;" in linked_feed_row
+    assert "const showChevron = options.showChevron !== false;" in linked_feed_row
     assert 'const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";' in linked_feed_row
     assert 'showChips ? "" : "is-no-chips",' in linked_feed_row
+    assert 'showChevron ? "" : "is-no-chevron",' in linked_feed_row
     assert 'flatFeed ? "is-flat-feed" : "",' in linked_feed_row
     assert 'typeof options.detailResolver === "function"' in linked_feed_row
     assert "if (showChips) {" in linked_feed_row
+    assert 'if (isInteractive && showChevron) {' in linked_feed_row
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
     assert "page.append(lightLinkedRecordSection(contact, {" in contact_detail
-    assert 'title: "Linked records"' in contact_detail
+    assert 'title: "Connected"' in contact_detail
     assert "showWhenEmpty: true" in contact_detail
+    assert 'showChips: false,' in contact_detail
+    assert 'showChevron: false,' in contact_detail
+    assert 'variant: "flat",' in contact_detail
     assert 'fromRoute: "contact-detail"' in contact_detail
     assert "const title = options.title || \"Linked records\";" in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
@@ -1053,6 +1061,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'body.classList.add("light-card", "is-flat-feed");' in linked_record_section
     assert "detailResolver: typeof options.detailResolver === \"function\" ? options.detailResolver : null," in linked_record_section
     assert "showChips: options.showChips !== false," in linked_record_section
+    assert "showChevron: options.showChevron !== false," in linked_record_section
     assert 'variant: flatFeed ? "flat" : "",' in linked_record_section
     assert "lightHtmlDocument(contact" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
@@ -1070,12 +1079,17 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'fromRoute: "project-detail"' in project_detail
     assert "dedupeTargets: true," in project_detail
     assert "showChips: false," in project_detail
+    assert 'showChevron: false,' in project_detail
     assert 'variant: "flat",' in project_detail
     assert "detailResolver: projectConnectedDetail," in project_detail
     assert "function projectConnectedDetail(entry) {" in app
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
     assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
     assert "lightHtmlDocument(record" not in graph_detail
+    assert ".light-linked-record-feed-row.is-no-chevron {" in styles
+    assert "grid-template-columns: 48px minmax(0, 1fr) auto;" in styles
+    assert ".light-linked-record-feed-row.is-no-chips.is-no-chevron {" in styles
+    assert "grid-template-columns: 48px minmax(0, 1fr);" in styles
 
 
 def test_note_flash_debug_surface_and_browser_delay_contracts_stay_notes_only() -> None:

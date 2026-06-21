@@ -4026,6 +4026,14 @@ button {
   grid-template-columns: 48px minmax(0, 1fr) 18px;
 }
 
+.light-linked-record-feed-row.is-no-chevron {
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+}
+
+.light-linked-record-feed-row.is-no-chips.is-no-chevron {
+  grid-template-columns: 48px minmax(0, 1fr);
+}
+
 .light-linked-records-empty-shell {
   min-height: 74px;
   background: color-mix(in srgb, var(--home-shell-card-strong) 82%, transparent);

@@ -1534,6 +1534,7 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   assert(projectState.connectedBodyIsFlat, "Project detail should render Connected inside one shared flat-feed shell");
   assert(projectState.connectedRows > 0, "Project detail should render connected feed rows");
   assert(projectState.flatRowCount === projectState.connectedRows, "Project detail connected rows should all use flat-feed styling");
+  assert(projectState.connectedChevronCount === 0, "Project detail connected rows should not render trailing chevrons");
   assert(projectState.contiguousRows, "Project detail connected rows should render contiguously with no inter-row gaps");
   if (seed.writeEnabled) {
     assert(projectState.pinnedNoteRows === 1, "Project detail should collapse duplicate linked-note targets into one row");
@@ -1692,9 +1693,14 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   const meProfileCard = await assertFlatContactProfileCard(page, "Me contact detail");
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
   await assertNoContactHtmlDocument(page, config, "contact-me", "Me contact detail");
-  const meLinkedSection = page.locator('.light-linked-records-section[data-linked-records-title="linked records"]').first();
+  const meLinkedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
   await meLinkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
   assert(await meLinkedSection.getByText("NOTES").count() === 0, "Expected Me contact detail to avoid a separate Notes section.");
+  const meConnectedState = await readLinkedRecordSectionState(page, "connected");
+  assert(meConnectedState.sectionCount === 1, "Expected Me contact detail to render one Connected section.");
+  assert(meConnectedState.bodyIsFlat, "Expected Me contact detail to render Connected inside one shared flat-feed shell.");
+  assert(meConnectedState.chevronCount === 0, "Expected Me contact Connected shell to omit trailing chevrons.");
+  assert(meConnectedState.chipCount === 0, "Expected Me contact Connected shell to omit linked-record pills.");
   const meEmptyShell = meLinkedSection.locator(".light-linked-records-empty-shell").first();
   await meEmptyShell.waitFor({ state: "visible", timeout: config.timeoutMs });
   const meEmptyShellBox = await meEmptyShell.boundingBox();
@@ -1733,11 +1739,17 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await assertNoContactHtmlDocument(page, config, firstContact.id, `${firstContact.title} detail`);
     summary.contactProfileCards.push({ theme, contact: firstContact.id, profile: contactProfileCard });
   }
-  const linkedSection = page.locator('.light-linked-records-section[data-linked-records-title="linked records"]').first();
+  const linkedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
   await linkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
   assert(await page.getByText("NOTES").count() === 0, "Expected populated contact detail to avoid a separate Notes section.");
   assert(await linkedSection.locator(".light-linked-record-feed-row").count() >= 3, "Expected populated contact detail to show mixed linked-record rows.");
   assert(await linkedSection.locator(".light-info-row").count() === 0, "Expected linked records to use feed rows instead of legacy info rows.");
+  const connectedState = await readLinkedRecordSectionState(page, "connected");
+  assert(connectedState.bodyIsFlat, "Expected populated contact Connected section to render inside one shared flat-feed shell.");
+  assert(connectedState.flatRowCount === connectedState.rowCount, "Expected populated contact Connected rows to all use flat-feed styling.");
+  assert(connectedState.contiguousRows, "Expected populated contact Connected rows to render contiguously with no inter-row gaps.");
+  assert(connectedState.chevronCount === 0, "Expected populated contact Connected rows to omit trailing chevrons.");
+  assert(connectedState.chipCount === 0, "Expected populated contact Connected rows to omit pills.");
   const linkedTexts = await linkedSection.locator(".light-linked-record-feed-row").allTextContents();
   for (const label of ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"]) {
     assert(linkedTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${linkedTexts.join(", ")}.`);
@@ -1948,6 +1960,9 @@ async function readProjectDetailState(page, runId) {
     const flatRowCount = connectedSection
       ? connectedSection.querySelectorAll(".light-linked-record-feed-row.is-flat-feed").length
       : 0;
+    const connectedChevronCount = connectedSection
+      ? connectedSection.querySelectorAll(".light-linked-record-feed-row .light-chevron").length
+      : 0;
     const pinnedNoteRows = connectedSection
       ? connectedSection.querySelectorAll(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${currentRunId}-pinned-note"]`).length
       : 0;
@@ -1966,11 +1981,35 @@ async function readProjectDetailState(page, runId) {
       connectedBodyIsFlat: Boolean(connectedBody?.classList.contains("light-card") && connectedBody?.classList.contains("is-flat-feed")),
       connectedRows,
       flatRowCount,
+      connectedChevronCount,
       contiguousRows,
       pinnedNoteRows,
       shellRoute: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
     };
   }, { runId });
+}
+
+async function readLinkedRecordSectionState(page, title) {
+  return page.evaluate(({ currentTitle }) => {
+    const normalizedTitle = String(currentTitle || "").trim().toLowerCase();
+    const section = [...document.querySelectorAll(".light-linked-records-section")]
+      .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === normalizedTitle);
+    const body = section?.querySelector(".light-linked-record-list") || null;
+    const rows = section ? [...section.querySelectorAll(".light-linked-record-feed-row")] : [];
+    const rowRects = rows.map((row) => {
+      const rect = row.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    });
+    return {
+      sectionCount: section ? 1 : 0,
+      bodyIsFlat: Boolean(body?.classList.contains("light-card") && body?.classList.contains("is-flat-feed")),
+      rowCount: rows.length,
+      flatRowCount: section ? section.querySelectorAll(".light-linked-record-feed-row.is-flat-feed").length : 0,
+      chevronCount: section ? section.querySelectorAll(".light-linked-record-feed-row .light-chevron").length : 0,
+      chipCount: section ? section.querySelectorAll(".light-linked-record-feed-row .light-graph-chip-row, .light-linked-record-feed-row .light-graph-chip").length : 0,
+      contiguousRows: rowRects.every((rect, index) => index === 0 || Math.abs(rect.top - rowRects[index - 1].bottom) <= 1.5),
+    };
+  }, { currentTitle: title });
 }
 
 async function waitForGraphText(page, text, timeoutMs) {
