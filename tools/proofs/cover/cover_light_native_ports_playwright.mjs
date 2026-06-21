@@ -598,6 +598,20 @@ async function openAndInspectDetail(page, selector, timeoutMs) {
   const targetSelector = await stableCardSelector(page, selector, timeoutMs);
   await clickSelector(page, targetSelector, timeoutMs);
   await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: timeoutMs });
+  if (targetSelector.includes('[data-card-action="audio"]')) {
+    const landedOnAudio = await page.waitForFunction(() => {
+      const panel = document.getElementById("detail");
+      return panel?.classList.contains("is-open") && String(panel.getAttribute("data-detail-viewer") || "") === "audio_player";
+    }, { timeout: Math.min(2_500, timeoutMs) }).then(() => true).catch(() => false);
+    if (!landedOnAudio) {
+      await closeDetail(page, timeoutMs);
+      await clickSelector(page, targetSelector, timeoutMs);
+      await page.waitForFunction(() => {
+        const panel = document.getElementById("detail");
+        return panel?.classList.contains("is-open") && String(panel.getAttribute("data-detail-viewer") || "") === "audio_player";
+      }, { timeout: timeoutMs });
+    }
+  }
   return {
     state: await readDetailState(page),
     visual: await readDetailVisual(page)
