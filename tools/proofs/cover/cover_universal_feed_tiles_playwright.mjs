@@ -433,6 +433,7 @@ async function collectDetailMetrics(page) {
       channelsSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "CHANNELS").length,
       notesSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "NOTES").length,
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
+      connectedLinkedRecordSections: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"]').length,
       detailShells: document.querySelectorAll(".detail-shell").length,
       detailPanels: document.querySelectorAll(`${detailSelector}.is-open, ${detailSelector}[aria-hidden="false"]`).length,
     };
@@ -592,7 +593,7 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
     assert(detailMetrics.notesSections > 0, "Reminders: linked note section should render");
   }
   if (routeConfig.route === "projects") {
-    assert(detailMetrics.projectGridCount > 0, "Projects: detail grid should render");
+    assert(detailMetrics.connectedLinkedRecordSections > 0, "Projects: connected detail section should render");
   }
   const detailScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-detail-open.png`));
   const returned = await backToList(page, routeConfig, timeoutMs);

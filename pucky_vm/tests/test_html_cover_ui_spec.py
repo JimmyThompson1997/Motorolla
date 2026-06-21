@@ -205,6 +205,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     light_event_block = function_block(app, "lightCalendarEventBlock")
     light_attendee_chip = function_block(app, "lightAttendeeChip")
     light_info_section = function_block(app, "lightInfoSection")
+    light_project_row = function_block(app, "lightProjectRow")
     light_linked_record_feed_row = function_block(app, "lightLinkedRecordFeedRow")
     light_record_chip = function_block(app, "lightRecordChip")
 
@@ -271,8 +272,8 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'row.fromRoute || state.route || ""' in light_info_row
     assert 'openWorkspaceTarget(' in light_linked_record_feed_row
     assert 'options.fromRoute || state.route || ""' in light_linked_record_feed_row
-    assert "lightInfoRow(row)" in light_info_section
-    assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
+    assert "lightInfoRow(row" in light_info_section
+    assert 'lightNavigate("project-detail", { from: "projects" });' in light_project_row
     assert "event.stopPropagation();" in light_attendee_chip
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
