@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  attachPageLogging,
+  buildPageTracking,
   ensureDir,
   saveScreenshot,
   writeJsonFile
@@ -1367,18 +1367,11 @@ async function verifyReloadStability(page, seed, mode, config, checks) {
 }
 
 function buildTracking(page, consoleLogPath) {
-  const consoleErrors = [];
-  const pageErrors = [];
-  attachPageLogging(page, consoleLogPath);
-  page.on("console", message => {
-    if (message.type() === "error") {
-      consoleErrors.push(message.text());
-    }
-  });
-  page.on("pageerror", error => {
-    pageErrors.push(error.message || String(error));
-  });
-  return { consoleErrors, pageErrors };
+  const tracking = buildPageTracking(page, consoleLogPath, { captureHttpErrors: false });
+  return {
+    consoleErrors: tracking.consoleErrors,
+    pageErrors: tracking.pageErrors,
+  };
 }
 
 function seriousConsoleErrors(messages) {

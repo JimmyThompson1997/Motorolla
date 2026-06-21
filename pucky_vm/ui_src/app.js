@@ -1595,6 +1595,74 @@
     return filtered.length || totalAvailable ? String(filtered.length || totalAvailable) : "";
   }
 
+  let linksLogoObserver = null;
+
+  function createLinksIconFallback() {
+    const fallback = el("span", "links-app-icon-fallback");
+    fallback.innerHTML = iconSvg("apps", { filled: false });
+    return fallback;
+  }
+
+  function loadLinksIconImage(icon, app) {
+    if (!icon || icon.dataset.linksLogoLoaded === "1" || icon.dataset.linksLogoLoading === "1") {
+      return;
+    }
+    const logoPath = String(app && app.logo_path || "").trim();
+    if (!logoPath) {
+      return;
+    }
+    icon.dataset.linksLogoLoading = "1";
+    const img = document.createElement("img");
+    img.className = "links-app-logo";
+    img.src = logoPath;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.fetchPriority = "low";
+    img.addEventListener("load", () => {
+      icon.classList.add("has-image");
+      icon.dataset.linksLogoLoaded = "1";
+      delete icon.dataset.linksLogoLoading;
+      state.links.logoLoads += 1;
+    });
+    img.addEventListener("error", () => {
+      state.links.logoErrors += 1;
+      delete icon.dataset.linksLogoLoading;
+      img.remove();
+    });
+    icon.append(img);
+  }
+
+  function observeLinksIconImage(icon, app) {
+    const logoPath = String(app && app.logo_path || "").trim();
+    if (!logoPath) {
+      return;
+    }
+    if (typeof IntersectionObserver !== "function") {
+      loadLinksIconImage(icon, app);
+      return;
+    }
+    if (!linksLogoObserver) {
+      linksLogoObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (!entry.isIntersecting) {
+            return;
+          }
+          const target = entry.target;
+          linksLogoObserver.unobserve(target);
+          const slug = String(target && target.dataset.linksLogoSlug || "").trim();
+          const appRow = Array.isArray(state.links.apps) ? state.links.apps.find(item => String(item.slug || "") === slug) : null;
+          loadLinksIconImage(target, appRow);
+        });
+      }, {
+        root: linksScrollElement(),
+        rootMargin: "240px 0px 240px 0px",
+      });
+    }
+    icon.dataset.linksLogoSlug = String(app && app.slug || "").trim();
+    linksLogoObserver.observe(icon);
+  }
+
   function createLinksRow(app, index, handoffLocked) {
     const row = el("button", "links-app-row");
     row.type = "button";
@@ -1604,23 +1672,8 @@
     row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
 
     const icon = el("span", "links-app-icon");
-    if (app.logo_path) {
-      const img = document.createElement("img");
-      img.className = "links-app-logo";
-      img.src = String(app.logo_path || "");
-      img.alt = "";
-      img.loading = "lazy";
-      img.decoding = "async";
-      img.addEventListener("load", () => {
-        icon.classList.add("has-image");
-        state.links.logoLoads += 1;
-      });
-      img.addEventListener("error", () => {
-        state.links.logoErrors += 1;
-        img.remove();
-      });
-      icon.append(img);
-    }
+    icon.append(createLinksIconFallback());
+    observeLinksIconImage(icon, app);
 
     const name = el("span", "links-app-name", app.name || app.slug);
     const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));

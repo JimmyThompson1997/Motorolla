@@ -259,6 +259,67 @@ export function attachPageLogging(page, consoleLogPath) {
   });
 }
 
+export function buildPageTracking(page, consoleLogPath, options = {}) {
+  const captureHttpErrors = options.captureHttpErrors !== false;
+  const consoleMessages = [];
+  const consoleErrors = [];
+  const pageErrors = [];
+  const failedRequests = [];
+  const httpErrorResponses = [];
+
+  page.on("console", (message) => {
+    const type = message.type();
+    const text = message.text();
+    const entry = { type, text, page_url: page.url() || "" };
+    consoleMessages.push(entry);
+    fs.appendFileSync(consoleLogPath, `[console:${type}] ${text}\n`, "utf8");
+    if (type === "error") {
+      consoleErrors.push(text);
+    }
+  });
+  page.on("pageerror", (error) => {
+    const text = error?.message || String(error);
+    const entry = { message: text, page_url: page.url() || "" };
+    pageErrors.push(text);
+    fs.appendFileSync(consoleLogPath, `[pageerror] ${text}\n`, "utf8");
+  });
+  page.on("requestfailed", (request) => {
+    const entry = {
+      url: request.url(),
+      method: request.method(),
+      resource_type: request.resourceType(),
+      failure: request.failure()?.errorText || "",
+      page_url: page.url() || "",
+    };
+    failedRequests.push(entry);
+    fs.appendFileSync(consoleLogPath, `[requestfailed] ${JSON.stringify(entry)}\n`, "utf8");
+  });
+  if (captureHttpErrors) {
+    page.on("response", (response) => {
+      const status = Number(response.status() || 0);
+      if (status < 400) {
+        return;
+      }
+      const entry = {
+        url: response.url(),
+        status,
+        status_text: response.statusText(),
+        resource_type: response.request().resourceType(),
+        page_url: page.url() || "",
+      };
+      httpErrorResponses.push(entry);
+      fs.appendFileSync(consoleLogPath, `[response:${status}] ${JSON.stringify(entry)}\n`, "utf8");
+    });
+  }
+  return {
+    consoleMessages,
+    consoleErrors,
+    pageErrors,
+    failedRequests,
+    httpErrorResponses,
+  };
+}
+
 export function writeAutomationError(reportDir, error) {
   ensureDir(reportDir);
   fs.writeFileSync(path.join(reportDir, "automation-error.txt"), `${error.stack || error.message}\n`, "utf8");

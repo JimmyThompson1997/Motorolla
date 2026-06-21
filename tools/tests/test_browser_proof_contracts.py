@@ -80,6 +80,19 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
     assert '"projects"' in source
 
 
+def test_live_user_session_browser_proof_tracks_failed_requests_and_mobile_connect_noise() -> None:
+    if not has_source("cover_live_user_session_playwright.mjs"):
+        return
+    source = read_source("cover_live_user_session_playwright.mjs")
+
+    assert "buildPageTracking(" in source
+    assert "failed_requests" in source
+    assert "http_error_responses" in source
+    assert "seriousFailedRequests(" in source
+    assert "seriousHttpErrorResponses(" in source
+    assert "ERR_HTTP2_PROTOCOL_ERROR" in source
+
+
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

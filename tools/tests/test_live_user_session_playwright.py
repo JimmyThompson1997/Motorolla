@@ -28,6 +28,9 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert "saveScreenshot(" in source
     assert "seedTaskProofWorkspace(" in source
     assert "cleanupTaskProofSeed(" in source
+    assert "failed_requests" in source
+    assert "http_error_responses" in source
+    assert "buildPageTracking(" in source
     assert 'const RESULT_SCHEMA = "pucky.live_user_session_browser_proof.v1";' in source
     assert "--keep-seed" in source
     assert '"meeting-notes"' in source
@@ -63,6 +66,9 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert "waitForConnectChips(" in source
     assert "data-links-connected-slug" in source
     assert "Reload connect directly" in source
+    assert "seriousFailedRequests(" in source
+    assert "seriousHttpErrorResponses(" in source
+    assert "ERR_HTTP2_PROTOCOL_ERROR" in source
     assert 'LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"]' in source
     assert 'localStorage.removeItem("pucky.cover.browser_device_id.v1");' in source
 
