@@ -1449,6 +1449,7 @@ function renderReport(summary) {
 
 async function main() {
   const config = parseArgs(process.argv.slice(2));
+  fs.rmSync(config.reportDir, { recursive: true, force: true });
   ensureDir(config.reportDir);
   if (!String(config.apiToken || "").trim()) {
     throw new Error("Live user session proof requires --api-token or PUCKY_LIVE_USER_SESSION_TOKEN/PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN");

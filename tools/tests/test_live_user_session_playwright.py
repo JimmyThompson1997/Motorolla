@@ -26,6 +26,7 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert "summary.json" in source
     assert "report.md" in source
     assert "saveScreenshot(" in source
+    assert "fs.rmSync(config.reportDir, { recursive: true, force: true });" in source
     assert "seedTaskProofWorkspace(" in source
     assert "cleanupTaskProofSeed(" in source
     assert "failed_requests" in source
