@@ -1401,36 +1401,38 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     reminder_descriptor = function_block(app, "universalReminderFeedTileDescriptor")
     render_universal_tile = function_block(app, "renderUniversalFeedTile")
     reminder_active = function_block(app, "reminderIsActive")
+    reminder_is_live = function_block(app, "reminderIsLive")
     reminder_is_now = function_block(app, "reminderIsNow")
     reminder_row = function_block(app, "lightReminderRow")
+    reminder_row_end = function_block(app, "lightReminderRowEnd")
+    reminder_countdown = function_block(app, "reminderSnoozeCountdown")
+    reminder_remaining = function_block(app, "reminderRemainingCompactLabel")
     reminder_detail = function_block(app, "lightReminderDetailPage")
     reminder_detail_surface = function_block(app, "lightReminderDetailSurface")
     reminder_detail_feed = function_block(app, "lightReminderDetailFeed")
     reminder_detail_card = function_block(app, "lightReminderDetailCard")
-    reminder_status_row = function_block(app, "lightReminderStatusRow")
     reminder_action_row = function_block(app, "lightReminderActionRow")
     reminder_feed_rows = function_block(app, "reminderDetailFeedRows")
     reminder_linked_rows = function_block(app, "reminderDetailLinkedRecordRows")
+    dismiss_reminder = function_block(app, "dismissReminder")
     mark_reminder_done = function_block(app, "markReminderDone")
     snooze_reminder = function_block(app, "snoozeReminder")
-    open_snooze_selector = function_block(app, "openReminderSnoozeSelector")
     recipient_name = function_block(app, "reminderRecipientDisplayName")
+    recipient_secondary = function_block(app, "reminderRecipientSecondaryCopy")
     recipient_rows = function_block(app, "reminderRecipientRows")
     light_info_row = function_block(app, "lightInfoRow")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "const active = reminders.filter(reminder => reminderIsActive(reminder));" in reminders_page
-    assert "const now = active.filter(reminder => reminderIsNow(reminder));" in reminders_page
-    assert "const upcoming = active.filter(reminder => !reminderIsNow(reminder));" in reminders_page
-    assert "const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));" in reminders_page
+    assert "const live = active.filter(reminder => reminderIsLive(reminder));" in reminders_page
+    assert "const upcoming = active.filter(reminder => !reminderIsLive(reminder));" in reminders_page
     assert "return renderUniversalFeedPage({" in reminders_page
     assert 'surface: "reminders",' in reminders_page
     assert 'pageClassName: "light-graph-page light-reminders-page",' in reminders_page
     assert "const sections = [];" in reminders_page
-    assert 'sections.push(lightReminderListSection("Now", now, "now"));' in reminders_page
+    assert 'sections.push(lightReminderListSection("Live", live, "live"));' in reminders_page
     assert 'sections.push(lightReminderListSection("Upcoming", upcoming, "upcoming"));' in reminders_page
-    assert 'sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));' in reminders_page
-    assert 'lightReminderListSection("", active, "active")' not in reminders_page
+    assert 'sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));' not in reminders_page
     assert "return {" in reminder_section
     assert "key: String(sectionKey || \"\").trim().toLowerCase()," in reminder_section
     assert "label: title," in reminder_section
@@ -1439,14 +1441,28 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "items: reminders.map(reminder => universalReminderFeedTileDescriptor(reminder, sectionKey))" in reminder_section
     assert 'renderMode: "flat",' in reminder_descriptor
     assert "light-reminder-history" not in reminders_page
-    assert "&& !reminderIsSnoozed(reminder)" in reminder_active
-    assert "if (!reminderIsActive(reminder)) {" in reminder_is_now
+    assert "&& !reminderIsSentHistory(reminder)" in reminder_active
+    assert "if (!reminderIsActive(reminder) || reminderIsSnoozed(reminder)) {" in reminder_is_live
+    assert "return reminderIsLive(reminder);" in reminder_is_now
     assert 'return lightReminderRow(descriptor.meta?.reminder || null);' in render_universal_tile
     assert 'flatFeed: descriptor.renderMode === "flat",' in render_universal_tile
     assert "lightSmallIcon(\"bell\", \"reminders\")" in reminder_row
     assert "const flatFeed = options.flatFeed === true;" in reminder_row
     assert "const secondaryCopy = reminderListSecondaryCopy(reminder);" in reminder_row
     assert 'copy.append(el("span", "light-reminder-row-summary", secondaryCopy));' in reminder_row
+    assert 'const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");' in reminder_row
+    assert 'row.dataset.reminderState = reminderState;' in reminder_row
+    assert "lightReminderRowEnd(reminder)" in reminder_row
+    assert 'wrap.dataset.reminderCountdown = "true";' in reminder_row_end
+    assert 'wrap.dataset.reminderProgress = countdown.progress.toFixed(3);' in reminder_row_end
+    assert 'el("span", "light-reminder-countdown-ring")' in reminder_row_end
+    assert 'el("span", "light-reminder-countdown-label", countdown.label)' in reminder_row_end
+    assert 'return el("span", "light-reminder-time", reminderRowLabel(reminder));' in reminder_row_end
+    assert "const totalMs = Math.max(60_000, dueAtMs - startAtMs);" in reminder_countdown
+    assert "const remainingMs = Math.max(0, dueAtMs - Number(nowMs || Date.now()));" in reminder_countdown
+    assert "const progress = Math.max(0, Math.min(1, 1 - (remainingMs / totalMs)));" in reminder_countdown
+    assert 'return `${totalMinutes}m`;' in reminder_remaining
+    assert 'return `${hours}h`;' in reminder_remaining
     assert "light-graph-chip-row" not in reminder_row
     assert 'flatFeed ? "is-flat-feed" : ""' in reminder_row
     assert 'const page = lightPage("Reminder", { detail: true });' in reminder_detail
@@ -1461,25 +1477,29 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'excludeKinds: ["note"]' in reminder_linked_rows
     assert '"calendar_event", "task", "meeting_note", "project", "contact", "feed_item"' in reminder_linked_rows
     assert 'el("h1", "", reminder.title)' not in reminder_detail
-    assert 'lightReminderStatusRow(reminder)' in reminder_detail_card
-    assert 'lightReminderActionRow(reminder)' in reminder_detail_card
-    assert '`Status: ${reminderStatusLabel(reminder)}`' in reminder_status_row
-    assert '`Delivery: ${reminderDeliveryLabel(reminder)}`' in reminder_status_row
-    assert 'dataset.reminderAction = "done";' in reminder_action_row
-    assert 'dataset.reminderAction = "snooze_10";' in reminder_action_row
-    assert 'dataset.reminderAction = "snooze_selector";' in reminder_action_row
-    assert '"Snooze 10 min"' in reminder_action_row
-    assert '"Snooze..."' in reminder_action_row
-    assert "void markReminderDone(reminder);" in reminder_action_row
-    assert "void snoozeReminder(reminder, Date.now() + (10 * 60 * 1000));" in reminder_action_row
-    assert "openReminderSnoozeSelector(reminder);" in reminder_action_row
+    assert "if (!reminderIsLive(reminder)) {" in reminder_action_row
+    assert 'dataset.reminderAction = "dismiss";' in reminder_action_row
+    assert 'dataset.reminderAction = "snooze";' in reminder_action_row
+    assert '"Dismiss"' in reminder_action_row
+    assert '"Snooze"' in reminder_action_row
+    assert '"Done"' not in reminder_action_row
+    assert '"Snooze 10 min"' not in reminder_action_row
+    assert '"Snooze..."' not in reminder_action_row
+    assert "void dismissReminder(reminder);" in reminder_action_row
+    assert "void snoozeReminder(reminder, Date.now() + 90_000);" in reminder_action_row
     assert 'el("p", "light-reminder-detail-summary", summary)' in reminder_detail_card
+    assert 'card.dataset.reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");' in reminder_detail_card
+    assert "const actionRow = lightReminderActionRow(reminder);" in reminder_detail_card
+    assert "if (actionRow) {" in reminder_detail_card
+    assert "card.append(actionRow);" in reminder_detail_card
+    assert "lightReminderStatusRow(reminder)" not in reminder_detail_card
     assert 'page.append(lightInfoSection("Schedule", reminderDetailRows(reminder)));' not in reminder_detail
     assert 'page.append(lightInfoSection("Recipients", recipientRows));' not in reminder_detail
     assert 'lightInfoSection("Channels"' not in reminder_detail
     assert 'const notes = lightLinkedNotesSection(reminder);' not in reminder_detail
     assert 'const linkedRows = lightLinkedRecordRows(reminder, { excludeKinds: ["note"] });' not in reminder_detail
     assert 'page.append(lightInfoSection("Linked records", linkedRows));' not in reminder_detail
+    assert "return markReminderDone(reminder);" in dismiss_reminder
     assert "applyReminderMutation(normalizedReminderId, \"done\"" in mark_reminder_done
     assert 'lightNavigate("reminders", { from: "reminder-detail" });' in mark_reminder_done
     assert 'metadata: {' in snooze_reminder
@@ -1488,8 +1508,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'last_fired_at_ms: 0,' in snooze_reminder
     assert 'last_fired_due_at_ms: 0,' in snooze_reminder
     assert 'last_delivery_error: "",' in snooze_reminder
-    assert 'openSettingsSelector({' in open_snooze_selector
-    assert '"Snooze reminder"' in open_snooze_selector
     assert 'function reminderSnoozePresets(nowMs = Date.now()) {' in app
     assert '"1_hour", label: "1 hour"' in app
     assert '"this_evening", label: "This evening"' in app
@@ -1499,16 +1517,26 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'normalizedPreset === "tomorrow_morning"' in app
     assert "lightHtmlDocument(reminder" not in reminder_detail
     assert 'const me = workspaceRecordByKind("contact", SELF_CONTACT_ID);' in recipient_name
+    assert "function reminderRecipientSecondaryCopy(recipient) {" in app
+    assert 'if (String(recipient.kind || "").trim().toLowerCase() === "self") {' in recipient_secondary
+    assert 'return String(contact?.summary || "").trim();' in recipient_secondary
     assert 'target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID' in recipient_rows
-    assert 'recipient.kind === "self" ? "System notification" : "Reminder recipient"' in recipient_rows
+    assert "value: reminderRecipientSecondaryCopy(recipient)," in recipient_rows
+    assert "hideDetail: !reminderRecipientSecondaryCopy(recipient)," in recipient_rows
+    assert "row?.hideDetail" in light_info_row
     assert 'isInteractive ? el("span", "light-chevron", ">") : el("span", "")' not in light_info_row
     assert ".light-reminder-detail-card" in styles
     assert ".light-reminder-detail-surface" in styles
     assert ".light-reminder-action-row" in styles
+    assert ".light-reminder-countdown" in styles
+    assert ".light-reminder-countdown-ring" in styles
+    assert ".light-reminder-countdown-label" in styles
     assert ".light-reminder-row-summary" in styles
     assert ".light-reminder-detail-feed .light-info-row" in styles
     assert ".light-reminder-channels-section" not in styles
-    assert "grid-template-columns: 42px minmax(0, 1fr);" in styles
+    assert ".light-reminder-status-row" not in styles
+    assert ".light-reminder-action-button.is-selector" not in styles
+    assert "grid-template-columns: 40px minmax(0, 1fr);" in styles
 
 
 def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewriting_canonical_cards() -> None:

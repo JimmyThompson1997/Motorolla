@@ -4825,18 +4825,14 @@
     const status = lightWorkspaceStatus("reminders", "bell", "No reminders yet");
     const reminders = chronologicalReminders();
     const active = reminders.filter(reminder => reminderIsActive(reminder));
-    const now = active.filter(reminder => reminderIsNow(reminder));
-    const upcoming = active.filter(reminder => !reminderIsNow(reminder));
-    const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));
+    const live = active.filter(reminder => reminderIsLive(reminder));
+    const upcoming = active.filter(reminder => !reminderIsLive(reminder));
     const sections = [];
-    if (now.length) {
-      sections.push(lightReminderListSection("Now", now, "now"));
+    if (live.length) {
+      sections.push(lightReminderListSection("Live", live, "live"));
     }
     if (upcoming.length) {
       sections.push(lightReminderListSection("Upcoming", upcoming, "upcoming"));
-    }
-    if (snoozed.length) {
-      sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));
     }
     return renderUniversalFeedPage({
       title: "Reminders",
@@ -4939,6 +4935,7 @@
     const row = el("button", ["light-card", "light-feed-row", "light-reminder-row", group || "", deliveryClass, flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     const copy = el("span", "light-text-stack");
     const secondaryCopy = reminderListSecondaryCopy(reminder);
+    const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     if (secondaryCopy) {
       copy.append(el("span", "light-reminder-row-summary", secondaryCopy));
@@ -4946,6 +4943,7 @@
     row.type = "button";
     row.dataset.recordId = reminder.id;
     row.dataset.reminderId = reminder.id;
+    row.dataset.reminderState = reminderState;
     row.addEventListener("click", () => {
       state.selectedReminderId = reminder.id;
       lightNavigate("reminder-detail", { from: "reminders" });
@@ -4953,9 +4951,28 @@
     row.append(
       lightSmallIcon("bell", "reminders"),
       copy,
-      el("span", "light-reminder-time", reminderRowLabel(reminder))
+      lightReminderRowEnd(reminder)
     );
     return row;
+  }
+
+  function lightReminderRowEnd(reminder) {
+    const countdown = reminderSnoozeCountdown(reminder);
+    if (countdown) {
+      const wrap = el("span", "light-reminder-countdown");
+      wrap.dataset.reminderCountdown = "true";
+      wrap.dataset.reminderProgress = countdown.progress.toFixed(3);
+      wrap.dataset.reminderRemainingMs = String(countdown.remainingMs);
+      wrap.setAttribute("aria-label", `Snoozed for ${countdown.label} more, until ${countdown.untilLabel}`);
+      wrap.title = `Snoozed until ${countdown.untilLabel}`;
+      wrap.style.setProperty("--progress", countdown.progress.toFixed(3));
+      wrap.append(
+        el("span", "light-reminder-countdown-ring"),
+        el("span", "light-reminder-countdown-label", countdown.label)
+      );
+      return wrap;
+    }
+    return el("span", "light-reminder-time", reminderRowLabel(reminder));
   }
 
   function chronologicalReminders() {
@@ -5098,7 +5115,8 @@
         icon: "contacts",
         accentKey: "contacts",
         label: reminderRecipientDisplayName(recipient),
-        value: recipient.kind === "self" ? "System notification" : "Reminder recipient",
+        value: reminderRecipientSecondaryCopy(recipient),
+        hideDetail: !reminderRecipientSecondaryCopy(recipient),
         target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID : (recipient.contactId || recipient.id))
       }));
   }
@@ -5263,7 +5281,7 @@
     }
     const delta = due - Date.now();
     if (delta < 0) {
-      return "Now";
+      return "Live";
     }
     if (delta <= 60 * 60 * 1000) {
       return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
@@ -5384,6 +5402,18 @@
     return String(recipient.label || contact?.title || contactId || "Contact").trim() || "Contact";
   }
 
+  function reminderRecipientSecondaryCopy(recipient) {
+    if (!recipient) {
+      return "";
+    }
+    if (String(recipient.kind || "").trim().toLowerCase() === "self") {
+      return "";
+    }
+    const contactId = String(recipient.contactId || recipient.id || "").trim();
+    const contact = contactId ? workspaceRecordByKind("contact", contactId) : null;
+    return String(contact?.summary || "").trim();
+  }
+
   function reminderDetailLinkedRows(reminder, options = {}) {
     const currentKind = String(reminder?.kind || "");
     const currentId = String(reminder?.id || reminder?.record_id || "");
@@ -5492,16 +5522,10 @@
     return section;
   }
 
-  function lightReminderStatusRow(reminder) {
-    const row = el("div", "light-reminder-status-row");
-    row.append(
-      el("span", "light-pill", `Status: ${reminderStatusLabel(reminder)}`),
-      el("span", "light-pill", `Delivery: ${reminderDeliveryLabel(reminder)}`)
-    );
-    return row;
-  }
-
   function lightReminderActionRow(reminder) {
+    if (!reminderIsLive(reminder)) {
+      return null;
+    }
     const reminderId = reminderRecordId(reminder);
     const donePending = reminderMutationPending(reminderId, "done");
     const snoozePending = reminderMutationPending(reminderId, "snooze");
@@ -5509,45 +5533,34 @@
     const row = el("div", "light-reminder-action-row");
     row.dataset.reminderActionRow = "true";
 
-    const doneButton = el("button", "light-pill light-reminder-action-button is-primary", "Done");
-    doneButton.type = "button";
-    doneButton.dataset.reminderAction = "done";
-    doneButton.disabled = pending || reminderIsDismissed(reminder);
-    doneButton.addEventListener("click", event => {
+    const dismissButton = el("button", "light-pill light-reminder-action-button is-primary", "Dismiss");
+    dismissButton.type = "button";
+    dismissButton.dataset.reminderAction = "dismiss";
+    dismissButton.disabled = pending || reminderIsDismissed(reminder);
+    dismissButton.addEventListener("click", event => {
       event.preventDefault();
-      void markReminderDone(reminder);
+      void dismissReminder(reminder);
     });
 
-    const snoozeButton = el("button", "light-pill light-reminder-action-button", "Snooze 10 min");
+    const snoozeButton = el("button", "light-pill light-reminder-action-button", "Snooze");
     snoozeButton.type = "button";
-    snoozeButton.dataset.reminderAction = "snooze_10";
+    snoozeButton.dataset.reminderAction = "snooze";
     snoozeButton.disabled = pending || reminderIsDismissed(reminder);
     snoozeButton.addEventListener("click", event => {
       event.preventDefault();
-      void snoozeReminder(reminder, Date.now() + (10 * 60 * 1000));
+      void snoozeReminder(reminder, Date.now() + 90_000);
     });
 
-    const selectorButton = el("button", "light-pill light-reminder-action-button is-selector", "Snooze...");
-    selectorButton.type = "button";
-    selectorButton.dataset.reminderAction = "snooze_selector";
-    selectorButton.setAttribute("aria-haspopup", "dialog");
-    selectorButton.disabled = pending || reminderIsDismissed(reminder);
-    selectorButton.addEventListener("click", event => {
-      event.preventDefault();
-      openReminderSnoozeSelector(reminder);
-    });
-
-    row.append(doneButton, snoozeButton, selectorButton);
+    row.append(dismissButton, snoozeButton);
     return row;
   }
 
   function lightReminderDetailCard(reminder) {
     const card = el("section", `light-card light-reminder-detail-card ${reminderDeliveryClass(reminder)}`.trim());
     card.dataset.reminderDetailCard = "true";
+    card.dataset.reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");
     const identity = el("div", "light-reminder-detail-identity");
     const copy = el("div", "light-reminder-detail-copy");
-    const statusLabel = `Status: ${reminderStatusLabel(reminder)}`;
-    const deliveryLabel = `Delivery: ${reminderDeliveryLabel(reminder)}`;
     copy.append(
       el("span", "light-reminder-detail-eyebrow", reminderDetailEyebrow(reminder)),
       el("strong", "light-reminder-detail-title", reminder.title || "Untitled reminder")
@@ -5557,14 +5570,11 @@
       copy.append(el("p", "light-reminder-detail-summary", summary));
     }
     identity.append(lightSmallIcon("bell", "reminders"), copy);
-    const statusRow = lightReminderStatusRow(reminder);
-    if (statusRow?.children?.[0]) {
-      statusRow.children[0].textContent = statusLabel;
+    card.append(identity);
+    const actionRow = lightReminderActionRow(reminder);
+    if (actionRow) {
+      card.append(actionRow);
     }
-    if (statusRow?.children?.[1]) {
-      statusRow.children[1].textContent = deliveryLabel;
-    }
-    card.append(identity, statusRow, lightReminderActionRow(reminder));
     return card;
   }
 
@@ -5572,25 +5582,25 @@
     if (reminderIsSentHistory(reminder)) {
       return "sent";
     }
-    if (reminderIsSnoozed(reminder)) {
-      return "snoozed";
+    if (reminderIsLive(reminder)) {
+      return "live";
     }
-    const due = Number(reminder?.due_at_ms || 0);
-    if (Number.isFinite(due) && due > 0 && due <= Date.now()) {
-      return "now";
-    }
-    if (Number.isFinite(due) && due > 0) {
-      return "active";
+    if (reminderIsActive(reminder)) {
+      return "upcoming";
     }
     return "unscheduled";
   }
 
-  function reminderIsNow(reminder) {
-    if (!reminderIsActive(reminder)) {
+  function reminderIsLive(reminder) {
+    if (!reminderIsActive(reminder) || reminderIsSnoozed(reminder)) {
       return false;
     }
     const due = Number(reminder?.due_at_ms || 0);
     return Number.isFinite(due) && due > 0 && due <= Date.now();
+  }
+
+  function reminderIsNow(reminder) {
+    return reminderIsLive(reminder);
   }
 
   function reminderClockLabel(ms, options = {}) {
@@ -5617,7 +5627,7 @@
       return summary;
     }
     if (reminderIsSnoozed(reminder)) {
-      return "Snoozed reminder";
+      return `Snoozed until ${reminderClockLabel(Number(reminder?.due_at_ms || 0))}`;
     }
     return "Personal reminder";
   }
@@ -5629,7 +5639,7 @@
     }
     const delta = due - Date.now();
     if (delta <= 0) {
-      return "Now";
+      return "Live";
     }
     if (delta <= 60 * 60 * 1000) {
       return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
@@ -5655,7 +5665,10 @@
 
   function reminderDetailEyebrow(reminder) {
     if (reminderIsSnoozed(reminder)) {
-      return reminderDueLabel(reminder);
+      return `Snoozed until ${reminderClockLabel(Number(reminder?.due_at_ms || 0))}`;
+    }
+    if (reminderIsLive(reminder)) {
+      return `Live${DOT}${reminderScheduleLabel(reminder)}`;
     }
     return reminderScheduleLabel(reminder);
   }
@@ -5696,7 +5709,50 @@
   }
 
   function reminderIsActive(reminder) {
-    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder) && !reminderIsSnoozed(reminder);
+    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder);
+  }
+
+  function reminderSnoozeCountdown(reminder, nowMs) {
+    if (!reminderIsSnoozed(reminder)) {
+      return null;
+    }
+    const dueAtMs = Number(reminder?.due_at_ms || 0);
+    if (!Number.isFinite(dueAtMs) || dueAtMs <= 0) {
+      return null;
+    }
+    const updatedAtMs = Number(reminder?.updated_at_ms || reminder?.event_at_ms || reminder?.created_at_ms || 0);
+    const fallbackStartAtMs = Math.max(0, dueAtMs - 60_000);
+    const startAtMs = updatedAtMs > 0 ? Math.min(updatedAtMs, fallbackStartAtMs) : fallbackStartAtMs;
+    const totalMs = Math.max(60_000, dueAtMs - startAtMs);
+    const remainingMs = Math.max(0, dueAtMs - Number(nowMs || Date.now()));
+    const progress = Math.max(0, Math.min(1, 1 - (remainingMs / totalMs)));
+    return {
+      totalMs,
+      remainingMs,
+      progress,
+      label: reminderRemainingCompactLabel(remainingMs),
+      untilLabel: reminderClockLabel(dueAtMs),
+    };
+  }
+
+  function reminderRemainingCompactLabel(ms) {
+    const value = Math.max(0, Number(ms || 0));
+    if (!Number.isFinite(value) || value <= 0) {
+      return "0m";
+    }
+    const totalMinutes = Math.max(1, Math.ceil(value / 60000));
+    if (totalMinutes < 60) {
+      return `${totalMinutes}m`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours >= 24 && minutes === 0) {
+      return `${Math.round(totalMinutes / (24 * 60))}d`;
+    }
+    if (minutes === 0) {
+      return `${hours}h`;
+    }
+    return `${hours}h ${minutes}m`;
   }
 
   function activeReminderCount() {
@@ -6913,6 +6969,10 @@
       lightNavigate("reminders", { from: "reminder-detail" });
     }
     return nextReminder;
+  }
+
+  async function dismissReminder(reminder) {
+    return markReminderDone(reminder);
   }
 
   function reminderSnoozePresetTimestamp(preset, nowMs = Date.now()) {
@@ -8132,9 +8192,16 @@
         row.openOptions || {}
       ));
     }
+    const copy = row?.hideDetail
+      ? (() => {
+          const stack = el("span", "light-text-stack");
+          stack.append(el("strong", "", row.label));
+          return stack;
+        })()
+      : lightTextStack(row.label, row.value);
     item.append(
       lightSmallIcon(row.icon, row.accentKey || row.accent || ""),
-      lightTextStack(row.label, row.value)
+      copy
     );
     return item;
   }

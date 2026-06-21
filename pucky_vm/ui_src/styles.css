@@ -4371,12 +4371,46 @@ button {
   min-width: 72px;
 }
 
+.light-reminder-row.live .light-reminder-time {
+  color: color-mix(in srgb, var(--accent-primary) 72%, var(--home-shell-text));
+}
+
+.light-reminder-countdown {
+  min-width: 72px;
+  display: inline-grid;
+  justify-items: end;
+  align-self: center;
+  gap: 6px;
+  color: #a36411;
+}
+
+.light-reminder-countdown-ring {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, var(--home-shell-card) 58%, transparent 60%),
+    conic-gradient(
+      color-mix(in srgb, #c88500 78%, #f0b44a) 0turn calc(var(--progress, 0) * 1turn),
+      color-mix(in srgb, #c88500 14%, transparent) calc(var(--progress, 0) * 1turn) 1turn
+    );
+  border: 1px solid color-mix(in srgb, #c88500 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ffffff 42%, transparent);
+}
+
+.light-reminder-countdown-label {
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 790;
+  white-space: nowrap;
+}
+
 .light-reminder-row.delivery-sent .light-reminder-time {
   color: #1f8b4c;
 }
 
-.light-reminder-row.delivery-snoozed .light-reminder-time {
-  color: #a36411;
+.light-reminder-row.delivery-snoozed .light-reminder-row-summary {
+  color: color-mix(in srgb, #a36411 72%, var(--home-shell-text-muted));
 }
 
 .light-reminder-list-section {
@@ -4391,14 +4425,14 @@ button {
 
 .light-reminder-detail-card {
   display: grid;
-  gap: 16px;
-  padding: 20px 18px 18px;
+  gap: 12px;
+  padding: 18px;
 }
 
 .light-reminder-detail-identity {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
-  gap: 14px;
+  gap: 12px;
   align-items: start;
 }
 
@@ -4411,8 +4445,8 @@ button {
 .light-reminder-detail-copy {
   min-width: 0;
   display: grid;
-  gap: 8px;
-  padding-top: 2px;
+  gap: 6px;
+  padding-top: 1px;
 }
 
 .light-reminder-detail-eyebrow {
@@ -4437,26 +4471,14 @@ button {
   line-height: 1.45;
 }
 
-.light-reminder-status-row,
 .light-reminder-action-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-.light-reminder-status-row {
-  justify-content: flex-start;
-}
-
-.light-reminder-status-row .light-pill {
-  min-height: 30px;
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 760;
+  gap: 10px;
 }
 
 .light-reminder-action-button {
-  min-height: 38px;
+  min-height: 36px;
   padding: 0 14px;
   cursor: pointer;
   appearance: none;
@@ -4471,10 +4493,6 @@ button {
 .light-reminder-action-button.is-primary {
   color: var(--accent-primary);
   background: color-mix(in srgb, var(--accent-primary) 16%, var(--home-shell-card));
-}
-
-.light-reminder-action-button.is-selector {
-  border-style: dashed;
 }
 
 .light-reminder-action-button:disabled {
