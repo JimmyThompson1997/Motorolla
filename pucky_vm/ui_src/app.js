@@ -6340,7 +6340,7 @@
     const previousAllDone = checklist.length > 0 && checklist.every(item => Boolean(item?.done));
     const nextAllDone = nextChecklist.length > 0 && nextChecklist.every(item => Boolean(item?.done));
     const currentStatus = normalizedTaskStatus(current);
-    const nextStatus = nextAllDone ? "done" : (previousAllDone && currentStatus === "done" ? "in_progress" : "");
+    const nextStatus = nextAllDone ? "done" : (previousAllDone ? "in_progress" : "");
     const optimisticStatus = nextStatus || currentStatus;
     const optimisticDerivedGroup = (() => {
       if (optimisticStatus === "done") {
