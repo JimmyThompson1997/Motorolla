@@ -74,9 +74,16 @@
   const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS && typeof iconCatalog.MATERIAL_SYMBOLS === "object"
     ? iconCatalog.MATERIAL_SYMBOLS
     : {};
-  const SEMANTIC_ICON_ACCENT_PALETTE = iconCatalog.SEMANTIC_ICON_ACCENT_PALETTE && typeof iconCatalog.SEMANTIC_ICON_ACCENT_PALETTE === "object"
-    ? iconCatalog.SEMANTIC_ICON_ACCENT_PALETTE
+  const SEMANTIC_ICON_REGISTRY = iconCatalog.SEMANTIC_ICON_REGISTRY && typeof iconCatalog.SEMANTIC_ICON_REGISTRY === "object"
+    ? iconCatalog.SEMANTIC_ICON_REGISTRY
     : {};
+  const SEMANTIC_ICON_KEY_BY_ICON = Object.freeze(Object.entries(SEMANTIC_ICON_REGISTRY).reduce((registry, [semanticKey, entry]) => {
+    const icon = String(entry && entry.icon || "").trim().toLowerCase();
+    if (icon && MATERIAL_SYMBOLS[icon] && !registry[icon]) {
+      registry[icon] = semanticKey;
+    }
+    return registry;
+  }, {}));
   const LIGHT_APPS = Array.isArray(routeCatalog.LIGHT_APPS)
     ? routeCatalog.LIGHT_APPS
     : [];
@@ -3776,6 +3783,7 @@
     tile.dataset.route = app.route;
     tile.dataset.lightAppRoute = app.route;
     tile.dataset.appLabel = app.label;
+    tile.dataset.semanticIcon = app.semantic;
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => openLightApp(app.route));
     const icon = lightAppIcon(app);
@@ -3817,14 +3825,21 @@
 
   function semanticIconAccentKey(accentKey) {
     const key = String(accentKey || "").trim().toLowerCase();
-    return SEMANTIC_ICON_ACCENT_PALETTE[key] ? key : "";
+    return SEMANTIC_ICON_REGISTRY[key] ? key : "";
+  }
+
+  function semanticIconName(accentKey) {
+    const key = semanticIconAccentKey(accentKey) || "inbox";
+    const entry = SEMANTIC_ICON_REGISTRY[key] || SEMANTIC_ICON_REGISTRY.inbox;
+    return String(entry.icon || SEMANTIC_ICON_REGISTRY.inbox?.icon || "mail").trim();
   }
 
   function semanticIconAccentValue(accentKey, theme = effectiveTheme()) {
     const key = semanticIconAccentKey(accentKey) || "inbox";
-    const palette = SEMANTIC_ICON_ACCENT_PALETTE[key] || SEMANTIC_ICON_ACCENT_PALETTE.inbox;
+    const entry = SEMANTIC_ICON_REGISTRY[key] || SEMANTIC_ICON_REGISTRY.inbox;
+    const colors = entry.colors && typeof entry.colors === "object" ? entry.colors : {};
     const mode = normalizeTheme(theme) === "light" ? "light" : "dark";
-    return String(palette[mode] || palette.dark || palette.light || "#8b63ff").trim();
+    return String(colors[mode] || colors.dark || colors.light || "#8b63ff").trim();
   }
 
   function applySemanticIconAccent(node, accentKey, options = {}) {
@@ -3844,20 +3859,7 @@
 
   function canonicalIconAccentKey(iconKey) {
     const key = normalizeReplyCardIcon(iconKey);
-    if (key === "mail") return "inbox";
-    if (key === "link") return "connect";
-    if (key === "mic") return "meetings";
-    if (key === "settings") return "settings";
-    if (key === "chat") return "messages";
-    if (key === "record_voice_over") return "meeting_notes";
-    if (key === "bell") return "reminders";
-    if (key === "note") return "notes";
-    if (key === "checklist") return "tasks";
-    if (key === "calendar") return "calendar";
-    if (key === "text") return "inbox";
-    if (key === "folder") return "projects";
-    if (key === "contacts") return "contacts";
-    return "";
+    return SEMANTIC_ICON_KEY_BY_ICON[key] || "";
   }
 
   function resolvedFilterAccentValue(filter, theme = effectiveTheme()) {
@@ -3868,10 +3870,16 @@
     return String(filter?.accent || "#f5f9ff");
   }
 
-  function lightAppIcon(app) {
+  function lightAppIcon(app, accentKey = "") {
     const wrap = el("span", "light-app-icon");
-    applySemanticIconAccent(wrap, app?.accent);
-    wrap.innerHTML = iconSvg(app.icon, { filled: false });
+    if (app && typeof app === "object" && !Array.isArray(app)) {
+      wrap.dataset.semanticIcon = app.semantic;
+      applySemanticIconAccent(wrap, app?.semantic);
+      wrap.innerHTML = iconSvg(semanticIconName(app?.semantic), { filled: false });
+      return wrap;
+    }
+    applySemanticIconAccent(wrap, accentKey, { allowEmpty: true });
+    wrap.innerHTML = iconSvg(app, { filled: false });
     return wrap;
   }
 

@@ -373,6 +373,16 @@ def run_local_web_proof(extra_args: list[str]) -> int:
                     ),
                 ),
                 (
+                    "tools/proofs/cover/cover_home_app_labels_playwright.mjs",
+                    [
+                        "--base-url",
+                        "http://127.0.0.1:8767",
+                        "--report-dir",
+                        str((ROOT / ".tmp" / "proof-local-web" / "home-app-labels").resolve()),
+                        *extra_args,
+                    ],
+                ),
+                (
                     "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
                     [
                         "--base-url",
@@ -621,6 +631,18 @@ def run_live_web_proof(extra_args: list[str]) -> int:
                 append_refresh_param("https://pucky.fly.dev", refresh_seed),
                 "--report-dir",
                 str((live_root / "universal-feed-tiles").resolve()),
+                *extra_args,
+            ],
+        )
+    )
+    scripts.append(
+        (
+            "tools/proofs/cover/cover_home_app_labels_playwright.mjs",
+            [
+                "--base-url",
+                append_refresh_param("https://pucky.fly.dev", refresh_seed),
+                "--report-dir",
+                str((live_root / "home-app-labels").resolve()),
                 *extra_args,
             ],
         )

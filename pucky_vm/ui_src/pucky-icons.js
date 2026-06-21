@@ -169,18 +169,18 @@ window.PUCKY_UI_ICONS = {
       outline: '<path d="M3 6h18M3 12h10M15 12h6M3 18h6M11 18h10"/><circle cx="13" cy="6" r="2"/><circle cx="11" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>'
     }
   },
-  SEMANTIC_ICON_ACCENT_PALETTE: {
-    inbox: { dark: "#8b63ff", light: "#8b63ff" },
-    connect: { dark: "#4f61d8", light: "#4f61d8" },
-    meetings: { dark: "#0a84ff", light: "#0a84ff" },
-    settings: { dark: "#64748b", light: "#64748b" },
-    messages: { dark: "#226fe8", light: "#226fe8" },
-    meeting_notes: { dark: "#0ea5e9", light: "#0ea5e9" },
-    reminders: { dark: "#f59e0b", light: "#f59e0b" },
-    notes: { dark: "#f2a000", light: "#f2a000" },
-    tasks: { dark: "#22c55e", light: "#22c55e" },
-    calendar: { dark: "#ff443a", light: "#ff443a" },
-    projects: { dark: "#0f9fb8", light: "#0f9fb8" },
-    contacts: { dark: "#f43f68", light: "#f43f68" }
+  SEMANTIC_ICON_REGISTRY: {
+    inbox: { icon: "mail", colors: { dark: "#8b63ff", light: "#8b63ff" } },
+    connect: { icon: "link", colors: { dark: "#4f61d8", light: "#4f61d8" } },
+    meetings: { icon: "mic", colors: { dark: "#0a84ff", light: "#0a84ff" } },
+    settings: { icon: "settings", colors: { dark: "#64748b", light: "#64748b" } },
+    messages: { icon: "chat", colors: { dark: "#226fe8", light: "#226fe8" } },
+    meeting_notes: { icon: "record_voice_over", colors: { dark: "#0ea5e9", light: "#0ea5e9" } },
+    reminders: { icon: "bell", colors: { dark: "#f59e0b", light: "#f59e0b" } },
+    notes: { icon: "note", colors: { dark: "#f2a000", light: "#f2a000" } },
+    tasks: { icon: "checklist", colors: { dark: "#22c55e", light: "#22c55e" } },
+    calendar: { icon: "calendar", colors: { dark: "#ff443a", light: "#ff443a" } },
+    projects: { icon: "folder", colors: { dark: "#0f9fb8", light: "#0f9fb8" } },
+    contacts: { icon: "contacts", colors: { dark: "#f43f68", light: "#f43f68" } }
   }
 };

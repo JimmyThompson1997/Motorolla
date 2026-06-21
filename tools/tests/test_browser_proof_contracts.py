@@ -408,13 +408,27 @@ def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
 
     assert "pucky.home_app_labels_browser_proof.v1" in source
     assert "const VIEWPORT = { width: 395, height: 786 };" in source
+    assert 'const THEMES = ["light", "dark"];' in source
     assert ".light-app-label" in source
     assert "Meeting Notes" in source
+    assert "SEMANTIC_ICON_REGISTRY" in source
+    assert "data-semantic-icon" in source
+    assert "iconAccentVar" in source
+    assert "iconBackground" in source
+    assert "registryColors" in source
     assert "assertNoSameRowLabelOverlap(metrics);" in source
     assert "horizontalOverlap > OVERLAP_EPSILON" in source
     assert "Math.abs(item.icon.centerX - tileCenter)" in source
     assert "Math.abs(item.label.centerX - tileCenter)" in source
     assert '"test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs"' in package
+
+
+def test_home_app_label_proof_is_wired_into_local_and_live_web_sweeps() -> None:
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+
+    assert '"tools/proofs/cover/cover_home_app_labels_playwright.mjs"' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-web" / "home-app-labels").resolve())' in dev_source
+    assert 'str((live_root / "home-app-labels").resolve())' in dev_source
 
 
 def test_settings_quiet_list_proof_checks_compact_live_rows() -> None:

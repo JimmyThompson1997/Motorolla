@@ -31,8 +31,9 @@ def test_material_icon_registry_remains_bundled() -> None:
 
     assert "window.PUCKY_UI_ICONS = {" in icons
     assert "MATERIAL_SYMBOLS:" in icons
-    assert "SEMANTIC_ICON_ACCENT_PALETTE:" in icons
+    assert "SEMANTIC_ICON_REGISTRY:" in icons
     assert "const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS" in app
+    assert "const SEMANTIC_ICON_REGISTRY = iconCatalog.SEMANTIC_ICON_REGISTRY" in app
     assert "function iconSvg(" in app
     assert "function replyCardIconSvg(" in app
     assert "function loadCardIconRegistry(" in app
@@ -76,6 +77,37 @@ def test_home_shell_registry_exposes_modern_routes_only() -> None:
     assert 'route: "calls"' not in routes
     assert 'HOME_SHELL_CANONICAL_ROUTES: ["inbox", "connect", "meetings", "settings"]' in routes
     assert "const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)" in app
+
+
+def test_semantic_icon_registry_drives_home_tiles_and_reverse_lookup() -> None:
+    app = read("app.js")
+    routes = read("pucky-routes.js")
+    light_app_tile = function_block(app, "lightAppTile")
+    semantic_icon_accent_key = function_block(app, "semanticIconAccentKey")
+    semantic_icon_name = function_block(app, "semanticIconName")
+    canonical_icon_accent_key = function_block(app, "canonicalIconAccentKey")
+    light_app_icon = function_block(app, "lightAppIcon")
+    reminder_channel_accent_key = function_block(app, "reminderChannelAccentKey")
+    graph_kind_accent_key = function_block(app, "graphKindAccentKey")
+
+    assert "const SEMANTIC_ICON_KEY_BY_ICON = Object.freeze(Object.entries(SEMANTIC_ICON_REGISTRY)" in app
+    assert 'tile.dataset.semanticIcon = app.semantic;' in light_app_tile
+    assert 'return SEMANTIC_ICON_REGISTRY[key] ? key : "";' in semantic_icon_accent_key
+    assert "const entry = SEMANTIC_ICON_REGISTRY[key] || SEMANTIC_ICON_REGISTRY.inbox;" in semantic_icon_name
+    assert 'return String(entry.icon || SEMANTIC_ICON_REGISTRY.inbox?.icon || "mail").trim();' in semantic_icon_name
+    assert "function semanticIconAccentValue(accentKey, theme = effectiveTheme()) {" in app
+    assert "const colors = entry.colors" in app
+    assert 'return String(colors[mode] || colors.dark || colors.light || "#8b63ff").trim();' in app
+    assert 'return SEMANTIC_ICON_KEY_BY_ICON[key] || "";' in canonical_icon_accent_key
+    assert 'if (key === "mail") return "inbox";' not in canonical_icon_accent_key
+    assert "applySemanticIconAccent(wrap, app?.semantic);" in light_app_icon
+    assert 'wrap.innerHTML = iconSvg(semanticIconName(app?.semantic), { filled: false });' in light_app_icon
+    assert '"email": "inbox"' in reminder_channel_accent_key or 'email: "inbox"' in reminder_channel_accent_key
+    assert '"sms": "inbox"' in reminder_channel_accent_key or 'sms: "inbox"' in reminder_channel_accent_key
+    assert '"call": "contacts"' in reminder_channel_accent_key or 'call: "contacts"' in reminder_channel_accent_key
+    assert '"connected_app": "connect"' in reminder_channel_accent_key or 'connected_app: "connect"' in reminder_channel_accent_key
+    assert "return canonicalIconAccentKey(graphKindIcon(kind));" in graph_kind_accent_key
+    assert '{ route: "inbox", label: "Inbox", semantic: "inbox", kind: "real" }' in routes
 
 
 def test_route_aliases_collapse_legacy_entry_points() -> None:
