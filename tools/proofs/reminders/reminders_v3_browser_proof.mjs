@@ -5,7 +5,7 @@ import { ensureDir, resolveChromePath, saveScreenshot, writeJsonFile } from "../
 
 const VIEWPORT = { width: 430, height: 932 };
 const LIVE_A_DELAY_MS = 75_000;
-const LIVE_B_DELAY_MS = 105_000;
+const LIVE_B_DELAY_MS = 75_000;
 
 function parseArgs(argv) {
   const config = {
@@ -292,6 +292,8 @@ async function readReminderListState(page, reminderIds = []) {
 async function readReminderDetailState(page) {
   return page.evaluate(() => {
     const card = document.querySelector('[data-reminder-detail-card="true"]');
+    const identity = card?.querySelector(".light-reminder-detail-identity");
+    const icon = identity?.querySelector(".light-small-icon");
     const feed = document.querySelector('[data-reminder-detail-feed="true"]');
     const meTile = [...document.querySelectorAll('[data-reminder-detail-tile="recipient"]')].find(node => {
       const label = String(node.querySelector(".light-text-stack strong")?.textContent || "").trim();
@@ -299,6 +301,9 @@ async function readReminderDetailState(page) {
     });
     const actionLabels = [...document.querySelectorAll('[data-reminder-action-row="true"] button')].map(node => String(node.textContent || "").trim());
     const shellText = String(document.querySelector(".light-shell")?.textContent || "");
+    const cardRect = card?.getBoundingClientRect?.() || null;
+    const identityRect = identity?.getBoundingClientRect?.() || null;
+    const iconRect = icon?.getBoundingClientRect?.() || null;
     return {
       route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       reminderState: card?.getAttribute("data-reminder-state") || "",
@@ -313,6 +318,8 @@ async function readReminderDetailState(page) {
       hasDeliveryText: shellText.includes("Delivery:"),
       meTileSubtitle: String(meTile?.querySelector(".light-text-stack span")?.textContent || "").trim(),
       recipientCount: document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length,
+      heroTopGap: cardRect && identityRect ? Math.round((identityRect.top - cardRect.top) * 10) / 10 : 0,
+      heroIconTopGap: cardRect && iconRect ? Math.round((iconRect.top - cardRect.top) * 10) / 10 : 0,
     };
   });
 }
@@ -340,6 +347,8 @@ async function assertCompactReminderDetail(page, expectedState, expectedActions)
   assert(!detail.hasStatusText, "Reminder detail should not show Status text");
   assert(!detail.hasDeliveryText, "Reminder detail should not show Delivery text");
   assert(detail.meTileSubtitle === "", `Expected Me tile subtitle to stay empty, saw ${detail.meTileSubtitle || "<non-empty>"}`);
+  assert(detail.heroTopGap >= 20, `Expected reminder hero top gap >= 20px, saw ${detail.heroTopGap}`);
+  assert(detail.heroIconTopGap >= 20, `Expected reminder icon top gap >= 20px, saw ${detail.heroIconTopGap}`);
   if (expectedActions.length === 0) {
     assert(detail.actionRowCount === 0, `Expected no reminder action row, saw ${detail.actionRowCount}`);
     return detail;
@@ -368,9 +377,10 @@ async function main() {
 
   const reminderAId = `browser-proof-live-a-${Date.now()}`;
   const reminderBId = `browser-proof-live-b-${Date.now()}`;
+  const createdReminderIds = [reminderAId];
   const baselineActive = await activeReminderCount(config);
   const reminderADueAtMs = Date.now() + LIVE_A_DELAY_MS;
-  const reminderBDueAtMs = Date.now() + LIVE_B_DELAY_MS;
+  let reminderBDueAtMs = 0;
 
   await apiRequest(config, "POST", "/api/workspace/reminders", {
     id: reminderAId,
@@ -383,25 +393,13 @@ async function main() {
       destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
     }
   });
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: reminderBId,
-    title: "Browser Proof Live Reminder B",
-    summary: "This reminder should dismiss cleanly on first fire.",
-    status: "open",
-    due_at_ms: reminderBDueAtMs,
-    metadata: {
-      recipients: [{ id: "self", kind: "self", label: "Me" }],
-      destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
-    }
-  });
-
   const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
   const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: config.reportDir, size: VIEWPORT } });
   await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
   const page = await context.newPage();
 
   try {
-    const expectedInitialActive = baselineActive + 2;
+    const expectedInitialActive = baselineActive + 1;
     await page.goto(pageUrl(config.baseUrl, config.theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
     await waitForHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, expectedInitialActive, config.timeoutMs);
@@ -409,12 +407,10 @@ async function main() {
 
     await openTile(page, "Reminders", "reminders", config.timeoutMs);
     await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-    const initialList = await readReminderListState(page, [reminderAId, reminderBId]);
+    const initialList = await readReminderListState(page, [reminderAId]);
     assert(initialList.sectionTitles.includes("UPCOMING"), `Expected Upcoming section, saw ${JSON.stringify(initialList.sectionTitles)}`);
     assert(!initialList.sectionTitles.includes("SNOOZED"), `Expected Snoozed section to stay removed, saw ${JSON.stringify(initialList.sectionTitles)}`);
     assert(initialList.rows[reminderAId]?.state === "upcoming", `Expected reminder A to start upcoming, saw ${initialList.rows[reminderAId]?.state}`);
-    assert(initialList.rows[reminderBId]?.state === "upcoming", `Expected reminder B to start upcoming, saw ${initialList.rows[reminderBId]?.state}`);
     summary.screenshots.reminders_list_initial = await saveScreenshot(page, config.reportDir, "reminders-list-initial");
 
     await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).click();
@@ -461,7 +457,7 @@ async function main() {
     await waitForReminderRowState(page, reminderAId, "snoozed", config.timeoutMs);
     const aCountdownStart = await readReminderCountdownState(page, reminderAId);
     assert(aCountdownStart.exists, "Reminder A should show a snoozed countdown in Upcoming");
-    const afterSnoozeList = await readReminderListState(page, [reminderAId, reminderBId]);
+    const afterSnoozeList = await readReminderListState(page, [reminderAId]);
     assert(afterSnoozeList.sectionTitles.includes("UPCOMING"), `Expected Upcoming after snooze, saw ${JSON.stringify(afterSnoozeList.sectionTitles)}`);
     assert(!afterSnoozeList.sectionTitles.includes("SNOOZED"), `Expected no Snoozed section after snooze, saw ${JSON.stringify(afterSnoozeList.sectionTitles)}`);
     summary.lifecycle.reminder_a_snoozed = {
@@ -476,40 +472,6 @@ async function main() {
     assert(aCountdownMid.progress > aCountdownStart.progress, `Reminder A countdown progress should advance (${aCountdownStart.progress} -> ${aCountdownMid.progress})`);
     assert(aCountdownMid.remainingMs < aCountdownStart.remainingMs, `Reminder A countdown remaining time should shrink (${aCountdownStart.remainingMs} -> ${aCountdownMid.remainingMs})`);
     summary.lifecycle.reminder_a_snooze_mid = aCountdownMid;
-
-    const bLiveObservation = await waitForReminderRowStateObserved(page, reminderBId, "live", 90_000);
-    assert(
-      Number(bLiveObservation?.observedAtMs || 0) <= reminderBDueAtMs + 20_000,
-      `Reminder B should become Live within 20s of due (${reminderBDueAtMs}), saw ${bLiveObservation?.observedAtMs || 0}`
-    );
-    const liveList = await readReminderListState(page, [reminderAId, reminderBId]);
-    assert(liveList.sectionTitles.includes("LIVE"), `Expected Live section when reminder B fires, saw ${JSON.stringify(liveList.sectionTitles)}`);
-    assert(liveList.rows[reminderBId]?.state === "live", `Expected reminder B to become live, saw ${liveList.rows[reminderBId]?.state}`);
-    summary.lifecycle.reminder_b_live = {
-      ...liveList.rows[reminderBId],
-      observed_at_ms: Number(bLiveObservation?.observedAtMs || 0)
-    };
-    summary.screenshots.b1_live_list = await saveScreenshot(page, config.reportDir, "b1-live-list");
-
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).click();
-    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"]);
-    await page.locator('[data-reminder-action="dismiss"]').click();
-    await waitForReminderRecord(
-      config,
-      reminderBId,
-      reminder => reminderIsDismissed(reminder),
-      "reminder B should dismiss on first fire",
-      30_000
-    );
-    await waitForLightRoute(page, "reminders", config.timeoutMs);
-    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderBId, { timeout: config.timeoutMs });
-    await backToHome(page, config.theme, config.timeoutMs);
-    await waitForReminderBadge(page, baselineActive + 1, config.timeoutMs);
-    summary.screenshots.b2_home_after_dismiss = await saveScreenshot(page, config.reportDir, "b2-home-after-dismiss");
-
-    await openTile(page, "Reminders", "reminders", config.timeoutMs);
-    await waitForReminderRowState(page, reminderAId, "snoozed", config.timeoutMs);
     await page.waitForTimeout(30_000);
     const aCountdownLate = await readReminderCountdownState(page, reminderAId);
     assert(aCountdownLate.exists, "Reminder A countdown should still be visible during the second 30-second observation");
@@ -545,6 +507,56 @@ async function main() {
     await waitForReminderBadge(page, baselineActive, config.timeoutMs);
     summary.screenshots.a5_home_after_final_dismiss = await saveScreenshot(page, config.reportDir, "a5-home-after-final-dismiss");
 
+    reminderBDueAtMs = Date.now() + LIVE_B_DELAY_MS;
+    await apiRequest(config, "POST", "/api/workspace/reminders", {
+      id: reminderBId,
+      title: "Browser Proof Live Reminder B",
+      summary: "This reminder should dismiss cleanly on first fire.",
+      status: "open",
+      due_at_ms: reminderBDueAtMs,
+      metadata: {
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      }
+    });
+    createdReminderIds.push(reminderBId);
+    await waitForReminderBadge(page, baselineActive + 1, config.timeoutMs);
+    await openTile(page, "Reminders", "reminders", config.timeoutMs);
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    const reminderBInitial = await readReminderListState(page, [reminderBId]);
+    assert(reminderBInitial.rows[reminderBId]?.state === "upcoming", `Expected reminder B to start upcoming, saw ${reminderBInitial.rows[reminderBId]?.state}`);
+
+    const bLiveObservation = await waitForReminderRowStateObserved(page, reminderBId, "live", LIVE_B_DELAY_MS + 90_000);
+    assert(
+      Number(bLiveObservation?.observedAtMs || 0) <= reminderBDueAtMs + 20_000,
+      `Reminder B should become Live within 20s of due (${reminderBDueAtMs}), saw ${bLiveObservation?.observedAtMs || 0}`
+    );
+    const liveList = await readReminderListState(page, [reminderBId]);
+    assert(liveList.sectionTitles.includes("LIVE"), `Expected Live section when reminder B fires, saw ${JSON.stringify(liveList.sectionTitles)}`);
+    assert(liveList.rows[reminderBId]?.state === "live", `Expected reminder B to become live, saw ${liveList.rows[reminderBId]?.state}`);
+    summary.lifecycle.reminder_b_live = {
+      ...liveList.rows[reminderBId],
+      observed_at_ms: Number(bLiveObservation?.observedAtMs || 0)
+    };
+    summary.screenshots.b1_live_list = await saveScreenshot(page, config.reportDir, "b1-live-list");
+
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).click();
+    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+    await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"]);
+    await page.locator('[data-reminder-action="dismiss"]').click();
+    await waitForReminderRecord(
+      config,
+      reminderBId,
+      reminder => reminderIsDismissed(reminder),
+      "reminder B should dismiss on first fire",
+      30_000
+    );
+    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderBId, { timeout: config.timeoutMs });
+    await backToHome(page, config.theme, config.timeoutMs);
+    await waitForReminderBadge(page, baselineActive, config.timeoutMs);
+    summary.screenshots.b2_home_after_dismiss = await saveScreenshot(page, config.reportDir, "b2-home-after-dismiss");
+
     summary.assertions.push("Reminder detail stays compact, hides status/delivery pills, and keeps one Connected feed with no chevrons.");
     summary.assertions.push("Live reminders expose Dismiss and Snooze only when firing, while Upcoming reminders stay action-free.");
     summary.assertions.push("Snoozed reminders remain inside Upcoming with a live countdown ring and refire into Live without manual reload.");
@@ -554,7 +566,7 @@ async function main() {
     try {
       await browser.close();
     } catch {}
-    for (const reminderId of [reminderAId, reminderBId]) {
+    for (const reminderId of createdReminderIds) {
       try {
         await apiRequest(config, "DELETE", `/api/workspace/reminders/${reminderId}`);
       } catch {}

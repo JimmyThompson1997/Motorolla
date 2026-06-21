@@ -4427,28 +4427,27 @@ button {
 
 .light-reminder-detail-card {
   display: grid;
-  gap: 12px;
-  padding: 18px;
+  gap: 14px;
+  padding: 22px 18px 18px;
 }
 
 .light-reminder-detail-identity {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
 .light-reminder-detail-identity .light-small-icon {
-  width: 40px;
-  height: 40px;
-  margin-top: 2px;
+  width: 36px;
+  height: 36px;
 }
 
 .light-reminder-detail-copy {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  padding-top: 1px;
+  gap: 5px;
+  padding-top: 2px;
 }
 
 .light-reminder-detail-eyebrow {
@@ -4461,8 +4460,8 @@ button {
 .light-reminder-detail-title {
   min-width: 0;
   color: var(--home-shell-text);
-  font-size: 22px;
-  line-height: 1.08;
+  font-size: 21px;
+  line-height: 1.06;
   font-weight: 840;
 }
 
@@ -4506,6 +4505,12 @@ button {
   min-height: 68px;
   align-items: start;
   padding: 12px 14px;
+}
+
+@media (max-width: 480px) {
+  .light-reminder-detail-title {
+    font-size: 20px;
+  }
 }
 
 .light-reminder-detail-feed .light-text-stack {

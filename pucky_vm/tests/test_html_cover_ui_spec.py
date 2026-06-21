@@ -1614,7 +1614,12 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert ".light-reminder-channels-section" not in styles
     assert ".light-reminder-status-row" not in styles
     assert ".light-reminder-action-button.is-selector" not in styles
-    assert "grid-template-columns: 40px minmax(0, 1fr);" in styles
+    assert "padding: 22px 18px 18px;" in styles
+    assert "grid-template-columns: 36px minmax(0, 1fr);" in styles
+    assert "width: 36px;" in styles
+    assert "height: 36px;" in styles
+    assert "font-size: 21px;" in styles
+    assert "@media (max-width: 480px) {" in styles
 
 
 def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewriting_canonical_cards() -> None:
