@@ -2023,13 +2023,13 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail", { requireActivity: true });
     await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
     screenshots[`${theme}_contacts_detail_reopened`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
-    await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    for (const [route, id, text] of [
-      ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
-      ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
-      ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
+    await page.locator(`[data-workspace-target-kind="note"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    for (const [kind, route, id, text] of [
+      ["note", "note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
+      ["project", "tag-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
+      ["meeting_note", "meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
-      await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
+      await page.locator(`[data-workspace-target-kind="${kind}"][data-workspace-target-id="${id}"]`).first().click();
       await waitForLightRoute(page, route, config.timeoutMs);
       await waitForGraphText(page, text, config.timeoutMs);
       await topBackToRoute(page, "contact-detail", "Proof Contact One", config.timeoutMs);
