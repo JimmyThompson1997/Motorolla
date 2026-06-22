@@ -1294,6 +1294,11 @@ button {
   min-width: 0;
 }
 
+.card.card-meeting-list .card-meeting-copy {
+  width: 100%;
+  text-align: left;
+}
+
 .card-meeting-meta {
   grid-column: 2;
   grid-row: 1;

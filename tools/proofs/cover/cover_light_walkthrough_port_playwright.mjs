@@ -73,7 +73,7 @@ function proofMeetings() {
     {
       meeting_id: "meeting-light-proof",
       state: "completed",
-      title: "Light proof meeting title that should wrap cleanly without colliding with the audio rail",
+      title: "Quick sync",
       recording_title: "light-proof-meeting-2026-06-08",
       started_at: "2026-06-08T18:23:00Z",
       stopped_at: "2026-06-08T18:38:00Z",
@@ -282,14 +282,16 @@ async function clickTile(page, route) {
   await page.locator(`.light-app-tile[data-route="${route}"]`).click();
 }
 
-async function assertMeetingsLayout(page, label, { expectWrapped = false } = {}) {
-  const layout = await page.evaluate(() => {
-    const card = document.querySelector('.light-shell[data-light-route="meetings"] .card-meeting-list');
+async function readMeetingRowLayout(page, { cardIndex = 0 } = {}) {
+  return page.evaluate(({ index }) => {
+    const cards = [...document.querySelectorAll('.light-shell[data-light-route="meetings"] .card-meeting-list')];
+    const card = cards[index] || null;
     const title = card?.querySelector('.title');
+    const body = card?.querySelector('.card-body');
     const meta = card?.querySelector('.card-meeting-meta');
     const stamp = card?.querySelector('.card-timestamp');
     const actions = card?.querySelector('.card-actions');
-    if (!(card && title && meta && stamp && actions)) {
+    if (!(card && title && body && meta && stamp && actions)) {
       return null;
     }
     const rect = (node) => {
@@ -305,17 +307,27 @@ async function assertMeetingsLayout(page, label, { expectWrapped = false } = {})
     };
     const titleStyle = window.getComputedStyle(title);
     const lineHeight = Number.parseFloat(titleStyle.lineHeight || "0") || 0;
+    const cardBox = rect(card);
+    const bodyBox = rect(body);
+    const titleBox = rect(title);
     return {
       innerWidth: window.innerWidth,
       scrollWidth: document.documentElement.scrollWidth,
-      card: rect(card),
-      title: rect(title),
+      card: cardBox,
+      body: bodyBox,
+      title: titleBox,
       meta: rect(meta),
       stamp: rect(stamp),
       actions: rect(actions),
       titleLineHeight: lineHeight,
+      bodyLeftInset: Number((bodyBox.left - cardBox.left).toFixed(2)),
+      titleLeftInset: Number((titleBox.left - cardBox.left).toFixed(2)),
     };
-  });
+  }, { index: cardIndex });
+}
+
+async function assertMeetingsLayout(page, label, { cardIndex = 0, expectWrapped = false, expectedLeftInset = null } = {}) {
+  const layout = await readMeetingRowLayout(page, { cardIndex });
   if (!layout) {
     throw new Error(`${label}: could not read meetings layout`);
   }
@@ -329,9 +341,16 @@ async function assertMeetingsLayout(page, label, { expectWrapped = false } = {})
   if (layout.title.left < layout.card.left - 1) {
     throw new Error(`${label}: meeting title clipped past the left edge`);
   }
+  if (Math.abs(layout.titleLeftInset - layout.bodyLeftInset) > 1.5) {
+    throw new Error(`${label}: meeting title drifted away from the shared left column (${layout.titleLeftInset} vs ${layout.bodyLeftInset})`);
+  }
+  if (typeof expectedLeftInset === "number" && Math.abs(layout.titleLeftInset - expectedLeftInset) > 1.5) {
+    throw new Error(`${label}: meeting title left inset changed unexpectedly (${layout.titleLeftInset} vs ${expectedLeftInset})`);
+  }
   if (expectWrapped && !(layout.title.height > layout.titleLineHeight * 1.5)) {
     throw new Error(`${label}: long meeting title did not wrap onto a second line`);
   }
+  return layout;
 }
 
 async function assertProjectConnectedLayout(page) {
@@ -464,11 +483,20 @@ async function main() {
     if ((await page.locator(".light-shell[data-light-route=\"meetings\"] .card-meeting-list").count()) < 1) {
       throw new Error("Light Meetings did not render canonical meeting cards");
     }
-    await assertMeetingsLayout(page, "meetings-430");
+    const meetingsLayout = {};
+    const short430 = await assertMeetingsLayout(page, "meetings-short-430", { cardIndex: 0 });
+    const long430 = await assertMeetingsLayout(page, "meetings-long-430", { cardIndex: 1, expectedLeftInset: short430.titleLeftInset });
+    meetingsLayout.light_430 = { short: short430, long: long430 };
     screenshots.meetings = await screenshot(page, config.reportDir, "08-light-meetings-fixture-cards");
     await page.setViewportSize({ width: 320, height: 740 });
     await assertVisible(page, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list", "meetings page 320");
-    await assertMeetingsLayout(page, "meetings-320", { expectWrapped: true });
+    const short320 = await assertMeetingsLayout(page, "meetings-short-320", { cardIndex: 0, expectedLeftInset: short430.titleLeftInset });
+    const long320 = await assertMeetingsLayout(page, "meetings-long-320", {
+      cardIndex: 1,
+      expectWrapped: true,
+      expectedLeftInset: short320.titleLeftInset
+    });
+    meetingsLayout.light_320 = { short: short320, long: long320 };
     screenshots.meetingsNarrow = await screenshot(page, config.reportDir, "08b-light-meetings-fixture-cards-320");
     await page.setViewportSize(VIEWPORT);
     await assertVisible(page, ".light-shell[data-light-route=\"meetings\"] .card-meeting-list", "meetings page reset");
@@ -490,6 +518,7 @@ async function main() {
       proof_data_source: "local_playwright_fixtures_and_mocked_api",
       page_url: config.pageUrl,
       screenshots,
+      meetings_layout: meetingsLayout,
       browser_open_commands: state.browserOpenCommands,
       home_tile_count: homeTileCount
     };

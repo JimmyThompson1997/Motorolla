@@ -561,6 +561,12 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "manage_mode_active" in source
     assert "selected_count" in source
     assert "menu_open" in source
+    assert "readMeetingRowLayout(" in source
+    assert "titleLeftInset" in source
+    assert "dark-meetings-430" in source
+    assert "light-meetings-430" in source
+    assert "dark-meetings-320" in source
+    assert "light-meetings-320" in source
 
 
 def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract() -> None:
@@ -573,6 +579,18 @@ def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract()
     assert 'for (const label of ["When", "Who", "Source", "Topics"]) {' in source
     assert "Meeting note detail should keep Who inside the Details card" in source
     assert "Meeting note detail should not keep a standalone Who section shell" in source
+
+
+def test_meetings_walkthrough_proof_checks_short_and_long_title_alignment() -> None:
+    source = read_source("cover_light_walkthrough_port_playwright.mjs")
+
+    assert "readMeetingRowLayout(" in source
+    assert "titleLeftInset" in source
+    assert 'title: "Quick sync"' in source
+    assert "meetings-short-430" in source
+    assert "meetings-long-430" in source
+    assert "meetings-short-320" in source
+    assert "meetings-long-320" in source
 
 
 def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:

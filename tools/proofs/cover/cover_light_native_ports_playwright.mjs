@@ -268,6 +268,7 @@ async function readMeetingRowLayout(page, selector, limit = 3) {
       const bodyRect = node.querySelector(".card-body")?.getBoundingClientRect() || null;
       const metaRect = node.querySelector(".card-meeting-meta")?.getBoundingClientRect() || null;
       const titleRect = node.querySelector(".title")?.getBoundingClientRect() || null;
+      const titleStyle = node.querySelector(".title") ? getComputedStyle(node.querySelector(".title")) : null;
       const timestampRect = node.querySelector(".card-timestamp")?.getBoundingClientRect() || null;
       const audioRect = node.querySelector('[data-card-action="audio"]')?.getBoundingClientRect() || null;
       const contentBottom = Math.max(
@@ -283,7 +284,11 @@ async function readMeetingRowLayout(page, selector, limit = 3) {
         gridRowCount: gridTemplateRows ? gridTemplateRows.split(/\s+/).filter(Boolean).length : 0,
         bottomSlackPx: Math.round((cardRect.bottom - contentBottom) * 10) / 10,
         bodyMetaGapPx: bodyRect && metaRect ? Math.round((metaRect.left - bodyRect.right) * 10) / 10 : null,
-        timestampAboveAudio: Boolean(timestampRect && audioRect && timestampRect.bottom <= audioRect.top + 1.5)
+        timestampAboveAudio: Boolean(timestampRect && audioRect && timestampRect.bottom <= audioRect.top + 1.5),
+        bodyLeftInset: bodyRect ? Math.round((bodyRect.left - cardRect.left) * 10) / 10 : null,
+        titleLeftInset: titleRect ? Math.round((titleRect.left - cardRect.left) * 10) / 10 : null,
+        titleHeight: titleRect ? Math.round(titleRect.height * 10) / 10 : null,
+        titleLineHeight: titleStyle ? Math.round((Number.parseFloat(titleStyle.lineHeight || "0") || 0) * 10) / 10 : null
       };
     }),
     limit
@@ -312,14 +317,23 @@ function assertMeaningfulRows(label, rows) {
   );
 }
 
-function assertTightMeetingRows(label, rows) {
+function assertTightMeetingRows(label, rows, { expectedLeftInset = null, requireWrappedRow = false } = {}) {
   assert(rows.length > 0, `${label} did not expose any meeting rows to inspect.`);
+  const referenceInset = typeof expectedLeftInset === "number" ? expectedLeftInset : rows[0]?.titleLeftInset;
   rows.forEach((row, index) => {
     assert(row.gridRowCount === 1, `${label} row ${index + 1} should use one effective grid row, got "${row.gridTemplateRows}".`);
     assert(row.bottomSlackPx <= 18, `${label} row ${index + 1} kept ${row.bottomSlackPx}px of dead bottom space.`);
     assert((row.bodyMetaGapPx ?? -1) >= 4, `${label} row ${index + 1} body overlapped or crowded the right rail (gap ${row.bodyMetaGapPx}px).`);
     assert(row.timestampAboveAudio, `${label} row ${index + 1} should keep the timestamp above the mic action.`);
+    assert(row.titleLeftInset != null && row.bodyLeftInset != null, `${label} row ${index + 1} did not expose title/body left inset metrics.`);
+    assert(Math.abs(row.titleLeftInset - row.bodyLeftInset) <= 1.5, `${label} row ${index + 1} title drifted away from the shared left column (${row.titleLeftInset} vs ${row.bodyLeftInset}).`);
+    if (typeof referenceInset === "number") {
+      assert(Math.abs(row.titleLeftInset - referenceInset) <= 1.5, `${label} row ${index + 1} changed left inset unexpectedly (${row.titleLeftInset} vs ${referenceInset}).`);
+    }
   });
+  if (requireWrappedRow) {
+    assert(rows.some(row => (row.titleHeight ?? 0) > (row.titleLineHeight ?? 0) * 1.5), `${label} should include a wrapped long title row.`);
+  }
 }
 
 async function readScrollReachability(page, rowsSelector, preferredContainerSelectors = []) {
@@ -1550,8 +1564,8 @@ async function main() {
       assertFlatCardShell(lightMeetingsCardStyle, "Light Meetings");
       meetingsTightLayout.standard.dark = await readMeetingRowLayout(darkMeetingsPage, ".meetings-page .card-wrap article.card.card-meeting-list");
       meetingsTightLayout.standard.light = await readMeetingRowLayout(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card.card-meeting-list");
-      assertTightMeetingRows("Dark Meetings standard width", meetingsTightLayout.standard.dark);
-      assertTightMeetingRows("Light Meetings standard width", meetingsTightLayout.standard.light);
+      assertTightMeetingRows("dark-meetings-430", meetingsTightLayout.standard.dark);
+      assertTightMeetingRows("light-meetings-430", meetingsTightLayout.standard.light);
       screenshots.meetingsList = await saveScreenshot(lightPage, config.reportDir, "08-light-meetings-list");
 
       const darkMeetingsDetail = await openAndInspectDetail(darkMeetingsPage, ".card-meeting-list .card-body", config.timeoutMs);
@@ -1578,8 +1592,14 @@ async function main() {
       await lightPage.waitForTimeout(150);
       meetingsTightLayout.narrow.dark = await readMeetingRowLayout(darkMeetingsPage, ".meetings-page .card-wrap article.card.card-meeting-list");
       meetingsTightLayout.narrow.light = await readMeetingRowLayout(lightPage, ".light-shell[data-light-route=\"meetings\"] .meetings-page .card-wrap article.card.card-meeting-list");
-      assertTightMeetingRows("Dark Meetings narrow width", meetingsTightLayout.narrow.dark);
-      assertTightMeetingRows("Light Meetings narrow width", meetingsTightLayout.narrow.light);
+      assertTightMeetingRows("dark-meetings-320", meetingsTightLayout.narrow.dark, {
+        expectedLeftInset: meetingsTightLayout.standard.dark[0]?.titleLeftInset ?? null,
+        requireWrappedRow: true
+      });
+      assertTightMeetingRows("light-meetings-320", meetingsTightLayout.narrow.light, {
+        expectedLeftInset: meetingsTightLayout.standard.light[0]?.titleLeftInset ?? null,
+        requireWrappedRow: true
+      });
       screenshots.meetingsListNarrow = await saveScreenshot(lightPage, config.reportDir, "10b-light-meetings-list-narrow");
     }
 

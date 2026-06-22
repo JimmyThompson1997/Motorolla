@@ -1756,6 +1756,17 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert ".inbox-card-menu-item" in styles
 
 
+def test_meetings_titles_stay_explicitly_left_anchored() -> None:
+    styles = read("styles.css")
+    meeting_title_only = css_block(styles, ".card.card-meeting-list .card-body.is-title-only")
+    meeting_copy = css_block(styles, ".card.card-meeting-list .card-meeting-copy")
+
+    assert "display: block;" in meeting_title_only
+    assert "align-items: center;" not in meeting_title_only
+    assert "width: 100%;" in meeting_copy
+    assert "text-align: left;" in meeting_copy
+
+
 def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     styles = read("styles.css")
