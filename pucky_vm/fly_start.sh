@@ -22,6 +22,18 @@ require_cmd() {
   fi
 }
 
+ensure_xz_runtime() {
+  if command -v xz >/dev/null 2>&1; then
+    return
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Pucky Fly start requires xz to unpack the Node runtime archive."
+    exit 1
+  fi
+  apt-get update
+  apt-get install -y --no-install-recommends xz-utils
+}
+
 resolve_node_archive_name() {
   local node_arch=""
   case "$(uname -m)" in
@@ -36,13 +48,14 @@ resolve_node_archive_name() {
 }
 
 ensure_node_runtime() {
-  if [[ -x "$BIN_DIR/node" && -x "$BIN_DIR/npm" && -x "$BIN_DIR/npx" ]]; then
-    echo "Pucky Fly start: using cached Node runtime from $NODE_ROOT/current"
+  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    echo "Pucky Fly start: using existing Node runtime"
     return
   fi
 
   require_cmd curl
   require_cmd tar
+  ensure_xz_runtime
 
   local archive_name=""
   archive_name="$(resolve_node_archive_name)"
@@ -83,8 +96,12 @@ ensure_codex_runtime() {
 }
 
 require_cmd python3
-ensure_node_runtime
-ensure_codex_runtime
+if command -v codex >/dev/null 2>&1; then
+  echo "Pucky Fly start: using existing Codex runtime"
+else
+  ensure_node_runtime
+  ensure_codex_runtime
+fi
 
 if ! python3 - <<'PY'
 import sys
