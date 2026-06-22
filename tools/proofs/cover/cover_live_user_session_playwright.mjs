@@ -314,6 +314,25 @@ async function fetchTaskRecord(baseUrl, taskId, refreshKey) {
   return payload;
 }
 
+async function waitForTaskRecord(baseUrl, taskId, refreshKey, predicate, timeoutMs, failureMessage) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0) || 0);
+  let lastRecord = null;
+  while (Date.now() <= deadline) {
+    lastRecord = await fetchTaskRecord(baseUrl, taskId, refreshKey);
+    if (predicate(lastRecord)) {
+      return lastRecord;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  const lastSummary = lastRecord && typeof lastRecord === "object"
+    ? {
+        status: String(lastRecord.status || ""),
+        completed_at_ms: Number(lastRecord.completed_at_ms || 0) || 0,
+      }
+    : lastRecord;
+  throw new Error(`${failureMessage} (last task record: ${JSON.stringify(lastSummary)})`);
+}
+
 async function loadChromium() {
   const require = createRequire(import.meta.url);
   const candidates = [];
@@ -1357,7 +1376,14 @@ async function runRouteTour(page, config, mode, seed) {
     await page.locator(`.light-task-checklist-row[data-checklist-item-id="${incompleteChecklistIds[1]}"]`).first().click();
     await waitForTaskDetailStatus(page, "done", config.timeoutMs);
     const taskStateAfterChecklistDone = await readTaskDetailState(page);
-    const taskRecordAfterChecklistDone = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+    const taskRecordAfterChecklistDone = await waitForTaskRecord(
+      config.baseUrl,
+      seed.primaryTaskId,
+      config.refreshKey,
+      task => String(task?.status || "") === "done" && Number(task?.completed_at_ms || 0) > 0,
+      config.timeoutMs,
+      `${mode}: completing the final checklist item should mark the task done in the API`
+    );
     const completedAtAfterChecklistDone = Number(taskRecordAfterChecklistDone.completed_at_ms || 0);
     assert(taskStateAfterChecklistDone.task_status === "done", `${mode}: completing the final checklist item should mark the task done in the DOM`);
     assert(taskStateAfterChecklistDone.header_created_meta.startsWith("Completed "), `${mode}: completed task detail header should say Completed, got ${taskStateAfterChecklistDone.header_created_meta}`);
@@ -1385,7 +1411,14 @@ async function runRouteTour(page, config, mode, seed) {
     await page.locator(`.light-task-checklist-row[data-checklist-item-id="${incompleteChecklistIds[1]}"]`).first().click();
     await waitForTaskDetailStatus(page, "in_progress", config.timeoutMs);
     const taskStateAfterChecklistReopen = await readTaskDetailState(page);
-    const taskRecordAfterChecklistReopen = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+    const taskRecordAfterChecklistReopen = await waitForTaskRecord(
+      config.baseUrl,
+      seed.primaryTaskId,
+      config.refreshKey,
+      task => String(task?.status || "") === "in_progress" && !("completed_at_ms" in (task || {})),
+      config.timeoutMs,
+      `${mode}: unchecking a completed checklist item should reopen the task in the API`
+    );
     assert(taskStateAfterChecklistReopen.task_status === "in_progress", `${mode}: unchecking a completed checklist item should reopen the task in the DOM`);
     assert(taskStateAfterChecklistReopen.header_created_meta.startsWith("Created "), `${mode}: reopened task detail header should return to Created, got ${taskStateAfterChecklistReopen.header_created_meta}`);
     assert(taskRecordAfterChecklistReopen.status === "in_progress", `${mode}: unchecking a completed checklist item should reopen the task in the API`);
@@ -1465,7 +1498,14 @@ async function runRouteTour(page, config, mode, seed) {
     await waitForRoute(page, expectedTaskReturnRoute(mode), config.timeoutMs);
     await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
     taskState = await readTaskDetailState(page);
-    const taskRecord = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+    const taskRecord = await waitForTaskRecord(
+      config.baseUrl,
+      seed.primaryTaskId,
+      config.refreshKey,
+      task => String(task?.status || "") === "done" && Number(task?.completed_at_ms || 0) > completedAtAfterChecklistDone,
+      config.timeoutMs,
+      `${mode}: task API did not persist Done after reload`
+    );
     const completedAtAfterReload = Number(taskRecord.completed_at_ms || 0);
     assert(taskState.task_status === "done", `${mode}: task detail did not keep Done after reload`);
     assert(taskRecord.status === "done", `${mode}: task API did not persist Done after reload`);
