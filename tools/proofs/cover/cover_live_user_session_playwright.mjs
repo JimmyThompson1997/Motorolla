@@ -158,7 +158,7 @@ async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
       await route.fulfill({ response });
     } catch (error) {
       const message = String(error && error.message ? error.message : error || "");
-      if (/target page, context or browser has been closed/i.test(message)) {
+      if (/target page, context or browser has been closed/i.test(message) || /fetch response has been disposed/i.test(message)) {
         await route.abort("failed").catch(() => {});
         return;
       }

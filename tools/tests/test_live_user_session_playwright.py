@@ -45,7 +45,8 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert 'url.searchParams.set("api_token"' not in source
     assert "browser_api_token" not in source
     assert "Authorization: `Bearer ${config.apiToken}`" not in source
-    assert 'if (/target page, context or browser has been closed/i.test(message)) {' in source
+    assert "/target page, context or browser has been closed/i.test(message)" in source
+    assert "/fetch response has been disposed/i.test(message)" in source
     assert 'await route.abort("failed").catch(() => {});' in source
 
 
