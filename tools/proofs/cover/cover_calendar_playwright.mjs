@@ -1124,7 +1124,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     detailState = await readMeetingDetailState(page);
     assert(detailState.connectedExpanded, "Expected Back from Who chip to preserve Connected expanded state.");
     for (const target of [
-      { id: `${seed.runId}-project`, route: "tag-detail", expectedText: "Proof freelance follow-up" },
+      { id: `${seed.runId}-project`, route: "project-detail", expectedText: "Proof freelance follow-up" },
       { id: `${seed.runId}-task`, route: "task-detail", expectedText: "Send proof review notes" },
       { id: `${seed.runId}-note`, route: "note-detail", expectedText: "Proof review outline" },
       { id: `${seed.runId}-meeting-note`, route: "meeting-note-detail", expectedText: "Proof freelance prep" },
@@ -1441,9 +1441,9 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await ensureMeetingDetailSectionExpanded(page, "details", true);
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
-    await selectCalendarDetailTarget(page, "tag-detail", `${seed.runId}-project`, "Proof freelance follow-up");
+    await selectCalendarDetailTarget(page, "project-detail", `${seed.runId}-project`, "Proof freelance follow-up");
     await page.getByRole("button", { name: "Back" }).click();
-    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from tag-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from project-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");

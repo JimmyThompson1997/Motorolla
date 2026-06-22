@@ -92,6 +92,13 @@ def test_workspace_store_keeps_note_html_and_clears_non_note_html(tmp_path: Path
     assert "source" not in task["metadata"]
 
 
+def test_workspace_store_uses_projects_collection_and_drops_tags_alias() -> None:
+    from pucky_vm.workspace_store import WORKSPACE_COLLECTIONS
+
+    assert WORKSPACE_COLLECTIONS["projects"] == "project"
+    assert "tags" not in WORKSPACE_COLLECTIONS
+
+
 def test_contact_endpoint_migration_backfills_email_phone_and_removes_metadata(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     db_path = tmp_path / "workspace.sqlite3"

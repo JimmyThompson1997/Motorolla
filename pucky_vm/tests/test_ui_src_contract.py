@@ -33,7 +33,7 @@ def test_shipped_workspace_apps_are_marked_real() -> None:
         '{ route: "notes", label: "Notes", semantic: "notes", kind: "real" }',
         '{ route: "tasks", label: "Tasks", semantic: "tasks", kind: "real" }',
         '{ route: "calendar", label: "Calendar", semantic: "calendar", kind: "real" }',
-        '{ route: "tags", label: "Tags", semantic: "tags", kind: "real" }',
+        '{ route: "projects", label: "Projects", semantic: "projects", kind: "real" }',
         '{ route: "contacts", label: "Contacts", semantic: "contacts", kind: "real" }',
         '{ route: "connect", label: "Connect", semantic: "connect", kind: "real" }',
         '{ route: "settings", label: "Settings", semantic: "settings", kind: "real" }',
@@ -59,7 +59,7 @@ def test_shipped_workspace_semantic_ids_exist_in_registry() -> None:
         "notes",
         "tasks",
         "calendar",
-        "tags",
+        "projects",
         "contacts",
     ):
         assert f"{semantic_key}: {{ icon:" in ICON_SOURCE
@@ -84,7 +84,7 @@ def test_shipped_semantic_registry_colors_are_unique_and_conservative() -> None:
         "notes": "#c28a00",
         "tasks": "#22c55e",
         "calendar": "#ef4444",
-        "tags": "#f97316",
+        "projects": "#f97316",
         "contacts": "#db2777",
     }
     assert expected.keys() <= entries.keys()

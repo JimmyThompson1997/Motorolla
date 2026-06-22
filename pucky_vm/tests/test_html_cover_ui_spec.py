@@ -118,8 +118,8 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     route_for_theme = function_block(app, "resolveRouteForTheme")
     route_sync = function_block(app, "syncRouteQueryParam")
 
-    assert 'projects: "tags"' in routes
-    assert '"project-detail": "tag-detail"' in routes
+    assert 'projects: "tags"' not in routes
+    assert '"project-detail": "tag-detail"' not in routes
     assert "const ROUTE_ALIASES = routeCatalog.ROUTE_ALIASES && typeof routeCatalog.ROUTE_ALIASES === \"object\"" in app
     assert 'feed: "inbox"' not in routes
     assert 'links: "connect"' not in routes
@@ -347,7 +347,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'openWorkspaceTarget(' in light_linked_record_feed_row
     assert 'options.fromRoute || state.route || ""' in light_linked_record_feed_row
     assert "lightInfoRow(row" in light_info_section
-    assert 'lightNavigate("tag-detail", { from: "tags" });' in light_project_row
+    assert 'lightNavigate("project-detail", { from: "projects" });' in light_project_row
     assert "event.stopPropagation();" in light_attendee_chip
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
@@ -956,7 +956,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
-    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);' in app
+    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);' in app
     assert "return UNIVERSAL_FLAT_FEED_SURFACES.has(surfaceKey);" in flat_feed_surface
     assert "notesSectionsExpanded: { pinned: true, recent: true }," in app
     assert "return renderUniversalFeedPage({" in light_notes
@@ -1240,14 +1240,14 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "lightHtmlDocument(item" not in feed_detail
     assert '["Artifacts", "attachment", projectAssets(project)]' not in project_detail
     assert "lightHtmlDocument(project" not in project_detail
-    assert 'page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`, "sell"));' in project_detail
-    assert "page.append(lightChipCloud(projectChips(project)));" in project_detail
+    assert "lightDetailHero(" not in project_detail
+    assert "lightChipCloud(" not in project_detail
     assert "light-project-section-grid" not in project_detail
     assert 'page.classList.add("light-project-detail-page");' in project_detail
     assert "page.append(lightLinkedRecordSection(project, {" in project_detail
     assert 'title: "Connected"' in project_detail
     assert "showWhenEmpty: true" in project_detail
-    assert 'fromRoute: "tag-detail"' in project_detail
+    assert 'fromRoute: "project-detail"' in project_detail
     assert "dedupeTargets: true," in project_detail
     assert "showChips: false," in project_detail
     assert 'showChevron: false,' in project_detail
@@ -1675,12 +1675,12 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert "function lightInboxSection(" in app
     assert "function lightMeetingsSection(" in app
     assert "return renderUniversalFeedPage({" in projects_page
-    assert 'surface: "tags",' in projects_page
-    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))' in projects_page
+    assert 'surface: "projects",' in projects_page
+    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))' in projects_page
     assert 'renderMode: "flat",' in project_descriptor
     assert "const flatFeed = options.flatFeed === true;" in project_row
     assert 'flatFeed ? "is-flat-feed" : ""' in project_row
-    assert 'lightSmallIcon("sell")' in project_row
+    assert 'lightSmallIcon("folder")' in project_row
     assert "return renderUniversalFeedPage({" in inbox_page
     assert 'surface: "inbox",' in inbox_page
     assert 'surfaceTag: "section",' in inbox_page

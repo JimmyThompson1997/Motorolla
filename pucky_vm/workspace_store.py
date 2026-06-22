@@ -21,14 +21,10 @@ WORKSPACE_COLLECTIONS: dict[str, str] = {
     "tasks": "task",
     "calendar-events": "calendar_event",
     "feed-items": "feed_item",
-    "tags": "project",
+    "projects": "project",
     "contacts": "contact",
     "meeting-notes": "meeting_note",
     "reminders": "reminder",
-}
-
-WORKSPACE_COLLECTION_ALIASES: dict[str, str] = {
-    "projects": "tags",
 }
 
 KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
@@ -55,13 +51,6 @@ CONTACT_PHOTO_BY_ID = {
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
-
-def canonical_collection_name(collection: object) -> str:
-    value = str(collection or "").strip()
-    if not value:
-        return ""
-    return WORKSPACE_COLLECTION_ALIASES.get(value, value)
 
 
 def _json_dumps(value: Any) -> str:
@@ -92,7 +81,7 @@ def _workspace_kind_label(kind: object) -> str:
         "task": "Task",
         "calendar_event": "Calendar",
         "feed_item": "Inbox",
-        "project": "Tag",
+        "project": "Project",
         "contact": "Contact",
         "meeting_note": "Meeting note",
         "reminder": "Reminder",
@@ -525,8 +514,7 @@ class WorkspaceStore:
         date: str = "",
         limit: int = 200,
     ) -> dict[str, object]:
-        canonical_collection = canonical_collection_name(collection)
-        kind = self.kind_for_collection(canonical_collection)
+        kind = self.kind_for_collection(collection)
         query = [
             "SELECT * FROM workspace_records WHERE kind = ?",
             "" if include_deleted else "AND deleted = 0",
@@ -561,7 +549,7 @@ class WorkspaceStore:
         items = [self._row_to_record(row) for row in rows]
         return {
             "schema": "pucky.workspace.list.v1",
-            "collection": canonical_collection,
+            "collection": collection,
             "kind": kind,
             "count": len(items),
             "items": items,
@@ -890,6 +878,9 @@ class WorkspaceStore:
         if current is None:
             return self.upsert_record("contacts", _self_contact_record())
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
+        metadata.pop("photo", None)
+        metadata.pop("html", None)
+        metadata.pop("html_asset_id", None)
         payload = {
             "id": SELF_CONTACT_ID,
             "title": SELF_CONTACT_TITLE,
@@ -981,7 +972,20 @@ class WorkspaceStore:
 
     def _cleanup_contacts_and_photos_v1(self, now_ms: int, *, remove_links: bool = True) -> None:
         with self._lock:
-            if remove_links:
+            clinic_row = self._conn.execute(
+                """
+                SELECT html, metadata_json
+                FROM workspace_records
+                WHERE kind = 'contact' AND record_id = 'clinic-front-desk'
+                """
+            ).fetchone()
+            should_remove_legacy_clinic = False
+            if clinic_row is not None:
+                clinic_metadata = _json_loads(clinic_row["metadata_json"], {})
+                clinic_email = str(clinic_metadata.get("email") or "").strip() if isinstance(clinic_metadata, dict) else ""
+                clinic_html = str(clinic_row["html"] or "").strip()
+                should_remove_legacy_clinic = not clinic_email and not clinic_html
+            if remove_links and should_remove_legacy_clinic:
                 self._conn.execute(
                     """
                     DELETE FROM workspace_links
@@ -989,17 +993,18 @@ class WorkspaceStore:
                        OR (target_kind = 'contact' AND target_id = 'clinic-front-desk')
                     """
                 )
-            self._conn.execute(
-                """
-                UPDATE workspace_records
-                SET archived = 1,
-                    deleted = 1,
-                    updated_at_ms = ?
-                WHERE kind = 'contact'
-                  AND record_id = 'clinic-front-desk'
-                """,
-                (now_ms,),
-            )
+            if should_remove_legacy_clinic:
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET archived = 1,
+                        deleted = 1,
+                        updated_at_ms = ?
+                    WHERE kind = 'contact'
+                      AND record_id = 'clinic-front-desk'
+                    """,
+                    (now_ms,),
+                )
             rows = self._conn.execute(
                 "SELECT record_id, title, metadata_json, deleted FROM workspace_records WHERE kind = 'contact'"
             ).fetchall()
@@ -1320,7 +1325,7 @@ class WorkspaceStore:
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
-        kind = WORKSPACE_COLLECTIONS.get(canonical_collection_name(collection))
+        kind = WORKSPACE_COLLECTIONS.get(str(collection or "").strip())
         if not kind:
             raise ValueError("unknown_workspace_collection")
         return kind
@@ -1792,10 +1797,7 @@ def seeded_workspace_snapshot(
         for asset in (assets or [])
         if str(asset.get("id") or asset.get("asset_id") or "").strip()
     }
-    next_records = {
-        canonical_collection_name(collection): [dict(record) for record in records]
-        for collection, records in records_by_collection.items()
-    }
+    next_records = {collection: [dict(record) for record in records] for collection, records in records_by_collection.items()}
     next_links = [dict(link) for link in links]
     next_records.setdefault("notes", [])
     notes = next_records["notes"]
@@ -1805,7 +1807,7 @@ def seeded_workspace_snapshot(
         if str(note.get("id") or note.get("record_id") or "").strip()
     }
     for collection, records in next_records.items():
-        kind = WORKSPACE_COLLECTIONS.get(canonical_collection_name(collection), "")
+        kind = WORKSPACE_COLLECTIONS.get(collection, "")
         for record in records:
             metadata = dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {}
             html = str(record.get("html") or "").strip()
@@ -2159,7 +2161,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                 "metadata": {"icon": "note", "type": "note_update"},
             },
         ],
-        "tags": [
+        "projects": [
             {
                 "id": "aurora",
                 "title": "Project Aurora",
@@ -2445,7 +2447,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "metadata": {"place": "Phone", "attendees": ["Sam Rivera"], "type": "call"},
             },
         ],
-        "tags": [
+        "projects": [
             {
                 "id": "home-refresh",
                 "title": "Home refresh",
