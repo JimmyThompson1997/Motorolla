@@ -510,6 +510,16 @@ def test_live_user_session_proof_checks_task_focus_ring_is_gone() -> None:
     assert "Task detail header selector opened in place without a blue focus rectangle." in source
 
 
+def test_live_user_session_contacts_edit_proof_handles_teardown_and_mode_specific_values() -> None:
+    source = read_source("cover_live_user_session_playwright.mjs")
+
+    assert "function buildContactsEditProofValues(mode) {" in source
+    assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "mobile" ? "Mobile" : "Proof";' in source
+    assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "mobile" ? "0199" : "0189";' in source
+    assert "Updated from ${modeKey} live proof edit flow" in source
+    assert 'await route.abort("failed").catch(() => {});' in source
+
+
 def test_live_user_session_proof_requires_clean_task_detail_layout_and_chevron_free_rows() -> None:
     source = read_source("cover_live_user_session_playwright.mjs")
 

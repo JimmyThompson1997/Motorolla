@@ -45,6 +45,8 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert 'url.searchParams.set("api_token"' not in source
     assert "browser_api_token" not in source
     assert "Authorization: `Bearer ${config.apiToken}`" not in source
+    assert 'if (/target page, context or browser has been closed/i.test(message)) {' in source
+    assert 'await route.abort("failed").catch(() => {});' in source
 
 
 def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() -> None:
@@ -180,13 +182,16 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert 'shouldRunRoute(config, "contacts-edit")' in source
+    assert "function buildContactsEditProofValues(mode) {" in source
+    assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "mobile" ? "Mobile" : "Proof";' in source
+    assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "mobile" ? "0199" : "0189";' in source
     assert 'action: "Open Contacts edit"' in source
     assert 'action: "Save edited contact"' in source
     assert 'action: "Return to edited Contacts list"' in source
     assert "readContactEditState" in source
     assert "saveContactEditAndWaitForDetail" in source
     assert "Updated Live Contact" in source
-    assert "Updated from live proof edit flow" in source
+    assert "Updated from ${modeKey} live proof edit flow" in source
     assert "updated.live.contact@example.com" in source
     assert "Expected saved contact detail to show the updated title" in source
     assert "Expected edited contact row to reappear with the updated title" in source

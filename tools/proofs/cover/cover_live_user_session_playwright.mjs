@@ -149,12 +149,21 @@ async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
     if (!headers.authorization) {
       headers.authorization = `Bearer ${token}`;
     }
-    const response = await route.fetch({
-      method: request.method(),
-      headers,
-      postData: request.postDataBuffer() || undefined,
-    });
-    await route.fulfill({ response });
+    try {
+      const response = await route.fetch({
+        method: request.method(),
+        headers,
+        postData: request.postDataBuffer() || undefined,
+      });
+      await route.fulfill({ response });
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error || "");
+      if (/target page, context or browser has been closed/i.test(message)) {
+        await route.abort("failed").catch(() => {});
+        return;
+      }
+      throw error;
+    }
   });
 }
 
@@ -952,6 +961,19 @@ async function saveContactEditAndWaitForDetail(page, timeoutMs) {
   await waitForRoute(page, "contact-detail", timeoutMs);
 }
 
+function buildContactsEditProofValues(mode) {
+  const modeKey = String(mode || "proof").trim().toLowerCase() || "proof";
+  const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "mobile" ? "Mobile" : "Proof";
+  const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "mobile" ? "0199" : "0189";
+  return {
+    updatedTitle: "Updated Live Contact",
+    updatedSummary: `Updated from ${modeKey} live proof edit flow`,
+    updatedEmail: "updated.live.contact@example.com",
+    updatedPhone: `+1 (415) 555-${phoneSuffix}`,
+    modeLabel,
+  };
+}
+
 async function waitForSeededCalendarEvent(page, seed, timeoutMs) {
   const selector = `.light-event-block[data-event-id="${seed.calendarEventId}"] .light-event-main`;
   const locator = page.locator(selector).first();
@@ -1660,10 +1682,7 @@ async function runRouteTour(page, config, mode, seed) {
   }
 
   if (shouldRunRoute(config, "contacts-edit")) {
-    const updatedTitle = "Updated Live Contact";
-    const updatedSummary = "Updated from live proof edit flow";
-    const updatedEmail = "updated.live.contact@example.com";
-    const updatedPhone = "+1 (415) 555-0199";
+    const { updatedTitle, updatedSummary, updatedEmail, updatedPhone, modeLabel } = buildContactsEditProofValues(mode);
     const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
 
     await goHome(page, config);
@@ -1695,7 +1714,7 @@ async function runRouteTour(page, config, mode, seed) {
       route: "contact-edit",
       action: "Update contact fields",
       expected: "The Contacts edit form accepts updated name, summary, email, and phone values before save.",
-      confirmation: "Edited contact fields populated cleanly in the form.",
+      confirmation: `${modeLabel} edited contact fields populated cleanly in the form.`,
       observed: { updated_title: updatedTitle, updated_summary: updatedSummary, updated_email: updatedEmail, updated_phone: updatedPhone },
     });
 
