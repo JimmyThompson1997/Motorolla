@@ -1336,6 +1336,7 @@ async function exerciseLiveTempCardArchive(page, config, reportDir, manifestBund
   proofUrl.searchParams.set("theme", "light");
   proofUrl.searchParams.set("route", "inbox");
   proofUrl.searchParams.set("reset_nav", "1");
+  proofUrl.searchParams.set("api_token", String(config.apiToken || "").trim());
   proofUrl.searchParams.set("_pucky_refresh", runId);
   await page.goto(proofUrl.toString(), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
   await waitForLightRoute(page, "inbox", ".card-wrap article.card", config.timeoutMs);

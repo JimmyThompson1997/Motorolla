@@ -694,6 +694,8 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "03-selected-simple-check" in source
     assert "05-archive-filter-card-visible" in source
     assert "06-archived-menu-unarchive" in source
+    assert 'proofUrl.searchParams.set("api_token", String(config.apiToken || "").trim());' in source
+    assert 'proofUrl.searchParams.set("_pucky_refresh", runId);' in source
     assert "proof-local-inbox-management" in dev_source
     assert "proof-live-inbox-management" in dev_source
     assert "--only-inbox-management" in dev_source
