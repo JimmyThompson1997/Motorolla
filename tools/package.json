@@ -10,6 +10,8 @@
     "test:cover-live-user-session": "node ./proofs/cover/cover_live_user_session_playwright.mjs",
     "test:cover-calendar": "node ./proofs/cover/cover_calendar_playwright.mjs",
     "test:cover-universal-feed-tiles": "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs",
+    "test:cover-links-auth-flow": "node ./proofs/cover/cover_links_auth_flow_playwright.mjs",
+    "test:cover-links-auth-flow-live": "node ./proofs/cover/cover_links_auth_flow_live_playwright.mjs",
     "test:cover-hosted-bug-hunt": "node ./proofs/cover/cover_hosted_bug_hunt_playwright.mjs",
     "test:cover-inbox-tile-audio-truth": "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
     "test:cover-light-native-ports": "node ./proofs/cover/cover_light_native_ports_playwright.mjs",

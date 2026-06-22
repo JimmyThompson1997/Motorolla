@@ -53,6 +53,8 @@
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
+  const LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS = 2200;
+  const LINKS_NATIVE_CONFIG_RETRY_MS = 120;
   const TASK_SPLIT_MIN_WIDTH_PX = 900;
   const MIN_PLAYBACK_SPEED = 0.5;
   const MAX_PLAYBACK_SPEED = 3;
@@ -960,19 +962,69 @@
       if (!url) {
         throw new Error("browser.open requires url");
       }
-      try {
-        window.open(url, "_blank", "noopener,noreferrer");
-      } catch (_) {
-        if (window.location && typeof window.location.assign === "function") {
-          window.location.assign(url);
+      let popup = null;
+      let popupError = null;
+      if (typeof window.open === "function") {
+        try {
+          popup = window.open("", "_blank", "noopener,noreferrer");
+          if (popup && popup.location && typeof popup.location.assign === "function") {
+            popup.location.assign(url);
+          }
+        } catch (error) {
+          popupError = error;
         }
       }
-      return {
-        schema: "pucky.browser_open.v1",
-        launched: true,
-        uri: url,
-        user_mediated: true
-      };
+      let popupOpened = false;
+      if (popup) {
+        await new Promise(resolve => setTimeout(resolve, 24));
+        try {
+          if (typeof popup.closed === "boolean" && popup.closed === true) {
+            popupOpened = false;
+          } else {
+            try {
+              const popupHref = String(popup.location && popup.location.href || "").trim();
+              popupOpened = Boolean(popupHref && popupHref !== "about:blank");
+            } catch (_) {
+              popupOpened = true;
+            }
+          }
+        } catch (_) {
+          popupOpened = true;
+        }
+      }
+      if (popupOpened) {
+        return {
+          schema: "pucky.browser_open.v1",
+          launched: true,
+          uri: url,
+          user_mediated: true,
+          launch_surface: "popup",
+          popup_opened: true,
+          same_tab_navigation: false
+        };
+      }
+      let assignError = null;
+      if (window.location && typeof window.location.assign === "function") {
+        try {
+          window.location.assign(url);
+          return {
+            schema: "pucky.browser_open.v1",
+            launched: true,
+            uri: url,
+            user_mediated: true,
+            launch_surface: "same_tab",
+            popup_opened: false,
+            same_tab_navigation: true
+          };
+        } catch (error) {
+          assignError = error;
+        }
+      }
+      const detail = [popupError, assignError]
+        .map(error => String(error && error.message ? error.message : error || "").trim())
+        .filter(Boolean)
+        .join("; ");
+      throw new Error(detail ? `browser.open failed to launch auth: ${detail}` : "browser.open could not open a popup or navigate this tab.");
     }
     if (command === "player.asset.prepare") {
       const url = String(args.url || "").trim();
@@ -1703,11 +1755,14 @@
 
     row.append(icon, name, auth, mark);
     row.addEventListener("click", () => {
-      if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-        showToast("Connect stays read-only in hosted web.");
+      if (hostedConnectReadOnlyMode() && !String(state.links.apiToken || state.links.token || "").trim()) {
+        state.links.error = "";
+        state.links.message = "Open Connect with ?api_token=... to launch app auth flows in browser.";
+        state.links.messageKind = "";
+        render();
         return;
       }
-      openLinksAuthFlow(app);
+      void openLinksAuthFlow(app);
     });
     return row;
   }
@@ -1751,13 +1806,28 @@
     return labels.join(" + ");
   }
 
+  function blankLinksHandoffState() {
+    return {
+      at: "",
+      event: "",
+      slug: "",
+      auth_url: "",
+      launched: false,
+      launch_surface: "",
+      popup_opened: false,
+      same_tab_navigation: false,
+      error: ""
+    };
+  }
+
   function linksDebugRoot() {
     if (!window.__PUCKY_LINKS_DEBUG__ || typeof window.__PUCKY_LINKS_DEBUG__ !== "object") {
       window.__PUCKY_LINKS_DEBUG__ = {
         schema: "pucky.links_debug.v1",
         route_sessions: [],
         click_sessions: [],
-        last_event: null
+        last_event: null,
+        last_handoff: blankLinksHandoffState()
       };
     }
     return window.__PUCKY_LINKS_DEBUG__;
@@ -1867,6 +1937,51 @@
     linksDebugRecord("row_click", { slug: String(slug || "") }, "click");
   }
 
+  function linksHandoffState() {
+    const current = state.links.lastHandoff;
+    if (!current || typeof current !== "object") {
+      return blankLinksHandoffState();
+    }
+    return Object.assign(blankLinksHandoffState(), current);
+  }
+
+  function setLinksHandoffState(patch = {}) {
+    state.links.lastHandoff = Object.assign(blankLinksHandoffState(), linksHandoffState(), patch);
+    linksDebugRoot().last_handoff = Object.assign({}, state.links.lastHandoff);
+    return state.links.lastHandoff;
+  }
+
+  function normalizeLinksBrowserOpenResult(result, options = {}) {
+    const raw = result && typeof result === "object" ? result : {};
+    const event = String(options.event || "browser_open_result").trim() || "browser_open_result";
+    const slug = String(options.slug || "").trim();
+    const authUrl = String(raw.uri || raw.url || options.authUrl || "").trim();
+    const launched = raw.launched !== false;
+    const popupOpened = raw.popup_opened === true;
+    const sameTabNavigation = raw.same_tab_navigation === true;
+    let launchSurface = String(raw.launch_surface || raw.surface || "").trim();
+    if (!launchSurface) {
+      if (popupOpened) {
+        launchSurface = "popup";
+      } else if (sameTabNavigation) {
+        launchSurface = "same_tab";
+      } else if (launched && !hostedConnectReadOnlyMode()) {
+        launchSurface = "external_intent";
+      }
+    }
+    return {
+      at: new Date().toISOString(),
+      event,
+      slug,
+      auth_url: authUrl,
+      launched,
+      launch_surface: launchSurface,
+      popup_opened: popupOpened || launchSurface === "popup",
+      same_tab_navigation: sameTabNavigation || launchSurface === "same_tab",
+      error: String(raw.error || options.error || "").trim()
+    };
+  }
+
   function hostedConnectReadOnlyMode() {
     return !(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
   }
@@ -1958,6 +2073,25 @@
           state.links.portal_url = "";
           state.links.token = "";
           state.links.auth_mode = "browser";
+          await ensureLinksApiConfig();
+          if (state.links.apiToken) {
+            linksDebugRecord("portal_url_start", { force: Boolean(options.force), browser_preview: true }, "route");
+            payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
+            state.links.portal_url = payload.portal_url;
+            state.links.token = payload.token;
+            state.links.auth_mode = payload.auth_mode;
+            state.links.available = payload.available;
+            linksDebugRecord(
+              "portal_url_end",
+              {
+                auth_mode: payload.auth_mode,
+                available: payload.available,
+                browser_preview: true,
+                server_timing: String(payload && payload._server_timing || "")
+              },
+              "route"
+            );
+          }
           await loadLinksConnected({ render: false, force: Boolean(options.force) });
           return;
         }
@@ -1970,7 +2104,7 @@
             linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
             return;
           }
-          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url", { authorized: true }));
+          payload = normalizeLinksPortalPayload(await linksApiRequest("/api/links/composio/portal-url"));
           state.links.portal_url = payload.portal_url;
           state.links.token = payload.token;
           state.links.auth_mode = payload.auth_mode;
@@ -2191,6 +2325,17 @@
     state.links.handoffLocked = true;
     state.links.handoffDeadlineAt = Date.now() + LINKS_BROWSER_HANDOFF_LOCK_MS;
     state.links.openingSlug = slug;
+    setLinksHandoffState({
+      at: new Date().toISOString(),
+      event: "handoff_started",
+      slug: String(slug || "").trim(),
+      auth_url: "",
+      launched: false,
+      launch_surface: "",
+      popup_opened: false,
+      same_tab_navigation: false,
+      error: ""
+    });
     state.links.error = "";
     state.links.message = "";
     state.links.messageKind = "";
@@ -2204,6 +2349,7 @@
 
   async function openLinksAuthFlow(app) {
     const slug = String(app && app.slug || "").trim();
+    let authUrl = "";
     if (!slug || linksHandoffLocked()) {
       return;
     }
@@ -2221,8 +2367,7 @@
     try {
       linksDebugRecord("oauth_start_start", { slug }, "click");
       const payload = await linksApiRequest(
-        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`,
-        { authorized: true }
+        `/api/links/composio/oauth/start?token=${encodeURIComponent(state.links.token)}&app=${encodeURIComponent(slug)}&auth_mode=${encodeURIComponent(state.links.auth_mode || "browser")}`
       );
       linksDebugRecord(
         "oauth_start_end",
@@ -2233,14 +2378,44 @@
         },
         "click"
       );
-      const authUrl = String(payload && payload.auth_url || "").trim();
+      authUrl = String(payload && payload.auth_url || "").trim();
       if (!authUrl) {
         throw new Error("Connect did not return a valid auth URL.");
       }
       if (String(payload && payload.auth_mode || state.links.auth_mode) === "browser") {
-        linksDebugRecord("browser_open_requested", { slug }, "click");
-        await Pucky.request({ command: "browser.open", args: { url: authUrl } });
+        linksDebugRecord("browser_open_requested", { slug, auth_url: authUrl }, "click");
+        const handoff = normalizeLinksBrowserOpenResult(
+          await Pucky.request({ command: "browser.open", args: { url: authUrl } }),
+          { slug, authUrl }
+        );
+        setLinksHandoffState(handoff);
+        linksDebugRecord(
+          "browser_open_result",
+          {
+            slug,
+            auth_url: handoff.auth_url,
+            launch_surface: handoff.launch_surface,
+            launched: handoff.launched,
+            popup_opened: handoff.popup_opened,
+            same_tab_navigation: handoff.same_tab_navigation
+          },
+          "click"
+        );
+        if (!handoff.launched) {
+          throw new Error(handoff.error || "Browser handoff did not launch an auth surface.");
+        }
       } else if (window.location && typeof window.location.assign === "function") {
+        setLinksHandoffState({
+          at: new Date().toISOString(),
+          event: "same_tab_assign",
+          slug,
+          auth_url: authUrl,
+          launched: true,
+          launch_surface: "same_tab",
+          popup_opened: false,
+          same_tab_navigation: true,
+          error: ""
+        });
         window.location.assign(authUrl);
         return;
       } else {
@@ -2254,6 +2429,17 @@
       } else {
         state.links.error = detail || "Could not open the auth flow.";
       }
+      setLinksHandoffState({
+        at: new Date().toISOString(),
+        event: "handoff_error",
+        slug,
+        auth_url: authUrl,
+        launched: false,
+        launch_surface: "",
+        popup_opened: false,
+        same_tab_navigation: false,
+        error: state.links.error
+      });
       linksDebugRecord("handoff_error", { slug, detail: state.links.error }, "click");
       releaseLinksHandoff({ render: false, reason: "error" });
     } finally {
@@ -2271,6 +2457,51 @@
       return String(window.location.origin || "").replace(/\/$/, "");
     }
     return DEFAULT_LINKS_API_BASE;
+  }
+
+  async function requestNativeLinksConfig(options = {}) {
+    const requireApiToken = options.requireApiToken === true;
+    const deadlineAt = Date.now() + LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS;
+    let lastError = null;
+    let lastConfig = null;
+    while (Date.now() < deadlineAt) {
+      if (!(window.Pucky && typeof window.Pucky.request === "function")) {
+        await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
+        continue;
+      }
+      try {
+        const config = await Pucky.request({ command: "pucky.config.get", args: {} });
+        lastConfig = config && typeof config === "object" ? config : {};
+        const hasApiToken = Boolean(String(config && config.api_token || "").trim()) || config && config.has_api_token === true;
+        if (!requireApiToken || hasApiToken) {
+          return config;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
+    }
+    if (lastConfig) {
+      return lastConfig;
+    }
+    if (lastError) {
+      throw lastError;
+    }
+    throw new Error("Native bridge did not expose pucky.config.get.");
+  }
+
+  function resolveHostedBrowserApiToken() {
+    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
+      ? window.PUCKY_UI_STATE
+      : null;
+    if (uiState && typeof uiState.resolveBrowserApiToken === "function") {
+      return String(uiState.resolveBrowserApiToken() || "").trim();
+    }
+    try {
+      return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();
+    } catch (_) {
+      return "";
+    }
   }
 
   function resolveHostedBrowserDeviceId() {
@@ -2297,7 +2528,8 @@
     if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       return;
     }
-    state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+    state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+    state.links.apiToken = resolveHostedBrowserApiToken();
     state.links.deviceId = resolveHostedBrowserDeviceId();
   }
 
@@ -2310,11 +2542,13 @@
       return;
     }
     try {
-      const config = await Pucky.request({ command: "pucky.config.get", args: {} });
+      const config = await requestNativeLinksConfig({ requireApiToken: true });
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
+      state.links.apiToken = String(config && config.api_token || "");
       state.links.deviceId = "";
     } catch (_) {
       state.links.apiBaseUrl = "";
+      state.links.apiToken = "";
       state.links.deviceId = "";
     }
   }
@@ -2325,9 +2559,12 @@
     if (!needsAuthorization) {
       return {};
     }
+    if (state.links.apiToken) {
+      return { Authorization: `Bearer ${state.links.apiToken}` };
+    }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       refreshHostedBrowserAuthState();
-      return {};
+      return state.links.apiToken ? { Authorization: `Bearer ${state.links.apiToken}` } : {};
     }
     if (nativeProtectedAuthorization) {
       return { Authorization: nativeProtectedAuthorization };
@@ -2353,6 +2590,9 @@
       cache: String(options.cache || "no-store"),
       headers: {}
     };
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
     Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
@@ -3006,6 +3246,10 @@
     const feed = document.getElementById("feed");
     const scrollport = linksScrollElement();
     const filtered = linksFilteredApps();
+    const filteredSlugs = filtered
+      .map(item => String(item && item.slug || "").trim())
+      .filter(Boolean);
+    const handoff = linksHandoffState();
     const scrollTop = Math.max(0, safeNumber(scrollport && scrollport.scrollTop));
     const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(scrollport && scrollport.clientHeight));
     const startIndex = filtered.length ? Math.min(filtered.length - 1, Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT))) : 0;
@@ -3020,12 +3264,25 @@
       catalog_source: String(state.links.catalogSource || ""),
       catalog_version: String(state.links.catalogVersion || ""),
       filtered_app_count: filtered.length,
+      filtered_slugs: filteredSlugs,
       rendered_row_count: linksPageRefs?.rows ? linksPageRefs.rows.querySelectorAll(".links-app-row").length : 0,
       connected_loaded: Boolean(state.links.connectedLoaded),
+      api_token_present: Boolean(String(state.links.apiToken || "").trim()),
+      portal_token_present: Boolean(String(state.links.token || "").trim()),
       session_ready: Boolean(state.links.token || state.links.userId || state.links.connectedLoaded),
       loading: Boolean(state.links.loading),
       logo_loads: safeNumber(state.links.logoLoads),
       logo_errors: safeNumber(state.links.logoErrors),
+      inline_message: String(state.links.error || state.links.message || ""),
+      toast_message: String(state.lastToast.message || ""),
+      last_handoff_event: String(handoff.event || ""),
+      last_handoff_slug: String(handoff.slug || ""),
+      last_handoff_url: String(handoff.auth_url || ""),
+      last_handoff_surface: String(handoff.launch_surface || ""),
+      last_handoff_launched: Boolean(handoff.launched),
+      last_handoff_popup_opened: Boolean(handoff.popup_opened),
+      last_handoff_same_tab_navigation: Boolean(handoff.same_tab_navigation),
+      last_handoff_error: String(handoff.error || ""),
       first_visible_slug: String(firstVisible && firstVisible.slug || ""),
       last_visible_slug: String(lastVisible && lastVisible.slug || ""),
       feed: {
@@ -3166,7 +3423,8 @@
       portal_url: "",
       token: "",
       apiBaseUrl: "",
-      deviceId: "",
+      apiToken: resolveHostedBrowserApiToken(),
+      deviceId: resolveHostedBrowserDeviceId(),
       userId: "",
       auth_mode: "browser",
       apps: [],
@@ -3190,6 +3448,7 @@
       logoErrors: 0,
       message: "",
       messageKind: "",
+      lastHandoff: blankLinksHandoffState(),
       lastRefreshAt: 0
     };
   }

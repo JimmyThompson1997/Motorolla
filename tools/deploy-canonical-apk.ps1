@@ -11,7 +11,8 @@ param(
     [string]$ExpectedBranch = "master",
     [int]$ExpectedVersionCode = -1,
     [string]$ExpectedVersionName = "",
-    [string]$ProvisionToken = $(if ($env:PUCKY_DEVICE_TOKEN) { $env:PUCKY_DEVICE_TOKEN } elseif ($env:PUCKY_API_TOKEN) { $env:PUCKY_API_TOKEN } else { "" }),
+    [string]$ProvisionDeviceToken = $(if ($env:PUCKY_DEVICE_TOKEN) { $env:PUCKY_DEVICE_TOKEN } elseif ($env:PUCKY_API_TOKEN) { $env:PUCKY_API_TOKEN } else { "" }),
+    [string]$ProvisionApiToken = $(if ($env:PUCKY_API_TOKEN) { $env:PUCKY_API_TOKEN } else { "" }),
     [string]$ProvisionTurnUrl = "",
     [string]$ProvisionReplyMode = "",
     [string]$ProvisionBrokerUrl = "",
@@ -131,7 +132,7 @@ Write-Host "ADB:            $adb"
 Write-Host "Gradle:         $gradle"
 Write-Host "Device serial:  $Serial"
 Write-Host "Expected:       versionCode=$ExpectedVersionCode versionName=$ExpectedVersionName"
-Write-Host "Provisioning:   token=$(-not [string]::IsNullOrWhiteSpace($ProvisionToken)) turn_url=$(-not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl)) reply_mode=$ProvisionReplyMode"
+Write-Host "Provisioning:   token=$(-not [string]::IsNullOrWhiteSpace($ProvisionDeviceToken)) turn_url=$(-not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl)) reply_mode=$ProvisionReplyMode"
 
 if ($DryRun) {
     Write-Host "Dry run complete. No build or install performed."
@@ -170,7 +171,8 @@ if ($packageText -notmatch [Regex]::Escape("versionName=$ExpectedVersionName")) 
     throw "Installed package did not report expected versionName=$ExpectedVersionName"
 }
 
-if (-not [string]::IsNullOrWhiteSpace($ProvisionToken) `
+if (-not [string]::IsNullOrWhiteSpace($ProvisionDeviceToken) `
+        -or -not [string]::IsNullOrWhiteSpace($ProvisionApiToken) `
         -or -not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl) `
         -or -not [string]::IsNullOrWhiteSpace($ProvisionReplyMode) `
         -or -not [string]::IsNullOrWhiteSpace($ProvisionBrokerUrl) `
@@ -178,8 +180,11 @@ if (-not [string]::IsNullOrWhiteSpace($ProvisionToken) `
     $provisioning = [ordered]@{
         schema = "pucky.provisioning.v1"
     }
-    if (-not [string]::IsNullOrWhiteSpace($ProvisionToken)) {
-        $provisioning["token"] = $ProvisionToken
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionDeviceToken)) {
+        $provisioning["token"] = $ProvisionDeviceToken
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProvisionApiToken)) {
+        $provisioning["pucky_api_token"] = $ProvisionApiToken
     }
     if (-not [string]::IsNullOrWhiteSpace($ProvisionTurnUrl)) {
         $provisioning["pucky_turn_url"] = $ProvisionTurnUrl

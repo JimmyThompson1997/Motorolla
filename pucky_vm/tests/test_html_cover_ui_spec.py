@@ -528,66 +528,82 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert "box-shadow: none;" in calendar_settings_button
 
 
-def test_hosted_workspace_writes_use_token_free_browser_state_and_public_same_origin_fallback() -> None:
+def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     app = read("app.js")
     ui_state = read("pucky-ui-state.js")
 
     initial_links = function_block(app, "initialLinksState")
+    resolve_hosted_browser_api_token = function_block(app, "resolveHostedBrowserApiToken")
     resolve_hosted_browser_device = function_block(app, "resolveHostedBrowserDeviceId")
-    refresh_hosted_auth = function_block(app, "refreshHostedBrowserAuthState")
-    ensure_links = function_block(app, "ensureLinksApiConfig")
-    protected_headers = function_block(app, "protectedApiAuthorizationHeaders")
+    hydrate_links_session = function_block(app, "hydrateLinksSession")
 
-    assert 'apiToken: "",' not in initial_links
-    assert "function resolveHostedBrowserApiToken(" not in app
-    assert "function resolveBrowserApiToken(" not in ui_state
-    assert "browser_api_token" not in app
-    assert "browser_api_token" not in ui_state
-    assert 'params.get("api_token")' not in app
-    assert 'searchParams.set("api_token"' not in app
-    assert 'params.get("api_token")' not in ui_state
-    assert 'searchParams.set("api_token"' not in ui_state
+    assert 'apiToken: resolveHostedBrowserApiToken(),' in initial_links
+    assert "function resolveBrowserApiToken(" in ui_state
+    assert "browser_api_token" in ui_state
+    assert 'new URLSearchParams(window.location.search || "").get("api_token")' in app
+    assert 'params.get("api_token")' in ui_state
+    assert 'if (uiState && typeof uiState.resolveBrowserApiToken === "function") {' in resolve_hosted_browser_api_token
+    assert 'return String(uiState.resolveBrowserApiToken() || "").trim();' in resolve_hosted_browser_api_token
+    assert 'return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();' in resolve_hosted_browser_api_token
     assert 'const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"' in resolve_hosted_browser_device
     assert 'return String(uiState.resolveBrowserDeviceId({ deviceStateKey: BROWSER_DEVICE_STATE_KEY }) || "").trim();' in resolve_hosted_browser_device
-    assert 'state.links.apiBaseUrl = String(window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\\/$/, "");' in refresh_hosted_auth
-    assert "state.links.deviceId = resolveHostedBrowserDeviceId();" in refresh_hosted_auth
-    assert "refreshHostedBrowserAuthState();" in ensure_links
-    assert 'state.links.apiToken = "";' not in ensure_links
-    assert "if (!needsAuthorization) {" in protected_headers
-    assert "refreshHostedBrowserAuthState();" in protected_headers
-    assert 'return { Authorization: `Bearer ${state.links.apiToken}` };' not in protected_headers
-    assert "return {};" in protected_headers
-    assert 'const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });' in protected_headers
+    assert 'browser_preview: true' in hydrate_links_session
 
 
-def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flow() -> None:
+def test_bridge_connect_surfaces_missing_provisioning_token() -> None:
     app = read("app.js")
-    settings_page = function_block(app, "settingsPageView")
-    create_links_row = function_block(app, "createLinksRow")
-    observe_links_icon = function_block(app, "observeLinksIconImage")
     hydrate_links_session = function_block(app, "hydrateLinksSession")
-    load_links_connected = function_block(app, "loadLinksConnected")
-    load_phone_role_status = function_block(app, "loadPhoneRoleStatus")
-    phone_role_settings_detail = function_block(app, "phoneRoleSettingsDetail")
+    links_debug_metrics = function_block(app, "linksDebugMetrics")
 
-    assert "webPreviewSettingsCard" not in app
-    assert "openBrowserUnlockSheet" not in app
-    assert 'cards.push(phoneRoleSettingsCard(), advancedSettingsCard());' in settings_page
-    assert 'showToast("Connect stays read-only in hosted web.");' in create_links_row
-    assert "createLinksIconFallback()" in create_links_row
-    assert "observeLinksIconImage(icon, app);" in create_links_row
-    assert "typeof IntersectionObserver !== \"function\"" in observe_links_icon
-    assert 'rootMargin: "240px 0px 240px 0px"' in observe_links_icon
-    assert 'img.fetchPriority = "low";' in app
-    assert "hostedConnectReadOnlyMode()" in hydrate_links_session
-    assert 'state.links.available = true;' in hydrate_links_session
-    assert 'await loadLinksConnected({ render: false, force: Boolean(options.force) });' in hydrate_links_session
-    assert 'const query = new URLSearchParams();' in load_links_connected
-    assert '`/api/links/composio/my-apps${query.toString() ? `?${query}` : ""}`' in load_links_connected
-    assert 'state.links.userId = String(payload && payload.user_id || "").trim();' in load_links_connected
-    assert 'state.phoneRole = unavailableBrowserPhoneRoleStatus("preview_unavailable", {' in load_phone_role_status
-    assert "Hosted web keeps phone-role state read-only. Open the APK on your phone to view or change it." in phone_role_settings_detail
-    assert "Hosted web does not expose phone-role state. Open the APK on your phone to view it." in phone_role_settings_detail
+    assert 'state.links.error = "Device provisioning missing pucky_api_token.";' in hydrate_links_session
+    assert 'api_token_present: Boolean(String(state.links.apiToken || "").trim())' in links_debug_metrics
+    assert 'portal_token_present: Boolean(String(state.links.token || "").trim())' in links_debug_metrics
+    assert 'inline_message: String(state.links.error || state.links.message || "")' in links_debug_metrics
+
+
+def test_browser_open_truthfully_reports_popup_fallback_or_failure() -> None:
+    app = read("app.js")
+    browser_request = function_block(app, "browserRequest")
+
+    assert 'await new Promise(resolve => setTimeout(resolve, 24));' in browser_request
+    assert 'const popupHref = String(popup.location && popup.location.href || "").trim();' in browser_request
+    assert 'launch_surface: "popup"' in browser_request
+    assert 'popup_opened: true' in browser_request
+    assert 'launch_surface: "same_tab"' in browser_request
+    assert 'same_tab_navigation: true' in browser_request
+    assert 'throw new Error(detail ? `browser.open failed to launch auth: ${detail}` : "browser.open could not open a popup or navigate this tab.");' in browser_request
+
+
+def test_connect_debug_metrics_capture_filtered_slugs_and_last_handoff_state() -> None:
+    app = read("app.js")
+    initial_links_state = function_block(app, "initialLinksState")
+    links_debug_root = function_block(app, "linksDebugRoot")
+    open_links_auth_flow = function_block(app, "openLinksAuthFlow")
+    links_debug_metrics = function_block(app, "linksDebugMetrics")
+
+    assert 'last_handoff: blankLinksHandoffState()' in links_debug_root
+    assert 'lastHandoff: blankLinksHandoffState(),' in initial_links_state
+    assert 'const handoff = normalizeLinksBrowserOpenResult(' in open_links_auth_flow
+    assert 'setLinksHandoffState(handoff);' in open_links_auth_flow
+    assert '"browser_open_result"' in open_links_auth_flow
+    assert 'filtered_slugs: filteredSlugs,' in links_debug_metrics
+    assert 'last_handoff_event: String(handoff.event || "")' in links_debug_metrics
+    assert 'last_handoff_surface: String(handoff.launch_surface || "")' in links_debug_metrics
+    assert 'last_handoff_same_tab_navigation: Boolean(handoff.same_tab_navigation)' in links_debug_metrics
+
+
+def test_connect_native_config_waits_for_bridge_request_before_declaring_missing_token() -> None:
+    app = read("app.js")
+    request_native_config = function_block(app, "requestNativeLinksConfig")
+    ensure_links_api_config = function_block(app, "ensureLinksApiConfig")
+
+    assert 'const deadlineAt = Date.now() + LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS;' in request_native_config
+    assert 'const requireApiToken = options.requireApiToken === true;' in request_native_config
+    assert 'if (!(window.Pucky && typeof window.Pucky.request === "function")) {' in request_native_config
+    assert 'await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));' in request_native_config
+    assert 'const hasApiToken = Boolean(String(config && config.api_token || "").trim()) || config && config.has_api_token === true;' in request_native_config
+    assert 'return await Pucky.request({ command: "pucky.config.get", args: {} });' not in request_native_config
+    assert 'const config = await requestNativeLinksConfig({ requireApiToken: true });' in ensure_links_api_config
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:

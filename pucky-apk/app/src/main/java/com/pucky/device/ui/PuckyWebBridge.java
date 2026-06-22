@@ -202,10 +202,12 @@ public final class PuckyWebBridge {
 
     private JSONObject puckyConfig() {
         String turnUrl = settings.getPuckyTurnUrl();
+        String apiToken = settings.getConfiguredPuckyApiToken();
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.web_config.v1");
         Json.put(out, "api_base_url", apiBaseUrl(turnUrl));
-        Json.put(out, "has_native_bridge", true);
+        Json.put(out, "api_token", apiToken);
+        Json.put(out, "has_api_token", !apiToken.trim().isEmpty());
         return out;
     }
 

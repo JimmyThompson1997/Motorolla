@@ -14,11 +14,13 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_canonical_deploy_can_import_turn_provisioning_without_secret_logging() -> None:
     script = (ROOT / "tools" / "deploy-canonical-apk.ps1").read_text(encoding="utf-8")
 
-    assert "[string]$ProvisionToken" in script
+    assert "[string]$ProvisionDeviceToken" in script
+    assert "[string]$ProvisionApiToken" in script
     assert "[string]$ProvisionTurnUrl" in script
     assert "[string]$ProvisionReplyMode" in script
     assert 'schema = "pucky.provisioning.v1"' in script
-    assert '$provisioning["token"] = $ProvisionToken' in script
+    assert '$provisioning["token"] = $ProvisionDeviceToken' in script
+    assert '$provisioning["pucky_api_token"] = $ProvisionApiToken' in script
     assert '$provisioning["pucky_turn_url"] = $ProvisionTurnUrl' in script
     assert '$provisioning["pucky_turn_reply_mode"] = $ProvisionReplyMode' in script
     assert "provisioning_json_base64" in script
@@ -27,7 +29,8 @@ def test_canonical_deploy_can_import_turn_provisioning_without_secret_logging() 
     assert "without printing token values" in script
     assert "$env:PUCKY_DEVICE_TOKEN" in script
     assert "$env:PUCKY_API_TOKEN" in script
-    assert "Write-Host $ProvisionToken" not in script
+    assert "Write-Host $ProvisionDeviceToken" not in script
+    assert "Write-Host $ProvisionApiToken" not in script
 
 
 def test_canonical_deploy_fails_when_adb_install_fails_even_if_old_package_matches(tmp_path) -> None:
@@ -47,7 +50,15 @@ def test_canonical_deploy_removes_local_provisioning_file_after_import(tmp_path)
     host_file = Path(tempfile.gettempdir()) / "pucky_turn_provisioning.json"
     host_file.unlink(missing_ok=True)
 
-    result = _run_deploy(shell, repo, adb, "-ProvisionToken", "secret-test-token")
+    result = _run_deploy(
+        shell,
+        repo,
+        adb,
+        "-ProvisionDeviceToken",
+        "secret-device-token",
+        "-ProvisionApiToken",
+        "secret-api-token",
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not host_file.exists()

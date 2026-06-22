@@ -391,6 +391,37 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert ".light-task-detail-toggle" not in source
 
 
+def test_live_connect_auth_browser_proof_requires_explicit_token_and_real_transition() -> None:
+    source = read_source("cover_links_auth_flow_live_playwright.mjs")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert "PUCKY_API_TOKEN" in source
+    assert 'url.searchParams.set("api_token", String(config.apiToken || "").trim());' in source
+    assert 'url.searchParams.set("route", "connect");' in source
+    assert 'if (transition.kind === "none") {' in source
+    assert "never opened an auth surface" in source
+    assert '"test:cover-links-auth-flow-live": "node ./proofs/cover/cover_links_auth_flow_live_playwright.mjs"' in package
+
+
+def test_emulator_connect_auth_proof_uses_chrome_cdp_and_no_mock_http_server() -> None:
+    source = read_source("phone_links_auth_flow_emulator_proof.py")
+    helper = read_source("phone_links_auth_flow_browser.js")
+
+    assert "PUCKY_API_TOKEN" in source
+    assert "PUCKY_DEVICE_TOKEN" in source
+    assert "10.0.2.2" not in source
+    assert 'CHROME_PACKAGE = "com.android.chrome"' in source
+    assert "discover_chrome_cdp_url" in source
+    assert '"pucky_api_token": args.api_token' in source or '"pucky_api_token": args.api_token,' in source
+    assert 'payload["token"] = args.device_token' in source
+    assert 'surface="chrome_auth"' in source
+    assert '"surface": surface,' in source
+    assert "chromium.connectOverCDP" in helper
+    assert 'mode === "chrome_auth"' in helper
+    assert "filtered_slugs" in helper
+
+
 def test_live_user_session_proof_checks_task_focus_ring_is_gone() -> None:
     source = read_source("cover_live_user_session_playwright.mjs")
 

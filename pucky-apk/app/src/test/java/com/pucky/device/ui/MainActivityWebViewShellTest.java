@@ -188,6 +188,20 @@ public final class MainActivityWebViewShellTest {
     }
 
     @Test
+    public void webBridgeConfigExposesOnlyExplicitConfiguredApiToken() throws Exception {
+        String settings = read("src/main/java/com/pucky/device/storage/SettingsStore.java");
+        String bridge = read("src/main/java/com/pucky/device/ui/PuckyWebBridge.java");
+
+        assertTrue("SettingsStore should expose the explicitly provisioned API token separately from the broker token",
+                settings.contains("public String getConfiguredPuckyApiToken()")
+                        && settings.contains("String explicit = getConfiguredPuckyApiToken();"));
+        assertTrue("pucky.config.get should surface the explicit Connect token and readiness bit",
+                bridge.contains("String apiToken = settings.getConfiguredPuckyApiToken();")
+                        && bridge.contains("Json.put(out, \"api_token\", apiToken);")
+                        && bridge.contains("Json.put(out, \"has_api_token\", !apiToken.trim().isEmpty());"));
+    }
+
+    @Test
     public void webViewServesAppOwnedArtifactsAsLocalUrls() throws Exception {
         String client = read("src/main/java/com/pucky/device/ui/PuckyWebResourceClient.java");
         String artifacts = read("src/main/java/com/pucky/device/artifacts/ArtifactController.java");
