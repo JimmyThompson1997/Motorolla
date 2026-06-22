@@ -277,6 +277,15 @@ async function waitForReminderRecord(config, reminderId, predicate, description,
   throw new Error(`Timed out waiting for reminder ${reminderId}: ${description}; last record ${JSON.stringify(lastRecord)}`);
 }
 
+async function readToastMessage(page) {
+  return page.evaluate(() => String(window.PuckyUiDebug?.describe?.()?.toast?.message || "").trim());
+}
+
+async function assertNoToast(page, label) {
+  const toastMessage = await readToastMessage(page);
+  assert(!toastMessage, `${label} should not show an error toast, saw ${toastMessage || "<non-empty>"}`);
+}
+
 function buildSeedManifest(runId = PROOF_RUN_ID) {
   return {
     runId,
@@ -2157,30 +2166,27 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     const card = document.querySelector('[data-reminder-detail-card="true"]');
     const shell = document.querySelector(".light-shell");
     const lower = String(shell?.textContent || "").toLowerCase();
-    const meTile = [...document.querySelectorAll('[data-reminder-detail-tile="recipient"]')].find(node => {
-      const label = String(node.querySelector(".light-text-stack strong")?.textContent || "").trim();
-      return label === "Me";
-    });
     const sectionTitles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim().toLowerCase());
     return card?.getAttribute("data-reminder-state") === "upcoming"
       && !document.querySelector('[data-reminder-action-row="true"]')
       && !lower.includes("status:")
       && !lower.includes("delivery:")
       && !lower.includes("system notification")
-      && lower.includes("me")
-      && !lower.includes("self")
       && !sectionTitles.includes("schedule")
       && !sectionTitles.includes("recipients")
       && !sectionTitles.includes("channels")
       && !sectionTitles.includes("linked records")
       && !sectionTitles.includes("notes")
-      && Boolean(document.querySelector('[data-reminder-detail-feed="true"]'))
-      && document.querySelectorAll('[data-reminder-detail-feed="true"]').length === 1
+      && !sectionTitles.includes("connected")
+      && document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length === 0
+      && document.querySelectorAll('[data-reminder-detail-tile="when"]').length === 0
+      && !document.querySelector('[data-reminder-detail-feed="true"]')
+      && document.querySelectorAll('[data-reminder-detail-feed="true"]').length === 0
       && !document.querySelector(".light-reminder-detail-feed .light-chevron")
-      && String(meTile?.querySelector(".light-text-stack span")?.textContent || "").trim() === ""
       && !lower.includes("no generated reminder page yet.");
   }, { timeout: config.timeoutMs });
   await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
+  await assertNoToast(page, `${theme} upcoming reminder detail`);
   screenshots[`${theme}_reminder_detail_upcoming`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-upcoming`);
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await waitForLightRoute(page, "reminders", config.timeoutMs);
@@ -2211,8 +2217,12 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
       && !lower.includes("delivery:")
       && !lower.includes("done")
       && !lower.includes("system notification")
+      && document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length === 0
+      && document.querySelectorAll('[data-reminder-detail-tile="when"]').length === 0
+      && !document.querySelector('[data-reminder-detail-feed="true"]')
       && !document.querySelector(".light-reminder-detail-feed .light-chevron");
   }, { timeout: config.timeoutMs });
+  await assertNoToast(page, `${theme} live reminder detail`);
   screenshots[`${theme}_reminder_detail_live`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-live`);
 
   await page.locator('[data-reminder-action="snooze"]').click();
@@ -2223,7 +2233,12 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     "live reminder should snooze for roughly ninety seconds",
     30_000
   );
+  assert(
+    Number(snoozedRecord?.metadata?.snoozed_until_ms || 0) === Number(snoozedRecord?.due_at_ms || 0),
+    `Expected snoozed reminder to align due_at_ms and snoozed_until_ms, saw ${Number(snoozedRecord?.due_at_ms || 0)} vs ${Number(snoozedRecord?.metadata?.snoozed_until_ms || 0)}`
+  );
   reminderSummary.snoozedUntilMs = Number(snoozedRecord?.metadata?.snoozed_until_ms || 0);
+  await assertNoToast(page, `${theme} reminder snooze`);
   await page.waitForFunction(() => {
     const shell = document.querySelector(".light-shell");
     const card = document.querySelector('[data-reminder-detail-card="true"]');
@@ -2264,6 +2279,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
     "dismiss reminder should mark done",
     30_000
   );
+  await assertNoToast(page, `${theme} reminder dismiss`);
   reminderSummary.dismissedStatus = String(dismissedReminder?.status || "").trim().toLowerCase();
   activeCount -= 1;
   await waitForLightRoute(page, "reminders", config.timeoutMs);
@@ -2276,7 +2292,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
 
   reminderSummary.finalActiveCount = activeCount;
   summary.reminders.push(reminderSummary);
-  summary.assertions.push(`${theme} reminders group into Live/Upcoming, keep snoozed reminders inside Upcoming, expose Dismiss and Snooze only on live reminder detail, hide backend delivery copy, and keep the home badge tied to visible reminders including snoozed items`);
+  summary.assertions.push(`${theme} reminders group into Live/Upcoming, keep snoozed reminders inside Upcoming, expose Dismiss and Snooze only on live reminder detail, hide backend delivery copy, hide Connected entirely when a reminder has no graph links, and keep the home badge tied to visible reminders including snoozed items`);
 }
 
 async function readGraphDetailState(page) {
@@ -2474,24 +2490,26 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
   await page.locator(`[data-reminder-id="${reminder}"]`).click();
   await waitForGraphText(page, "Proof Graph Reminder", config.timeoutMs);
-  for (const text of ["When", "Me", "Proof Contact One", "Proof Future Task", "Proof Graph Meeting", "CONNECTED"]) {
+  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "CONNECTED"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   await page.waitForFunction(() => {
     const shell = document.querySelector(".light-shell");
     const text = String(shell?.textContent || "").toLowerCase();
-    const meTile = [...document.querySelectorAll('[data-reminder-detail-tile="recipient"]')].find(node => {
-      const label = String(node.querySelector(".light-text-stack strong")?.textContent || "").trim();
-      return label === "Me";
-    });
+    const feedLabels = [...document.querySelectorAll('.light-reminder-detail-feed .light-text-stack strong')]
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
     return !text.includes("status:")
       && !text.includes("delivery:")
       && !text.includes("system notification")
+      && document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length === 0
+      && document.querySelectorAll('[data-reminder-detail-tile="when"]').length === 0
       && !document.querySelector('[data-reminder-action-row="true"]')
       && document.querySelectorAll('[data-reminder-detail-feed="true"]').length === 1
       && !document.querySelector(".light-reminder-detail-feed .light-chevron")
-      && String(meTile?.querySelector(".light-text-stack span")?.textContent || "").trim() === "";
+      && JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"]);
   }, { timeout: config.timeoutMs });
+  await assertNoToast(page, `${theme} graph reminder detail`);
   graphState = await readGraphDetailState(page);
   assert(graphState.route === "reminder-detail", `Expected reminder-detail route, got ${graphState.route}`);
   assert(!graphState.hasHtmlFrame, "Did not expect reminder detail to render a generated HTML iframe");

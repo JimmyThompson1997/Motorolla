@@ -5422,40 +5422,6 @@
     return [kindLabel, timestamp, summary].filter(Boolean).join(DOT);
   }
 
-  function reminderDetailRows(reminder) {
-    return [
-      {
-        icon: "clock",
-        accentKey: "reminders",
-        label: "When",
-        value: reminderScheduleLabel(reminder),
-        className: "light-reminder-detail-tile is-when",
-        dataset: { reminderDetailTile: "when" }
-      }
-    ];
-  }
-
-  function reminderRecipientRows(reminder) {
-    return reminderRecipients(reminder)
-      .slice()
-      .sort((left, right) => {
-        const leftSelf = String(left?.kind || "").trim().toLowerCase() === "self";
-        const rightSelf = String(right?.kind || "").trim().toLowerCase() === "self";
-        if (leftSelf !== rightSelf) {
-          return leftSelf ? -1 : 1;
-        }
-        return reminderRecipientDisplayName(left).localeCompare(reminderRecipientDisplayName(right));
-      })
-      .map(recipient => ({
-        icon: "contacts",
-        accentKey: "contacts",
-        label: reminderRecipientDisplayName(recipient),
-        value: reminderRecipientSecondaryCopy(recipient),
-        hideDetail: !reminderRecipientSecondaryCopy(recipient),
-        target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID : (recipient.contactId || recipient.id))
-      }));
-  }
-
   function reminderDestinationRows(reminder) {
     return reminderDestinations(reminder).map(destination => ({
       icon: reminderChannelIcon(destination.channel),
@@ -5797,14 +5763,6 @@
     return rows;
   }
 
-  function reminderDetailRecipientFeedRows(reminder) {
-    return reminderRecipientRows(reminder).map(row => ({
-      ...row,
-      className: "light-reminder-detail-tile is-recipient",
-      dataset: { reminderDetailTile: "recipient" },
-    }));
-  }
-
   function reminderDetailLinkedNoteRows(reminder) {
     return reminderDetailLinkedRows(reminder, {
       includeKinds: ["note"],
@@ -5836,8 +5794,6 @@
 
   function reminderDetailFeedRows(reminder) {
     return [
-      ...reminderDetailRows(reminder),
-      ...reminderDetailRecipientFeedRows(reminder),
       ...reminderDetailLinkedNoteRows(reminder),
       ...reminderDetailLinkedRecordRows(reminder),
     ];

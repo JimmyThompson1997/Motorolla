@@ -1494,13 +1494,11 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     reminder_detail_card = function_block(app, "lightReminderDetailCard")
     reminder_action_row = function_block(app, "lightReminderActionRow")
     reminder_feed_rows = function_block(app, "reminderDetailFeedRows")
+    reminder_linked_note_rows = function_block(app, "reminderDetailLinkedNoteRows")
     reminder_linked_rows = function_block(app, "reminderDetailLinkedRecordRows")
     dismiss_reminder = function_block(app, "dismissReminder")
     mark_reminder_done = function_block(app, "markReminderDone")
     snooze_reminder = function_block(app, "snoozeReminder")
-    recipient_name = function_block(app, "reminderRecipientDisplayName")
-    recipient_secondary = function_block(app, "reminderRecipientSecondaryCopy")
-    recipient_rows = function_block(app, "reminderRecipientRows")
     light_info_row = function_block(app, "lightInfoRow")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
@@ -1552,9 +1550,15 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'const feed = lightReminderDetailFeed(reminder);' in reminder_detail_surface
     assert 'surface.append(lightReminderDetailCard(reminder));' in reminder_detail_surface
     assert "const rows = reminderDetailFeedRows(reminder);" in reminder_detail_feed
+    assert "if (!rows.length) {" in reminder_detail_feed
+    assert "return null;" in reminder_detail_feed
     assert 'card.dataset.reminderDetailFeed = "true";' in reminder_detail_feed
     assert 'rows.forEach(row => card.append(lightInfoRow(row)));' in reminder_detail_feed
+    assert "reminderDetailLinkedNoteRows(reminder)" in reminder_feed_rows
     assert "reminderDetailLinkedRecordRows(reminder)" in reminder_feed_rows
+    assert "reminderDetailRows(reminder)" not in reminder_feed_rows
+    assert "reminderDetailRecipientFeedRows(reminder)" not in reminder_feed_rows
+    assert 'includeKinds: ["note"]' in reminder_linked_note_rows
     assert 'excludeKinds: ["note"]' in reminder_linked_rows
     assert '"calendar_event", "task", "meeting_note", "project", "contact", "feed_item"' in reminder_linked_rows
     assert 'el("h1", "", reminder.title)' not in reminder_detail
@@ -1597,13 +1601,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'normalizedPreset === "this_evening"' in app
     assert 'normalizedPreset === "tomorrow_morning"' in app
     assert "lightHtmlDocument(reminder" not in reminder_detail
-    assert 'const me = workspaceRecordByKind("contact", SELF_CONTACT_ID);' in recipient_name
-    assert "function reminderRecipientSecondaryCopy(recipient) {" in app
-    assert 'if (String(recipient.kind || "").trim().toLowerCase() === "self") {' in recipient_secondary
-    assert 'return String(contact?.summary || "").trim();' in recipient_secondary
-    assert 'target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID' in recipient_rows
-    assert "value: reminderRecipientSecondaryCopy(recipient)," in recipient_rows
-    assert "hideDetail: !reminderRecipientSecondaryCopy(recipient)," in recipient_rows
     assert "row?.hideDetail" in light_info_row
     assert 'isInteractive ? el("span", "light-chevron", ">") : el("span", "")' not in light_info_row
     assert ".light-reminder-detail-card" in styles

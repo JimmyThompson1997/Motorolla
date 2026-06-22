@@ -102,6 +102,22 @@ def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() ->
     assert LEGACY_BROWSER_TOKEN_KEY not in source
 
 
+def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:
+    reminder_source = read_source("reminders_v3_browser_proof.mjs")
+    workspace_source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "Expected no Connected feed when reminder has no graph links" in reminder_source
+    assert "Expected no Connected section title when reminder has no graph links" in reminder_source
+    assert "Expected reminder detail to omit reminder-native Connected rows" in reminder_source
+    assert "detail.nativeTileLabels.length === 0" in reminder_source
+    assert "detail.connectedCount === 0" in reminder_source
+    assert "document.querySelectorAll('[data-reminder-detail-tile=\"recipient\"]').length === 0" in workspace_source
+    assert "document.querySelectorAll('[data-reminder-detail-tile=\"when\"]').length === 0" in workspace_source
+    assert 'JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"])' in workspace_source
+    assert 'for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "CONNECTED"]) {' in workspace_source
+    assert 'for (const text of ["When", "Me", "Proof Contact One", "Proof Future Task", "Proof Graph Meeting", "CONNECTED"]) {' not in workspace_source
+
+
 def test_universal_feed_tiles_browser_proof_loads_directly_without_browser_unlock() -> None:
     source = read_source("cover_universal_feed_tiles_playwright.mjs")
 

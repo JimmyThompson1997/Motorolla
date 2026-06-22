@@ -295,10 +295,10 @@ async function readReminderDetailState(page) {
     const identity = card?.querySelector(".light-reminder-detail-identity");
     const icon = identity?.querySelector(".light-small-icon");
     const feed = document.querySelector('[data-reminder-detail-feed="true"]');
-    const meTile = [...document.querySelectorAll('[data-reminder-detail-tile="recipient"]')].find(node => {
-      const label = String(node.querySelector(".light-text-stack strong")?.textContent || "").trim();
-      return label === "Me";
-    });
+    const feedLabels = feed
+      ? [...feed.querySelectorAll(".light-info-row .light-text-stack strong")].map(node => String(node.textContent || "").trim()).filter(Boolean)
+      : [];
+    const nativeTileLabels = feedLabels.filter(label => label === "When" || label === "Me");
     const actionLabels = [...document.querySelectorAll('[data-reminder-action-row="true"] button')].map(node => String(node.textContent || "").trim());
     const shellText = String(document.querySelector(".light-shell")?.textContent || "");
     const cardRect = card?.getBoundingClientRect?.() || null;
@@ -314,14 +314,18 @@ async function readReminderDetailState(page) {
       actionRowCount: document.querySelectorAll('[data-reminder-action-row="true"]').length,
       connectedCount: document.querySelectorAll('[data-reminder-detail-feed="true"]').length,
       feedChevronCount: document.querySelectorAll(".light-reminder-detail-feed .light-chevron").length,
+      feedLabels,
+      nativeTileLabels,
       hasStatusText: shellText.includes("Status:"),
       hasDeliveryText: shellText.includes("Delivery:"),
-      meTileSubtitle: String(meTile?.querySelector(".light-text-stack span")?.textContent || "").trim(),
-      recipientCount: document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length,
       heroTopGap: cardRect && identityRect ? Math.round((identityRect.top - cardRect.top) * 10) / 10 : 0,
       heroIconTopGap: cardRect && iconRect ? Math.round((iconRect.top - cardRect.top) * 10) / 10 : 0,
     };
   });
+}
+
+async function readToastMessage(page) {
+  return page.evaluate(() => String(window.PuckyUiDebug?.describe?.()?.toast?.message || "").trim());
 }
 
 async function readReminderCountdownState(page, reminderId) {
@@ -338,17 +342,32 @@ async function readReminderCountdownState(page, reminderId) {
   }, reminderId);
 }
 
-async function assertCompactReminderDetail(page, expectedState, expectedActions) {
+async function assertNoToast(page, label) {
+  const toastMessage = await readToastMessage(page);
+  assert(!toastMessage, `${label} should not show an error toast, saw ${toastMessage || "<non-empty>"}`);
+}
+
+async function assertCompactReminderDetail(page, expectedState, expectedActions, options = {}) {
+  const expectedConnectedLabels = Array.isArray(options.expectedConnectedLabels) ? options.expectedConnectedLabels : [];
   const detail = await readReminderDetailState(page);
   assert(detail.route === "reminder-detail", `Expected reminder-detail route, saw ${detail.route}`);
   assert(detail.reminderState === expectedState, `Expected reminder detail state ${expectedState}, saw ${detail.reminderState}`);
-  assert(detail.connectedCount === 1, `Expected one Connected feed, saw ${detail.connectedCount}`);
-  assert(detail.feedChevronCount === 0, `Expected no reminder-detail chevrons, saw ${detail.feedChevronCount}`);
   assert(!detail.hasStatusText, "Reminder detail should not show Status text");
   assert(!detail.hasDeliveryText, "Reminder detail should not show Delivery text");
-  assert(detail.meTileSubtitle === "", `Expected Me tile subtitle to stay empty, saw ${detail.meTileSubtitle || "<non-empty>"}`);
+  assert(detail.nativeTileLabels.length === 0, `Expected reminder detail to omit reminder-native Connected rows, saw ${JSON.stringify(detail.nativeTileLabels)}`);
   assert(detail.heroTopGap >= 20, `Expected reminder hero top gap >= 20px, saw ${detail.heroTopGap}`);
   assert(detail.heroIconTopGap >= 20, `Expected reminder icon top gap >= 20px, saw ${detail.heroIconTopGap}`);
+  if (!expectedConnectedLabels.length) {
+    assert(detail.connectedCount === 0, `Expected no Connected feed when reminder has no graph links, saw ${detail.connectedCount}`);
+    assert(!detail.sectionTitles.includes("Connected"), `Expected no Connected section title when reminder has no graph links, saw ${JSON.stringify(detail.sectionTitles)}`);
+  } else {
+    assert(detail.connectedCount === 1, `Expected one Connected feed, saw ${detail.connectedCount}`);
+    assert(detail.feedChevronCount === 0, `Expected no reminder-detail chevrons, saw ${detail.feedChevronCount}`);
+    assert(
+      JSON.stringify(detail.feedLabels) === JSON.stringify(expectedConnectedLabels),
+      `Expected Connected labels ${JSON.stringify(expectedConnectedLabels)}, saw ${JSON.stringify(detail.feedLabels)}`
+    );
+  }
   if (expectedActions.length === 0) {
     assert(detail.actionRowCount === 0, `Expected no reminder action row, saw ${detail.actionRowCount}`);
     return detail;
@@ -417,7 +436,8 @@ async function main() {
     await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
     await page.waitForFunction(() => Boolean(document.querySelector('[data-reminder-detail-card="true"]')), { timeout: config.timeoutMs });
     const detailUrlBeforeLive = await page.url();
-    const aUpcomingDetail = await assertCompactReminderDetail(page, "upcoming", []);
+    const aUpcomingDetail = await assertCompactReminderDetail(page, "upcoming", [], { expectedConnectedLabels: [] });
+    await assertNoToast(page, "Upcoming reminder detail");
     summary.lifecycle.reminder_a_upcoming = aUpcomingDetail;
     summary.screenshots.a1_upcoming_detail = await saveScreenshot(page, config.reportDir, "a1-upcoming-detail");
 
@@ -432,7 +452,8 @@ async function main() {
       Number(aLiveObservation?.observedAtMs || 0) <= reminderADueAtMs + 20_000,
       `Reminder A should become Live within 20s of due (${reminderADueAtMs}), saw ${aLiveObservation?.observedAtMs || 0}`
     );
-    const aLiveDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"]);
+    const aLiveDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
+    await assertNoToast(page, "Live reminder detail");
     summary.lifecycle.reminder_a_live = {
       due_at_ms: reminderADueAtMs,
       observed_at_ms: Number(aLiveObservation?.observedAtMs || 0),
@@ -448,6 +469,11 @@ async function main() {
       "reminder A should snooze for roughly ninety seconds",
       30_000
     );
+    assert(
+      Number(aSnoozedRecord?.metadata?.snoozed_until_ms || 0) === Number(aSnoozedRecord?.due_at_ms || 0),
+      `Reminder A snooze should keep due_at_ms and snoozed_until_ms aligned, saw ${Number(aSnoozedRecord?.due_at_ms || 0)} vs ${Number(aSnoozedRecord?.metadata?.snoozed_until_ms || 0)}`
+    );
+    await assertNoToast(page, "Reminder A snooze");
     await page.waitForFunction(() => {
       const card = document.querySelector('[data-reminder-detail-card="true"]');
       return card?.getAttribute("data-reminder-state") === "snoozed"
@@ -486,7 +512,7 @@ async function main() {
     );
     await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).click();
     await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    const aRefiredDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"]);
+    const aRefiredDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
     summary.lifecycle.reminder_a_refired = {
       observed_at_ms: Number(aRefireObservation?.observedAtMs || 0),
       detail: aRefiredDetail
@@ -501,6 +527,7 @@ async function main() {
       "reminder A should dismiss after refiring",
       30_000
     );
+    await assertNoToast(page, "Reminder A dismiss");
     await waitForLightRoute(page, "reminders", config.timeoutMs);
     await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderAId, { timeout: config.timeoutMs });
     await backToHome(page, config.theme, config.timeoutMs);
@@ -542,7 +569,7 @@ async function main() {
 
     await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).click();
     await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"]);
+    await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
     await page.locator('[data-reminder-action="dismiss"]').click();
     await waitForReminderRecord(
       config,
@@ -551,13 +578,14 @@ async function main() {
       "reminder B should dismiss on first fire",
       30_000
     );
+    await assertNoToast(page, "Reminder B dismiss");
     await waitForLightRoute(page, "reminders", config.timeoutMs);
     await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderBId, { timeout: config.timeoutMs });
     await backToHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, baselineActive, config.timeoutMs);
     summary.screenshots.b2_home_after_dismiss = await saveScreenshot(page, config.reportDir, "b2-home-after-dismiss");
 
-    summary.assertions.push("Reminder detail stays compact, hides status/delivery pills, and keeps one Connected feed with no chevrons.");
+    summary.assertions.push("Reminder detail stays compact, hides status/delivery pills, shows Dismiss and Snooze only while live, and hides Connected entirely when a proof reminder has no graph links.");
     summary.assertions.push("Live reminders expose Dismiss and Snooze only when firing, while Upcoming reminders stay action-free.");
     summary.assertions.push("Snoozed reminders remain inside Upcoming with a live countdown ring and refire into Live without manual reload.");
 
