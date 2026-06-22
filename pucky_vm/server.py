@@ -255,6 +255,7 @@ def _failure_reason_from_exception(exc: BaseException) -> str:
 
 _BROKER_MODULE = None
 _BROKER_DB_PATH: str | None = None
+_BROKER_INIT_LOCK = threading.RLock()
 DEFAULT_CARD_ICONS = {
     "clock": {
         "name": "clock",
@@ -480,21 +481,22 @@ def _load_broker_module():
 
 def ensure_broker_initialized(db_path: str | None = None):
     global _BROKER_DB_PATH
-    broker = _load_broker_module()
-    resolved = str(db_path or os.environ.get("PUCKY_DB_PATH") or broker.DEFAULT_DB_PATH)
-    if getattr(broker, "DB", None) is not None and _BROKER_DB_PATH == resolved:
+    with _BROKER_INIT_LOCK:
+        broker = _load_broker_module()
+        resolved = str(db_path or os.environ.get("PUCKY_DB_PATH") or broker.DEFAULT_DB_PATH)
+        if getattr(broker, "DB", None) is not None and _BROKER_DB_PATH == resolved:
+            return broker
+        existing = getattr(broker, "DB", None)
+        if existing is not None:
+            try:
+                existing.close()
+            except Exception:
+                pass
+            broker.DB = None
+        broker.DEVICES.clear()
+        broker.init_db(resolved)
+        _BROKER_DB_PATH = resolved
         return broker
-    existing = getattr(broker, "DB", None)
-    if existing is not None:
-        try:
-            existing.close()
-        except Exception:
-            pass
-        broker.DB = None
-    broker.DEVICES.clear()
-    broker.init_db(resolved)
-    _BROKER_DB_PATH = resolved
-    return broker
 
 
 def reset_broker_for_tests(db_path: str):
@@ -697,6 +699,7 @@ class PuckyVoiceService:
         self.codex.start()
         if self.meeting_codex is not self.codex:
             self.meeting_codex.start()
+        ensure_broker_initialized()
         if self._reminder_poll_thread is None or not self._reminder_poll_thread.is_alive():
             self._reminder_stop_event.clear()
             self._reminder_poll_thread = threading.Thread(
@@ -5945,7 +5948,6 @@ def make_handler(service: PuckyVoiceService):
 
 def serve(service: PuckyVoiceService) -> None:
     service.start()
-    ensure_broker_initialized()
     server = ThreadingHTTPServer((service.config.host, service.config.port), make_handler(service))
     print(f"Pucky voice service listening on {service.config.host}:{service.config.port}", flush=True)
     server.serve_forever()

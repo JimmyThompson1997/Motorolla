@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
+import pucky_vm.server as server_module
 from pucky_vm.server import (
     Config,
     PuckyVoiceService,
@@ -903,6 +904,71 @@ class ServerTests(unittest.TestCase):
     def clear_active_reminders(self) -> None:
         for item in self.service.workspace.list_records("reminders", include_archived=True, include_deleted=True)["items"]:
             self.service.workspace.patch_record("reminders", str(item["id"]), {"archived": True, "deleted": True})
+
+    def test_service_start_initializes_broker_before_reminder_thread(self) -> None:
+        events: list[str] = []
+
+        class FakeReminderThread:
+            def is_alive(self) -> bool:
+                return False
+
+            def start(self) -> None:
+                events.append("thread-start")
+
+        with (
+            mock.patch.object(self.codex, "start", side_effect=lambda: events.append("codex-start")),
+            mock.patch.object(self.meeting_codex, "start", side_effect=lambda: events.append("meeting-codex-start")),
+            mock.patch("pucky_vm.server.ensure_broker_initialized", side_effect=lambda *args, **kwargs: events.append("broker-init") or self.broker),
+            mock.patch("pucky_vm.server.threading.Thread", side_effect=lambda *args, **kwargs: FakeReminderThread()),
+        ):
+            self.service._reminder_poll_thread = None
+            self.service.start()
+
+        self.assertIn("broker-init", events)
+        self.assertIn("thread-start", events)
+        self.assertLess(events.index("broker-init"), events.index("thread-start"))
+
+    def test_ensure_broker_initialized_serializes_concurrent_first_load(self) -> None:
+        class FakeDb:
+            def close(self) -> None:
+                return None
+
+        class FakeBroker:
+            DEFAULT_DB_PATH = "/tmp/pucky-broker-race.sqlite3"
+
+            def __init__(self) -> None:
+                self.DB = None
+                self.DEVICES: dict[str, object] = {}
+                self.init_calls: list[str] = []
+
+            def init_db(self, path: str) -> None:
+                self.init_calls.append(path)
+                time.sleep(0.05)
+                self.DB = FakeDb()
+
+        fake_broker = FakeBroker()
+        ready = threading.Event()
+        results: list[object] = []
+
+        def worker() -> None:
+            ready.wait(timeout=5)
+            results.append(server_module.ensure_broker_initialized(fake_broker.DEFAULT_DB_PATH))
+
+        with (
+            mock.patch("pucky_vm.server._load_broker_module", return_value=fake_broker),
+            mock.patch("pucky_vm.server._BROKER_DB_PATH", None),
+        ):
+            first = threading.Thread(target=worker)
+            second = threading.Thread(target=worker)
+            first.start()
+            second.start()
+            ready.set()
+            first.join(timeout=5)
+            second.join(timeout=5)
+
+        self.assertEqual(fake_broker.init_calls, [fake_broker.DEFAULT_DB_PATH])
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(item is fake_broker for item in results))
 
     def test_healthz_reports_ready_without_secrets(self) -> None:
         payload = self.get_json("/healthz")
