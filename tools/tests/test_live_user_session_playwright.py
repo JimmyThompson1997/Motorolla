@@ -38,7 +38,7 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert '"reminders"' in source
     assert "const UNIVERSAL_FEED_TILE_ROUTES = [" in source
     assert '"notes"' in source
-    assert '"projects"' in source
+    assert '"tags"' in source
     assert '"inbox"' in source
     assert '"meetings"' in source
     assert 'url.searchParams.set("api_token"' not in source
@@ -57,7 +57,7 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'await openRouteFromHome(page, "meeting-notes", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "notes", config.timeoutMs);' in source
-    assert 'await openRouteFromHome(page, "projects", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "tags", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "contacts", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source

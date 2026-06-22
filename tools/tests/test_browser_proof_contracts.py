@@ -77,7 +77,7 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_supports_contac
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert '"notes"' in source
-    assert '"projects"' in source
+    assert '"tags"' in source
 
 
 def test_live_user_session_browser_proof_tracks_failed_requests_and_mobile_connect_noise() -> None:
