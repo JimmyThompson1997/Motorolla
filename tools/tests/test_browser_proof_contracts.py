@@ -690,18 +690,46 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     calendar_source = read_source("cover_calendar_playwright.mjs")
 
     assert "data-meeting-detail-section" in calendar_source
+    assert "row_top_delta_px" in calendar_source
+    assert "who_chip_gap_px" in calendar_source
+    assert "who_guest_chip_count" in calendar_source
+    assert "details_card_overflow_x" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-default.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-connected-expanded.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-details-collapsed.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-connected-restored.png" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-details-card.png" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-who-row.png" in calendar_source
+    assert "calendar-desktop-${theme}-agenda-tile.png" in calendar_source
+    assert "calendar-desktop-${theme}-clinic-detail.png" in calendar_source
+    assert "calendar-desktop-${theme}-clinic-who-row.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-default.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-connected-expanded.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-details-collapsed.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-connected-restored.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-details-card.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-who-row.png" in calendar_source
+    assert "calendar-mobile-${theme}-agenda-tile.png" in calendar_source
+    assert "calendar-mobile-${theme}-clinic-detail.png" in calendar_source
+    assert "calendar-mobile-${theme}-clinic-who-row.png" in calendar_source
     assert "Expected event detail to avoid a standalone Description section." in calendar_source
     assert "Expected merged description text inside Details." in calendar_source
     assert "Expected Connected to start collapsed on a fresh event open." in calendar_source
     assert "Expected Details to start expanded on a fresh event open." in calendar_source
+    assert "Expected compact When to avoid weekday text" in calendar_source
+    assert "Expected compact Who row to keep visible chip spacing" in calendar_source
+    assert "Expected Calendar Who row to avoid guest attendee chips" in calendar_source
+    assert "Expected mobile Details card to avoid horizontal overflow" in calendar_source
+    assert "Outside counsel" in calendar_source
+    assert "Clinic front desk" in calendar_source
+    assert 'title: "Outside counsel"' in calendar_source
+    assert 'title: "Clinic front desk"' in calendar_source
+    assert "Expected agenda cards to show all contact-backed attendees" in calendar_source
+    assert "Expected clinic detail to render the role-style contact as a recognized chip" in calendar_source
+    assert "Expected mobile agenda cards to show all contact-backed attendees" in calendar_source
+    assert "Expected mobile Who row to avoid guest attendee chips" in calendar_source
+    assert "Expected mobile Who row to include at least one guest chip." not in calendar_source
+    assert "Expected mobile Who row to carry contact and guest chips" not in calendar_source
     assert "Expected Back from linked target to restore Connected expanded state." in calendar_source
     assert "Expected reopening the event detail to reset Connected closed." in calendar_source
     assert "Expected reopening the event detail to reset Details open." in calendar_source

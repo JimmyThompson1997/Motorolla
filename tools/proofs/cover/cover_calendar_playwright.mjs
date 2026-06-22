@@ -159,6 +159,20 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     html: "<!doctype html><h1>Jeff Bennett</h1><p>Proof contact for family plans and review context.</p>",
     metadata: { first_name: "Jeff", last_name: "Bennett", photo: "fixtures/contact_photos/eric.webp", email: "jeff@example.com", phone: "+1 (415) 555-0102" }
   });
+  await rememberRecord("contacts", {
+    id: `${runId}-outside-counsel`,
+    title: "Outside counsel",
+    summary: "Proof role-style contact",
+    html: "<!doctype html><h1>Outside counsel</h1><p>Proof contact to keep role titles recognizable in Calendar attendees.</p>",
+    metadata: { photo: "fixtures/contact_photos/maya.svg", email: "counsel@example.com", phone: "+1 (415) 555-0103" }
+  });
+  await rememberRecord("contacts", {
+    id: `${runId}-clinic-front-desk`,
+    title: "Clinic front desk",
+    summary: "Proof clinic role contact",
+    html: "<!doctype html><h1>Clinic front desk</h1><p>Proof contact for the clinic check-in event.</p>",
+    metadata: { photo: "fixtures/contact_photos/proof-contact.webp", email: "frontdesk@example.com", phone: "+1 (415) 555-0104" }
+  });
   await rememberRecord("projects", {
     id: `${runId}-project`,
     title: "Proof freelance follow-up",
@@ -773,6 +787,7 @@ async function ensureMeetingDetailSectionExpanded(page, sectionKey, expanded = t
 async function readMeetingDetailState(page) {
   return page.evaluate(() => {
     const visible = node => Boolean(node instanceof HTMLElement && !node.hidden && node.getClientRects().length);
+    const normalizedText = node => String(node?.textContent || "").replace(/\s+/g, " ").trim();
     const sectionRoots = Array.from(document.querySelectorAll(".light-meeting-detail-section"));
     const sections = Object.fromEntries(sectionRoots.map(section => {
       const key = String(section.getAttribute("data-meeting-detail-section") || "").trim();
@@ -789,6 +804,22 @@ async function readMeetingDetailState(page) {
     const connectedRows = Array.from(document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row'));
     const descriptionNode = document.querySelector(".light-calendar-detail-description-copy");
     const connectedCountNode = document.querySelector('.light-meeting-detail-section[data-meeting-detail-section="connected"] .light-meeting-detail-section-count');
+    const detailsCard = document.querySelector('.light-meeting-detail-section[data-meeting-detail-section="details"] .light-calendar-detail-card');
+    const whoCloud = document.querySelector('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-cloud');
+    const detailRowMetrics = Object.fromEntries(detailRows.map(row => {
+      const key = String(row.getAttribute("data-detail-row") || "").trim();
+      const labelNode = row.querySelector(".light-calendar-detail-row-label");
+      const valueNode = row.querySelector(".light-calendar-detail-row-value");
+      const labelRect = labelNode?.getBoundingClientRect?.();
+      const valueRect = valueNode?.getBoundingClientRect?.();
+      return [key, {
+        label: normalizedText(labelNode),
+        value: normalizedText(valueNode),
+        is_compact: row.classList.contains("is-compact"),
+        row_top_delta_px: labelRect && valueRect ? Math.round(Math.abs(labelRect.top - valueRect.top)) : null,
+      }];
+    }));
+    const whoStyle = whoCloud instanceof HTMLElement ? getComputedStyle(whoCloud) : null;
     return {
       text: String(document.querySelector(".light-document-page")?.innerText || "").replace(/\s+/g, " ").trim(),
       sectionTitles: titleNodes.map(node => String(node.textContent || "").trim().toUpperCase()),
@@ -801,6 +832,15 @@ async function readMeetingDetailState(page) {
       descriptionVisible: visible(descriptionNode),
       connectedCount: Number(connectedCountNode?.textContent || 0) || 0,
       whoChipTexts: Array.from(document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip')).map(node => String(node.textContent || "").trim()).filter(Boolean),
+      detailRowMetrics,
+      detailRowValues: Object.fromEntries(Object.entries(detailRowMetrics).map(([key, value]) => [key, String(value?.value || "").trim()])),
+      who_chip_gap_px: whoStyle ? Math.max(
+        Number.parseFloat(whoStyle.columnGap || "0") || 0,
+        Number.parseFloat(whoStyle.rowGap || "0") || 0,
+        Number.parseFloat(whoStyle.gap || "0") || 0
+      ) : 0,
+      who_guest_chip_count: document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').length,
+      details_card_overflow_x: detailsCard instanceof HTMLElement ? Math.max(0, Math.round(detailsCard.scrollWidth - detailsCard.clientWidth)) : 0,
     };
   });
 }
@@ -921,13 +961,13 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-off-today.png`, summary);
     await setCalendarDate(page, seed.today);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, `Expected desktop calendar to return to ${seed.today}, got ${await page.locator(".light-date-input").inputValue()}.`);
-    await page.waitForFunction(selector => document.querySelectorAll(`${selector} .light-attendee-chip`).length >= 2, eventSelector);
+    await page.waitForFunction(selector => document.querySelectorAll(`${selector} .light-attendee-chip`).length >= 3, eventSelector);
     assert(await page.locator(`${eventSelector} .light-event-summary`).count() === 0, "Expected agenda cards to drop summary text.");
     const agendaChipTexts = await allText(page, `${eventSelector} .light-attendee-chip`);
-    for (const label of ["Jimmy T.", "Jeff B."]) {
+    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(agendaChipTexts.includes(label), `Expected agenda contact chips to include ${label}, got ${agendaChipTexts.join(", ")}.`);
     }
-    assert(agendaChipTexts.length === 2, `Expected agenda cards to show only recognized contacts, got ${agendaChipTexts.join(", ")}.`);
+    assert(agendaChipTexts.length === 3, `Expected agenda cards to show all contact-backed attendees, got ${agendaChipTexts.join(", ")}.`);
     assert(!agendaChipTexts.includes("Kitchen table"), "Expected place to stay out of calendar agenda chips.");
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(!agendaChipTexts.includes(label), `Expected agenda cards to hide non-contact graph chips like ${label}.`);
@@ -940,6 +980,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await page.locator(".light-calendar-day-chip.is-selected .light-calendar-day-dot.blue").count() >= 1, "Expected the selected day strip to use the same blue tone for the freelance event.");
     await saveLocatorShot(page.locator(".light-page-header-shell"), reportDir, `calendar-desktop-${theme}-chrome.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-settings-button"), reportDir, `calendar-desktop-${theme}-settings-button.png`, summary);
+    await saveLocatorShot(page.locator(eventSelector).first(), reportDir, `calendar-desktop-${theme}-agenda-tile.png`, summary);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-today.png`, summary);
     await scrollDayStripToDay(page, firstDayKey, "start");
     const selectedMonthLeft = await calendarStripMetrics(page);
@@ -1018,13 +1059,25 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(detailState.visibleConnectedRowCount === 0, `Expected no visible Connected rows while collapsed, got ${detailState.visibleConnectedRowCount}.`);
     assert(!detailState.text.includes("Linked records"), "Expected event detail to keep the section label as Connected.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected Who to render guests as chips instead of paragraph copy.");
-    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected Who to include at least one neutral guest chip.");
+    assert(detailState.detailRowMetrics.when?.is_compact, `Expected When row to use compact metadata layout, got ${JSON.stringify(detailState.detailRowMetrics.when)}.`);
+    assert(detailState.detailRowMetrics.who?.is_compact, `Expected Who row to use compact metadata layout, got ${JSON.stringify(detailState.detailRowMetrics.who)}.`);
+    assert(detailState.detailRowMetrics.place?.is_compact, `Expected Place row to use compact metadata layout, got ${JSON.stringify(detailState.detailRowMetrics.place)}.`);
+    assert(!/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/.test(detailState.detailRowValues.when || ""), `Expected compact When to avoid weekday text, got ${detailState.detailRowValues.when}.`);
+    assert((detailState.detailRowValues.when || "").includes("June"), `Expected compact When to keep month/day text, got ${detailState.detailRowValues.when}.`);
+    assert(detailState.detailRowMetrics.when?.row_top_delta_px !== null && detailState.detailRowMetrics.when.row_top_delta_px <= 4, `Expected compact When row to align label and value on one line, got ${JSON.stringify(detailState.detailRowMetrics.when)}.`);
+    assert(detailState.detailRowMetrics.who?.row_top_delta_px !== null && detailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected compact Who row to align label and first chip on one line, got ${JSON.stringify(detailState.detailRowMetrics.who)}.`);
+    assert(detailState.detailRowMetrics.place?.row_top_delta_px !== null && detailState.detailRowMetrics.place.row_top_delta_px <= 4, `Expected compact Place row to align label and value on one line, got ${JSON.stringify(detailState.detailRowMetrics.place)}.`);
+    assert(detailState.who_chip_gap_px >= 6, `Expected compact Who row to keep visible chip spacing, got ${detailState.who_chip_gap_px}.`);
+    assert(detailState.who_guest_chip_count === 0, `Expected Calendar Who row to avoid guest attendee chips, got ${detailState.who_guest_chip_count}.`);
+    assert(detailState.details_card_overflow_x <= 1, `Expected desktop Details card to avoid horizontal overflow, got ${detailState.details_card_overflow_x}.`);
     const whoChipTexts = detailState.whoChipTexts;
     for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(whoChipTexts.includes(label), `Expected Who to include ${label}, got ${whoChipTexts.join(", ")}.`);
     }
     await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-default.png`, summary);
+    await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-desktop-${theme}-event-detail-details-card.png`, summary);
+    await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-event-detail-who-row.png`, summary);
 
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     detailState = await readMeetingDetailState(page);
@@ -1046,7 +1099,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     }
     assert(!connectedRowTexts.some(value => value.includes("Jimmy T.")), "Expected contact chips to stay in Who, not Connected.");
     assert(!connectedRowTexts.some(value => value.includes("Jeff B.")), "Expected contact chips to stay in Who, not Connected.");
-    assert(!connectedRowTexts.some(value => value.includes("Outside counsel")), "Expected unmatched attendees to stay in Who, not Connected.");
+    assert(!connectedRowTexts.some(value => value.includes("Outside counsel")), "Expected attendee contacts to stay in Who, not Connected.");
     assert(!connectedRowTexts.some(value => value.includes("Kitchen table")), "Expected place to stay out of Connected rows on detail.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="place"] .light-attendee-chip').count() === 0, "Expected Place to stay plain text only.");
     await saveLocatorShot(connectedSection, reportDir, `calendar-desktop-${theme}-connected.png`, summary);
@@ -1071,7 +1124,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     detailState = await readMeetingDetailState(page);
     assert(detailState.connectedExpanded, "Expected Back from Who chip to preserve Connected expanded state.");
     for (const target of [
-      { id: `${seed.runId}-project`, route: "project-detail", expectedText: "Proof freelance follow-up" },
+      { id: `${seed.runId}-project`, route: "tag-detail", expectedText: "Proof freelance follow-up" },
       { id: `${seed.runId}-task`, route: "task-detail", expectedText: "Send proof review notes" },
       { id: `${seed.runId}-note`, route: "note-detail", expectedText: "Proof review outline" },
       { id: `${seed.runId}-meeting-note`, route: "meeting-note-detail", expectedText: "Proof freelance prep" },
@@ -1088,6 +1141,19 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-connected-restored.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    await setCalendarDate(page, seed.tomorrow);
+    await selectCalendarEventById(page, seed, "clinic", "Proof clinic paperwork check-in");
+    let clinicDetailState = await readMeetingDetailState(page);
+    assert(clinicDetailState.detailsExpanded, "Expected clinic detail to keep Details expanded by default.");
+    assert(clinicDetailState.who_guest_chip_count === 0, `Expected clinic detail to avoid guest attendee chips, got ${clinicDetailState.who_guest_chip_count}.`);
+    assert(clinicDetailState.whoChipTexts.includes("Clinic front desk"), `Expected clinic detail to render the role-style contact as a recognized chip, got ${clinicDetailState.whoChipTexts.join(", ")}.`);
+    assert(clinicDetailState.detailRowMetrics.who?.row_top_delta_px !== null && clinicDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected clinic Who row to stay compact, got ${JSON.stringify(clinicDetailState.detailRowMetrics.who)}.`);
+    await saveShot(page, reportDir, `calendar-desktop-${theme}-clinic-detail.png`, summary);
+    await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-clinic-who-row.png`, summary);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from clinic detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    await setCalendarDate(page, seed.today);
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const emptyConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     await emptyConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1223,13 +1289,13 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveShot(page, reportDir, `calendar-mobile-${theme}-off-today.png`, summary);
     await setCalendarDate(page, seed.today);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, `Expected mobile calendar to return to ${seed.today}, got ${await page.locator(".light-date-input").inputValue()}.`);
-    await page.waitForFunction(selector => document.querySelectorAll(`${selector} .light-attendee-chip`).length >= 2, eventSelector);
+    await page.waitForFunction(selector => document.querySelectorAll(`${selector} .light-attendee-chip`).length >= 3, eventSelector);
     assert(await page.locator(`${eventSelector} .light-event-summary`).count() === 0, "Expected mobile agenda cards to drop summary text.");
     const mobileChipTexts = await allText(page, `${eventSelector} .light-attendee-chip`);
-    for (const label of ["Jimmy T.", "Jeff B."]) {
+    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(mobileChipTexts.includes(label), `Expected mobile agenda contact chips to include ${label}, got ${mobileChipTexts.join(", ")}.`);
     }
-    assert(mobileChipTexts.length === 2, `Expected mobile agenda cards to stay contacts-only, got ${mobileChipTexts.join(", ")}.`);
+    assert(mobileChipTexts.length === 3, `Expected mobile agenda cards to show all contact-backed attendees, got ${mobileChipTexts.join(", ")}.`);
     assert(!mobileChipTexts.includes("Kitchen table"), "Expected place to stay out of mobile agenda chips.");
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(!mobileChipTexts.includes(label), `Expected mobile agenda cards to hide non-contact graph chips like ${label}.`);
@@ -1239,6 +1305,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await assertChipContrast(page, `${eventSelector} .light-attendee-chip.is-link`);
     await saveLocatorShot(page.locator(".light-page-header-shell"), reportDir, `calendar-mobile-${theme}-chrome.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-settings-button"), reportDir, `calendar-mobile-${theme}-settings-button.png`, summary);
+    await saveLocatorShot(page.locator(eventSelector).first(), reportDir, `calendar-mobile-${theme}-agenda-tile.png`, summary);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-top.png`, summary);
     await scrollDayStripToDay(page, firstDayKey, "start");
     const selectedMonthLeft = await calendarStripMetrics(page);
@@ -1288,6 +1355,14 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     };
     await setCalendarDate(page, seed.today);
     await page.waitForFunction(selector => document.querySelectorAll(selector).length >= 1, eventSelector);
+    await selectAgendaChip(page, seed, "Jimmy T.");
+    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after agenda chip tap, got ${await currentLightRoute(page)}.`);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile agenda chip to restore calendar, got ${await currentLightRoute(page)}.`);
+    assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected mobile agenda Back to preserve the selected day.");
+    assert((await visibleCalendarTitles(page)).includes("Proof freelance review call"), "Expected the source mobile event to remain visible after returning to the agenda.");
 
     await selectCalendarEvent(page, seed);
     assert(await page.locator(".light-event-detail-time").count() === 0, "Expected mobile event detail to remove the redundant time line beneath the header.");
@@ -1305,11 +1380,34 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileDetailState.visibleConnectedRowCount === 0, `Expected mobile Connected rows to stay hidden while collapsed, got ${mobileDetailState.visibleConnectedRowCount}.`);
     assert(!mobileDetailState.text.includes("Linked records"), "Expected mobile event detail to keep the section label as Connected.");
     const mobileWhoChipTexts = mobileDetailState.whoChipTexts;
-    assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B.") && mobileWhoChipTexts.includes("Outside counsel"), `Expected mobile Who row to carry contact and guest chips, got ${mobileWhoChipTexts.join(", ")}.`);
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected mobile Who row to avoid guest paragraphs.");
-    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').count() >= 1, "Expected mobile Who row to include at least one guest chip.");
+    assert(mobileDetailState.detailRowMetrics.when?.is_compact, `Expected mobile When row to use compact metadata layout, got ${JSON.stringify(mobileDetailState.detailRowMetrics.when)}.`);
+    assert(mobileDetailState.detailRowMetrics.who?.is_compact, `Expected mobile Who row to use compact metadata layout, got ${JSON.stringify(mobileDetailState.detailRowMetrics.who)}.`);
+    assert(mobileDetailState.detailRowMetrics.place?.is_compact, `Expected mobile Place row to use compact metadata layout, got ${JSON.stringify(mobileDetailState.detailRowMetrics.place)}.`);
+    assert(!/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/.test(mobileDetailState.detailRowValues.when || ""), `Expected compact When to avoid weekday text, got ${mobileDetailState.detailRowValues.when}.`);
+    assert((mobileDetailState.detailRowValues.when || "").includes("June"), `Expected compact When to keep month/day text, got ${mobileDetailState.detailRowValues.when}.`);
+    assert(mobileDetailState.detailRowMetrics.when?.row_top_delta_px !== null && mobileDetailState.detailRowMetrics.when.row_top_delta_px <= 4, `Expected mobile compact When row to align label and value on one line, got ${JSON.stringify(mobileDetailState.detailRowMetrics.when)}.`);
+    assert(mobileDetailState.detailRowMetrics.who?.row_top_delta_px !== null && mobileDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected mobile compact Who row to align label and first chip on one line, got ${JSON.stringify(mobileDetailState.detailRowMetrics.who)}.`);
+    assert(mobileDetailState.detailRowMetrics.place?.row_top_delta_px !== null && mobileDetailState.detailRowMetrics.place.row_top_delta_px <= 4, `Expected mobile compact Place row to align label and value on one line, got ${JSON.stringify(mobileDetailState.detailRowMetrics.place)}.`);
+    assert(mobileDetailState.who_chip_gap_px >= 6, `Expected compact Who row to keep visible chip spacing, got ${mobileDetailState.who_chip_gap_px}.`);
+    assert(mobileDetailState.who_guest_chip_count === 0, `Expected mobile Who row to avoid guest attendee chips, got ${mobileDetailState.who_guest_chip_count}.`);
+    assert(mobileDetailState.details_card_overflow_x <= 1, `Expected mobile Details card to avoid horizontal overflow, got ${mobileDetailState.details_card_overflow_x}.`);
+    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
+      assert(mobileWhoChipTexts.includes(label), `Expected mobile Who to include ${label}, got ${mobileWhoChipTexts.join(", ")}.`);
+    }
     await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-default.png`, summary);
+    await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-mobile-${theme}-detail-details-card.png`, summary);
+    await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-detail-who-row.png`, summary);
+    await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
+    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after Who chip tap, got ${await currentLightRoute(page)}.`);
+    await page.getByRole("button", { name: "Back" }).click();
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from mobile Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    await waitForHeaderText(page, "Proof freelance review call");
+    mobileDetailState = await readMeetingDetailState(page);
+    assert(mobileDetailState.detailsExpanded, "Expected mobile Details to stay expanded after returning from a Who chip.");
+    assert(!mobileDetailState.connectedExpanded, "Expected mobile Connected to stay collapsed before the user expands it.");
 
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     mobileDetailState = await readMeetingDetailState(page);
@@ -1343,15 +1441,30 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await ensureMeetingDetailSectionExpanded(page, "details", true);
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
-    await selectCalendarDetailTarget(page, "project-detail", `${seed.runId}-project`, "Proof freelance follow-up");
+    await selectCalendarDetailTarget(page, "tag-detail", `${seed.runId}-project`, "Proof freelance follow-up");
     await page.getByRole("button", { name: "Back" }).click();
-    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from project-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from tag-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-connected-restored.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile event detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    await setCalendarDate(page, seed.tomorrow);
+    await selectCalendarEventById(page, seed, "clinic", "Proof clinic paperwork check-in");
+    let mobileClinicDetailState = await readMeetingDetailState(page);
+    assert(mobileClinicDetailState.detailsExpanded, "Expected mobile clinic detail to keep Details expanded by default.");
+    assert(mobileClinicDetailState.who_guest_chip_count === 0, `Expected clinic detail to avoid guest attendee chips, got ${mobileClinicDetailState.who_guest_chip_count}.`);
+    assert(mobileClinicDetailState.whoChipTexts.includes("Clinic front desk"), `Expected clinic detail to render the role-style contact as a recognized chip, got ${mobileClinicDetailState.whoChipTexts.join(", ")}.`);
+    assert(mobileClinicDetailState.detailRowMetrics.who?.row_top_delta_px !== null && mobileClinicDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected clinic Who row to stay compact, got ${JSON.stringify(mobileClinicDetailState.detailRowMetrics.who)}.`);
+    assert(mobileClinicDetailState.details_card_overflow_x <= 1, `Expected mobile clinic Details card to avoid horizontal overflow, got ${mobileClinicDetailState.details_card_overflow_x}.`);
+    await saveShot(page, reportDir, `calendar-mobile-${theme}-clinic-detail.png`, summary);
+    await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-clinic-who-row.png`, summary);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.locator(".light-date-input").waitFor({ state: "visible" });
+    assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile clinic detail to restore calendar, got ${await currentLightRoute(page)}.`);
+    await setCalendarDate(page, seed.today);
     await selectCalendarEventByContainer(page, seed);
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.detailsExpanded, "Expected reopening the mobile event detail to reset Details open.");

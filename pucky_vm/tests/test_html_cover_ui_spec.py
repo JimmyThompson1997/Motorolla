@@ -19,7 +19,7 @@ def css_block(styles: str, selector: str) -> str:
 
 
 def function_block(source: str, name: str) -> str:
-    match = re.search(rf"function {re.escape(name)}\([^)]*\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
+    match = re.search(rf"function {re.escape(name)}\(.*?\)\s*\{{(?P<body>.*?)\n  \}}", source, re.S)
     assert match, f"Missing function {name}"
     return match.group("body")
 
@@ -284,15 +284,25 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();' in linked_record_section
     assert 'body.append(el("div", flatFeed ? "light-linked-records-empty-shell is-flat-feed" : "light-card light-linked-records-empty-shell"));' in linked_record_section
     assert 'entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {' in linked_record_section
+    light_calendar_event_details_section = function_block(app, "lightCalendarEventDetailsSection")
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
+    assert 'const card = el("div", "light-calendar-detail-card light-calendar-event-detail-card");' in app
+    assert 'calendarEventCompactWhenLabel(event)' in app
     assert 'const description = String(event?.summary || "").trim();' in app
     assert 'lightCalendarDetailDescription(description)' in app
-    assert 'who.dataset.detailRow = "who";' in app
+    assert 'lightCalendarDetailRow("who", "Who", cloud, {' in app
     assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
     assert 'light-attendee-chip-cloud' in app
-    assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' in app
+    assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' not in light_calendar_event_details_section
     assert 'light-calendar-detail-guest-list' not in app
+    assert 'lightCalendarDetailRow("place", "Place", place, { compact: true })' in app
+    assert 'lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone, { compact: true })' in app
     assert 'function lightCalendarDetailDescription(description) {' in app
+    assert 'function lightCalendarDetailRow(rowKey, label, value, options = {}) {' in app
+    assert "if (options.compact) {" in app
+    assert 'row.classList.add("is-compact");' in app
+    assert 'function calendarEventCompactDateLabel(event, timeZone = calendarEffectiveTimeZone()) {' in app
+    assert 'function calendarEventCompactWhenLabel(event, timeZone = calendarEffectiveTimeZone()) {' in app
     assert 'function lightMeetingDetailConnectedSection(meeting) {' in app
     assert 'function lightMeetingDetailSection(title, sectionKey, bodyContent, options = {}) {' in app
     assert 'function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId) {' in app
@@ -323,6 +333,11 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "state.calendarDayRailEndMonth" in app
     assert "calendarStripWindowSize" not in app
     assert "calendarStripDays(" not in app
+    calendar_contact_chip_label = function_block(app, "calendarContactChipLabel")
+    assert 'if (first && last) {' in calendar_contact_chip_label
+    assert 'if (first) {' in calendar_contact_chip_label
+    assert 'const parts = display.split(/\\s+/).filter(Boolean);' not in calendar_contact_chip_label
+    assert 'return display || "Contact";' in calendar_contact_chip_label
     assert "queueCalendarDayStripCenter(strip, targetDayKey);" in build_calendar_day_rail
     assert "state.selectedCalendarDate" not in continue_calendar_day_rail
     assert 'localStorage.setItem("pucky.cover.calendar_type_filters.v1"' in app
@@ -392,6 +407,10 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".calendar-settings-panel" in styles
     assert ".calendar-type-filter-row" in styles
     assert ".light-calendar-detail-card" in styles
+    assert ".light-calendar-event-detail-card" in styles
+    assert ".light-calendar-event-detail-card .light-calendar-detail-row.is-compact" in styles
+    assert ".light-calendar-event-detail-card .light-calendar-detail-row-value" in styles
+    assert ".light-calendar-event-detail-card .light-attendee-chip-cloud" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip.is-link" in styles
     assert ".light-attendee-chip-guest" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip-guest" in styles

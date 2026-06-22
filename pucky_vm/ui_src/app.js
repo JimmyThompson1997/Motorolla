@@ -4525,33 +4525,27 @@
   }
 
   function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {
-    const card = el("div", "light-calendar-detail-card");
+    void attendees;
+    const card = el("div", "light-calendar-detail-card light-calendar-event-detail-card");
     card.append(
-      lightCalendarDetailRow("when", "When", `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`)
+      lightCalendarDetailRow("when", "When", calendarEventCompactWhenLabel(event), { compact: true })
     );
     const recognized = calendarEventChipTargets(event, { contactsOnly: true });
-    const guests = attendees
-      .filter(person => !person.recognized)
-      .map(person => String(person?.fullLabel || person?.label || "").trim())
-      .filter(Boolean);
-    if (recognized.length || guests.length) {
-      const who = el("div", "light-calendar-detail-row");
-      who.dataset.detailRow = "who";
-      const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");
-      const cloud = el("div", "light-attendee-chip-cloud");
+    if (recognized.length) {
+      const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
       recognized.forEach(entry => cloud.append(lightRecordChip(entry, { fromRoute: "meeting-detail" })));
-      guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));
-      value.append(cloud);
-      who.append(el("strong", "light-calendar-detail-row-label", "Who"), value);
-      card.append(who);
+      card.append(lightCalendarDetailRow("who", "Who", cloud, {
+        compact: true,
+        valueClassName: "light-calendar-detail-people",
+      }));
     }
     const place = String(event?.metadata?.place || "").trim();
     if (place) {
-      card.append(lightCalendarDetailRow("place", "Place", place));
+      card.append(lightCalendarDetailRow("place", "Place", place, { compact: true }));
     }
     const eventTimeZone = String(event?.metadata?.time_zone || "").trim();
     if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
-      card.append(lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone));
+      card.append(lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone, { compact: true }));
     }
     const description = String(event?.summary || "").trim();
     if (description) {
@@ -4563,12 +4557,22 @@
     });
   }
 
-  function lightCalendarDetailRow(rowKey, label, value) {
+  function lightCalendarDetailRow(rowKey, label, value, options = {}) {
     const row = el("div", "light-calendar-detail-row");
+    if (options.compact) {
+      row.classList.add("is-compact");
+    }
+    const valueClassName = ["light-calendar-detail-row-value", String(options.valueClassName || "").trim()].filter(Boolean).join(" ");
+    const valueNode = el("div", valueClassName);
+    if (value instanceof Node) {
+      valueNode.append(value);
+    } else {
+      valueNode.textContent = String(value ?? "").trim();
+    }
     row.dataset.detailRow = String(rowKey || label || "").trim().toLowerCase();
     row.append(
       el("strong", "light-calendar-detail-row-label", label),
-      el("div", "light-calendar-detail-row-value", value)
+      valueNode
     );
     return row;
   }
@@ -5534,7 +5538,7 @@
     const rows = [{
       icon: "clock",
       label: "When",
-      value: `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`
+      value: calendarEventCompactWhenLabel(event)
     }];
     const place = String(meta.place || "").trim();
     if (place) {
@@ -5544,15 +5548,15 @@
     if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
       rows.push({ icon: "globe", label: "Time zone", value: eventTimeZone });
     }
-    const guests = attendees
-      .filter(person => !person.recognized)
-      .map(person => String(person?.fullLabel || person?.label || "").trim())
+    const recognized = attendees
+      .filter(person => person?.recognized && person?.target)
+      .map(person => String(person?.label || person?.fullLabel || "").trim())
       .filter(Boolean);
-    if (guests.length) {
+    if (recognized.length) {
       rows.push({
         icon: "contacts",
-        label: guests.length === 1 ? "Guest" : "Guests",
-        value: guests.join(", ")
+        label: "Who",
+        value: recognized.join(", ")
       });
     }
     return rows;
@@ -6156,10 +6160,6 @@
       return first;
     }
     const display = String(contact?.title || meta.display_name || "").trim();
-    const parts = display.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2 && /^[A-Z]/i.test(parts[0]) && /^[A-Z]/i.test(parts[1])) {
-      return `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.`;
-    }
     return display || "Contact";
   }
 
@@ -8758,6 +8758,17 @@
       month: "long",
       day: "numeric"
     });
+  }
+
+  function calendarEventCompactDateLabel(event, timeZone = calendarEffectiveTimeZone()) {
+    return formatCalendarDateKey(calendarEventDateKey(event, timeZone), {
+      month: "long",
+      day: "numeric"
+    });
+  }
+
+  function calendarEventCompactWhenLabel(event, timeZone = calendarEffectiveTimeZone()) {
+    return `${calendarEventCompactDateLabel(event, timeZone)}${DOT}${calendarEventTimeRange(event, timeZone)}`;
   }
 
   function calendarEventTimeRange(event, timeZone = calendarEffectiveTimeZone()) {

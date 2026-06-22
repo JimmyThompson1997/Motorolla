@@ -5489,6 +5489,32 @@ button {
   line-height: 1.45;
 }
 
+.light-calendar-event-detail-card {
+  overflow-x: clip;
+}
+
+.light-calendar-event-detail-card .light-calendar-detail-row.is-compact {
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.light-calendar-event-detail-card .light-calendar-detail-row-label {
+  align-self: start;
+  padding-top: 2px;
+}
+
+.light-calendar-event-detail-card .light-calendar-detail-row-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.light-calendar-event-detail-card .light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-row-value {
+  display: flex;
+  align-items: flex-start;
+  overflow-wrap: normal;
+}
+
 .light-meeting-note-summary {
   margin: 0;
 }
@@ -5514,6 +5540,20 @@ button {
 .light-calendar-detail-people {
   display: grid;
   gap: 10px;
+}
+
+.light-calendar-event-detail-card .light-calendar-detail-people {
+  display: block;
+  min-width: 0;
+}
+
+.light-calendar-event-detail-card .light-attendee-chip-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .light-calendar-detail-people .light-attendee-chip-cloud {
