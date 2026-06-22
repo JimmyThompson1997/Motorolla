@@ -230,6 +230,10 @@ def test_calendar_browser_proof_retries_manifest_fetch_and_reacquires_event_cont
     assert 'targetRow.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });' in source
     assert "targetRow.click();" in source
     assert 'const allowedRoutes = route === "project-detail" ? new Set(["project-detail", "tag-detail"]) : new Set([route]);' in source
+    assert "async function openCalendarProofRoot(page, config, theme)" in source
+    assert 'await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });' in source
+    assert 'await openCalendarProofRoot(page, config, theme);' in source
+    assert 'waitUntil: "networkidle"' not in source
     assert 'await selectCalendarEventById(page, seed, "late-call", "Proof late call");' in source
     assert "const whoChipTexts = detailState.whoChipTexts;" in source
     assert 'for (const label of ["Jimmy T.", "Jeff B."]) {' in source

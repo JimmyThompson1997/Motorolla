@@ -397,6 +397,11 @@ async function openHomeCalendar(page) {
   await page.locator(".light-date-input").waitFor({ state: "visible" });
 }
 
+async function openCalendarProofRoot(page, config, theme) {
+  await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
+}
+
 async function openCalendarSettings(page) {
   await page.locator(".light-calendar-settings-button").click();
   await page.locator(".calendar-settings-panel").waitFor({ state: "visible" });
@@ -1068,8 +1073,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     }
   });
   try {
-    await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
-    await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
+    await openCalendarProofRoot(page, config, theme);
     await openHomeCalendar(page);
 
     const initialDate = await page.locator(".light-date-input").inputValue();
@@ -1407,8 +1411,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     }
   });
   try {
-    await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
-    await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
+    await openCalendarProofRoot(page, config, theme);
     await openHomeCalendar(page);
     const chromeText = await calendarChromeText(page);
     assert(await page.locator(".light-date-input").count() === 1, "Expected a native date input on mobile.");
