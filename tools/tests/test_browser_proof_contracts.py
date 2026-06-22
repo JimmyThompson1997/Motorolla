@@ -58,14 +58,14 @@ def test_canonical_browser_proof_routes_use_inbox_and_connect() -> None:
     assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
 
 
-def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit() -> None:
+def test_live_user_session_browser_proof_avoids_stale_routes_and_supports_contacts_edit() -> None:
     if not has_source("cover_live_user_session_playwright.mjs"):
         return
     source = read_source("cover_live_user_session_playwright.mjs")
 
     assert "route=apps" not in source
     assert "route=feed" not in source
-    assert "contacts-edit" not in source
+    assert 'shouldRunRoute(config, "contacts-edit")' in source
     assert 'url.searchParams.set("api_token"' not in source
     assert LEGACY_BROWSER_TOKEN_KEY not in source
     assert "fetchConnectMyApps(" in source
@@ -356,6 +356,23 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "contacts-search-detail-from-filter" in source
     assert 'phone: "+1 (415) 555-0188"' in shared
     assert 'activity: ["Linked to live alpha"]' in shared
+
+
+def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "readContactEditState" in source
+    assert "saveContactEditAndWaitForDetail" in source
+    assert "contacts-edit-open" in source
+    assert "contacts-edit-name" in source
+    assert "contacts-edit-photo" in source
+    assert "contacts-edit-back-to-list" in source
+    assert "Updated Proof Contact" in source
+    assert "Updated from local proof edit flow" in source
+    assert "updated.proof.one@example.com" in source
+    assert "Expected contact edit to persist the updated title" in source
+    assert "Expected contact edit to persist the uploaded photo asset" in source
+    assert 'input[type="file"][data-contact-photo-input="true"]' in source
 
 
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
@@ -649,6 +666,24 @@ def test_contacts_search_browser_proof_task_runner_and_docs_are_first_class() ->
     assert "python -m tools.dev proof-live-contacts-search-browser" in readme
     assert "Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`" in docs_readme
     assert "Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`" in docs_readme
+
+
+def test_contacts_edit_browser_proof_task_runner_and_docs_are_first_class() -> None:
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+    assert '"proof-local-contacts-edit-browser": "Boot the local workspace proof server and run the Contacts edit browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-contacts-edit-browser": "Run the Contacts edit browser proof against the hosted VM with manifest verification."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-contacts-edit-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contacts-edit-browser").resolve())' in dev_source
+    assert '"contacts-edit",' in dev_source
+    assert 'return run_local_contacts_edit_browser_proof(args.extra_args)' in dev_source
+    assert 'return run_live_contacts_edit_browser_proof(args.extra_args)' in dev_source
+    assert "python -m tools.dev proof-local-contacts-edit-browser" in readme
+    assert "python -m tools.dev proof-live-contacts-edit-browser" in readme
+    assert "Contacts edit browser proof (local): `python -m tools.dev proof-local-contacts-edit-browser`" in docs_readme
+    assert "Contacts edit browser proof (live): `python -m tools.dev proof-live-contacts-edit-browser`" in docs_readme
 def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     source = read_source("cover_universal_feed_tiles_playwright.mjs")
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))

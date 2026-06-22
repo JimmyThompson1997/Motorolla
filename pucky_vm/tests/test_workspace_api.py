@@ -694,22 +694,55 @@ def test_workspace_api_preserves_me_contact_and_allows_updates(tmp_path: Path) -
         assert me["title"] == "Me"
         assert me["metadata"]["is_self"] is True
 
+        photo_asset = request_json(
+            base_url,
+            "/api/workspace/assets",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "contact-me-photo",
+                "title": "Contact Me Photo",
+                "mime_type": "image/png",
+                "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO0r3n8AAAAASUVORK5CYII=",
+                "metadata": {"kind": "contact_photo"},
+            },
+        )
+        assert photo_asset["asset_id"] == "contact-me-photo"
+        assert photo_asset["mime_type"] == "image/png"
+
         updated = request_json(
             base_url,
             "/api/workspace/contacts/contact-me",
             method="PATCH",
             token="test-token",
             body={
+                "title": "Jimmy Thompson",
+                "summary": "My primary contact card",
                 "metadata": {
+                    "first_name": "Jimmy",
+                    "last_name": "Thompson",
+                    "avatar": "JT",
                     "email": "me@example.com",
                     "phone": "+14155550123",
                     "notification_device_id": "phone-1",
+                    "photo_asset_id": "contact-me-photo",
+                    "photo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO0r3n8AAAAASUVORK5CYII=",
                 }
             },
         )
+        assert updated["title"] == "Jimmy Thompson"
+        assert updated["summary"] == "My primary contact card"
+        assert updated["metadata"]["first_name"] == "Jimmy"
+        assert updated["metadata"]["last_name"] == "Thompson"
         assert updated["metadata"]["email"] == "me@example.com"
         assert updated["metadata"]["phone"] == "+14155550123"
         assert updated["metadata"]["notification_device_id"] == "phone-1"
+        assert updated["metadata"]["photo_asset_id"] == "contact-me-photo"
+        assert updated["metadata"]["photo"].startswith("data:image/png;base64,")
+        assert updated["metadata"]["is_self"] is True
+        assert updated["pinned"] is True
+        assert updated["archived"] is False
+        assert updated["deleted"] is False
 
         preserved = request_json(
             base_url,
@@ -718,6 +751,7 @@ def test_workspace_api_preserves_me_contact_and_allows_updates(tmp_path: Path) -
             token="test-token",
         )
         assert preserved["id"] == "contact-me"
+        assert preserved["title"] == "Jimmy Thompson"
         assert preserved["archived"] is False
         assert preserved["deleted"] is False
     finally:

@@ -4748,6 +4748,89 @@ button {
   box-shadow: none;
 }
 
+.light-contact-edit-page {
+  gap: 18px;
+}
+
+.light-contact-edit-form {
+  display: grid;
+  gap: 14px;
+  padding: 0 0 84px;
+}
+
+.light-contact-edit-photo-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--home-shell-card) 92%, white);
+  border: 1px solid var(--home-shell-border);
+}
+
+.light-contact-edit-photo-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.light-contact-edit-photo-title,
+.light-contact-edit-photo-detail {
+  margin: 0;
+}
+
+.light-contact-edit-photo-detail,
+.light-contact-edit-label,
+.light-contact-edit-discard-copy {
+  color: var(--home-shell-text-muted);
+}
+
+.light-contact-edit-photo-actions,
+.light-contact-edit-actions,
+.light-contact-edit-discard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.light-contact-edit-photo-actions {
+  grid-column: 1 / -1;
+}
+
+.light-contact-edit-name-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.light-contact-edit-field {
+  display: grid;
+  gap: 8px;
+}
+
+.light-contact-edit-label {
+  font-size: 12px;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+}
+
+.light-contact-edit-input {
+  width: 100%;
+}
+
+.light-contact-edit-textarea {
+  min-height: 112px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.light-contact-edit-discard {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
 .light-profile-card h1,
 .light-profile-card p {
   margin: 0;
