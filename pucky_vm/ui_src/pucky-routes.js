@@ -28,7 +28,8 @@ window.PUCKY_UI_ROUTES = {
     "projects",
     "project-detail",
     "contacts",
-    "contact-detail"
+    "contact-detail",
+    "contact-edit"
   ],
   HOME_SHELL_CANONICAL_ROUTES: ["inbox", "connect", "meetings", "settings"],
   LIGHT_ROUTE_PARENTS: {
@@ -39,7 +40,8 @@ window.PUCKY_UI_ROUTES = {
     "meeting-note-detail": "meeting-notes",
     "reminder-detail": "reminders",
     "project-detail": "projects",
-    "contact-detail": "contacts"
+    "contact-detail": "contacts",
+    "contact-edit": "contact-detail"
   },
   ROUTE_ALIASES: {},
   WORKSPACE_ROUTE_COLLECTIONS: {
@@ -57,7 +59,8 @@ window.PUCKY_UI_ROUTES = {
     projects: "projects",
     "project-detail": "projects",
     contacts: "contacts",
-    "contact-detail": "contacts"
+    "contact-detail": "contacts",
+    "contact-edit": "contacts"
   },
   WORKSPACE_COLLECTION_LABELS: {
     notes: "Notes",

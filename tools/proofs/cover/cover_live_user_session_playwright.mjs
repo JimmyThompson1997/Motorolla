@@ -868,6 +868,31 @@ async function readContactsSearchState(page) {
   });
 }
 
+async function readContactEditState(page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector(".light-shell");
+    const pageRoot = document.querySelector(".light-contact-edit-page");
+    const fieldValue = key => {
+      const input = document.querySelector(`[data-contact-edit-field="${key}"]`);
+      return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
+    };
+    const save = document.querySelector("[data-contact-edit-save]");
+    return {
+      route: shell?.getAttribute("data-light-route") || "",
+      page_visible: Boolean(pageRoot),
+      title: String(pageRoot?.querySelector(".light-page-title")?.textContent || "").trim(),
+      first_name: fieldValue("first_name"),
+      last_name: fieldValue("last_name"),
+      summary: fieldValue("summary"),
+      email: fieldValue("email"),
+      phone: fieldValue("phone"),
+      has_connected_section: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
+      has_photo_preview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
+      save_disabled: save instanceof HTMLButtonElement ? save.disabled : true,
+    };
+  });
+}
+
 async function setContactsSearchQuery(page, query, timeoutMs) {
   const search = page.locator(".light-contacts-search").first();
   await search.waitFor({ state: "visible", timeout: timeoutMs });
@@ -890,6 +915,19 @@ async function expectContactsSearchRows(page, query, expectedIds, timeoutMs) {
       && JSON.stringify(rowIds) === JSON.stringify(ids);
   }, { expectedQuery: query, ids: expectedIds }, { timeout: timeoutMs });
   return readContactsSearchState(page);
+}
+
+async function fillContactEditField(page, fieldName, value, timeoutMs) {
+  const input = page.locator(`[data-contact-edit-field="${fieldName}"]`).first();
+  await input.waitFor({ state: "visible", timeout: timeoutMs });
+  await input.fill(value);
+}
+
+async function saveContactEditAndWaitForDetail(page, timeoutMs) {
+  const submit = page.locator('[data-contact-edit-save-inline="true"]').first();
+  await submit.waitFor({ state: "visible", timeout: timeoutMs });
+  await submit.click();
+  await waitForRoute(page, "contact-detail", timeoutMs);
 }
 
 async function waitForSeededCalendarEvent(page, seed, timeoutMs) {
@@ -1597,6 +1635,106 @@ async function runRouteTour(page, config, mode, seed) {
       JSON.stringify(reenteredSearchState.row_ids) === JSON.stringify(baselineRowIds),
       `${mode}: Contacts re-entry should restore the baseline list, got ${reenteredSearchState.row_ids.join(", ")}`
     );
+  }
+
+  if (shouldRunRoute(config, "contacts-edit")) {
+    const updatedTitle = "Updated Live Contact";
+    const updatedSummary = "Updated from live proof edit flow";
+    const updatedEmail = "updated.live.contact@example.com";
+    const updatedPhone = "+1 (415) 555-0199";
+    const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
+
+    await goHome(page, config);
+    await openRouteFromHome(page, "contacts", config.timeoutMs);
+    await waitForSeededContact(page, seed, config.timeoutMs);
+    await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
+    await waitForRoute(page, "contact-detail", config.timeoutMs);
+    await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
+    await page.getByRole("button", { name: "Edit contact" }).first().click();
+    await waitForRoute(page, "contact-edit", config.timeoutMs);
+    const editState = await readContactEditState(page);
+    assert(editState.page_visible, `${mode}: expected Contacts edit page to be visible`);
+    assert(editState.route === "contact-edit", `${mode}: expected contact-edit route, got ${editState.route}`);
+    assert(!editState.has_connected_section, `${mode}: expected Connected to stay on contact detail, not edit`);
+    await recorder.capture({
+      route: "contact-edit",
+      action: "Open Contacts edit",
+      expected: "The contact detail opens a full-screen Contacts edit form with editable contact info and no Connected section.",
+      confirmation: "Contacts edit opened with the expected focused edit form.",
+      observed: { contact_title: seed.contactTitle, contact_edit: editState },
+    });
+
+    await fillContactEditField(page, "first_name", "Updated", config.timeoutMs);
+    await fillContactEditField(page, "last_name", "Live Contact", config.timeoutMs);
+    await fillContactEditField(page, "summary", updatedSummary, config.timeoutMs);
+    await fillContactEditField(page, "email", updatedEmail, config.timeoutMs);
+    await fillContactEditField(page, "phone", updatedPhone, config.timeoutMs);
+    await recorder.capture({
+      route: "contact-edit",
+      action: "Update contact fields",
+      expected: "The Contacts edit form accepts updated name, summary, email, and phone values before save.",
+      confirmation: "Edited contact fields populated cleanly in the form.",
+      observed: { updated_title: updatedTitle, updated_summary: updatedSummary, updated_email: updatedEmail, updated_phone: updatedPhone },
+    });
+
+    const photoInput = page.locator('input[type="file"][data-contact-photo-input="true"]').first();
+    await photoInput.setInputFiles(photoPath);
+    await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-edit-page .light-avatar.has-photo img")), undefined, { timeout: config.timeoutMs });
+    await recorder.capture({
+      route: "contact-edit",
+      action: "Upload new contact photo",
+      expected: "Selecting a new contact photo updates the edit preview before save.",
+      confirmation: "The contact photo preview updated after upload.",
+      observed: { photo_fixture: photoPath },
+    });
+
+    await saveContactEditAndWaitForDetail(page, config.timeoutMs);
+    await waitForTextInBody(page, updatedTitle, config.timeoutMs);
+    await page.getByText(updatedEmail).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.getByText(updatedPhone).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.getByText(updatedSummary).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const updatedRecord = await fetch(`${String(config.baseUrl || "").replace(/\/+$/, "")}/api/workspace/contacts/${encodeURIComponent(seed.contactId)}`, {
+      headers: {
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        Pragma: "no-cache",
+      },
+    }).then(async response => {
+      if (!response.ok) {
+        throw new Error(`Could not load updated contact record (${response.status})`);
+      }
+      return response.json();
+    });
+    assert(updatedRecord.title === updatedTitle, `${mode}: Expected saved contact detail to show the updated title, got ${updatedRecord.title}`);
+    assert(updatedRecord.summary === updatedSummary, `${mode}: expected updated summary to persist, got ${updatedRecord.summary}`);
+    assert(updatedRecord.metadata?.email === updatedEmail, `${mode}: expected updated email to persist, got ${updatedRecord.metadata?.email}`);
+    assert(updatedRecord.metadata?.phone === updatedPhone, `${mode}: expected updated phone to persist, got ${updatedRecord.metadata?.phone}`);
+    assert(String(updatedRecord.metadata?.photo_asset_id || "").trim(), `${mode}: expected uploaded contact photo asset id to persist`);
+    await recorder.capture({
+      route: "contact-detail",
+      action: "Save edited contact",
+      expected: "Saving the contact edit returns to contact detail with the updated title, summary, email, phone, and photo persisted.",
+      confirmation: "Edited contact saved and reopened on detail with the updated values.",
+      observed: {
+        updated_title: updatedRecord.title,
+        updated_summary: updatedRecord.summary,
+        updated_email: updatedRecord.metadata?.email || "",
+        updated_phone: updatedRecord.metadata?.phone || "",
+        photo_asset_id: updatedRecord.metadata?.photo_asset_id || "",
+      },
+    });
+
+    await clickBack(page, config.timeoutMs);
+    await waitForRoute(page, "contacts", config.timeoutMs);
+    await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const editedListState = await readContactsSearchState(page);
+    assert(editedListState.row_titles.includes(updatedTitle), `${mode}: Expected edited contact row to reappear with the updated title, got ${editedListState.row_titles.join(", ")}`);
+    await recorder.capture({
+      route: "contacts",
+      action: "Return to edited Contacts list",
+      expected: "Backing out of the saved contact detail returns to the Contacts list with the updated row visible.",
+      confirmation: "Contacts list showed the edited contact row after returning from detail.",
+      observed: { updated_title: updatedTitle, contacts_search: editedListState },
+    });
   }
 
   return {

@@ -1694,7 +1694,7 @@ def test_light_inbox_unread_attachment_actions_use_light_theme_icon_color() -> N
     assert "--icon-card-action-unread: #101624;" in light_shell
 
 
-def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
+def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     app = read("app.js")
     styles = read("styles.css")
     contacts_page = function_block(app, "lightContactsPage")
@@ -1703,18 +1703,21 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     contact_matches_search = function_block(app, "contactMatchesSearch")
     filtered_contacts = function_block(app, "filteredContactsListItems")
     contact_detail = function_block(app, "lightContactDetailPage")
+    contact_edit = function_block(app, "lightContactEditPage")
     contact_profile_card = css_block(styles, ".light-contact-detail-page .light-profile-card")
     contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
     contact_search_input = css_block(styles, ".light-contacts-search")
     contact_list = css_block(styles, ".light-contact-list")
     contact_row = css_block(styles, ".light-contact-row")
+    contact_edit_page = css_block(styles, ".light-contact-edit-page")
+    contact_edit_form = css_block(styles, ".light-contact-edit-form")
+    contact_edit_photo = css_block(styles, ".light-contact-edit-photo-card")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
     assert "function normalizeSearchDigits(value)" in app
-    assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" not in app
-    assert '"contact-edit"' not in app
+    assert '"contact-edit"' in app
     assert "const searchWrap = lightContactsSearchField();" in contacts_page
     assert "const contacts = filteredContactsListItems();" in contacts_page
     assert "page.append(searchWrap);" in contacts_page
@@ -1740,7 +1743,8 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'Clear the search field to see every contact again.' in contacts_page
     assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in contacts_page
     assert 'const row = el("button", "light-card light-contact-row");' not in contacts_page
-    assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
+    assert 'const page = lightPage("Contact", {' in contact_detail
+    assert "detail: true," in contact_detail
     assert 'page.classList.add("light-contact-detail-page");' in contact_detail
     assert 'const hero = el("section", "light-profile-card");' in contact_detail
     assert 'hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));' in contact_detail
@@ -1748,12 +1752,25 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "meta.endpoints" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
+    assert 'lightIconButton("edit", contactIsSelf(contact) ? "Edit me" : "Edit contact"' in contact_detail
+    assert 'lightNavigate("contact-edit", { from: "contact-detail" });' in contact_detail
     assert "lightLinkedRecordSection(contact, {" in contact_detail
     assert "showWhenEmpty: true" in contact_detail
     assert "lightHtmlDocument(contact" not in contact_detail
-    assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
-    assert "lightContactEditPage" not in app
+    assert "function lightContactEditPage()" in app
+    assert 'const contact = selectedContact();' in contact_edit
+    assert 'contactIsSelf(contact) ? "Edit me" : "Edit contact"' in contact_edit
+    assert 'const saveButton = settingsActionButton(' in contact_edit
+    assert 'photoInput.type = "file";' in contact_edit
+    assert 'photoInput.accept = "image/*";' in contact_edit
+    assert 'firstNameInput.autocomplete = "given-name";' in contact_edit
+    assert 'lastNameInput.autocomplete = "family-name";' in contact_edit
+    assert 'emailInput.type = "email";' in contact_edit
+    assert 'phoneInput.type = "tel";' in contact_edit
+    assert 'await saveContactEditDraft(contact);' in contact_edit
+    assert 'page.append(form);' in contact_edit
+    assert "lightLinkedRecordSection(contact, {" not in contact_edit
     assert "display: flex;" in contact_search_wrap
     assert "padding: 0;" in contact_search_wrap
     assert "border-bottom:" in contact_search_wrap
@@ -1778,6 +1795,10 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "border: 0;" in contact_profile_card
     assert "box-shadow: none;" in contact_profile_card
     assert "border-radius: 0;" in contact_profile_card
+    assert "gap:" in contact_edit_page
+    assert "display: grid;" in contact_edit_form
+    assert "border-radius:" in contact_edit_photo
+    assert "padding:" in contact_edit_photo
 
 
 def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:
@@ -1789,7 +1810,7 @@ def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:
     light_back = function_block(app, "lightBack")
 
     assert "function isContactsSurfaceRoute(route) {" in app
-    assert 'return value === "contacts" || value === "contact-detail";' in is_contacts_surface_route
+    assert 'return value === "contacts" || value === "contact-detail" || value === "contact-edit";' in is_contacts_surface_route
     assert "if (!isContactsSurfaceRoute(currentRoute) || isContactsSurfaceRoute(nextRoute)) {" in reset_contacts_search
     assert 'state.contacts.search = "";' in reset_contacts_search
     assert "resetContactsSearchIfLeavingContacts(normalized.route);" in restore_light_route_snapshot

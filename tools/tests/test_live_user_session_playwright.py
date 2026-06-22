@@ -61,7 +61,7 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'await openRouteFromHome(page, "contacts", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source
-    assert "contacts-edit" not in source
+    assert 'shouldRunRoute(config, "contacts-edit")' in source
     assert "Connect stays read-only" in source
     assert "connect_cta_clicked: false" in source
     assert "fetchConnectMyApps(" in source
@@ -173,6 +173,22 @@ def test_live_user_session_runner_supports_contacts_route_filter_and_search_cont
     assert "Contacts search should reset after leaving the Contacts surface" in source
     assert "Requested routes" in source
     assert "requested_routes:" in source
+
+
+def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_contract() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'shouldRunRoute(config, "contacts-edit")' in source
+    assert 'action: "Open Contacts edit"' in source
+    assert 'action: "Save edited contact"' in source
+    assert 'action: "Return to edited Contacts list"' in source
+    assert "readContactEditState" in source
+    assert "saveContactEditAndWaitForDetail" in source
+    assert "Updated Live Contact" in source
+    assert "Updated from live proof edit flow" in source
+    assert "updated.live.contact@example.com" in source
+    assert "Expected saved contact detail to show the updated title" in source
+    assert "Expected edited contact row to reappear with the updated title" in source
 
 
 def test_live_user_session_wrapper_targets_nested_runner() -> None:

@@ -602,7 +602,7 @@ class WorkspaceStore:
         if self.kind_for_collection(collection) == "contact" and str(record_id or "").strip() == SELF_CONTACT_ID:
             merged["id"] = SELF_CONTACT_ID
             merged["record_id"] = SELF_CONTACT_ID
-            merged["title"] = SELF_CONTACT_TITLE
+            merged["title"] = str(merged.get("title") or current.get("title") or SELF_CONTACT_TITLE).strip() or SELF_CONTACT_TITLE
             merged["summary"] = str(merged.get("summary") or SELF_CONTACT_SUMMARY).strip() or SELF_CONTACT_SUMMARY
             merged["pinned"] = True
             merged["archived"] = False
@@ -880,7 +880,7 @@ class WorkspaceStore:
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
         payload = {
             "id": SELF_CONTACT_ID,
-            "title": SELF_CONTACT_TITLE,
+            "title": str(current.get("title") or SELF_CONTACT_TITLE).strip() or SELF_CONTACT_TITLE,
             "summary": str(current.get("summary") or SELF_CONTACT_SUMMARY).strip() or SELF_CONTACT_SUMMARY,
             "pinned": True,
             "archived": False,
@@ -1562,7 +1562,7 @@ class WorkspaceStore:
                     "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
                     "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
                 }
-                title = SELF_CONTACT_TITLE
+                title = title or SELF_CONTACT_TITLE
                 summary = summary or SELF_CONTACT_SUMMARY
                 pinned = True
                 archived = False
