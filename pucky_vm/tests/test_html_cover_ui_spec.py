@@ -263,6 +263,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'main.addEventListener("click", event => {' in light_event_block
     assert "event.stopPropagation();" in light_event_block
     assert 'if (event.key === "Enter" || event.key === " ") {' in light_event_block
+    light_calendar_event_chips = function_block(app, "lightCalendarEventChips")
+    assert 'visible.forEach(entry => row.append(lightCalendarContactChip(entry, { fromRoute: options.fromRoute || state.route || "" })));' in light_calendar_event_chips
+    assert "lightRecordChip(entry" not in light_calendar_event_chips
     light_gap = function_block(app, "lightCalendarGap")
     assert 'Free ${calendarFormatTime(untilMs - gapMs)} - ${calendarFormatTime(untilMs)}' in light_gap
     assert "Long break" not in light_gap
@@ -293,12 +296,17 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'lightCalendarDetailRow("who", "Who", cloud, {' in app
     assert 'calendarEventChipTargets(event, { contactsOnly: true })' in app
     assert 'light-attendee-chip-cloud' in app
+    assert 'recognized.forEach(entry => cloud.append(lightCalendarContactChip(entry, { fromRoute: "meeting-detail" })));' in app
+    assert "lightRecordChip(entry" not in light_calendar_event_details_section
     assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' not in light_calendar_event_details_section
     assert 'light-calendar-detail-guest-list' not in app
     assert 'lightCalendarDetailRow("place", "Place", place, { compact: true })' in app
     assert 'lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone, { compact: true })' in app
     assert 'function lightCalendarDetailDescription(description) {' in app
     assert 'function lightCalendarDetailRow(rowKey, label, value, options = {}) {' in app
+    assert 'function lightCalendarContactChip(entry, options = {}) {' in app
+    assert 'const icon = el("span", "light-calendar-attendee-chip-icon");' in app
+    assert 'el("span", "light-calendar-attendee-chip-label", label)' in app
     assert "if (options.compact) {" in app
     assert 'row.classList.add("is-compact");' in app
     assert 'function calendarEventCompactDateLabel(event, timeZone = calendarEffectiveTimeZone()) {' in app
@@ -411,6 +419,9 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-calendar-event-detail-card .light-calendar-detail-row.is-compact" in styles
     assert ".light-calendar-event-detail-card .light-calendar-detail-row-value" in styles
     assert ".light-calendar-event-detail-card .light-attendee-chip-cloud" in styles
+    assert ".light-calendar-attendee-chip {" in styles
+    assert ".light-calendar-attendee-chip .light-calendar-attendee-chip-icon {" in styles
+    assert ".light-calendar-attendee-chip .light-calendar-attendee-chip-label {" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip.is-link" in styles
     assert ".light-attendee-chip-guest" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip-guest" in styles

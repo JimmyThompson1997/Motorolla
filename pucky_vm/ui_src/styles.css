@@ -6233,11 +6233,74 @@ button {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 28%, rgba(255, 255, 255, 0.18));
 }
 
+.light-calendar-attendee-chip {
+  --calendar-attendee-accent: var(--accent-primary);
+  gap: 7px;
+  padding: 0 11px 0 10px;
+}
+
+.light-calendar-attendee-chip.is-link {
+  background: color-mix(in srgb, var(--calendar-attendee-accent) 10%, white);
+  color: var(--home-shell-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--calendar-attendee-accent) 18%, var(--home-shell-border));
+}
+
+.app-shell[data-theme="dark"] .light-calendar-attendee-chip.is-link {
+  background: color-mix(in srgb, var(--calendar-attendee-accent) 24%, #152236);
+  color: #f5f8ff;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--calendar-attendee-accent) 28%, rgba(255, 255, 255, 0.18));
+}
+
+.light-calendar-attendee-chip .light-calendar-attendee-chip-icon {
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  flex: 0 0 14px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--calendar-attendee-accent);
+}
+
+.light-calendar-attendee-chip .light-calendar-attendee-chip-icon .material-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.light-calendar-attendee-chip .light-calendar-attendee-chip-label {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 .light-event-chip-row .light-attendee-chip.is-link,
 .light-event-connected-card .light-attendee-chip.is-link {
   background: var(--event-chip-surface);
   color: var(--event-chip-text);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--event-tone) 18%, var(--home-shell-border));
+}
+
+.light-event-chip-row .light-calendar-attendee-chip.is-link,
+.light-event-connected-card .light-calendar-attendee-chip.is-link {
+  background: color-mix(in srgb, var(--calendar-attendee-accent) 10%, white);
+  color: var(--home-shell-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--calendar-attendee-accent) 18%, var(--home-shell-border));
+}
+
+.app-shell[data-theme="dark"] .light-event-chip-row .light-calendar-attendee-chip.is-link,
+.app-shell[data-theme="dark"] .light-event-connected-card .light-calendar-attendee-chip.is-link {
+  background: color-mix(in srgb, var(--calendar-attendee-accent) 24%, #152236);
+  color: #f5f8ff;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--calendar-attendee-accent) 28%, rgba(255, 255, 255, 0.18));
 }
 
 .light-attendee-chip-guest {

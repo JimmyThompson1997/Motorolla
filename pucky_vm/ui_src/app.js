@@ -5277,7 +5277,7 @@
     const recognized = calendarEventChipTargets(event, { contactsOnly: true });
     if (recognized.length) {
       const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
-      recognized.forEach(entry => cloud.append(lightRecordChip(entry, { fromRoute: "meeting-detail" })));
+      recognized.forEach(entry => cloud.append(lightCalendarContactChip(entry, { fromRoute: "meeting-detail" })));
       card.append(lightCalendarDetailRow("who", "Who", cloud, {
         compact: true,
         valueClassName: "light-calendar-detail-people",
@@ -9297,13 +9297,37 @@
     return chip;
   }
 
+  function lightCalendarContactChip(entry, options = {}) {
+    const label = String(entry?.label || entry?.fullLabel || graphKindLabel(entry?.kind)).trim() || "Contact";
+    const target = entry?.target || null;
+    const chip = el(
+      target ? "button" : "span",
+      target ? "light-attendee-chip light-calendar-attendee-chip is-link" : "light-attendee-chip light-calendar-attendee-chip"
+    );
+    applySemanticIconAccent(chip, "contacts", { propertyName: "--calendar-attendee-accent" });
+    const icon = el("span", "light-calendar-attendee-chip-icon");
+    icon.innerHTML = iconSvg("contacts", { filled: true });
+    chip.append(
+      icon,
+      el("span", "light-calendar-attendee-chip-label", label)
+    );
+    if (target) {
+      chip.type = "button";
+      chip.addEventListener("click", event => {
+        event.stopPropagation();
+        openWorkspaceTarget(target, options.fromRoute || state.route || "");
+      });
+    }
+    return chip;
+  }
+
   function lightCalendarEventChips(event, options = {}) {
     const row = el("div", "light-event-chip-row");
     const chipTargets = calendarEventChipTargets(event, options);
     const limit = Math.max(0, Number(options.limit || 0) || 0);
     const visible = limit > 0 ? chipTargets.slice(0, limit) : chipTargets;
     if (visible.length) {
-      visible.forEach(entry => row.append(lightRecordChip(entry, { fromRoute: options.fromRoute || state.route || "" })));
+      visible.forEach(entry => row.append(lightCalendarContactChip(entry, { fromRoute: options.fromRoute || state.route || "" })));
       if (limit > 0 && chipTargets.length > limit) {
         row.append(el("span", "light-attendee-chip light-attendee-overflow", `+${chipTargets.length - limit}`));
       }

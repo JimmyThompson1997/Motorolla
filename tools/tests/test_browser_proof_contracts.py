@@ -862,8 +862,12 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "data-meeting-detail-section" in calendar_source
     assert "row_top_delta_px" in calendar_source
     assert "who_chip_gap_px" in calendar_source
+    assert "who_contact_icon_count" in calendar_source
     assert "who_guest_chip_count" in calendar_source
+    assert "who_record_chip_count" in calendar_source
     assert "details_card_overflow_x" in calendar_source
+    assert "agenda_contact_icon_count" in calendar_source
+    assert "agenda_record_chip_count" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-default.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-connected-expanded.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-details-collapsed.png" in calendar_source
@@ -888,6 +892,10 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "Expected Details to start expanded on a fresh event open." in calendar_source
     assert "Expected compact When to avoid weekday text" in calendar_source
     assert "Expected compact Who row to keep visible chip spacing" in calendar_source
+    assert "Expected agenda attendee chips to keep a visible contact icon on every chip." in calendar_source
+    assert "Expected agenda attendee chips to avoid record-chip styling." in calendar_source
+    assert "Expected Calendar Who row to keep a visible contact icon on every attendee chip." in calendar_source
+    assert "Expected Calendar Who row to avoid record-chip styling." in calendar_source
     assert "Expected Calendar Who row to avoid guest attendee chips" in calendar_source
     assert "Expected mobile Details card to avoid horizontal overflow" in calendar_source
     assert "Outside counsel" in calendar_source
@@ -897,6 +905,10 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "Expected agenda cards to show all contact-backed attendees" in calendar_source
     assert "Expected clinic detail to render the role-style contact as a recognized chip" in calendar_source
     assert "Expected mobile agenda cards to show all contact-backed attendees" in calendar_source
+    assert "Expected mobile agenda attendee chips to keep a visible contact icon on every chip." in calendar_source
+    assert "Expected mobile agenda attendee chips to avoid record-chip styling." in calendar_source
+    assert "Expected mobile Who row to keep a visible contact icon on every attendee chip." in calendar_source
+    assert "Expected mobile Who row to avoid record-chip styling." in calendar_source
     assert "Expected mobile Who row to avoid guest attendee chips" in calendar_source
     assert "Expected mobile Who row to include at least one guest chip." not in calendar_source
     assert "Expected mobile Who row to carry contact and guest chips" not in calendar_source

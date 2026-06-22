@@ -907,7 +907,9 @@ async function readMeetingDetailState(page) {
         Number.parseFloat(whoStyle.rowGap || "0") || 0,
         Number.parseFloat(whoStyle.gap || "0") || 0
       ) : 0,
+      who_contact_icon_count: document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-attendee-chip-icon').length,
       who_guest_chip_count: document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-guest').length,
+      who_record_chip_count: document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-record-chip').length,
       details_card_overflow_x: detailsCard instanceof HTMLElement ? Math.max(0, Math.round(detailsCard.scrollWidth - detailsCard.clientWidth)) : 0,
     };
   });
@@ -1119,10 +1121,16 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await page.waitForFunction(selector => document.querySelectorAll(`${selector} .light-attendee-chip`).length >= 3, eventSelector);
     assert(await page.locator(`${eventSelector} .light-event-summary`).count() === 0, "Expected agenda cards to drop summary text.");
     const agendaChipTexts = await allText(page, `${eventSelector} .light-attendee-chip`);
+    const agendaChipMetrics = {
+      agenda_contact_icon_count: await page.locator(`${eventSelector} .light-calendar-attendee-chip-icon`).count(),
+      agenda_record_chip_count: await page.locator(`${eventSelector} .light-record-chip`).count(),
+    };
     for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(agendaChipTexts.includes(label), `Expected agenda contact chips to include ${label}, got ${agendaChipTexts.join(", ")}.`);
     }
     assert(agendaChipTexts.length === 3, `Expected agenda cards to show all contact-backed attendees, got ${agendaChipTexts.join(", ")}.`);
+    assert(agendaChipMetrics.agenda_contact_icon_count === agendaChipTexts.length, `Expected agenda attendee chips to keep a visible contact icon on every chip. Saw ${agendaChipMetrics.agenda_contact_icon_count} icons for ${agendaChipTexts.length} chips.`);
+    assert(agendaChipMetrics.agenda_record_chip_count === 0, `Expected agenda attendee chips to avoid record-chip styling. Saw ${agendaChipMetrics.agenda_record_chip_count} record-chip nodes.`);
     assert(!agendaChipTexts.includes("Kitchen table"), "Expected place to stay out of calendar agenda chips.");
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(!agendaChipTexts.includes(label), `Expected agenda cards to hide non-contact graph chips like ${label}.`);
@@ -1225,14 +1233,16 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(detailState.detailRowMetrics.who?.row_top_delta_px !== null && detailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected compact Who row to align label and first chip on one line, got ${JSON.stringify(detailState.detailRowMetrics.who)}.`);
     assert(detailState.detailRowMetrics.place?.row_top_delta_px !== null && detailState.detailRowMetrics.place.row_top_delta_px <= 4, `Expected compact Place row to align label and value on one line, got ${JSON.stringify(detailState.detailRowMetrics.place)}.`);
     assert(detailState.who_chip_gap_px >= 6, `Expected compact Who row to keep visible chip spacing, got ${detailState.who_chip_gap_px}.`);
-    assert(detailState.who_guest_chip_count === 0, `Expected Calendar Who row to avoid guest attendee chips, got ${detailState.who_guest_chip_count}.`);
-    assert(detailState.details_card_overflow_x <= 1, `Expected desktop Details card to avoid horizontal overflow, got ${detailState.details_card_overflow_x}.`);
     const whoChipTexts = detailState.whoChipTexts;
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip').count() >= whoChipTexts.length, "Expected Who to render every attendee as a chip.");
-    for (const label of ["Jimmy T.", "Jeff B."]) {
+    assert(detailState.who_contact_icon_count === whoChipTexts.length, `Expected Calendar Who row to keep a visible contact icon on every attendee chip. Saw ${detailState.who_contact_icon_count} icons for ${whoChipTexts.length} chips.`);
+    assert(detailState.who_guest_chip_count === 0, `Expected Calendar Who row to avoid guest attendee chips, got ${detailState.who_guest_chip_count}.`);
+    assert(detailState.who_record_chip_count === 0, `Expected Calendar Who row to avoid record-chip styling. Saw ${detailState.who_record_chip_count} record-chip nodes.`);
+    assert(detailState.details_card_overflow_x <= 1, `Expected desktop Details card to avoid horizontal overflow, got ${detailState.details_card_overflow_x}.`);
+    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(whoChipTexts.includes(label), `Expected Who to include ${label}, got ${whoChipTexts.join(", ")}.`);
     }
-    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-record-chip.is-link');
+    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-calendar-attendee-chip.is-link');
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-default.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-desktop-${theme}-event-detail-details-card.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-event-detail-who-row.png`, summary);
@@ -1304,6 +1314,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     let clinicDetailState = await readMeetingDetailState(page);
     assert(clinicDetailState.detailsExpanded, "Expected clinic detail to keep Details expanded by default.");
     assert(clinicDetailState.who_guest_chip_count === 0, `Expected clinic detail to avoid guest attendee chips, got ${clinicDetailState.who_guest_chip_count}.`);
+    assert(clinicDetailState.who_contact_icon_count === clinicDetailState.whoChipTexts.length, `Expected clinic detail Who row to keep contact icons on every attendee chip. Saw ${clinicDetailState.who_contact_icon_count} icons for ${clinicDetailState.whoChipTexts.length} chips.`);
+    assert(clinicDetailState.who_record_chip_count === 0, `Expected clinic detail Who row to avoid record-chip styling. Saw ${clinicDetailState.who_record_chip_count} record-chip nodes.`);
     assert(clinicDetailState.whoChipTexts.includes("Clinic front desk"), `Expected clinic detail to render the role-style contact as a recognized chip, got ${clinicDetailState.whoChipTexts.join(", ")}.`);
     assert(clinicDetailState.detailRowMetrics.who?.row_top_delta_px !== null && clinicDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected clinic Who row to stay compact, got ${JSON.stringify(clinicDetailState.detailRowMetrics.who)}.`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-clinic-detail.png`, summary);
@@ -1449,10 +1461,16 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await page.waitForFunction(selector => document.querySelectorAll(`${selector} .light-attendee-chip`).length >= 3, eventSelector);
     assert(await page.locator(`${eventSelector} .light-event-summary`).count() === 0, "Expected mobile agenda cards to drop summary text.");
     const mobileChipTexts = await allText(page, `${eventSelector} .light-attendee-chip`);
+    const mobileAgendaChipMetrics = {
+      agenda_contact_icon_count: await page.locator(`${eventSelector} .light-calendar-attendee-chip-icon`).count(),
+      agenda_record_chip_count: await page.locator(`${eventSelector} .light-record-chip`).count(),
+    };
     for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
       assert(mobileChipTexts.includes(label), `Expected mobile agenda contact chips to include ${label}, got ${mobileChipTexts.join(", ")}.`);
     }
     assert(mobileChipTexts.length === 3, `Expected mobile agenda cards to show all contact-backed attendees, got ${mobileChipTexts.join(", ")}.`);
+    assert(mobileAgendaChipMetrics.agenda_contact_icon_count === mobileChipTexts.length, `Expected mobile agenda attendee chips to keep a visible contact icon on every chip. Saw ${mobileAgendaChipMetrics.agenda_contact_icon_count} icons for ${mobileChipTexts.length} chips.`);
+    assert(mobileAgendaChipMetrics.agenda_record_chip_count === 0, `Expected mobile agenda attendee chips to avoid record-chip styling. Saw ${mobileAgendaChipMetrics.agenda_record_chip_count} record-chip nodes.`);
     assert(!mobileChipTexts.includes("Kitchen table"), "Expected place to stay out of mobile agenda chips.");
     for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       assert(!mobileChipTexts.includes(label), `Expected mobile agenda cards to hide non-contact graph chips like ${label}.`);
@@ -1549,11 +1567,15 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileDetailState.detailRowMetrics.who?.row_top_delta_px !== null && mobileDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected mobile compact Who row to align label and first chip on one line, got ${JSON.stringify(mobileDetailState.detailRowMetrics.who)}.`);
     assert(mobileDetailState.detailRowMetrics.place?.row_top_delta_px !== null && mobileDetailState.detailRowMetrics.place.row_top_delta_px <= 4, `Expected mobile compact Place row to align label and value on one line, got ${JSON.stringify(mobileDetailState.detailRowMetrics.place)}.`);
     assert(mobileDetailState.who_chip_gap_px >= 6, `Expected compact Who row to keep visible chip spacing, got ${mobileDetailState.who_chip_gap_px}.`);
+    assert(mobileDetailState.who_contact_icon_count === mobileWhoChipTexts.length, `Expected mobile Who row to keep a visible contact icon on every attendee chip. Saw ${mobileDetailState.who_contact_icon_count} icons for ${mobileWhoChipTexts.length} chips.`);
     assert(mobileDetailState.who_guest_chip_count === 0, `Expected mobile Who row to avoid guest attendee chips, got ${mobileDetailState.who_guest_chip_count}.`);
+    assert(mobileDetailState.who_record_chip_count === 0, `Expected mobile Who row to avoid record-chip styling. Saw ${mobileDetailState.who_record_chip_count} record-chip nodes.`);
     assert(mobileDetailState.details_card_overflow_x <= 1, `Expected mobile Details card to avoid horizontal overflow, got ${mobileDetailState.details_card_overflow_x}.`);
-    assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B."), `Expected mobile Who row to carry the linked contact chips, got ${mobileWhoChipTexts.join(", ")}.`);
+    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
+      assert(mobileWhoChipTexts.includes(label), `Expected mobile Who to include ${label}, got ${mobileWhoChipTexts.join(", ")}.`);
+    }
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip').count() >= mobileDetailState.whoChipTexts.length, "Expected mobile Who row to render every attendee as a chip.");
-    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-record-chip.is-link');
+    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-calendar-attendee-chip.is-link');
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-default.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-mobile-${theme}-detail-details-card.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-detail-who-row.png`, summary);
@@ -1614,6 +1636,8 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     let mobileClinicDetailState = await readMeetingDetailState(page);
     assert(mobileClinicDetailState.detailsExpanded, "Expected mobile clinic detail to keep Details expanded by default.");
     assert(mobileClinicDetailState.who_guest_chip_count === 0, `Expected clinic detail to avoid guest attendee chips, got ${mobileClinicDetailState.who_guest_chip_count}.`);
+    assert(mobileClinicDetailState.who_contact_icon_count === mobileClinicDetailState.whoChipTexts.length, `Expected mobile clinic detail Who row to keep contact icons on every attendee chip. Saw ${mobileClinicDetailState.who_contact_icon_count} icons for ${mobileClinicDetailState.whoChipTexts.length} chips.`);
+    assert(mobileClinicDetailState.who_record_chip_count === 0, `Expected mobile clinic detail Who row to avoid record-chip styling. Saw ${mobileClinicDetailState.who_record_chip_count} record-chip nodes.`);
     assert(mobileClinicDetailState.whoChipTexts.includes("Clinic front desk"), `Expected clinic detail to render the role-style contact as a recognized chip, got ${mobileClinicDetailState.whoChipTexts.join(", ")}.`);
     assert(mobileClinicDetailState.detailRowMetrics.who?.row_top_delta_px !== null && mobileClinicDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected clinic Who row to stay compact, got ${JSON.stringify(mobileClinicDetailState.detailRowMetrics.who)}.`);
     assert(mobileClinicDetailState.details_card_overflow_x <= 1, `Expected mobile clinic Details card to avoid horizontal overflow, got ${mobileClinicDetailState.details_card_overflow_x}.`);
