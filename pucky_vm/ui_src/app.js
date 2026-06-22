@@ -12030,7 +12030,7 @@
     applyCardActionData(select, "manage_select", card, "reply");
     select.setAttribute("aria-label", `${selected ? "Deselect" : "Select"} ${card?.title || "Inbox tile"}`);
     select.setAttribute("aria-pressed", selected ? "true" : "false");
-    select.innerHTML = iconSvg("checklist", { filled: selected });
+    select.innerHTML = selected ? iconSvg("check", { filled: true }) : "";
     select.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleInboxManageSelection(card);
@@ -12365,7 +12365,7 @@
       });
     }
     wrapper.append(cardEl);
-    if (manageableInboxCard) {
+    if (manageableInboxCard && !inboxManageMode) {
       wrapper.append(inboxCardMenuButton(card));
       if (isInboxCardMenuOpen(card)) {
         wrapper.append(cardOverflowMenu(card));

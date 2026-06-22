@@ -1751,9 +1751,13 @@ def test_light_inbox_unread_attachment_actions_use_light_theme_icon_color() -> N
 
 def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> None:
     app = read("app.js")
+    icons = read("pucky-icons.js")
     styles = read("styles.css")
     inbox_page = function_block(app, "lightInboxPage")
     card_view = function_block(app, "cardView")
+    select_button = function_block(app, "inboxManageSelectButton")
+    menu_button = css_block(styles, ".inbox-card-menu-button")
+    manage_bar = css_block(styles, ".inbox-manage-bar")
 
     assert "action: inboxManageHeaderAction()" in inbox_page
     assert "function inboxManageHeaderAction(" in app
@@ -1766,10 +1770,22 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert 'requestFeedAction(card, "unarchive"' in app
     assert '"delete"' not in function_block(app, "cardOverflowMenu")
     assert 'const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);' in card_view
+    assert 'if (manageableInboxCard && !inboxManageMode) {' in card_view
+    assert 'check: {' in icons
+    assert 'select.innerHTML = selected ? iconSvg("check", { filled: true }) : "";' in select_button
+    assert 'iconSvg("checklist", { filled: selected })' not in select_button
+    assert '.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"]' in styles
     assert ".inbox-manage-bar" in styles
     assert ".inbox-manage-select" in styles
     assert ".inbox-card-menu" in styles
     assert ".inbox-card-menu-item" in styles
+    assert "left: 7px;" in menu_button
+    assert "top: 50%;" in menu_button
+    assert "right: 7px;" not in menu_button
+    assert "transform: translateY(-50%);" in menu_button
+    assert "position: fixed;" in manage_bar
+    assert "bottom: max(10px, env(safe-area-inset-bottom, 0px));" in manage_bar
+    assert "width: min(calc(100vw - 28px), 480px);" in manage_bar
 
 
 def test_meetings_titles_stay_explicitly_left_anchored() -> None:

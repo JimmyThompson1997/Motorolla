@@ -616,6 +616,7 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
 
 def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> None:
     source = read_source("cover_light_native_ports_playwright.mjs")
+    dev_source = DEV_PY_PATH.read_text(encoding="utf-8")
 
     assert "assertMeaningfulRows(" in source
     assert "const NARROW_VIEWPORT = { width: 320, height: 932 };" in source
@@ -657,6 +658,22 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "light-meetings-430" in source
     assert "dark-meetings-320" in source
     assert "light-meetings-320" in source
+    assert "onlyInboxManagement" in source
+    assert "--only-inbox-management" in source
+    assert "assertInboxManagementLayout(" in source
+    assert "normal_menu" in source
+    assert "selected_control" in source
+    assert "manage_bar" in source
+    assert "archive_filter" in source
+    assert "no_audio" in source
+    assert "01-normal-left-menu" in source
+    assert "02-manage-fixed-bottom-bar" in source
+    assert "03-selected-simple-check" in source
+    assert "05-archive-filter-card-visible" in source
+    assert "06-archived-menu-unarchive" in source
+    assert "proof-local-inbox-management" in dev_source
+    assert "proof-live-inbox-management" in dev_source
+    assert "--only-inbox-management" in dev_source
 
 
 def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract() -> None:

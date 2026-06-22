@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -11,6 +12,7 @@ import {
   writeAutomationError,
   writeJsonFile
 } from "../../support/cover_shared.mjs";
+import { loadProofRuntimeEnv, resolveWriteToken } from "../../support/proof_runtime_env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_LIGHT_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=light&reset_nav=1";
@@ -21,6 +23,17 @@ const NARROW_VIEWPORT = { width: 320, height: 932 };
 const INBOX_MANAGE_SELECT_SELECTOR = '[data-card-action="manage_select"]';
 const INBOX_MANAGE_MENU_SELECTOR = '[data-card-action="manage_menu"]';
 
+function parseViewport(value, fallback = VIEWPORT) {
+  const match = String(value || "").trim().match(/^(\d{2,5})x(\d{2,5})$/i);
+  if (!match) {
+    return { ...fallback };
+  }
+  return {
+    width: Math.max(280, Number(match[1]) || fallback.width),
+    height: Math.max(480, Number(match[2]) || fallback.height)
+  };
+}
+
 function parseArgs(argv) {
   const config = {
     lightUrl: process.env.PUCKY_LIGHT_NATIVE_URL || DEFAULT_LIGHT_URL,
@@ -29,7 +42,12 @@ function parseArgs(argv) {
     reportDir: path.resolve("artifacts", "light-native-ports"),
     timeoutMs: 30000,
     browserName: "chromium",
-    headless: true
+    headless: true,
+    onlyInboxManagement: false,
+    viewport: { ...VIEWPORT },
+    liveBackend: false,
+    apiToken: process.env.PUCKY_API_TOKEN || process.env.PUCKY_OPERATOR_TOKEN || "",
+    expectedSha: ""
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -46,6 +64,16 @@ function parseArgs(argv) {
     } else if (arg === "--browser" && argv[index + 1]) {
       const browserName = String(argv[++index] || config.browserName).trim().toLowerCase();
       config.browserName = browserName === "webkit" ? "webkit" : "chromium";
+    } else if (arg === "--viewport" && argv[index + 1]) {
+      config.viewport = parseViewport(argv[++index], config.viewport);
+    } else if (arg === "--only-inbox-management") {
+      config.onlyInboxManagement = true;
+    } else if (arg === "--live-backend") {
+      config.liveBackend = true;
+    } else if (arg === "--api-token" && argv[index + 1]) {
+      config.apiToken = String(argv[++index] || "");
+    } else if (arg === "--expected-sha" && argv[index + 1]) {
+      config.expectedSha = String(argv[++index] || "").trim();
     } else if (arg === "--headed") {
       config.headless = false;
     }
@@ -57,6 +85,148 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function authHeaders(token) {
+  const cleanToken = String(token || "").trim();
+  return cleanToken ? { Authorization: `Bearer ${cleanToken}` } : {};
+}
+
+async function fetchTextStrict(url, token = "") {
+  const response = await fetch(url, {
+    headers: authHeaders(token),
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    throw new Error(`Could not load ${url} (${response.status})`);
+  }
+  return response.text();
+}
+
+async function fetchJsonStrict(url, init = {}) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    ...init,
+    headers: {
+      ...(init.headers || {})
+    }
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Request failed for ${url} (${response.status}): ${text.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Response from ${url} was not valid JSON: ${String(error?.message || error)}`);
+  }
+}
+
+function sha256Text(text) {
+  return crypto.createHash("sha256").update(String(text || ""), "utf8").digest("hex");
+}
+
+async function fetchManifestBundle(pageUrl, token = "", refreshValue = "") {
+  const manifestUrl = new URL("manifest.json", pageUrl);
+  if (refreshValue) {
+    manifestUrl.searchParams.set("_pucky_refresh", refreshValue);
+  }
+  const manifest = await fetchJsonStrict(manifestUrl.toString(), {
+    headers: authHeaders(token)
+  });
+  const fileChecks = {};
+  for (const fileName of ["app.js", "styles.css"]) {
+    const fileUrl = new URL(fileName, manifestUrl.toString());
+    if (refreshValue) {
+      fileUrl.searchParams.set("_pucky_refresh", refreshValue);
+    }
+    const fetched = await fetchTextStrict(fileUrl.toString(), token);
+    const fetchedSha256 = sha256Text(fetched);
+    const manifestSha256 = String(manifest?.files?.[fileName]?.sha256 || "");
+    fileChecks[fileName] = {
+      url: fileUrl.toString(),
+      manifest_sha256: manifestSha256,
+      fetched_sha256: fetchedSha256,
+      matches_manifest: manifestSha256 ? manifestSha256 === fetchedSha256 : false
+    };
+    assert(manifestSha256, `Manifest did not include ${fileName} sha256`);
+    assert(manifestSha256 === fetchedSha256, `Live ${fileName} sha256 did not match manifest`);
+  }
+  return {
+    manifest_url: manifestUrl.toString(),
+    source_commit_full: String(manifest?.source_commit_full || ""),
+    source_dirty: Boolean(manifest?.source_dirty),
+    ui_version: String(manifest?.ui_version || ""),
+    file_count: manifest?.files && typeof manifest.files === "object" ? Object.keys(manifest.files).length : 0,
+    files: fileChecks
+  };
+}
+
+function installNoAudioGuard(page) {
+  const guard = {
+    clickedAudioCount: 0,
+    mediaRequestCount: 0,
+    mediaRequests: []
+  };
+  page.on("request", request => {
+    const url = request.url();
+    const resourceType = String(request.resourceType() || "");
+    if (
+      resourceType === "media"
+      || /\.(?:mp3|m4a|wav|aac|ogg|opus|mp4)(?:[?#]|$)/i.test(url)
+      || /\/api\/media\/|\/media\//i.test(url)
+    ) {
+      guard.mediaRequestCount += 1;
+      guard.mediaRequests.push({
+        url,
+        resource_type: resourceType,
+        method: request.method()
+      });
+    }
+  });
+  return guard;
+}
+
+function noAudioSummary(guard) {
+  return {
+    clicked_audio_count: Number(guard?.clickedAudioCount || 0),
+    media_request_count: Number(guard?.mediaRequestCount || 0),
+    media_requests: Array.isArray(guard?.mediaRequests) ? guard.mediaRequests.slice() : []
+  };
+}
+
+function assertNoUnexpectedAudio(guard, label) {
+  const summary = noAudioSummary(guard);
+  assert(summary.clicked_audio_count === 0, `${label} clicked audio controls ${summary.clicked_audio_count} times`);
+  assert(summary.media_request_count === 0, `${label} observed unexpected media requests`);
+  return summary;
+}
+
+function cssAttributeValue(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+}
+
+function inboxCardWrap(page, cardId) {
+  const selector = `article.card[data-card-id="${cssAttributeValue(cardId)}"]`;
+  return page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap")
+    .filter({ has: page.locator(selector) })
+    .first();
+}
+
+async function ensureInboxArchiveFilter(page, showArchived, timeoutMs) {
+  const desired = Boolean(showArchived);
+  const state = await page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle").first()
+    .getAttribute("aria-pressed")
+    .catch(() => null);
+  const current = state === "true";
+  if (current !== desired) {
+    await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle").first(), timeoutMs, desired ? "Show archived Inbox" : "Show active Inbox");
+  }
+  await page.waitForFunction(
+    expected => document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle")?.getAttribute("aria-pressed") === String(expected),
+    desired,
+    { timeout: timeoutMs }
+  );
 }
 
 let playwrightBrowsersPromise = null;
@@ -598,36 +768,168 @@ async function readInboxManagementState(page) {
         bottom: Number(bounds.bottom.toFixed(2))
       };
     };
+    const readButtonStyles = (node) => {
+      if (!(node instanceof HTMLElement)) {
+        return null;
+      }
+      const style = getComputedStyle(node);
+      const paths = Array.from(node.querySelectorAll("path"));
+      const icon = node.querySelector(".material-icon");
+      const iconStyle = icon instanceof Element ? getComputedStyle(icon) : null;
+      const firstPathStyle = paths[0] instanceof Element ? getComputedStyle(paths[0]) : null;
+      return {
+        rect: rect(node),
+        background_color: style.backgroundColor,
+        color: style.color,
+        border_color: style.borderColor,
+        icon_fill: firstPathStyle?.fill || iconStyle?.fill || "",
+        icon_stroke: firstPathStyle?.stroke || iconStyle?.stroke || "",
+        icon_path_count: paths.length,
+        icon_paths: paths.map(path => String(path.getAttribute("d") || "")),
+        aria_pressed: String(node.getAttribute("aria-pressed") || ""),
+        class_name: String(node.className || "")
+      };
+    };
     const shell = document.querySelector(".light-shell[data-light-route=\"inbox\"]");
     const wraps = Array.from(shell?.querySelectorAll(".card-wrap") || []);
     const firstManageable = wraps.find(wrap =>
       wrap.querySelector("article.card[data-card-id]")
-        && wrap.querySelector("[data-card-action=\"manage_menu\"]")
+        && (
+          wrap.classList.contains("has-inbox-menu")
+          || wrap.querySelector("[data-card-action=\"manage_menu\"]")
+          || wrap.querySelector("[data-card-action=\"manage_select\"]")
+        )
     );
     const firstArticle = firstManageable?.querySelector("article.card");
+    const normalMenuButton = firstManageable?.querySelector("[data-card-action=\"manage_menu\"]");
+    const selectButton = firstManageable?.querySelector("[data-card-action=\"manage_select\"]");
     const selectedCount = Number(shell?.querySelector(".inbox-manage-bar")?.getAttribute("data-inbox-manage-selected-count") || 0);
+    const selectedButton = shell?.querySelector("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]");
+    const manageBar = shell?.querySelector(".inbox-manage-bar");
+    const archiveToggle = shell?.querySelector(".inbox-archive-toggle");
     const openMenu = shell?.querySelector(".inbox-card-menu");
+    const viewport = {
+      width: Number(window.innerWidth.toFixed(2)),
+      height: Number(window.innerHeight.toFixed(2))
+    };
+    const normalMenuRect = rect(normalMenuButton);
+    const firstArticleRect = rect(firstArticle);
+    const selectRect = rect(selectButton);
+    const manageBarRect = rect(manageBar);
+    const expectedManageBarWidth = Math.min(window.innerWidth - 28, 480);
+    const firstActionsRect = rect(firstArticle?.querySelector(".card-actions"));
+    const firstAudioRect = rect(firstArticle?.querySelector("[data-card-action=\"audio\"]"));
+    const firstPageRect = rect(firstArticle?.querySelector("[data-card-action=\"page\"], [data-card-action=\"attachment\"]"));
     return {
       manage_button_visible: Boolean(shell?.querySelector(".inbox-manage-toggle")),
+      manage_button_label: String(shell?.querySelector(".inbox-manage-toggle")?.getAttribute("aria-label") || shell?.querySelector(".inbox-manage-toggle")?.textContent || "").trim(),
       archive_toggle_visible: Boolean(shell?.querySelector(".inbox-archive-toggle")),
+      archive_toggle_pressed: archiveToggle?.getAttribute("aria-pressed") === "true",
+      archive_toggle_label: String(archiveToggle?.getAttribute("aria-label") || archiveToggle?.textContent || "").trim(),
       manage_mode_active: Boolean(shell?.querySelector(".inbox-manage-bar")),
       selected_count: selectedCount,
       selected_button_count: shell?.querySelectorAll("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]").length || 0,
       menu_button_count: shell?.querySelectorAll("[data-card-action=\"manage_menu\"]").length || 0,
+      visible_menu_button_count: Array.from(shell?.querySelectorAll("[data-card-action=\"manage_menu\"]") || [])
+        .filter(node => node instanceof HTMLElement && getComputedStyle(node).display !== "none" && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0).length,
+      select_control_count: shell?.querySelectorAll("[data-card-action=\"manage_select\"]").length || 0,
       menu_open: Boolean(openMenu),
       menu_actions: Array.from(openMenu?.querySelectorAll(".inbox-card-menu-item") || [])
         .map(node => String(node.getAttribute("data-card-menu-action") || "").trim())
         .filter(Boolean),
       archive_reveal_count: shell?.querySelectorAll(".archive-reveal-action").length || 0,
       visible_card_count: shell?.querySelectorAll(".card-wrap article.card").length || 0,
+      selected_card_ids: Array.from(shell?.querySelectorAll(".card-wrap.is-inbox-manage-selected article.card[data-card-id]") || [])
+        .map(card => String(card.getAttribute("data-card-id") || "").trim())
+        .filter(Boolean),
       first_card: firstArticle ? {
         card_id: String(firstArticle.getAttribute("data-card-id") || "").trim(),
         session_id: String(firstArticle.getAttribute("data-card-session-id") || "").trim(),
         title: String(firstArticle.querySelector(".title")?.textContent || "").trim(),
         rect: rect(firstArticle)
-      } : null
+      } : null,
+      layout: {
+        viewport,
+        normal_menu: {
+          button_rect: normalMenuRect,
+          article_rect: firstArticleRect,
+          center_delta: normalMenuRect && firstArticleRect
+            ? Number(((normalMenuRect.y + (normalMenuRect.height / 2)) - (firstArticleRect.y + (firstArticleRect.height / 2))).toFixed(2))
+            : null,
+          left_rail_bounds: firstArticleRect ? {
+            left: Number((firstArticleRect.x + 4).toFixed(2)),
+            right: Number((firstArticleRect.x + 48).toFixed(2))
+          } : null,
+          action_column_rect: firstActionsRect,
+          audio_rect: firstAudioRect,
+          page_rect: firstPageRect
+        },
+        manage_bar: {
+          rect: manageBarRect,
+          viewport,
+          bottom_gap: manageBarRect ? Number((window.innerHeight - manageBarRect.bottom).toFixed(2)) : null,
+          expected_width: Number(expectedManageBarWidth.toFixed(2)),
+          safe_area_value: getComputedStyle(document.documentElement).getPropertyValue("safe-area-inset-bottom") || "",
+          selected_count: selectedCount
+        },
+        selected_control: {
+          button_rect: selectRect,
+          selected_button: readButtonStyles(selectedButton),
+          visible_button: readButtonStyles(selectButton),
+          selected_count: selectedCount,
+          checklist_glyph_present: Boolean(selectedButton?.querySelector("path[d*=\"M19.5 4.5\"]"))
+        },
+        archive_filter: {
+          pressed: archiveToggle?.getAttribute("aria-pressed") === "true",
+          label: String(archiveToggle?.getAttribute("aria-label") || archiveToggle?.textContent || "").trim(),
+          visible_card_count: shell?.querySelectorAll(".card-wrap article.card").length || 0
+        }
+      }
     };
   });
+}
+
+function assertInboxManagementLayout(state, phase) {
+  assert(state, `Missing Inbox management state for ${phase}`);
+  assert(state.archive_reveal_count === 0, `${phase}: Inbox should not expose swipe-only archive reveal actions`);
+  if (phase === "normal") {
+    const menu = state.layout?.normal_menu || {};
+    assert(state.menu_button_count > 0, "Normal Inbox should render visible per-tile more buttons");
+    assert(menu.button_rect, "Normal Inbox did not expose a measurable tile menu button");
+    assert(menu.article_rect, "Normal Inbox did not expose a measurable tile article");
+    assert(Math.abs(Number(menu.center_delta || 0)) <= 2, `Tile menu should be vertically centered, center delta ${menu.center_delta}`);
+    assert(menu.button_rect.x >= menu.article_rect.x + 4, `Tile menu left ${menu.button_rect.x} should sit inside the left rail`);
+    assert(menu.button_rect.right <= menu.article_rect.x + 48, `Tile menu right ${menu.button_rect.right} should stay inside the left rail`);
+    if (menu.action_column_rect) {
+      assert(menu.button_rect.right < menu.action_column_rect.x, "Tile menu should not overlap the right mic/paperclip action column");
+    }
+  }
+  if (phase === "manage") {
+    const bar = state.layout?.manage_bar || {};
+    assert(state.manage_mode_active, "Manage mode should be active");
+    assert(state.visible_menu_button_count === 0, `Manage mode should replace menu buttons with select controls, saw ${state.visible_menu_button_count}`);
+    assert(state.select_control_count > 0, "Manage mode should render select controls");
+    assert(bar.rect, "Manage mode did not expose a measurable bottom bar");
+    assert(bar.bottom_gap >= 8 && bar.bottom_gap <= 24, `Manage bar bottom gap should be 8-24px, got ${bar.bottom_gap}`);
+    assert(Math.abs(Number(bar.rect.width || 0) - Number(bar.expected_width || 0)) <= 2, `Manage bar width ${bar.rect.width} did not match expected ${bar.expected_width}`);
+    const selectRect = state.layout?.selected_control?.button_rect;
+    const articleRect = state.first_card?.rect;
+    if (selectRect && articleRect) {
+      const selectCenter = selectRect.y + (selectRect.height / 2);
+      const articleCenter = articleRect.y + (articleRect.height / 2);
+      assert(Math.abs(selectCenter - articleCenter) <= 2, `Manage select control should be vertically centered, delta ${selectCenter - articleCenter}`);
+    }
+  }
+  if (phase === "selected") {
+    const selected = state.layout?.selected_control?.selected_button || {};
+    assert(state.selected_count === 1, `Selected count should be 1, got ${state.selected_count}`);
+    assert(state.selected_button_count === 1, `Exactly one select button should be pressed, got ${state.selected_button_count}`);
+    assert(Array.isArray(state.selected_card_ids) && state.selected_card_ids.length === 1, "Selected tile should expose selected styling");
+    assert(selected.background_color && selected.background_color !== "rgba(0, 0, 0, 0)", "Selected select button should have an active blue background");
+    assert(selected.icon_path_count === 1, `Selected icon should be one simple check path, got ${selected.icon_path_count}`);
+    assert(!state.layout?.selected_control?.checklist_glyph_present, "Selected control should not use the filled checklist glyph");
+    assert(!/rgb\(0,\s*0,\s*0\)|#000/i.test(`${selected.icon_fill} ${selected.icon_stroke}`), "Selected check icon should not render black");
+  }
 }
 
 async function installInboxManagementActionInterceptor(page, actionRequests) {
@@ -740,17 +1042,21 @@ async function reloadLightInbox(page, timeoutMs) {
   await waitForLightRoute(page, "inbox", ".card-wrap article.card", timeoutMs);
 }
 
-async function exerciseInboxManagement(page, timeoutMs, reportDir) {
+async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {}) {
+  const noAudioGuard = options.noAudioGuard || null;
   const actionRequests = [];
   const feedEmulation = await installInboxManagementActionInterceptor(page, actionRequests);
   const before = await readInboxManagementState(page);
   assert(before.manage_button_visible, "Light Inbox should render a visible Manage control");
   assert(before.archive_toggle_visible, "Light Inbox should render a visible archived-feed toggle");
   assert(before.menu_button_count > 0, "Light Inbox should render visible per-tile more buttons");
-  assert(before.archive_reveal_count === 0, `Light Inbox should not expose swipe-only archive reveal actions, found ${before.archive_reveal_count}`);
+  assertInboxManagementLayout(before, "normal");
   assert(before.first_card?.card_id || before.first_card?.session_id, "Inbox management proof could not find a manageable card");
+  const targetCardId = before.first_card.card_id;
+  assert(targetCardId, "Inbox management archive proof requires a card_id");
+  const normalScreenshot = await saveScreenshot(page, reportDir, "01-normal-left-menu");
 
-  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"manage_menu\"]").first(), timeoutMs, "Open Inbox tile menu");
+  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Open Inbox tile menu");
   await page.waitForFunction(
     () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
     undefined,
@@ -760,8 +1066,8 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir) {
   assert(menuOpen.menu_open, "Inbox tile menu did not open");
   assert(menuOpen.menu_actions.includes("archive"), "Inbox tile menu did not expose Archive");
   assert(menuOpen.menu_actions.includes("open_transcript"), "Inbox tile menu did not expose Open transcript");
-  const menuScreenshot = await saveScreenshot(page, reportDir, "04a-light-inbox-menu");
-  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"manage_menu\"]").first(), timeoutMs, "Close Inbox tile menu");
+  assert(!menuOpen.menu_actions.includes("delete"), "Inbox tile menu must not expose Delete");
+  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Close Inbox tile menu");
 
   await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
   await page.waitForFunction(
@@ -770,9 +1076,9 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir) {
     { timeout: timeoutMs }
   );
   const manageMode = await readInboxManagementState(page);
-  assert(manageMode.manage_mode_active, "Inbox Manage mode did not activate");
-  assert(manageMode.archive_reveal_count === 0, "Inbox Manage mode should not reintroduce archive reveal actions");
-  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"manage_select\"]").first(), timeoutMs, "Select Inbox tile");
+  assertInboxManagementLayout(manageMode, "manage");
+  const manageScreenshot = await saveScreenshot(page, reportDir, "02-manage-fixed-bottom-bar");
+  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_SELECT_SELECTOR).first(), timeoutMs, "Select Inbox tile");
   await page.waitForFunction(
     () => {
       const bar = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar");
@@ -782,8 +1088,8 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir) {
     { timeout: timeoutMs }
   );
   const afterSelect = await readInboxManagementState(page);
-  assert(afterSelect.selected_count === 1, "Inbox Manage selection count should update to one");
-  const selectedScreenshot = await saveScreenshot(page, reportDir, "04b-light-inbox-manage-selected");
+  assertInboxManagementLayout(afterSelect, "selected");
+  const selectedScreenshot = await saveScreenshot(page, reportDir, "03-selected-simple-check");
 
   await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-action.is-primary").first(), timeoutMs, "Archive selected Inbox tile");
   await page.waitForFunction(
@@ -799,31 +1105,297 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir) {
       const cards = Array.from(document.querySelectorAll(".light-shell[data-light-route=\"inbox\"] article.card"));
       return cards.every(card => String(card.getAttribute("data-card-id") || "").trim() !== expectedCardId);
     },
-    before.first_card.card_id,
+    targetCardId,
     { timeout: timeoutMs }
   );
   const afterArchive = await readInboxManagementState(page);
-  assert(actionRequests.some(item => item.payload?.action === "archive" && item.payload?.card_id === before.first_card.card_id), "Inbox Manage archive did not issue the expected feed action payload");
+  assert(actionRequests.some(item => item.payload?.action === "archive" && item.payload?.card_id === targetCardId), "Inbox Manage archive did not issue the expected feed action payload");
   assert(afterArchive.visible_card_count === Math.max(0, before.visible_card_count - 1), "Archived Inbox tile should disappear from the active Inbox view");
-  const archivedScreenshot = await saveScreenshot(page, reportDir, "04c-light-inbox-manage-archived");
+  const afterArchiveScreenshot = await saveScreenshot(page, reportDir, "04-after-archive-active-feed");
+
+  if (afterArchive.manage_mode_active) {
+    await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Exit Inbox Manage mode");
+    await page.waitForFunction(
+      () => !document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar"),
+      undefined,
+      { timeout: timeoutMs }
+    );
+  }
+  await ensureInboxArchiveFilter(page, true, timeoutMs);
+  await page.waitForFunction(
+    expectedCardId => Array.from(document.querySelectorAll(".light-shell[data-light-route=\"inbox\"] article.card"))
+      .some(card => String(card.getAttribute("data-card-id") || "").trim() === expectedCardId),
+    targetCardId,
+    { timeout: timeoutMs }
+  );
+  const archiveFilter = await readInboxManagementState(page);
+  assert(archiveFilter.archive_toggle_pressed, "Archive filter should be active after toggling archived Inbox");
+  const archiveFilterScreenshot = await saveScreenshot(page, reportDir, "05-archive-filter-card-visible");
+
+  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Open archived Inbox tile menu");
+  await page.waitForFunction(
+    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
+    undefined,
+    { timeout: timeoutMs }
+  );
+  const archivedMenu = await readInboxManagementState(page);
+  assert(archivedMenu.menu_actions.includes("unarchive"), "Archived Inbox tile menu should expose Unarchive");
+  assert(!archivedMenu.menu_actions.includes("delete"), "Archived Inbox tile menu must not expose Delete");
+  const archivedMenuScreenshot = await saveScreenshot(page, reportDir, "06-archived-menu-unarchive");
 
   feedEmulation.archivedCardIds.clear();
   await reloadLightInbox(page, timeoutMs);
   const restored = await readInboxManagementState(page);
   assert(restored.visible_card_count >= before.visible_card_count, "Inbox reload after intercepted archive should restore the active card list");
+  const noAudio = noAudioGuard ? assertNoUnexpectedAudio(noAudioGuard, "Inbox management intercepted proof") : null;
   return {
+    layout: {
+      normal_menu: before.layout?.normal_menu || null,
+      manage_bar: manageMode.layout?.manage_bar || null,
+      selected_control: afterSelect.layout?.selected_control || null,
+      archive_filter: archiveFilter.layout?.archive_filter || null
+    },
     before,
     menu_open: menuOpen,
     manage_mode: manageMode,
     after_select: afterSelect,
     after_archive: afterArchive,
+    archive_filter: archiveFilter,
+    archived_menu: archivedMenu,
     restored,
+    archive: {
+      intercepted: {
+        request_payloads: actionRequests.map(item => item.payload),
+        active_count_before: before.visible_card_count,
+        active_count_after: afterArchive.visible_card_count,
+        archived_filter_visibility: {
+          card_id: targetCardId,
+          visible: true,
+          visible_card_count: archiveFilter.visible_card_count
+        }
+      }
+    },
     action_requests: actionRequests,
     feed_requests: feedEmulation.feedRequests,
+    no_audio: noAudio,
     screenshots: {
-      menu: menuScreenshot,
+      normal_menu: normalScreenshot,
+      menu: normalScreenshot,
+      manage_bar: manageScreenshot,
       selected: selectedScreenshot,
-      archived: archivedScreenshot
+      after_archive_active_feed: afterArchiveScreenshot,
+      archived: afterArchiveScreenshot,
+      archive_filter_card_visible: archiveFilterScreenshot,
+      archived_menu_unarchive: archivedMenuScreenshot
+    }
+  };
+}
+
+async function fetchFeedItems(baseUrl, token, includeArchived = false) {
+  const url = new URL("/api/feed", `${String(baseUrl || "").replace(/\/+$/, "")}/`);
+  url.searchParams.set("limit", "100");
+  url.searchParams.set("compact", "1");
+  url.searchParams.set("include_archived", includeArchived ? "1" : "0");
+  const payload = await fetchJsonStrict(url.toString(), {
+    headers: authHeaders(token)
+  });
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+async function waitForFeedItem(baseUrl, token, matcher, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastItems = [];
+  while (Date.now() < deadline) {
+    lastItems = await fetchFeedItems(baseUrl, token, true);
+    const item = lastItems.find(matcher);
+    if (item) {
+      return item;
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for live proof feed item; saw ${lastItems.length} archived-inclusive items`);
+}
+
+async function createLiveTempInboxCard(baseUrl, token, runId) {
+  const result = await fetchJsonStrict(new URL("/api/turn/text", `${String(baseUrl || "").replace(/\/+$/, "")}/`).toString(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token)
+    },
+    body: JSON.stringify({
+      text: `Inbox management proof temporary tile ${runId}`,
+      turn_id: runId,
+      reply_mode: "card_only",
+      thread_mode: "new",
+      proof_reply_delay_ms: 0
+    })
+  });
+  const responseCardId = String(result?.card_id || "").trim();
+  if (responseCardId) {
+    return {
+      result,
+      card_id: responseCardId,
+      turn_id: runId
+    };
+  }
+  const item = await waitForFeedItem(
+    baseUrl,
+    token,
+    entry => String(entry?.turn_id || entry?.session_id || "").trim() === runId,
+    30000
+  );
+  return {
+    result,
+    card_id: String(item?.card_id || "").trim(),
+    turn_id: runId
+  };
+}
+
+async function waitForInboxCardPresence(page, cardId, shouldBeVisible, timeoutMs) {
+  await page.waitForFunction(
+    ({ expectedCardId, expectedVisible }) => {
+      const visible = Array.from(document.querySelectorAll(".light-shell[data-light-route=\"inbox\"] article.card"))
+        .some(card => String(card.getAttribute("data-card-id") || "").trim() === expectedCardId);
+      return visible === expectedVisible;
+    },
+    { expectedCardId: cardId, expectedVisible: Boolean(shouldBeVisible) },
+    { timeout: timeoutMs }
+  );
+}
+
+async function enterInboxManageMode(page, timeoutMs) {
+  const state = await readInboxManagementState(page);
+  if (!state.manage_mode_active) {
+    await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
+    await page.waitForFunction(
+      () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar")),
+      undefined,
+      { timeout: timeoutMs }
+    );
+  }
+}
+
+async function exitInboxManageMode(page, timeoutMs) {
+  const state = await readInboxManagementState(page);
+  if (state.manage_mode_active) {
+    await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Exit Inbox Manage mode");
+    await page.waitForFunction(
+      () => !document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar"),
+      undefined,
+      { timeout: timeoutMs }
+    );
+  }
+}
+
+async function archiveVisibleInboxCardWithManage(page, cardId, timeoutMs, label = "Archive live Inbox tile") {
+  await ensureInboxArchiveFilter(page, false, timeoutMs);
+  await waitForInboxCardPresence(page, cardId, true, timeoutMs);
+  await enterInboxManageMode(page, timeoutMs);
+  await clickLocator(page, inboxCardWrap(page, cardId).locator(INBOX_MANAGE_SELECT_SELECTOR).first(), timeoutMs, `${label}: select tile`);
+  await page.waitForFunction(
+    expectedCardId => Array.from(document.querySelectorAll(".card-wrap.is-inbox-manage-selected article.card[data-card-id]"))
+      .some(card => String(card.getAttribute("data-card-id") || "").trim() === expectedCardId),
+    cardId,
+    { timeout: timeoutMs }
+  );
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-action.is-primary").first(), timeoutMs, `${label}: click Archive`);
+  await waitForInboxCardPresence(page, cardId, false, timeoutMs);
+  await exitInboxManageMode(page, timeoutMs);
+}
+
+async function exerciseLiveTempCardArchive(page, config, reportDir, manifestBundle, noAudioGuard) {
+  if (!String(config.apiToken || "").trim()) {
+    throw new Error("Focused live Inbox management proof requires --api-token or PUCKY_OPERATOR_TOKEN/PUCKY_API_TOKEN for the real backend temp-card proof");
+  }
+  const baseUrl = new URL(config.lightUrl).origin;
+  const sourceSha = String(manifestBundle?.source_commit_full || "").trim();
+  const runId = `inbox-management-proof-${(sourceSha || "unknown").slice(0, 12)}-${Date.now().toString(36)}`;
+  const actionRequests = [];
+  page.on("request", request => {
+    const url = request.url();
+    if (!/\/api\/feed\/actions(?:[?#]|$)/.test(url)) {
+      return;
+    }
+    let payload = {};
+    try {
+      payload = JSON.parse(request.postData() || "{}");
+    } catch (_error) {
+      payload = {};
+    }
+    actionRequests.push({
+      url,
+      method: request.method(),
+      payload
+    });
+  });
+
+  const created = await createLiveTempInboxCard(baseUrl, config.apiToken, runId);
+  assert(created.card_id, "Live temp Inbox proof card did not return a card_id");
+  const proofUrl = new URL(config.lightUrl);
+  proofUrl.searchParams.set("theme", "light");
+  proofUrl.searchParams.set("route", "inbox");
+  proofUrl.searchParams.set("reset_nav", "1");
+  proofUrl.searchParams.set("_pucky_refresh", runId);
+  await page.goto(proofUrl.toString(), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForLightRoute(page, "inbox", ".card-wrap article.card", config.timeoutMs);
+  await ensureInboxArchiveFilter(page, false, config.timeoutMs);
+  await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
+
+  await archiveVisibleInboxCardWithManage(page, created.card_id, config.timeoutMs, "Archive live temp Inbox proof tile");
+  const activeAfterArchive = await readInboxManagementState(page);
+  assert(!activeAfterArchive.selected_card_ids.includes(created.card_id), "Live temp proof tile should not remain selected after archive");
+  await ensureInboxArchiveFilter(page, true, config.timeoutMs);
+  await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
+  const archivedVisible = await readInboxManagementState(page);
+
+  await clickLocator(page, inboxCardWrap(page, created.card_id).locator(INBOX_MANAGE_MENU_SELECTOR).first(), config.timeoutMs, "Open live temp archived menu");
+  await page.waitForFunction(
+    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
+    undefined,
+    { timeout: config.timeoutMs }
+  );
+  const archivedMenu = await readInboxManagementState(page);
+  assert(archivedMenu.menu_actions.includes("unarchive"), "Live archived temp card should expose Unarchive");
+  assert(!archivedMenu.menu_actions.includes("delete"), "Live archived temp card must not expose Delete");
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu-item[data-card-menu-action=\"unarchive\"]").first(), config.timeoutMs, "Unarchive live temp Inbox proof tile");
+  await waitForInboxCardPresence(page, created.card_id, false, config.timeoutMs);
+
+  await ensureInboxArchiveFilter(page, false, config.timeoutMs);
+  await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
+  const restoredActive = await readInboxManagementState(page);
+  const restoredScreenshot = await saveScreenshot(page, reportDir, "07-after-unarchive-active-feed");
+
+  await archiveVisibleInboxCardWithManage(page, created.card_id, config.timeoutMs, "Cleanup archive live temp Inbox proof tile");
+  await ensureInboxArchiveFilter(page, true, config.timeoutMs);
+  await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
+  const cleanupArchived = await readInboxManagementState(page);
+  const cleanupScreenshot = await saveScreenshot(page, reportDir, "08-cleanup-archived-final");
+  const noAudio = noAudioGuard ? assertNoUnexpectedAudio(noAudioGuard, "Inbox management live temp-card proof") : null;
+
+  assert(actionRequests.some(item => item.payload?.action === "archive" && item.payload?.card_id === created.card_id), "Live temp card archive request was not observed");
+  assert(actionRequests.some(item => item.payload?.action === "unarchive" && item.payload?.card_id === created.card_id), "Live temp card unarchive request was not observed");
+
+  return {
+    created_card_id: created.card_id,
+    turn_id: created.turn_id,
+    archive_requests: actionRequests.map(item => item.payload),
+    archived_filter_visibility: {
+      visible: true,
+      state: archivedVisible.layout?.archive_filter || null
+    },
+    restored_active: {
+      visible: true,
+      state: restoredActive.layout?.archive_filter || null
+    },
+    cleanup_result: {
+      archived_final: true,
+      state: cleanupArchived.layout?.archive_filter || null
+    },
+    no_audio: noAudio,
+    screenshots: {
+      after_unarchive_active_feed: restoredScreenshot,
+      cleanup_archived_final: cleanupScreenshot
     }
   };
 }
@@ -1301,8 +1873,190 @@ async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs, r
   };
 }
 
+async function runInboxManagementOnly(config) {
+  ensureDir(config.reportDir);
+  loadProofRuntimeEnv({ rootDir: ROOT });
+  if (!String(config.apiToken || "").trim()) {
+    config.apiToken = resolveWriteToken({
+      rootDir: ROOT,
+      explicitToken: config.apiToken,
+      sharedKeys: ["PUCKY_OPERATOR_TOKEN", "PUCKY_API_TOKEN"]
+    });
+  }
+  const tracePath = path.join(config.reportDir, "trace.zip");
+  const consoleJsonPath = path.join(config.reportDir, "console.json");
+  const networkJsonPath = path.join(config.reportDir, "network.json");
+  const actionsJsonPath = path.join(config.reportDir, "actions.json");
+  const manifestJsonPath = path.join(config.reportDir, "manifest.json");
+  const finalDomPaths = {
+    intercepted: path.join(config.reportDir, "intercepted-final-dom.html"),
+    live_temp_card: path.join(config.reportDir, "live-temp-card-final-dom.html")
+  };
+  const videoDir = path.join(config.reportDir, "video");
+  ensureDir(videoDir);
+
+  const actions = [];
+  const consoleEvents = [];
+  const networkEvents = [];
+  const videos = {};
+  const pageEntries = [];
+  const browser = await launchConfiguredBrowser(config);
+  const context = await browser.newContext({
+    viewport: config.viewport,
+    screen: config.viewport,
+    hasTouch: true,
+    isMobile: true,
+    recordVideo: { dir: videoDir, size: config.viewport }
+  });
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+
+  const attachManagedPage = async (name) => {
+    const page = await context.newPage();
+    const video = page.video();
+    const consoleLogPath = path.join(config.reportDir, `${name}-console.log`);
+    attachPageLogging(page, consoleLogPath);
+    page.on("console", (message) => {
+      consoleEvents.push({
+        page: name,
+        type: message.type(),
+        text: message.text()
+      });
+    });
+    page.on("pageerror", (error) => {
+      consoleEvents.push({
+        page: name,
+        type: "pageerror",
+        text: String(error?.message || error || "")
+      });
+    });
+    page.on("response", async (response) => {
+      const headers = await response.allHeaders().catch(() => ({}));
+      networkEvents.push({
+        page: name,
+        url: response.url(),
+        status: response.status(),
+        resource_type: response.request().resourceType(),
+        content_type: String(headers["content-type"] || "")
+      });
+    });
+    pageEntries.push({ name, page, video });
+    return page;
+  };
+
+  try {
+    const refreshValue = config.expectedSha || `inbox-management-${Date.now()}`;
+    const manifest = await fetchManifestBundle(config.lightUrl, config.apiToken, `${refreshValue}-manifest`);
+    writeJsonFile(manifestJsonPath, manifest);
+    if (config.expectedSha) {
+      assert(manifest.source_commit_full === config.expectedSha, `Hosted manifest commit ${manifest.source_commit_full || "<empty>"} did not match expected ${config.expectedSha}`);
+    }
+    if (config.liveBackend) {
+      assert(manifest.source_dirty === false, "Hosted manifest source_dirty must be false before live Inbox management proof");
+    }
+
+    const interceptedPage = await attachManagedPage("intercepted");
+    const interceptedGuard = installNoAudioGuard(interceptedPage);
+    logAction(actions, "navigate_inbox_management_intercepted", {
+      browser_name: config.browserName,
+      viewport: config.viewport,
+      light_url: config.lightUrl
+    });
+    await interceptedPage.goto(config.lightUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await waitForLightRoute(interceptedPage, "inbox", ".card-wrap article.card", config.timeoutMs);
+    const intercepted = await exerciseInboxManagement(interceptedPage, config.timeoutMs, config.reportDir, {
+      noAudioGuard: interceptedGuard
+    });
+    fs.writeFileSync(finalDomPaths.intercepted, await interceptedPage.content(), "utf8");
+
+    let liveTempCard = null;
+    let liveTempNoAudio = null;
+    if (config.liveBackend) {
+      const livePage = await attachManagedPage("live-temp-card");
+      const liveGuard = installNoAudioGuard(livePage);
+      logAction(actions, "exercise_live_temp_card", {
+        browser_name: config.browserName,
+        viewport: config.viewport,
+        light_url: config.lightUrl,
+        expected_sha: config.expectedSha
+      });
+      liveTempCard = await exerciseLiveTempCardArchive(livePage, config, config.reportDir, manifest, liveGuard);
+      liveTempNoAudio = liveTempCard.no_audio;
+      fs.writeFileSync(finalDomPaths.live_temp_card, await livePage.content(), "utf8");
+    }
+
+    const combinedNoAudio = {
+      clicked_audio_count: Number(intercepted.no_audio?.clicked_audio_count || 0) + Number(liveTempNoAudio?.clicked_audio_count || 0),
+      media_request_count: Number(intercepted.no_audio?.media_request_count || 0) + Number(liveTempNoAudio?.media_request_count || 0),
+      intercepted: intercepted.no_audio,
+      live_temp_card: liveTempNoAudio
+    };
+    assert(combinedNoAudio.clicked_audio_count === 0, "Inbox management proof clicked audio");
+    assert(combinedNoAudio.media_request_count === 0, "Inbox management proof observed media requests");
+
+    await context.tracing.stop({ path: tracePath });
+    writeJsonFile(consoleJsonPath, consoleEvents);
+    writeJsonFile(networkJsonPath, networkEvents);
+    writeJsonFile(actionsJsonPath, actions);
+    await context.close().catch(() => {});
+    for (const entry of pageEntries) {
+      videos[entry.name] = entry.video ? await entry.video.path().catch(() => "") : "";
+    }
+
+    const summary = {
+      schema: "pucky.inbox_management_proof.v1",
+      ok: true,
+      browser_name: config.browserName,
+      viewport: config.viewport,
+      light_url: config.lightUrl,
+      manifest,
+      layout: intercepted.layout,
+      archive: {
+        intercepted: intercepted.archive?.intercepted || null,
+        live_temp_card: liveTempCard
+      },
+      no_audio: combinedNoAudio,
+      screenshots: {
+        ...intercepted.screenshots,
+        ...(liveTempCard?.screenshots || {})
+      },
+      actions,
+      evidence: {
+        trace: tracePath,
+        console_json: consoleJsonPath,
+        network_json: networkJsonPath,
+        actions_json: actionsJsonPath,
+        manifest_json: manifestJsonPath,
+        final_dom: finalDomPaths,
+        video_dir: videoDir,
+        videos
+      }
+    };
+    writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
+    console.log(JSON.stringify(summary, null, 2));
+  } catch (error) {
+    await context.tracing.stop({ path: tracePath }).catch(() => {});
+    writeJsonFile(consoleJsonPath, consoleEvents);
+    writeJsonFile(networkJsonPath, networkEvents);
+    writeJsonFile(actionsJsonPath, actions);
+    for (const entry of pageEntries) {
+      await entry.page.content()
+        .then((html) => fs.writeFileSync(finalDomPaths[entry.name] || path.join(config.reportDir, `${entry.name}-final-dom.html`), html, "utf8"))
+        .catch(() => {});
+    }
+    writeAutomationError(config.reportDir, error);
+    throw error;
+  } finally {
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
+  if (config.onlyInboxManagement) {
+    await runInboxManagementOnly(config);
+    return;
+  }
   ensureDir(config.reportDir);
   const tracePath = path.join(config.reportDir, "trace.zip");
   const consoleJsonPath = path.join(config.reportDir, "console.json");

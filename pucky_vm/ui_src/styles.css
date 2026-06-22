@@ -6460,7 +6460,7 @@ button {
   padding-right: 30px;
 }
 
-.card-wrap.is-inbox-manage-mode .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] {
+.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] {
   padding-left: 50px;
 }
 
@@ -6494,17 +6494,19 @@ button {
 }
 
 .inbox-manage-select .material-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  stroke: none;
 }
 
 .inbox-card-menu-button {
   position: absolute;
-  top: 7px;
-  right: 7px;
+  left: 7px;
+  top: 50%;
   z-index: 4;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -6512,6 +6514,7 @@ button {
   border-radius: 999px;
   color: var(--home-shell-text-muted);
   background: color-mix(in srgb, var(--surface-card-elevated) 84%, transparent);
+  transform: translateY(-50%);
 }
 
 .inbox-card-menu-button.is-open,
@@ -6529,8 +6532,8 @@ button {
 
 .inbox-card-menu {
   position: absolute;
-  top: 41px;
-  right: 7px;
+  top: calc(50% + 20px);
+  left: 7px;
   z-index: 8;
   min-width: 178px;
   display: grid;
@@ -6572,20 +6575,27 @@ button {
 }
 
 .inbox-manage-bar {
-  position: sticky;
-  bottom: calc(var(--nav-safe) + 10px);
-  z-index: 11;
+  position: fixed;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 90;
   min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  width: 100%;
+  width: min(calc(100vw - 28px), 480px);
   padding: 8px 10px 8px 12px;
   border: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-card-elevated) 98%, white 2%);
   box-shadow: 0 18px 48px rgba(31, 44, 70, 0.2);
+  transform: translateX(-50%);
+  box-sizing: border-box;
+}
+
+.light-inbox-page:has(.inbox-manage-bar) .light-inbox-surface {
+  padding-bottom: 86px;
 }
 
 .inbox-manage-count {

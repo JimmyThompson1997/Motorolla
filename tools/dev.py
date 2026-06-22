@@ -76,6 +76,8 @@ TASK_HELP = {
     "proof-live-contacts-edit-browser": "Run the Contacts edit browser proof against the hosted VM with manifest verification.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
     "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
+    "proof-local-inbox-management": "Boot the local inbox/media proof server and run the no-audio Inbox management browser proof.",
+    "proof-live-inbox-management": "Run the no-audio Inbox management browser proof against the deployed hosted VM bundle.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
     "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
@@ -649,6 +651,104 @@ def run_live_universal_feed_tiles_proof(extra_args: list[str]) -> int:
     )
 
 
+def run_local_inbox_management_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    env = proof_env()
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
+    refresh_seed = f"proof-local-inbox-management-{int(time.time() * 1000)}"
+    scripts: list[tuple[str, list[str]]] = []
+    for viewport in ("390x844", "599x790"):
+        local_url = append_refresh_param(
+            f"{base_url}/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+            f"{refresh_seed}-{viewport}",
+        )
+        scripts.append(
+            (
+                "tools/proofs/cover/cover_light_native_ports_playwright.mjs",
+                [
+                    "--only-inbox-management",
+                    "--browser",
+                    "chromium",
+                    "--viewport",
+                    viewport,
+                    "--light-url",
+                    local_url,
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-local-inbox-management" / "chromium" / viewport / "run-1").resolve()),
+                    "--timeout-ms",
+                    "30000",
+                    *extra_args,
+                ],
+            )
+        )
+    server = run_server(
+        [
+            PYTHON,
+            "tools/proofs/cover/cover_inbox_media_proof_server.py",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--api-token",
+            "proof-token",
+        ]
+    )
+    try:
+        wait_for_api(f"{base_url}/healthz")
+        return run_node_proofs(node_binary, scripts, env=env)
+    finally:
+        stop_servers([server])
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - defensive cleanup
+            server.kill()
+            server.wait(timeout=5)
+
+
+def run_live_inbox_management_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    expected_sha = current_git_head() or str(int(time.time()))
+    live_root = (ROOT / ".tmp" / "proof-live-inbox-management" / expected_sha).resolve()
+    scripts: list[tuple[str, list[str]]] = []
+    for browser_name in ("chromium", "webkit"):
+        for viewport in ("390x844", "599x790"):
+            for attempt in range(1, 4):
+                run_name = f"run-{attempt}"
+                refresh_seed = f"{expected_sha}-{browser_name}-{viewport}-{run_name}"
+                light_url = append_refresh_param(
+                    "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+                    refresh_seed,
+                )
+                scripts.append(
+                    (
+                        "tools/proofs/cover/cover_light_native_ports_playwright.mjs",
+                        [
+                            "--only-inbox-management",
+                            "--live-backend",
+                            "--expected-sha",
+                            expected_sha,
+                            "--browser",
+                            browser_name,
+                            "--viewport",
+                            viewport,
+                            "--light-url",
+                            light_url,
+                            "--report-dir",
+                            str((live_root / browser_name / viewport / run_name).resolve()),
+                            "--timeout-ms",
+                            "45000",
+                            *extra_args,
+                        ],
+                    )
+                )
+    return run_node_proofs(
+        node_binary,
+        scripts,
+        env=proof_env(),
+    )
+
+
 def run_live_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     refresh_seed = current_git_head() or str(int(time.time()))
@@ -884,6 +984,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-live-universal-tiles":
         return run_live_universal_feed_tiles_proof(args.extra_args)
+    if args.task == "proof-local-inbox-management":
+        return run_local_inbox_management_proof(args.extra_args)
+    if args.task == "proof-live-inbox-management":
+        return run_live_inbox_management_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":
