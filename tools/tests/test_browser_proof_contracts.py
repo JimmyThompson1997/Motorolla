@@ -237,7 +237,7 @@ def test_calendar_browser_proof_retries_manifest_fetch_and_reacquires_event_cont
     assert 'waitUntil: "networkidle"' not in source
     assert 'await selectCalendarEventById(page, seed, "late-call", "Proof late call");' in source
     assert "const whoChipTexts = detailState.whoChipTexts;" in source
-    assert 'for (const label of ["Jimmy T.", "Jeff B."]) {' in source
+    assert 'for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {' in source
     assert 'assert(await page.locator(\'.light-calendar-detail-row[data-detail-row=\"who\"] .light-attendee-chip-guest\').count() >= 1' not in source
 
 
