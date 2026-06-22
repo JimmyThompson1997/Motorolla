@@ -5987,12 +5987,9 @@
   }
 
   function reminderIsSentHistory(reminder) {
-    if (reminderIsDismissed(reminder)) {
-      return false;
-    }
-    const meta = reminderMetadata(reminder);
-    const dueAtMs = Number(reminder?.due_at_ms || 0);
-    return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
+    void reminder;
+    // Delivered reminders stay in the active/live flow until the user dismisses them.
+    return false;
   }
 
   function reminderIsSnoozed(reminder) {

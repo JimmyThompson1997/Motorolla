@@ -125,12 +125,8 @@ function reminderIsDismissed(reminder) {
 }
 
 function reminderIsSentHistory(reminder) {
-  if (reminderIsDismissed(reminder)) {
-    return false;
-  }
-  const meta = reminderMeta(reminder);
-  const dueAtMs = Number(reminder?.due_at_ms || 0);
-  return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
+  void reminder;
+  return false;
 }
 
 function reminderIsSnoozed(reminder) {
