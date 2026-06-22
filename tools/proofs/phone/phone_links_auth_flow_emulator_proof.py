@@ -667,6 +667,38 @@ def auth_snapshot_is_valid(snapshot: dict[str, Any], *, base_url: str) -> bool:
     return any(hint in url.lower() or hint in text or hint in title for hint in AUTH_URL_HINTS) or url.startswith("http")
 
 
+def auth_snapshot_has_rendered_content(snapshot: dict[str, Any]) -> bool:
+    title = str(snapshot.get("title") or "").strip()
+    body_text = str(snapshot.get("body_text") or "").strip()
+    if len(body_text) >= 24:
+        return True
+    if len(title) >= 6 and title.lower() != "composio platform":
+        return True
+    return False
+
+
+def wait_for_rendered_auth_snapshot(args: argparse.Namespace, chrome_cdp_url: str) -> dict[str, Any]:
+    deadline = time.time() + max(3.0, float(args.browser_timeout_seconds))
+    last_snapshot: dict[str, Any] = {}
+    while time.time() < deadline:
+        chrome_browser = run_browser_helper(
+            args,
+            cdp_url=chrome_cdp_url,
+            surface="chrome_auth",
+            page_url_not_contains="/ui/pucky/latest",
+            operations=[{"kind": "page_info"}],
+        )
+        snapshot = chrome_browser.get("final_state") or {}
+        last_snapshot = snapshot if isinstance(snapshot, dict) else {}
+        if auth_snapshot_is_valid(last_snapshot, base_url=args.base_url) and auth_snapshot_has_rendered_content(last_snapshot):
+            return last_snapshot
+        time.sleep(1.0)
+    raise EmulatorLinksProofError(
+        "Chrome opened, but the auth page never rendered readable content. "
+        f"url={last_snapshot.get('url')!r} title={last_snapshot.get('title')!r}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     ensure_dir(args.report_dir)
@@ -768,9 +800,6 @@ def main(argv: list[str] | None = None) -> int:
             raise EmulatorLinksProofError("Connect click did not report a launched handoff.")
 
         summary["focus_after_click"] = resolve_browser_surface(args, timeout_seconds=args.timeout_seconds)
-        auth_device = args.report_dir / "04-auth-device.png"
-        capture_screenshot(args, auth_device, "links-proof-auth-device.png")
-        summary["screenshots"]["auth_device"] = str(auth_device)
         summary["focus_after_browser"] = current_focus(args)
         if not summary["focus_after_browser"].startswith(f"{CHROME_PACKAGE}/"):
             raise EmulatorLinksProofError(f"Expected Chrome after handoff, saw {summary['focus_after_browser'] or '<none>'}.")
@@ -782,6 +811,7 @@ def main(argv: list[str] | None = None) -> int:
             "cdp_url": chrome.get("cdp_url"),
             "pages": chrome.get("matches") or chrome.get("pages") or [],
         }
+        wait_for_rendered_auth_snapshot(args, str(chrome["cdp_url"]))
         chrome_browser = run_browser_helper(
             args,
             cdp_url=str(chrome["cdp_url"]),
@@ -794,10 +824,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         summary["chrome_browser"] = chrome_browser
         summary["screenshots"]["auth_chrome_cdp"] = str(args.report_dir / "05-auth-chrome-cdp.png")
+        auth_device = args.report_dir / "04-auth-device.png"
+        capture_screenshot(args, auth_device, "links-proof-auth-device.png")
+        summary["screenshots"]["auth_device"] = str(auth_device)
         auth_snapshot = chrome_browser.get("final_state") or {}
         if not auth_snapshot_is_valid(auth_snapshot, base_url=args.base_url):
             raise EmulatorLinksProofError(
                 f"Chrome opened, but the captured page did not look like auth. url={auth_snapshot.get('url')!r} title={auth_snapshot.get('title')!r}"
+            )
+        if not auth_snapshot_has_rendered_content(auth_snapshot):
+            raise EmulatorLinksProofError(
+                "Chrome opened, but the captured auth page was still visually blank. "
+                f"url={auth_snapshot.get('url')!r} title={auth_snapshot.get('title')!r}"
             )
 
         summary["ok"] = True

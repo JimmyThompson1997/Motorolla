@@ -59,6 +59,32 @@ def test_auth_snapshot_validation_rejects_connect_page_and_accepts_auth_targets(
     )
 
 
+def test_auth_snapshot_rendered_content_requires_more_than_blank_loading_surface() -> None:
+    assert not proof.auth_snapshot_has_rendered_content(
+        {
+            "url": "https://slack.com/workspace-signin",
+            "title": "",
+            "body_text": "",
+        }
+    )
+
+    assert proof.auth_snapshot_has_rendered_content(
+        {
+            "url": "https://slack.com/workspace-signin",
+            "title": "Find your workspace | Slack",
+            "body_text": "Sign in to your workspace",
+        }
+    )
+
+    assert not proof.auth_snapshot_has_rendered_content(
+        {
+            "url": "https://platform.composio.dev/link/lk_123",
+            "title": "Composio Platform",
+            "body_text": "",
+        }
+    )
+
+
 def test_has_forbidden_connect_error_requires_ready_session_and_no_inline_error() -> None:
     state = {
         "metrics": {
