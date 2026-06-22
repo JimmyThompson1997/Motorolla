@@ -181,10 +181,10 @@ window.PUCKY_UI_ICONS = {
     messages: { icon: "chat", colors: { dark: "#10b981", light: "#10b981" } },
     meeting_notes: { icon: "record_voice_over", colors: { dark: "#14b8a6", light: "#14b8a6" } },
     reminders: { icon: "bell", colors: { dark: "#f59e0b", light: "#f59e0b" } },
-    notes: { icon: "note", colors: { dark: "#eab308", light: "#eab308" } },
+    notes: { icon: "note", colors: { dark: "#c28a00", light: "#c28a00" } },
     tasks: { icon: "checklist", colors: { dark: "#22c55e", light: "#22c55e" } },
     calendar: { icon: "calendar", colors: { dark: "#ef4444", light: "#ef4444" } },
     tags: { icon: "sell", colors: { dark: "#f97316", light: "#f97316" } },
-    contacts: { icon: "contacts", colors: { dark: "#f43f5e", light: "#f43f5e" } }
+    contacts: { icon: "contacts", colors: { dark: "#db2777", light: "#db2777" } }
   }
 };
