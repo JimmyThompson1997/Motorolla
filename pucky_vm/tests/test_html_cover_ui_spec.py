@@ -1706,8 +1706,8 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert ".card-meeting-meta {" in styles
     assert "grid-template-rows: auto;" in meeting_list_card
     assert "min-height: 72px;" in meeting_list_card
-    assert "display: flex;" in meeting_list_title_only
-    assert "align-items: center;" in meeting_list_title_only
+    assert "display: block;" in meeting_list_title_only
+    assert "align-items: center;" not in meeting_list_title_only
     assert ".light-feed-surface.is-flat-feed {" in styles
     assert ".light-feed-section.is-flat-feed {" in styles
     assert ".light-feed-list.is-flat-feed {" in styles

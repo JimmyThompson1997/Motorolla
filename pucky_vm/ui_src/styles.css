@@ -1285,8 +1285,7 @@ button {
 }
 
 .card.card-meeting-list .card-body.is-title-only {
-  display: flex;
-  align-items: center;
+  display: block;
   min-height: 0;
 }
 
