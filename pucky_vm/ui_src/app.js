@@ -8427,13 +8427,16 @@
     statusCircle.setAttribute("aria-hidden", "true");
     statusCircle.append(el("span", taskCheckCircleClass(task)));
     const createdAt = Number(task?.created_at_ms || 0);
+    const completedAt = Number(task?.completed_at_ms || 0);
+    const headerMetaPrefix = current === "done" ? "Completed" : "Created";
+    const headerMetaAt = current === "done" ? (completedAt > 0 ? completedAt : createdAt) : createdAt;
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
-    if (Number.isFinite(createdAt) && createdAt > 0) {
-      copy.append(el("span", "light-task-detail-created", `Created ${taskDateTimeLabel(createdAt, "")}`));
+    if (Number.isFinite(headerMetaAt) && headerMetaAt > 0) {
+      copy.append(el("span", "light-task-detail-created", `${headerMetaPrefix} ${taskDateTimeLabel(headerMetaAt, "")}`));
     }
     card.append(statusCircle, copy);
     return card;

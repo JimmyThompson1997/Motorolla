@@ -449,6 +449,8 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert 'detailState.sections.includes("checklist")' in source
     assert 'detailState.sections.includes("connected")' in source
     assert 'detailState.createdMeta' in source
+    assert 'detailState.createdMeta.startsWith("Created ")' in source
+    assert 'detailState.createdMeta.startsWith("Completed ")' in source
     assert 'detailState.descriptionIsFirstSection' in source
     assert "light-task-detail-body" not in source
     assert "lightHtmlFrame" not in source

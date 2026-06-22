@@ -124,6 +124,7 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert 'assert(!taskState.sections.includes("attached")' in source
     assert 'assert(taskState.checklist_immediately_after_description' in source
     assert 'assert(taskState.header_created_meta' in source
+    assert 'assert(taskState.header_created_meta.startsWith("Created ")' in source
     assert 'task_detail_chevron_count: Array.from(detail?.querySelectorAll(".light-info-row .light-chevron") || []).length,' in source
     assert 'assert(!taskState.task_html_frame_present' in source
     assert 'assert(taskState.description_is_first_section' in source
@@ -149,9 +150,16 @@ def test_live_user_session_runner_exercises_task_status_triggers_and_clean_detai
     assert "Complete final task checklist item" in source
     assert "Reopen task by unchecking a completed checklist item" in source
     assert 'assert(taskStateAfterChecklistDone.task_status === "done"' in source
+    assert 'assert(taskStateAfterChecklistDone.header_created_meta.startsWith("Completed ")' in source
+    assert 'const completedAtAfterChecklistDone = Number(taskRecordAfterChecklistDone.completed_at_ms || 0);' in source
     assert 'assert(taskStateAfterChecklistReopen.task_status === "in_progress"' in source
+    assert 'assert(taskStateAfterChecklistReopen.header_created_meta.startsWith("Created ")' in source
+    assert 'assert(!("completed_at_ms" in taskRecordAfterChecklistReopen)' in source
     assert 'assert(taskRecordAfterChecklistDone.status === "done"' in source
     assert 'assert(taskRecordAfterChecklistReopen.status === "in_progress"' in source
+    assert 'const completedAtAfterReload = Number(taskRecord.completed_at_ms || 0);' in source
+    assert 'assert(taskState.header_created_meta.startsWith("Completed ")' in source
+    assert 'assert(completedAtAfterReload > completedAtAfterChecklistDone' in source
 
 
 def test_live_user_session_runner_supports_contacts_route_filter_and_search_contract() -> None:

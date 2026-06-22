@@ -1286,6 +1286,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   assert(!detailState.sections.includes("people"), "Did not expect inline task detail to include a People section");
   assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
   assert(detailState.createdMeta, "Expected inline task detail to render compact created metadata in the header");
+  assert(detailState.createdMeta.startsWith("Created "), `Expected inline task detail header to say Created, got ${detailState.createdMeta}`);
   assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
   assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");
   assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");
@@ -1330,6 +1331,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     statusLabel: detailState.statusLabel,
     statusValue: detailState.statusValue,
     due: detailState.due,
+    createdMeta: detailState.createdMeta,
     descriptionIsFirstSection: detailState.descriptionIsFirstSection,
     taskHtmlFramePresent: detailState.taskHtmlFramePresent,
   });
@@ -1440,8 +1442,9 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   detailState = await readTaskDetailState(page);
   assert(detailState.statusValue === "done", `Expected done task status value to be done, got ${detailState.statusValue}`);
   assert(detailState.statusLabel === "Done", `Expected done task status label to say Done, got ${detailState.statusLabel}`);
+  assert(detailState.createdMeta.startsWith("Completed "), `Expected done task detail header to say Completed, got ${detailState.createdMeta}`);
   screenshots[`${theme}_tasks_done_status`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-status`);
-  summary.taskDetail.push({ theme, type: "done_status", taskId: doneId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
+  summary.taskDetail.push({ theme, type: "done_status", taskId: doneId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due, createdMeta: detailState.createdMeta });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 

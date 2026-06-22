@@ -1332,6 +1332,7 @@ async function runRouteTour(page, config, mode, seed) {
     assert(taskState.description_is_first_section, `${mode}: task detail should start with Description`);
     assert(taskState.checklist_immediately_after_description, `${mode}: task detail should place Checklist directly after Description`);
     assert(taskState.header_created_meta, `${mode}: task detail should show compact created metadata in the header`);
+    assert(taskState.header_created_meta.startsWith("Created "), `${mode}: active task detail header should say Created, got ${taskState.header_created_meta}`);
     assert(taskState.connected.some(item => item.kind === "note" && item.label === seed.noteTitle), `${mode}: task detail missing connected note entry`);
     assert(taskState.connected.some(item => item.kind === "calendar_event" && item.label === seed.calendarEventTitle), `${mode}: task detail missing connected calendar event`);
     assert(taskState.connected.some(item => item.kind === "contact" && item.label === seed.contactTitle), `${mode}: task detail missing connected contact`);
@@ -1357,8 +1358,11 @@ async function runRouteTour(page, config, mode, seed) {
     await waitForTaskDetailStatus(page, "done", config.timeoutMs);
     const taskStateAfterChecklistDone = await readTaskDetailState(page);
     const taskRecordAfterChecklistDone = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+    const completedAtAfterChecklistDone = Number(taskRecordAfterChecklistDone.completed_at_ms || 0);
     assert(taskStateAfterChecklistDone.task_status === "done", `${mode}: completing the final checklist item should mark the task done in the DOM`);
+    assert(taskStateAfterChecklistDone.header_created_meta.startsWith("Completed "), `${mode}: completed task detail header should say Completed, got ${taskStateAfterChecklistDone.header_created_meta}`);
     assert(taskRecordAfterChecklistDone.status === "done", `${mode}: completing the final checklist item should mark the task done in the API`);
+    assert(completedAtAfterChecklistDone > 0, `${mode}: completing the final checklist item should stamp completed_at_ms in the API`);
     await goToTasksList(page, mode, config.timeoutMs);
     await waitForRoute(page, "tasks", config.timeoutMs);
     await revealTaskRow(page, seed.primaryTaskId);
@@ -1383,7 +1387,9 @@ async function runRouteTour(page, config, mode, seed) {
     const taskStateAfterChecklistReopen = await readTaskDetailState(page);
     const taskRecordAfterChecklistReopen = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
     assert(taskStateAfterChecklistReopen.task_status === "in_progress", `${mode}: unchecking a completed checklist item should reopen the task in the DOM`);
+    assert(taskStateAfterChecklistReopen.header_created_meta.startsWith("Created "), `${mode}: reopened task detail header should return to Created, got ${taskStateAfterChecklistReopen.header_created_meta}`);
     assert(taskRecordAfterChecklistReopen.status === "in_progress", `${mode}: unchecking a completed checklist item should reopen the task in the API`);
+    assert(!("completed_at_ms" in taskRecordAfterChecklistReopen), `${mode}: reopening a task should clear completed_at_ms in the API`);
     await goToTasksList(page, mode, config.timeoutMs);
     await waitForRoute(page, "tasks", config.timeoutMs);
     await revealTaskRow(page, seed.primaryTaskId);
@@ -1447,6 +1453,7 @@ async function runRouteTour(page, config, mode, seed) {
         ...detailTitleFocusState,
       },
     });
+    await page.waitForTimeout(25);
     await page.locator('.settings-selector-option[data-selector-value="done"]').first().click();
     await waitForTaskDetailStatus(page, "done", config.timeoutMs);
     await page.evaluate(() => {
@@ -1459,12 +1466,15 @@ async function runRouteTour(page, config, mode, seed) {
     await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
     taskState = await readTaskDetailState(page);
     const taskRecord = await fetchTaskRecord(config.baseUrl, seed.primaryTaskId, config.refreshKey);
+    const completedAtAfterReload = Number(taskRecord.completed_at_ms || 0);
     assert(taskState.task_status === "done", `${mode}: task detail did not keep Done after reload`);
     assert(taskRecord.status === "done", `${mode}: task API did not persist Done after reload`);
     assert(!taskState.task_html_frame_present, `${mode}: task detail should stay free of embedded HTML after reload`);
     assert(taskState.description_is_first_section, `${mode}: task detail should still start with Description after reload`);
     assert(taskState.checklist_immediately_after_description, `${mode}: task detail should keep Checklist directly after Description after reload`);
     assert(taskState.header_created_meta, `${mode}: task detail should keep compact created metadata after reload`);
+    assert(taskState.header_created_meta.startsWith("Completed "), `${mode}: done task detail header should keep Completed after reload, got ${taskState.header_created_meta}`);
+    assert(completedAtAfterReload > completedAtAfterChecklistDone, `${mode}: re-done task should stamp a fresh completion timestamp after reopening`);
     assert(taskState.task_detail_chevron_count === 0, `${mode}: task detail linked rows should stay chevron-free after reload`);
     await recorder.capture({
       route: taskState.route || expectedTaskReturnRoute(mode),

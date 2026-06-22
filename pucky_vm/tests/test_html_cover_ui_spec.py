@@ -1458,8 +1458,11 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'statusCircle.append(el("span", taskCheckCircleClass(task)));' in task_detail_card
     assert "lightTaskStatusControl(task)" not in task_detail_card
     assert 'const createdAt = Number(task?.created_at_ms || 0);' in task_detail_card
-    assert 'if (Number.isFinite(createdAt) && createdAt > 0) {' in task_detail_card
-    assert 'copy.append(el("span", "light-task-detail-created", `Created ${taskDateTimeLabel(createdAt, "")}`));' in task_detail_card
+    assert 'const completedAt = Number(task?.completed_at_ms || 0);' in task_detail_card
+    assert 'const headerMetaPrefix = current === "done" ? "Completed" : "Created";' in task_detail_card
+    assert 'const headerMetaAt = current === "done" ? (completedAt > 0 ? completedAt : createdAt) : createdAt;' in task_detail_card
+    assert 'if (Number.isFinite(headerMetaAt) && headerMetaAt > 0) {' in task_detail_card
+    assert 'copy.append(el("span", "light-task-detail-created", `${headerMetaPrefix} ${taskDateTimeLabel(headerMetaAt, "")}`));' in task_detail_card
     assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
     assert 'options: taskStatusFilterSelectorOptions(counts),' in task_filters
     assert 'return taskStatusFilterChoices().map(([value, label]) => {' in task_filter_selector_options

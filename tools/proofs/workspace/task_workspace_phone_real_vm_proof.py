@@ -747,7 +747,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             assert_or_fail(checklist_rows.get(item_id) is True, "phone_checklist_persistence_failed", f"Checklist item {item_id} did not persist as done after reload")
         task_after_checklist = fetch_task_record(args.vm_base_url, token, str(seed["primaryTaskId"]))
         assert_or_fail(str(task_after_checklist.get("status") or "") == "done", "phone_checklist_persistence_failed", "Checking every checklist item should auto-mark the parent task done")
-        checklist_checks.append({"toggled_all_done": True, "status_after_toggle": task_after_checklist.get("status")})
+        completed_after_checklist = int(task_after_checklist.get("completed_at_ms") or 0)
+        assert_or_fail(int(task_after_checklist.get("completed_at_ms") or 0) > 0, "phone_checklist_persistence_failed", "Checking every checklist item should stamp completed_at_ms")
+        checklist_checks.append({
+            "toggled_all_done": True,
+            "status_after_toggle": task_after_checklist.get("status"),
+            "completed_at_ms_after_toggle": task_after_checklist.get("completed_at_ms"),
+        })
         reopen_item_id = checklist_ids[-1] if checklist_ids else ""
         assert_or_fail(bool(reopen_item_id), "phone_checklist_persistence_failed", "Missing checklist item to reopen the completed task")
         reopen_phase = run_phase(
@@ -772,7 +778,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         assert_or_fail(reopen_rows.get(reopen_item_id) is False, "phone_checklist_persistence_failed", f"Checklist item {reopen_item_id} did not reopen after reload")
         task_after_reopen = fetch_task_record(args.vm_base_url, token, str(seed["primaryTaskId"]))
         assert_or_fail(str(task_after_reopen.get("status") or "") == "in_progress", "phone_checklist_persistence_failed", "Unchecking a completed checklist item should reopen the parent task to in progress")
-        checklist_checks.append({"toggled_all_done": False, "status_after_reopen": task_after_reopen.get("status")})
+        assert_or_fail(not bool(task_after_reopen.get("completed_at_ms")), "phone_checklist_persistence_failed", "Reopening a completed task should clear completed_at_ms")
+        checklist_checks.append({
+            "toggled_all_done": False,
+            "status_after_reopen": task_after_reopen.get("status"),
+            "completed_at_ms_after_reopen": task_after_reopen.get("completed_at_ms"),
+        })
 
         transitions = [
             {"status": "in_progress", "group": "do"},
@@ -811,6 +822,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             assert_or_fail(state.get("taskStatus") == transition["status"], "phone_status_persistence_failed", f"Task status did not persist as {transition['status']}")
             task_record = fetch_task_record(args.vm_base_url, token, str(seed["primaryTaskId"]))
             assert_or_fail(str(task_record.get("status") or "") == transition["status"], "phone_status_persistence_failed", f"Workspace API did not persist {transition['status']}")
+            if transition["status"] == "done":
+                assert_or_fail(int(task_record.get("completed_at_ms") or 0) > completed_after_checklist, "phone_status_persistence_failed", "Re-done task did not stamp a fresh completion timestamp")
             list_state_after_back = None
             for item in list(phase.get("operations") or []):
                 if isinstance(item, dict) and item.get("kind") == "task_state" and isinstance(item.get("state"), dict):

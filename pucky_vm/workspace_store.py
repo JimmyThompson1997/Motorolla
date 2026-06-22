@@ -580,6 +580,8 @@ class WorkspaceStore:
                 record_id = SELF_CONTACT_ID
         existing_record = self.get_record(collection, record_id, include_deleted=True)
         normalized = self._normalize_record(kind, record_id, payload, now_ms=now)
+        if kind == "task":
+            self._apply_task_completion_timestamp(normalized, existing_record, payload, now_ms=now)
         if kind == "note":
             self._apply_note_content_timestamp(normalized, existing_record, now_ms=now)
         created_at_ms = int(existing_record["created_at_ms"]) if existing_record else now
@@ -623,6 +625,16 @@ class WorkspaceStore:
             return value
         return _int_or_zero(record.get("content_updated_at_ms"))
 
+    @staticmethod
+    def _task_completed_at_ms(record: dict[str, object] | None) -> int:
+        if not isinstance(record, dict):
+            return 0
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        value = _int_or_zero(metadata.get("completed_at_ms")) if isinstance(metadata, dict) else 0
+        if value > 0:
+            return value
+        return _int_or_zero(record.get("completed_at_ms"))
+
     @classmethod
     def _note_content_changed(cls, current: dict[str, object] | None, record: dict[str, object]) -> bool:
         if current is None:
@@ -665,6 +677,35 @@ class WorkspaceStore:
         metadata["content_updated_at_ms"] = resolved
         record["metadata"] = metadata
         record["content_updated_at_ms"] = resolved
+
+    @classmethod
+    def _apply_task_completion_timestamp(
+        cls,
+        record: dict[str, object],
+        current: dict[str, object] | None,
+        payload: dict[str, object],
+        *,
+        now_ms: int,
+    ) -> None:
+        metadata = dict(record.get("metadata") or {})
+        metadata.pop("completed_at_ms", None)
+        record.pop("completed_at_ms", None)
+        status = normalize_task_status(record.get("status"))
+        if status != "done":
+            record["metadata"] = metadata
+            return
+        previous_status = normalize_task_status(current.get("status")) if isinstance(current, dict) else ""
+        previous_completed = cls._task_completed_at_ms(current)
+        if current is None:
+            resolved = _int_or_zero(payload.get("created_at_ms")) or now_ms
+        elif previous_status == "done":
+            resolved = previous_completed
+        else:
+            resolved = now_ms
+        if resolved > 0:
+            metadata["completed_at_ms"] = resolved
+            record["completed_at_ms"] = resolved
+        record["metadata"] = metadata
 
     def delete_record(self, collection: str, record_id: str) -> dict[str, object] | None:
         existing = self.get_record(collection, record_id, include_deleted=True)
@@ -1697,6 +1738,9 @@ class WorkspaceStore:
             record["owner"] = str(metadata.get("owner") or "").strip()
             record["description"] = str(metadata.get("description") or record["summary"] or "").strip()
             record["checklist"] = _normalize_task_checklist(metadata.get("checklist"))
+            completed_at_ms = _int_or_zero(metadata.get("completed_at_ms"))
+            if completed_at_ms > 0:
+                record["completed_at_ms"] = completed_at_ms
             record["derived_group"] = derive_task_group(record, self.now_ms())
         if row["kind"] == "note":
             record["content_updated_at_ms"] = self._note_content_updated_at_ms(record) or int(row["created_at_ms"] or 0) or int(row["updated_at_ms"] or 0)

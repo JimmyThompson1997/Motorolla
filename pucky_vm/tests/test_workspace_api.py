@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -136,6 +137,7 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
             token="test-token",
             body={"id": "public-task", "title": "Public Task", "status": "todo", "due_at_ms": 2_000_000_000_000},
         )
+        assert "completed_at_ms" not in task
         same_origin_headers = {
             "Origin": base_url,
             "Referer": f"{base_url}/ui/pucky/latest/?theme=light&route=tasks",
@@ -182,6 +184,7 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
         )
         assert checklist_done["status"] == "done"
         assert [item["done"] for item in checklist_done["checklist"]] == [True, True]
+        assert int(checklist_done["completed_at_ms"]) > 0
 
         checklist_reopen = request_json(
             base_url,
@@ -199,6 +202,7 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
         )
         assert checklist_reopen["status"] == "in_progress"
         assert [item["done"] for item in checklist_reopen["checklist"]] == [True, False]
+        assert "completed_at_ms" not in checklist_reopen
 
         for bad_body in (
             {"status": "open"},
@@ -297,6 +301,76 @@ def test_workspace_api_authenticated_task_patch_persists_checklist_and_status(tm
         )
         assert patched["status"] == "done"
         assert [item["done"] for item in patched["checklist"]] == [True, True]
+        assert int(patched["completed_at_ms"]) > 0
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_task_completed_timestamp_is_durable(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        active = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={"id": "durable-task", "title": "Durable Task", "status": "todo"},
+        )
+        assert "completed_at_ms" not in active
+
+        created_done = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "durable-created-done",
+                "title": "Durable Created Done",
+                "status": "done",
+                "created_at_ms": 1_700_000_000_123,
+            },
+        )
+        assert created_done["completed_at_ms"] == 1_700_000_000_123
+
+        first_done = request_json(
+            base_url,
+            f"/api/workspace/tasks/{active['id']}",
+            method="PATCH",
+            token="test-token",
+            body={"status": "done"},
+        )
+        first_completed_at = int(first_done["completed_at_ms"])
+        assert first_completed_at > 0
+
+        preserved = request_json(
+            base_url,
+            f"/api/workspace/tasks/{active['id']}",
+            method="PATCH",
+            token="test-token",
+            body={"summary": "Edited after done"},
+        )
+        assert preserved["status"] == "done"
+        assert preserved["completed_at_ms"] == first_completed_at
+
+        reopened = request_json(
+            base_url,
+            f"/api/workspace/tasks/{active['id']}",
+            method="PATCH",
+            token="test-token",
+            body={"status": "waiting"},
+        )
+        assert reopened["status"] == "waiting"
+        assert "completed_at_ms" not in reopened
+
+        time.sleep(0.02)
+        redone = request_json(
+            base_url,
+            f"/api/workspace/tasks/{active['id']}",
+            method="PATCH",
+            token="test-token",
+            body={"status": "done"},
+        )
+        assert int(redone["completed_at_ms"]) > first_completed_at
     finally:
         server.shutdown()
 

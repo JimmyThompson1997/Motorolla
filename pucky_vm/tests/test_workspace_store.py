@@ -412,6 +412,59 @@ def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> 
     assert still_done["derived_group"] == "done"
 
 
+def test_task_completed_timestamp_lifecycle_is_durable(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
+
+    active = store.upsert_record(
+        "tasks",
+        {
+            "id": "durable-complete-active",
+            "title": "Durable active task",
+            "status": "todo",
+        },
+    )
+    assert "completed_at_ms" not in active
+    assert "completed_at_ms" not in active["metadata"]
+
+    created_done = store.upsert_record(
+        "tasks",
+        {
+            "id": "durable-complete-created-done",
+            "title": "Created done task",
+            "status": "done",
+            "created_at_ms": clock.value - 45_000,
+        },
+    )
+    assert created_done["completed_at_ms"] == clock.value - 45_000
+    assert created_done["metadata"]["completed_at_ms"] == clock.value - 45_000
+
+    clock.value += 1_000
+    stamped = store.patch_record("tasks", "durable-complete-active", {"status": "done"})
+    assert stamped is not None
+    assert stamped["completed_at_ms"] == clock.value
+    assert stamped["metadata"]["completed_at_ms"] == clock.value
+
+    clock.value += 1_000
+    preserved = store.patch_record("tasks", "durable-complete-active", {"summary": "Edited after completion"})
+    assert preserved is not None
+    assert preserved["status"] == "done"
+    assert preserved["completed_at_ms"] == stamped["completed_at_ms"]
+
+    clock.value += 1_000
+    reopened = store.patch_record("tasks", "durable-complete-active", {"status": "in_progress"})
+    assert reopened is not None
+    assert reopened["status"] == "in_progress"
+    assert "completed_at_ms" not in reopened
+    assert "completed_at_ms" not in reopened["metadata"]
+
+    clock.value += 1_000
+    redone = store.patch_record("tasks", "durable-complete-active", {"status": "done"})
+    assert redone is not None
+    assert redone["completed_at_ms"] == clock.value
+    assert redone["completed_at_ms"] > stamped["completed_at_ms"]
+
+
 def test_workspace_store_migrates_legacy_non_note_html_and_asset_content_into_linked_notes_idempotently(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     db_path = tmp_path / "workspace.sqlite3"

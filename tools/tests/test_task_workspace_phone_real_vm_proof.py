@@ -187,9 +187,14 @@ def test_phone_task_proof_source_requires_checklist_autodone_and_reopen() -> Non
     source = Path(phone_proof.__file__).read_text(encoding="utf-8")
 
     assert 'assert_or_fail(str(task_after_checklist.get("status") or "") == "done"' in source
+    assert 'assert_or_fail(int(task_after_checklist.get("completed_at_ms") or 0) > 0' in source
     assert 'assert_or_fail(str(task_after_reopen.get("status") or "") == "in_progress"' in source
+    assert 'assert_or_fail(not bool(task_after_reopen.get("completed_at_ms"))' in source
     assert '"status_after_toggle": task_after_checklist.get("status")' in source
+    assert '"completed_at_ms_after_toggle": task_after_checklist.get("completed_at_ms")' in source
     assert '"status_after_reopen": task_after_reopen.get("status")' in source
+    assert '"completed_at_ms_after_reopen": task_after_reopen.get("completed_at_ms")' in source
+    assert 'assert_or_fail(int(task_record.get("completed_at_ms") or 0) > completed_after_checklist' in source
 
 
 def test_fetch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch: pytest.MonkeyPatch) -> None:
