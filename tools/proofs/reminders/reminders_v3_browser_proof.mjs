@@ -58,37 +58,6 @@ function pageUrl(baseUrl, theme, apiToken = "") {
   return url.toString();
 }
 
-async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
-  const token = String(apiToken || "").trim();
-  if (!token) {
-    return;
-  }
-  const apiBase = `${String(baseUrl || "").replace(/\/+$/, "")}/api/**`;
-  await context.route(apiBase, async route => {
-    const request = route.request();
-    const headers = { ...request.headers() };
-    delete headers.origin;
-    if (!headers.authorization) {
-      headers.authorization = `Bearer ${token}`;
-    }
-    try {
-      const response = await route.fetch({
-        method: request.method(),
-        headers,
-        postData: request.postDataBuffer() || undefined
-      });
-      await route.fulfill({ response });
-    } catch (error) {
-      const detail = String(error?.message || error || "");
-      if (/Request context disposed|Target page, context or browser has been closed/i.test(detail)) {
-        await route.abort("failed");
-        return;
-      }
-      throw error;
-    }
-  });
-}
-
 async function apiRequest(config, method, apiPath, body = undefined) {
   const headers = { Accept: "application/json" };
   if (config.apiToken) {
@@ -410,7 +379,6 @@ async function main() {
   });
   const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
   const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: config.reportDir, size: VIEWPORT } });
-  await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
   const page = await context.newPage();
 
   try {

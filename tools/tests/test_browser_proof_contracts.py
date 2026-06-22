@@ -112,6 +112,8 @@ def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:
     assert "Expected reminder detail to omit reminder-native Connected rows" in reminder_source
     assert "detail.nativeTileLabels.length === 0" in reminder_source
     assert "detail.connectedCount === 0" in reminder_source
+    assert "installAuthorizedApiProxy(" not in reminder_source
+    assert 'headers.authorization = `Bearer ${token}`' not in reminder_source
     assert "document.querySelectorAll('[data-reminder-detail-tile=\"recipient\"]').length === 0" in workspace_source
     assert "document.querySelectorAll('[data-reminder-detail-tile=\"when\"]').length === 0" in workspace_source
     assert 'JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"])' in workspace_source

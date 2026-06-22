@@ -696,19 +696,15 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             try:
                 payload = {} if method == "DELETE" else self._read_json_payload(1024 * 1024)
                 if not self._is_authorized():
-                    public_task_status_patch, public_task_status_code = self._public_browser_task_status_patch_result(parts, method, payload)
-                    if public_task_status_patch is None:
+                    public_browser_patch, public_browser_patch_code, public_browser_patch_error = self._public_browser_workspace_patch_result(parts, method, payload)
+                    if public_browser_patch is None:
                         self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                         return
-                    if not public_task_status_patch:
+                    if not public_browser_patch:
                         self._json(
-                            public_task_status_code or HTTPStatus.UNAUTHORIZED,
+                            public_browser_patch_code or HTTPStatus.UNAUTHORIZED,
                             {
-                                "error": (
-                                    "workspace_task_public_status_patch_invalid"
-                                    if public_task_status_code == HTTPStatus.BAD_REQUEST
-                                    else "unauthorized"
-                                )
+                                "error": public_browser_patch_error or "unauthorized"
                             },
                         )
                         return
@@ -765,25 +761,35 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return []
             return [unquote(part).strip() for part in suffix.split("/") if part.strip()]
 
-        def _public_browser_task_status_patch_result(
+        def _public_browser_workspace_patch_result(
             self,
             parts: list[str],
             method: str,
             payload: dict[str, object],
-        ) -> tuple[bool | None, HTTPStatus | None]:
-            if method != "PATCH" or len(parts) != 2 or parts[0] != "tasks":
-                return None, None
+        ) -> tuple[bool | None, HTTPStatus | None, str | None]:
+            if method != "PATCH" or len(parts) != 2:
+                return None, None, None
+            if parts[0] == "tasks":
+                return self._public_browser_task_status_patch_result(payload)
+            if parts[0] == "reminders":
+                return self._public_browser_reminder_patch_result(payload)
+            return None, None, None
+
+        def _public_browser_task_status_patch_result(
+            self,
+            payload: dict[str, object],
+        ) -> tuple[bool, HTTPStatus, str]:
             payload_keys = set(payload.keys())
             if payload_keys not in ({"status"}, {"checklist"}, {"checklist", "status"}):
-                return False, HTTPStatus.BAD_REQUEST
+                return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
             if "status" in payload_keys:
                 status = str(payload.get("status") or "").strip()
                 if status not in PUBLIC_BROWSER_TASK_STATUSES:
-                    return False, HTTPStatus.BAD_REQUEST
+                    return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
             if "checklist" in payload_keys:
                 checklist = payload.get("checklist")
                 if not isinstance(checklist, list):
-                    return False, HTTPStatus.BAD_REQUEST
+                    return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
                 if payload_keys == {"checklist", "status"}:
                     checklist_done_values = [
                         bool(item.get("done") or item.get("checked"))
@@ -791,30 +797,84 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                         if isinstance(item, dict)
                     ]
                     if len(checklist_done_values) != len(checklist):
-                        return False, HTTPStatus.BAD_REQUEST
+                        return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
                     all_done = bool(checklist_done_values) and all(checklist_done_values)
                     any_pending = any(not item for item in checklist_done_values)
                     status = str(payload.get("status") or "").strip()
                     if status == "done":
                         if not all_done:
-                            return False, HTTPStatus.BAD_REQUEST
+                            return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
                     elif status == "in_progress":
                         if not checklist_done_values or not any_pending:
-                            return False, HTTPStatus.BAD_REQUEST
+                            return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
                     else:
-                        return False, HTTPStatus.BAD_REQUEST
+                        return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
+            if not self._is_same_origin_ui_request():
+                return False, HTTPStatus.UNAUTHORIZED, "unauthorized"
+            return True, HTTPStatus.OK, ""
+
+        def _public_browser_reminder_patch_result(
+            self,
+            payload: dict[str, object],
+        ) -> tuple[bool, HTTPStatus, str]:
+            payload_keys = set(payload.keys())
+            if payload_keys == {"status"}:
+                if str(payload.get("status") or "").strip() != "done":
+                    return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+                if not self._is_same_origin_ui_request():
+                    return False, HTTPStatus.UNAUTHORIZED, "unauthorized"
+                return True, HTTPStatus.OK, ""
+            if payload_keys != {"due_at_ms", "metadata"}:
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            due_at_ms = payload.get("due_at_ms")
+            metadata = payload.get("metadata")
+            try:
+                due_at_value = int(due_at_ms)
+            except (TypeError, ValueError):
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            if due_at_value <= 0 or not isinstance(metadata, dict):
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            metadata_keys = set(metadata.keys())
+            expected_metadata_keys = {
+                "snoozed_until_ms",
+                "delivery_state",
+                "last_fired_at_ms",
+                "last_fired_due_at_ms",
+                "last_delivery_error",
+            }
+            if metadata_keys != expected_metadata_keys:
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            try:
+                snoozed_until_ms = int(metadata.get("snoozed_until_ms"))
+                last_fired_at_ms = int(metadata.get("last_fired_at_ms"))
+                last_fired_due_at_ms = int(metadata.get("last_fired_due_at_ms"))
+            except (TypeError, ValueError):
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            if snoozed_until_ms != due_at_value:
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            if str(metadata.get("delivery_state") or "").strip() != "pending":
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            if last_fired_at_ms != 0 or last_fired_due_at_ms != 0:
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            if str(metadata.get("last_delivery_error") or "") != "":
+                return False, HTTPStatus.BAD_REQUEST, "workspace_reminder_public_patch_invalid"
+            if not self._is_same_origin_ui_request():
+                return False, HTTPStatus.UNAUTHORIZED, "unauthorized"
+            return True, HTTPStatus.OK, ""
+
+        def _is_same_origin_ui_request(self) -> bool:
             origin = self._origin_signature(self.headers.get("Origin", ""))
             referer = urlsplit(str(self.headers.get("Referer") or "").strip())
             expected = self._origin_signature(self._request_base_url())
             if origin is None or expected is None:
-                return False, HTTPStatus.UNAUTHORIZED
+                return False
             if origin != expected:
-                return False, HTTPStatus.UNAUTHORIZED
+                return False
             if self._origin_signature(str(self.headers.get("Referer") or "").strip()) != expected:
-                return False, HTTPStatus.UNAUTHORIZED
+                return False
             if not referer.path.startswith("/ui/pucky/latest"):
-                return False, HTTPStatus.UNAUTHORIZED
-            return True, HTTPStatus.OK
+                return False
+            return True
 
         def _origin_signature(self, value: str) -> tuple[str, str, int] | None:
             parsed = urlsplit(str(value or "").strip())

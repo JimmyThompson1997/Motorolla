@@ -267,6 +267,120 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
         server.shutdown()
 
 
+def test_workspace_api_allows_same_origin_public_reminder_actions_only(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        reminder = request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "public-reminder",
+                "title": "Public Reminder",
+                "status": "open",
+                "due_at_ms": 2_000_000_000_000,
+                "metadata": {"delivery_state": "pending"},
+            },
+        )
+        same_origin_headers = {
+            "Origin": base_url,
+            "Referer": f"{base_url}/ui/pucky/latest/?theme=light&route=reminder-detail",
+        }
+
+        dismissed = request_json(
+            base_url,
+            f"/api/workspace/reminders/{reminder['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={"status": "done"},
+        )
+        assert dismissed["status"] == "done"
+
+        reminder = request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "public-reminder-snooze",
+                "title": "Public Reminder Snooze",
+                "status": "open",
+                "due_at_ms": 2_000_000_000_000,
+                "metadata": {"delivery_state": "pending"},
+            },
+        )
+        snoozed_until_ms = 2_100_000_000_000
+        snoozed = request_json(
+            base_url,
+            f"/api/workspace/reminders/{reminder['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={
+                "due_at_ms": snoozed_until_ms,
+                "metadata": {
+                    "snoozed_until_ms": snoozed_until_ms,
+                    "delivery_state": "pending",
+                    "last_fired_at_ms": 0,
+                    "last_fired_due_at_ms": 0,
+                    "last_delivery_error": "",
+                },
+            },
+        )
+        assert snoozed["due_at_ms"] == snoozed_until_ms
+        assert snoozed["metadata"]["snoozed_until_ms"] == snoozed_until_ms
+
+        for bad_body in (
+            {"status": "open"},
+            {"status": "done", "title": "Sneaky"},
+            {"due_at_ms": snoozed_until_ms},
+            {
+                "due_at_ms": snoozed_until_ms,
+                "metadata": {
+                    "snoozed_until_ms": snoozed_until_ms - 1,
+                    "delivery_state": "pending",
+                    "last_fired_at_ms": 0,
+                    "last_fired_due_at_ms": 0,
+                    "last_delivery_error": "",
+                },
+            },
+            {
+                "due_at_ms": snoozed_until_ms,
+                "metadata": {
+                    "snoozed_until_ms": snoozed_until_ms,
+                    "delivery_state": "sent",
+                    "last_fired_at_ms": 0,
+                    "last_fired_due_at_ms": 0,
+                    "last_delivery_error": "",
+                },
+            },
+        ):
+            with pytest.raises(urllib.error.HTTPError) as caught:
+                request_json(
+                    base_url,
+                    f"/api/workspace/reminders/{reminder['id']}",
+                    method="PATCH",
+                    token="",
+                    headers=same_origin_headers,
+                    body=bad_body,
+                )
+            assert caught.value.code == 400
+
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            request_json(
+                base_url,
+                f"/api/workspace/reminders/{reminder['id']}",
+                method="PATCH",
+                token="",
+                body={"status": "done"},
+            )
+        assert caught.value.code == 401
+    finally:
+        server.shutdown()
+
+
 def test_workspace_api_authenticated_task_patch_persists_checklist_and_status(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:

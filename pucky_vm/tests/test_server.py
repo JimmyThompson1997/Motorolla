@@ -1103,6 +1103,84 @@ class ServerTests(unittest.TestCase):
             urllib.request.urlopen(note_request, timeout=10)
         self.assertEqual(caught.exception.code, 401)
 
+    def test_same_origin_public_reminder_patch_allows_dismiss_and_snooze_only(self) -> None:
+        reminder = self.post_json(
+            "/api/workspace/reminders",
+            {
+                "id": "browser-public-reminder",
+                "title": "Browser Public Reminder",
+                "status": "open",
+                "due_at_ms": 2_000_000_000_000,
+                "metadata": {"delivery_state": "pending"},
+            },
+        )
+        same_origin_headers = {
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}/ui/pucky/latest/?theme=light&route=reminder-detail",
+            "Content-Type": "application/json",
+        }
+        dismiss_request = urllib.request.Request(
+            self.base_url + f"/api/workspace/reminders/{urllib.parse.quote(str(reminder['id']), safe='')}",
+            data=json.dumps({"status": "done"}).encode("utf-8"),
+            method="PATCH",
+            headers=same_origin_headers,
+        )
+        with urllib.request.urlopen(dismiss_request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(payload["status"], "done")
+
+        reminder = self.post_json(
+            "/api/workspace/reminders",
+            {
+                "id": "browser-public-reminder-snooze",
+                "title": "Browser Public Reminder Snooze",
+                "status": "open",
+                "due_at_ms": 2_000_000_000_000,
+                "metadata": {"delivery_state": "pending"},
+            },
+        )
+        snoozed_until_ms = 2_100_000_000_000
+        snooze_request = urllib.request.Request(
+            self.base_url + f"/api/workspace/reminders/{urllib.parse.quote(str(reminder['id']), safe='')}",
+            data=json.dumps(
+                {
+                    "due_at_ms": snoozed_until_ms,
+                    "metadata": {
+                        "snoozed_until_ms": snoozed_until_ms,
+                        "delivery_state": "pending",
+                        "last_fired_at_ms": 0,
+                        "last_fired_due_at_ms": 0,
+                        "last_delivery_error": "",
+                    },
+                }
+            ).encode("utf-8"),
+            method="PATCH",
+            headers=same_origin_headers,
+        )
+        with urllib.request.urlopen(snooze_request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(payload["due_at_ms"], snoozed_until_ms)
+        self.assertEqual(payload["metadata"]["snoozed_until_ms"], snoozed_until_ms)
+
+        for body, expected_code in (
+            ({"status": "open"}, 400),
+            ({"status": "done", "title": "Sneaky"}, 400),
+            ({"status": "done"}, 401),
+        ):
+            headers = dict(same_origin_headers)
+            if body == {"status": "done"}:
+                headers.pop("Origin", None)
+                headers.pop("Referer", None)
+            failing = urllib.request.Request(
+                self.base_url + f"/api/workspace/reminders/{urllib.parse.quote(str(reminder['id']), safe='')}",
+                data=json.dumps(body).encode("utf-8"),
+                method="PATCH",
+                headers=headers,
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(failing, timeout=10)
+            self.assertEqual(caught.exception.code, expected_code)
+
     def test_unknown_operator_token_still_does_not_authorize_protected_browser_routes(self) -> None:
         headers = {"Authorization": "Bearer test-operator-token"}
         for path in (
