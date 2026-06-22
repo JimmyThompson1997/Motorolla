@@ -1691,8 +1691,10 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'surfaceTag: "section",' in meetings_page
     assert 'surfaceClassName: "light-canonical-port-surface light-meetings-surface",' in meetings_page
     assert 'contentClassName: "meetings-page is-embedded-light",' in meetings_page
-    assert "const beforeSections = [meetingsEmbeddedToolbar()];" in meetings_page
+    assert "const beforeSections = [];" in meetings_page
     assert "sections: [lightMeetingsSection()]" in meetings_page
+    assert "function meetingsEmbeddedToolbar(" not in app
+    assert '"meetings-refresh"' not in app
     assert 'renderMode: "flat",' in reply_descriptor
     assert 'renderMode: "flat",' in meeting_descriptor
     assert "const card = descriptor.meta?.card;" in render_universal_tile

@@ -8663,7 +8663,7 @@
   }
 
   function lightMeetingsPage() {
-    const beforeSections = [meetingsEmbeddedToolbar()];
+    const beforeSections = [];
     if (state.meetings.loading && state.meetings.records.length) {
       beforeSections.push(el("div", "meetings-refreshing", "Refreshing..."));
     }
@@ -8724,15 +8724,6 @@
       emptyState: cards.length ? null : filteredFeedEmptyView(),
       items: cards.map(card => universalCanonicalReplyFeedTileDescriptor(card, "inbox"))
     };
-  }
-
-  function meetingsEmbeddedToolbar() {
-    const refresh = el("button", "meetings-refresh", "Refresh");
-    refresh.type = "button";
-    refresh.addEventListener("click", () => loadMeetings({ render: true }));
-    const toolbar = el("div", "meetings-embedded-toolbar");
-    toolbar.append(refresh);
-    return toolbar;
   }
 
   function lightMeetingsSection() {
@@ -11067,20 +11058,13 @@
   function meetingsPageView(options = {}) {
     const embedded = Boolean(options && options.embedded);
     const page = el("section", embedded ? "meetings-page is-embedded-light" : "meetings-page");
-    const refresh = el("button", "meetings-refresh", "Refresh");
-    refresh.type = "button";
-    refresh.addEventListener("click", () => loadMeetings({ render: true }));
     if (embedded) {
-      const toolbar = el("div", "meetings-embedded-toolbar");
-      toolbar.append(refresh);
-      page.append(toolbar);
     } else {
       const header = el("div", "meetings-header");
       header.append(
         el("div", "meetings-kicker", "Meeting Recording Mode"),
         el("h2", "meetings-title", "Meetings")
       );
-      header.append(refresh);
       page.append(header);
     }
 
