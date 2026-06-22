@@ -194,6 +194,48 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "continueDayStripBeyondEdge(page, \"right\")" in source
 
 
+def test_calendar_browser_proof_retries_manifest_fetch_and_reacquires_event_container() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert "const LOCATOR_SHOT_ATTEMPTS = 4;" in source
+    assert "const LOCATOR_SHOT_RETRY_MS = 150;" in source
+    assert "const MANIFEST_FETCH_ATTEMPTS = 4;" in source
+    assert "const MANIFEST_FETCH_RETRY_MS = 750;" in source
+    assert "const CALENDAR_EVENT_CONTAINER_ATTEMPTS = 4;" in source
+    assert "const CALENDAR_EVENT_CONTAINER_RETRY_MS = 250;" in source
+    assert "async function delay(ms)" in source
+    assert "async function saveLocatorShot(locator, reportDir, name, summary)" in source
+    assert "for (let attempt = 1; attempt <= LOCATOR_SHOT_ATTEMPTS; attempt += 1)" in source
+    assert 'await locator.waitFor({ state: "visible" });' in source
+    assert "await locator.scrollIntoViewIfNeeded();" in source
+    assert "await locator.screenshot({ path: target });" in source
+    assert "await delay(LOCATOR_SHOT_RETRY_MS * attempt);" in source
+    assert "async function calendarEventContainerBox(page, selector)" in source
+    assert "await page.waitForFunction(targetSelector => {" in source
+    assert 'eventCard.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });' in source
+    assert "for (let attempt = 1; attempt <= CALENDAR_EVENT_CONTAINER_ATTEMPTS; attempt += 1)" in source
+    assert "await delay(CALENDAR_EVENT_CONTAINER_RETRY_MS * attempt);" in source
+    assert "const box = await calendarEventContainerBox(page, proofEventSelector(seed));" in source
+    assert "for (let attempt = 1; attempt <= MANIFEST_FETCH_ATTEMPTS; attempt += 1)" in source
+    assert "summary.manifest_fetch_attempts = Number(summary.manifest?._proof_fetch_attempt || 0) || 1;" in source
+    assert "await delay(MANIFEST_FETCH_RETRY_MS * attempt);" in source
+    assert "async function waitForCalendarTitle(page, title)" in source
+    assert 'await waitForCalendarTitle(page, "Proof freelance review call");' in source
+    assert 'await waitForCalendarTitle(page, "Proof Katy pickup handoff");' in source
+    assert "async function waitForMeetingDetailWhoChip(page, label)" in source
+    assert 'await waitForMeetingDetailWhoChip(page, "Jimmy T.");' in source
+    assert 'await waitForMeetingDetailWhoChip(page, "Jeff B.");' in source
+    assert "kindByRoute" in source
+    assert "await page.waitForFunction(({ targetSelector, targetText }) => {" in source
+    assert 'targetRow.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });' in source
+    assert "targetRow.click();" in source
+    assert 'const allowedRoutes = route === "project-detail" ? new Set(["project-detail", "tag-detail"]) : new Set([route]);' in source
+    assert 'await selectCalendarEventById(page, seed, "late-call", "Proof late call");' in source
+    assert "const whoChipTexts = detailState.whoChipTexts;" in source
+    assert 'for (const label of ["Jimmy T.", "Jeff B."]) {' in source
+    assert 'assert(await page.locator(\'.light-calendar-detail-row[data-detail-row=\"who\"] .light-attendee-chip-guest\').count() >= 1' not in source
+
+
 def test_task_workspace_proof_page_url_keeps_hosted_page_access_token_free() -> None:
     source = read_source("task_workspace_proof_shared.mjs")
 

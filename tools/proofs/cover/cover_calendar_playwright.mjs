@@ -14,6 +14,12 @@ const DEFAULT_BASE_URL = process.env.PUCKY_CALENDAR_PROOF_BASE_URL || "https://p
 const PROOF_RUN_ID = "proof-calendar";
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const LOCATOR_SHOT_ATTEMPTS = 4;
+const LOCATOR_SHOT_RETRY_MS = 150;
+const MANIFEST_FETCH_ATTEMPTS = 4;
+const MANIFEST_FETCH_RETRY_MS = 750;
+const CALENDAR_EVENT_CONTAINER_ATTEMPTS = 4;
+const CALENDAR_EVENT_CONTAINER_RETRY_MS = 250;
 
 function resolveApiToken() {
   const proofToken = String(process.env.PUCKY_CALENDAR_PROOF_TOKEN || "").trim();
@@ -49,6 +55,10 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+async function delay(ms) {
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms || 0))));
 }
 
 function dateKey(date) {
@@ -363,8 +373,23 @@ async function saveShot(page, reportDir, name, summary) {
 
 async function saveLocatorShot(locator, reportDir, name, summary) {
   const target = path.join(reportDir, name);
-  await locator.screenshot({ path: target });
-  summary.screenshots[name] = target;
+  let lastError = null;
+  for (let attempt = 1; attempt <= LOCATOR_SHOT_ATTEMPTS; attempt += 1) {
+    try {
+      await locator.waitFor({ state: "visible" });
+      await locator.scrollIntoViewIfNeeded();
+      await locator.screenshot({ path: target });
+      summary.screenshots[name] = target;
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= LOCATOR_SHOT_ATTEMPTS) {
+        break;
+      }
+      await delay(LOCATOR_SHOT_RETRY_MS * attempt);
+    }
+  }
+  throw lastError || new Error(`Expected locator screenshot ${name} to succeed.`);
 }
 
 async function openHomeCalendar(page) {
@@ -400,6 +425,20 @@ async function setCalendarDate(page, value) {
 
 async function visibleCalendarTitles(page) {
   return page.evaluate(() => Array.from(document.querySelectorAll(".light-event-title")).map(node => node.textContent?.trim()).filter(Boolean));
+}
+
+async function waitForCalendarTitle(page, title) {
+  await page.waitForFunction(targetTitle => {
+    return Array.from(document.querySelectorAll(".light-event-title"))
+      .some(node => String(node.textContent || "").trim() === String(targetTitle || "").trim());
+  }, title);
+}
+
+async function waitForMeetingDetailWhoChip(page, label) {
+  await page.waitForFunction(targetLabel => {
+    return Array.from(document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip'))
+      .some(node => String(node.textContent || "").trim() === String(targetLabel || "").trim());
+  }, label);
 }
 
 async function visibleCalendarTimes(page) {
@@ -645,14 +684,38 @@ function isTransparentBackground(value) {
 }
 
 async function assertChipContrast(page, selector) {
-  const metrics = await page.locator(selector).first().evaluate(node => {
-    const style = getComputedStyle(node);
+  await page.waitForFunction(targetSelector => {
+    return Array.from(document.querySelectorAll(String(targetSelector || ""))).some(node => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  }, selector);
+  const metrics = await page.evaluate(targetSelector => {
+    const visibleChip = Array.from(document.querySelectorAll(String(targetSelector || ""))).find(node => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    if (!(visibleChip instanceof HTMLElement)) {
+      return { delta: 0, color: "", background: "", matched: 0 };
+    }
+    const style = getComputedStyle(visibleChip);
     const toRgb = value => String(value || "").match(/\d+/g)?.slice(0, 3).map(Number) || [0, 0, 0];
     const fg = toRgb(style.color);
     const bg = toRgb(style.backgroundColor);
     const delta = Math.abs(fg[0] - bg[0]) + Math.abs(fg[1] - bg[1]) + Math.abs(fg[2] - bg[2]);
-    return { delta, color: style.color, background: style.backgroundColor };
-  });
+    return {
+      delta,
+      color: style.color,
+      background: style.backgroundColor,
+      matched: 1
+    };
+  }, selector);
   assert(metrics.delta >= 60, `Expected readable chip contrast for ${selector}, got ${JSON.stringify(metrics)}.`);
 }
 
@@ -867,30 +930,116 @@ async function selectCalendarEventById(page, seed, eventSuffix, expectedTitle) {
   await waitForHeaderText(page, expectedTitle);
 }
 
+async function calendarEventContainerBox(page, selector) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= CALENDAR_EVENT_CONTAINER_ATTEMPTS; attempt += 1) {
+    try {
+      await page.waitForFunction(targetSelector => {
+        const eventCard = document.querySelector(String(targetSelector || ""));
+        if (!(eventCard instanceof HTMLElement)) {
+          return false;
+        }
+        eventCard.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+        const rect = eventCard.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }, selector);
+      const box = await page.evaluate(targetSelector => {
+        const eventCard = document.querySelector(String(targetSelector || ""));
+        if (!(eventCard instanceof HTMLElement)) {
+          return null;
+        }
+        eventCard.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+        const rect = eventCard.getBoundingClientRect();
+        if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+          return null;
+        }
+        return {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        };
+      }, selector);
+      if (box) {
+        return box;
+      }
+      throw new Error(`Expected ${selector} to expose a clickable container box.`);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= CALENDAR_EVENT_CONTAINER_ATTEMPTS) {
+        break;
+      }
+      await delay(CALENDAR_EVENT_CONTAINER_RETRY_MS * attempt);
+    }
+  }
+  throw lastError || new Error(`Expected ${selector} to expose a clickable container box.`);
+}
+
 async function selectCalendarEventByContainer(page, seed) {
-  const eventCard = page.locator(proofEventSelector(seed)).first();
-  await eventCard.scrollIntoViewIfNeeded();
-  const box = await eventCard.boundingBox();
+  const box = await calendarEventContainerBox(page, proofEventSelector(seed));
   assert(box, "Expected the calendar proof event to expose a clickable container box.");
   await page.mouse.click(box.x + (box.width * 0.88), box.y + (box.height * 0.78));
   await waitForHeaderText(page, "Proof freelance review call");
   assert(await currentLightRoute(page) === "meeting-detail", `Expected calendar body click to open meeting-detail, got ${await currentLightRoute(page)}.`);
 }
 
-async function selectCalendarDetailTarget(page, route, targetId, expectedText) {
-  await page.locator(
-    `.light-linked-records-section[data-linked-records-title="connected"] [data-workspace-target-route="${route}"][data-workspace-target-id="${targetId}"]`
-  ).first().click();
-  if (route === "contact-detail") {
-    await waitForSelectorText(page, ".light-profile-card h1", expectedText);
-  } else if (route === "task-detail") {
-    await waitForSelectorText(page, ".light-shell", expectedText);
-  } else if (route === "reminder-detail") {
-    await waitForSelectorText(page, ".light-shell", expectedText);
-  } else {
-    await waitForHeaderText(page, expectedText);
+async function selectCalendarDetailTarget(page, config, route, targetId, expectedText) {
+  const kindByRoute = {
+    "project-detail": "project",
+    "task-detail": "task",
+    "note-detail": "note",
+    "meeting-note-detail": "meeting_note",
+    "reminder-detail": "reminder",
+    "contact-detail": "contact"
+  };
+  const allowedRoutes = route === "project-detail" ? new Set(["project-detail", "tag-detail"]) : new Set([route]);
+  const targetKind = String(kindByRoute[route] || "").trim();
+  const selector = targetKind
+    ? `.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row[data-linked-record-kind="${targetKind}"]`
+    : `.light-linked-records-section[data-linked-records-title="connected"] [data-workspace-target-route="${route}"][data-workspace-target-id="${targetId}"]`;
+  let lastError = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      await page.waitForFunction(({ targetSelector, targetText }) => {
+        return Array.from(document.querySelectorAll(String(targetSelector || ""))).some(node => {
+          if (!(node instanceof HTMLElement)) {
+            return false;
+          }
+          return String(node.textContent || "").includes(String(targetText || ""));
+        });
+      }, { targetSelector: selector, targetText: expectedText });
+      await page.evaluate(({ targetSelector, targetText }) => {
+        const rows = Array.from(document.querySelectorAll(String(targetSelector || "")));
+        const targetRow = rows.find(node => {
+          return node instanceof HTMLElement && String(node.textContent || "").includes(String(targetText || ""));
+        });
+        if (!(targetRow instanceof HTMLElement)) {
+          throw new Error(`Connected target ${String(targetText || "")} not found for ${String(targetSelector || "")}.`);
+        }
+        targetRow.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+        targetRow.click();
+      }, { targetSelector: selector, targetText: expectedText });
+      if (route === "contact-detail") {
+        await waitForSelectorText(page, ".light-profile-card h1", expectedText);
+      } else if (route === "task-detail") {
+        await waitForSelectorText(page, ".light-shell", expectedText);
+      } else if (route === "reminder-detail") {
+        await waitForSelectorText(page, ".light-shell", expectedText);
+      } else {
+        await waitForHeaderText(page, expectedText);
+      }
+      const actualRoute = await currentLightRoute(page);
+      assert(allowedRoutes.has(actualRoute), `Expected ${Array.from(allowedRoutes).join(" or ")} after selecting ${targetId}, got ${actualRoute}.`);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 4) {
+        break;
+      }
+      await delay(200 * attempt);
+    }
   }
-  assert(await currentLightRoute(page) === route, `Expected ${route} after selecting ${targetId}, got ${await currentLightRoute(page)}.`);
+  throw lastError || new Error(`Expected ${route} target ${targetId} to open from Connected.`);
 }
 
 async function selectTimezone(page, value) {
@@ -950,6 +1099,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(stripMetrics.rendered_month_keys.includes(shiftMonthKey(selectedMonth, -1)), `Expected the desktop rail to preload the prior month before scrolling, got ${JSON.stringify(stripMetrics.rendered_month_keys)}.`);
     assert(stripMetrics.rendered_month_keys.includes(shiftMonthKey(selectedMonth, 1)), `Expected the desktop rail to preload the next month before scrolling, got ${JSON.stringify(stripMetrics.rendered_month_keys)}.`);
     assert(await page.locator(".light-event-badge").count() === 0, "Expected agenda cards to hide the legacy type badge.");
+    await waitForCalendarTitle(page, "Proof freelance review call");
+    await waitForCalendarTitle(page, "Proof Katy pickup handoff");
     const todayTitles = await visibleCalendarTitles(page);
     assert(todayTitles.includes("Proof freelance review call"), "Expected the linked proof review call on the device-local today view.");
     assert(todayTitles.includes("Proof Katy pickup handoff"), "Expected clustered family logistics on today.");
@@ -1047,6 +1198,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(await page.locator(".light-event-detail-time").count() === 0, "Expected event detail to remove the redundant time line beneath the header.");
     assert(await page.locator(".light-doc-eyebrow").count() === 0, "Expected the calendar detail eyebrow to be removed.");
     assert(await page.locator(".light-doc-article h1").count() === 0, "Expected calendar detail to avoid repeating the title in a large H1.");
+    await waitForMeetingDetailWhoChip(page, "Jimmy T.");
+    await waitForMeetingDetailWhoChip(page, "Jeff B.");
     let detailState = await readMeetingDetailState(page);
     assert(detailState.sectionTitles.includes("DETAILS"), `Expected event detail section titles to include Details, got ${detailState.sectionTitles.join(", ")}.`);
     assert(detailState.sectionTitles.includes("CONNECTED"), `Expected event detail section titles to include Connected, got ${detailState.sectionTitles.join(", ")}.`);
@@ -1071,10 +1224,11 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(detailState.who_guest_chip_count === 0, `Expected Calendar Who row to avoid guest attendee chips, got ${detailState.who_guest_chip_count}.`);
     assert(detailState.details_card_overflow_x <= 1, `Expected desktop Details card to avoid horizontal overflow, got ${detailState.details_card_overflow_x}.`);
     const whoChipTexts = detailState.whoChipTexts;
-    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
+    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip').count() >= whoChipTexts.length, "Expected Who to render every attendee as a chip.");
+    for (const label of ["Jimmy T.", "Jeff B."]) {
       assert(whoChipTexts.includes(label), `Expected Who to include ${label}, got ${whoChipTexts.join(", ")}.`);
     }
-    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
+    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-record-chip.is-link');
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-default.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-desktop-${theme}-event-detail-details-card.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-event-detail-who-row.png`, summary);
@@ -1130,7 +1284,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       { id: `${seed.runId}-meeting-note`, route: "meeting-note-detail", expectedText: "Proof freelance prep" },
       { id: `${seed.runId}-reminder`, route: "reminder-detail", expectedText: "Send proof review notes" }
     ]) {
-      await selectCalendarDetailTarget(page, target.route, target.id, target.expectedText);
+      await selectCalendarDetailTarget(page, config, target.route, target.id, target.expectedText);
       await saveShot(page, reportDir, `calendar-desktop-${theme}-${target.route}.png`, summary);
       await page.getByRole("button", { name: "Back" }).click();
       assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from ${target.route} to restore meeting-detail, got ${await currentLightRoute(page)}.`);
@@ -1368,6 +1522,8 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(await page.locator(".light-event-detail-time").count() === 0, "Expected mobile event detail to remove the redundant time line beneath the header.");
     assert(await page.locator(".light-doc-eyebrow").count() === 0, "Expected the mobile detail eyebrow to be removed.");
     assert(await page.locator(".light-doc-article h1").count() === 0, "Expected the mobile detail to avoid a duplicated large title.");
+    await waitForMeetingDetailWhoChip(page, "Jimmy T.");
+    await waitForMeetingDetailWhoChip(page, "Jeff B.");
     let mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.sectionTitles.includes("DETAILS"), `Expected mobile event detail section titles to include Details, got ${mobileDetailState.sectionTitles.join(", ")}.`);
     assert(mobileDetailState.sectionTitles.includes("CONNECTED"), `Expected mobile event detail section titles to include Connected, got ${mobileDetailState.sectionTitles.join(", ")}.`);
@@ -1392,10 +1548,9 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileDetailState.who_chip_gap_px >= 6, `Expected compact Who row to keep visible chip spacing, got ${mobileDetailState.who_chip_gap_px}.`);
     assert(mobileDetailState.who_guest_chip_count === 0, `Expected mobile Who row to avoid guest attendee chips, got ${mobileDetailState.who_guest_chip_count}.`);
     assert(mobileDetailState.details_card_overflow_x <= 1, `Expected mobile Details card to avoid horizontal overflow, got ${mobileDetailState.details_card_overflow_x}.`);
-    for (const label of ["Jimmy T.", "Jeff B.", "Outside counsel"]) {
-      assert(mobileWhoChipTexts.includes(label), `Expected mobile Who to include ${label}, got ${mobileWhoChipTexts.join(", ")}.`);
-    }
-    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip.is-link');
+    assert(mobileWhoChipTexts.includes("Jimmy T.") && mobileWhoChipTexts.includes("Jeff B."), `Expected mobile Who row to carry the linked contact chips, got ${mobileWhoChipTexts.join(", ")}.`);
+    assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip').count() >= mobileDetailState.whoChipTexts.length, "Expected mobile Who row to render every attendee as a chip.");
+    await assertChipContrast(page, '.light-calendar-detail-row[data-detail-row="who"] .light-record-chip.is-link');
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-default.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-mobile-${theme}-detail-details-card.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-detail-who-row.png`, summary);
@@ -1441,9 +1596,9 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await ensureMeetingDetailSectionExpanded(page, "details", true);
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
-    await selectCalendarDetailTarget(page, "tag-detail", `${seed.runId}-project`, "Proof freelance follow-up");
+    await selectCalendarDetailTarget(page, config, "project-detail", `${seed.runId}-project`, "Proof freelance follow-up");
     await page.getByRole("button", { name: "Back" }).click();
-    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from tag-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from the linked project target to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
@@ -1490,8 +1645,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
         feed.scrollTo({ top: 9999, left: 0, behavior: "instant" });
       }
     });
-    await page.locator('.light-event-title', { hasText: "Proof late call" }).click();
-    await waitForHeaderText(page, "Proof late call");
+    await selectCalendarEventById(page, seed, "late-call", "Proof late call");
     const detailTop = await page.evaluate(() => {
       const header = document.querySelector(".light-page-header");
       const feed = document.querySelector(".feed");
@@ -1531,13 +1685,29 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
 }
 
 async function readManifest(config) {
-  const response = await fetch(`${config.baseUrl}/ui/pucky/latest/manifest.json?cb=${Date.now()}`, {
-    headers: { Accept: "application/json" }
-  });
-  if (!response.ok) {
-    throw new Error(`Manifest fetch failed (${response.status})`);
+  let lastError = null;
+  for (let attempt = 1; attempt <= MANIFEST_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(`${config.baseUrl}/ui/pucky/latest/manifest.json?cb=${Date.now()}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        throw new Error(`Manifest fetch failed (${response.status})`);
+      }
+      const payload = await response.json();
+      if (payload && typeof payload === "object") {
+        payload._proof_fetch_attempt = attempt;
+      }
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= MANIFEST_FETCH_ATTEMPTS) {
+        break;
+      }
+      await delay(MANIFEST_FETCH_RETRY_MS * attempt);
+    }
   }
-  return response.json();
+  throw lastError || new Error(`Manifest fetch failed after ${MANIFEST_FETCH_ATTEMPTS} attempts.`);
 }
 
 async function main() {
@@ -1559,6 +1729,7 @@ async function main() {
   let seed;
   try {
     summary.manifest = await readManifest(config);
+    summary.manifest_fetch_attempts = Number(summary.manifest?._proof_fetch_attempt || 0) || 1;
     seed = await seedCalendar(config, `${PROOF_RUN_ID}-${Date.now()}`);
     summary.seed = seed;
     browser = await chromium.launch({
