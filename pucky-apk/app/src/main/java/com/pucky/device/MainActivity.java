@@ -62,7 +62,7 @@ public class MainActivity extends Activity {
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
-    private static final String HOSTED_UI_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html";
+    private static final String HOSTED_UI_URL = "https://pucky.fly.dev/ui/pucky/latest/";
 
     private SettingsStore settingsStore;
     private UiBundleController uiBundleController;

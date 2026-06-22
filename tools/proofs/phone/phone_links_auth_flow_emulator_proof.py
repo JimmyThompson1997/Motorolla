@@ -27,6 +27,7 @@ DEFAULT_BROWSER_HELPER = ROOT / "tools" / "proofs" / "phone" / "phone_links_auth
 DEFAULT_REPORT_DIR = ROOT / ".tmp" / "links-auth-flow-emulator-live"
 CHROME_PACKAGE = "com.android.chrome"
 CHROME_CHOOSER_LABELS = ("Chrome", "Google Chrome")
+CHROME_SETUP_ACTIVITY_HINTS = ("firstrun",)
 CHROME_PROMPT_LABELS = (
     "Accept & continue",
     "Accept and continue",
@@ -198,6 +199,12 @@ def clear_app(args: argparse.Namespace) -> None:
     run(args, ["shell", "pm", "clear", args.package_name], timeout=30)
 
 
+def clear_chrome(args: argparse.Namespace) -> None:
+    if args.skip_clear:
+        return
+    run(args, ["shell", "pm", "clear", CHROME_PACKAGE], timeout=30)
+
+
 def grant_runtime_permissions(args: argparse.Namespace) -> None:
     for permission in RUNTIME_PERMISSIONS:
         completed = run(args, ["shell", "pm", "grant", args.package_name, permission], timeout=20, check=False)
@@ -350,6 +357,13 @@ def find_node_by_text(root: ET.Element, text: str, *, contains: bool = False) ->
     return None
 
 
+def chrome_focus_requires_setup(focus: str) -> bool:
+    lowered = str(focus or "").strip().lower()
+    if not lowered.startswith(f"{CHROME_PACKAGE}/"):
+        return False
+    return any(hint in lowered for hint in CHROME_SETUP_ACTIVITY_HINTS)
+
+
 def tap(args: argparse.Namespace, x: int, y: int) -> None:
     run(args, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=10)
 
@@ -389,7 +403,7 @@ def resolve_browser_surface(args: argparse.Namespace, *, timeout_seconds: int = 
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         focus = current_focus(args)
-        if focus.startswith(f"{CHROME_PACKAGE}/"):
+        if focus.startswith(f"{CHROME_PACKAGE}/") and not chrome_focus_requires_setup(focus):
             return focus
         root = dump_ui_xml(args)
         chooser = None
@@ -426,8 +440,13 @@ def resolve_browser_surface(args: argparse.Namespace, *, timeout_seconds: int = 
                 break
         if tapped_prompt:
             continue
+        if chrome_focus_requires_setup(focus):
+            time.sleep(0.75)
+            continue
         time.sleep(0.5)
-    raise EmulatorLinksProofError("Chrome chooser could not be resolved or Chrome never took focus.")
+    raise EmulatorLinksProofError(
+        "Chrome chooser could not be resolved, Chrome first-run could not be dismissed, or Chrome never took focus."
+    )
 
 
 def capture_screenshot(args: argparse.Namespace, target: Path, remote_name: str) -> None:
@@ -673,16 +692,13 @@ def main(argv: list[str] | None = None) -> int:
         ensure_live_credentials(args)
         ensure_device(args)
         ensure_chrome_available(args)
+        clear_chrome(args)
         install_apk(args)
         clear_app(args)
         grant_runtime_permissions(args)
         launch_app(args)
         dismiss_permission_dialogs(args)
         wait_for_focus_prefix(args, f"{args.package_name}/", timeout_seconds=args.timeout_seconds)
-
-        connect_device = args.report_dir / "01-connect-device.png"
-        capture_screenshot(args, connect_device, "links-proof-connect-device.png")
-        summary["screenshots"]["connect_device"] = str(connect_device)
 
         cover = discover_cover_cdp_url(args)
         cover_forward_port = str(cover.get("forward_port") or "")
@@ -694,8 +710,7 @@ def main(argv: list[str] | None = None) -> int:
             args,
             cdp_url=str(cover["cdp_url"]),
             surface="cover",
-            page_title="Pucky Cover",
-            page_url_contains="index.html",
+            page_url_contains="/ui/pucky/latest",
             operations=[
                 {"kind": "ensure_connect_route"},
                 {"kind": "wait_for_connect_ready", "timeout_ms": int(args.timeout_seconds * 1000)},
@@ -704,6 +719,9 @@ def main(argv: list[str] | None = None) -> int:
             ],
         )
         summary["connect_browser"] = connect_browser
+        connect_device = args.report_dir / "01-connect-device.png"
+        capture_screenshot(args, connect_device, "links-proof-connect-device.png")
+        summary["screenshots"]["connect_device"] = str(connect_device)
         summary["screenshots"]["connect_cdp"] = str(args.report_dir / "01-connect-cdp.png")
         initial_state = connect_browser.get("final_state") or {}
         connect_error = has_forbidden_connect_error(initial_state)
@@ -714,8 +732,7 @@ def main(argv: list[str] | None = None) -> int:
             args,
             cdp_url=str(cover["cdp_url"]),
             surface="cover",
-            page_title="Pucky Cover",
-            page_url_contains="index.html",
+            page_url_contains="/ui/pucky/latest",
             operations=[
                 {"kind": "search_app", "slug": args.app_slug},
                 {"kind": "links_state"},
@@ -733,8 +750,7 @@ def main(argv: list[str] | None = None) -> int:
             args,
             cdp_url=str(cover["cdp_url"]),
             surface="cover",
-            page_title="Pucky Cover",
-            page_url_contains="index.html",
+            page_url_contains="/ui/pucky/latest",
             operations=[
                 {"kind": "click_app", "slug": args.app_slug},
                 {"kind": "wait_for_handoff", "timeout_ms": int(args.timeout_seconds * 1000)},

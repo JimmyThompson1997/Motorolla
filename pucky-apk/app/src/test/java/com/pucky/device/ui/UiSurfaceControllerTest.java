@@ -51,7 +51,7 @@ public final class UiSurfaceControllerTest {
                 String.class);
         sourceKind.setAccessible(true);
 
-        String activeUrl = "https://pucky.fly.dev/ui/pucky/latest/index.html?reset_nav=1";
+        String activeUrl = "https://pucky.fly.dev/ui/pucky/latest/?reset_nav=1";
         String kind = (String) sourceKind.invoke(null, activeUrl, "", "", "");
 
         assertEquals("hosted_vm", kind);

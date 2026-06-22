@@ -11,7 +11,7 @@ import java.time.Instant;
 
 public final class UiSurfaceController {
     private static final String PREFS = "pucky_ui_surface";
-    private static final String HOSTED_UI_PREFIX = "https://pucky.fly.dev/ui/pucky/latest/index.html";
+    private static final String HOSTED_UI_PREFIX = "https://pucky.fly.dev/ui/pucky/latest/";
     private static final String REQUESTED_URL = "requested_url";
     private static final String ACTIVE_URL = "active_url";
     private static final String REQUESTED_AT = "requested_at";

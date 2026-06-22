@@ -22,7 +22,7 @@ public final class MainActivityWebViewShellTest {
                         && source.contains("webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController))")
                         && count(source, "new WebView") == 1);
         assertTrue("MainActivity should load the hosted VM HTML entrypoint",
-                source.contains("HOSTED_UI_URL = \"https://pucky.fly.dev/ui/pucky/latest/index.html\"")
+                source.contains("HOSTED_UI_URL = \"https://pucky.fly.dev/ui/pucky/latest/\"")
                         && source.contains("String url = hostedUiUrl();")
                         && source.contains("uiSurfaceController.recordRequested(url, uiBundleController);")
                         && source.contains("webShell.loadUrl(url)"));
@@ -213,6 +213,13 @@ public final class MainActivityWebViewShellTest {
                         && client.contains("\"/artifact\"")
                         && client.contains("request.getRequestHeaders()")
                         && client.contains("new ArtifactController(context).webResponse"));
+        assertTrue("Hosted WebView loads should retry bounded main-frame failures against the canonical latest URL",
+                client.contains("HOSTED_UI_HOST = \"pucky.fly.dev\"")
+                        && client.contains("HOSTED_UI_PATH_PREFIX = \"/ui/pucky/latest\"")
+                        && client.contains("MAX_HOSTED_UI_RELOAD_ATTEMPTS = 6")
+                        && client.contains("onReceivedError")
+                        && client.contains("onReceivedHttpError")
+                        && client.contains("view.loadUrl(failingUrl)"));
         assertTrue("Artifact URLs should stream app-owned files with range support for media playback",
                 artifacts.contains("pucky.artifact_url.v1")
                         && artifacts.contains("https")

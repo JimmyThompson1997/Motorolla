@@ -76,7 +76,7 @@ function parseArgs(argv) {
 }
 
 function buildConnectUrl(config) {
-  const url = new URL("/ui/pucky/latest/index.html", `${String(config.baseUrl || "").replace(/\/+$/, "")}/`);
+  const url = new URL("/ui/pucky/latest/", `${String(config.baseUrl || "").replace(/\/+$/, "")}/`);
   url.searchParams.set("theme", "light");
   url.searchParams.set("route", "connect");
   url.searchParams.set("reset_nav", "1");

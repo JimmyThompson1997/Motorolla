@@ -461,6 +461,8 @@ def test_live_connect_auth_browser_proof_requires_explicit_token_and_real_transi
 
     assert "PUCKY_WEB_UI_TOKEN" in source
     assert "PUCKY_API_TOKEN" in source
+    assert 'new URL("/ui/pucky/latest/",' in source
+    assert "/ui/pucky/latest/index.html" not in source
     assert 'url.searchParams.set("api_token", String(config.apiToken || "").trim());' in source
     assert 'url.searchParams.set("route", "connect");' in source
     assert 'if (transition.kind === "none") {' in source
@@ -477,6 +479,11 @@ def test_emulator_connect_auth_proof_uses_chrome_cdp_and_no_mock_http_server() -
     assert "10.0.2.2" not in source
     assert 'CHROME_PACKAGE = "com.android.chrome"' in source
     assert "discover_chrome_cdp_url" in source
+    assert "chrome_focus_requires_setup" in source
+    assert "firstrun" in source.lower()
+    assert '"pm", "clear", CHROME_PACKAGE' in source
+    assert 'page_url_contains="/ui/pucky/latest"' in source
+    assert 'page_title="Pucky Cover"' not in source
     assert '"pucky_api_token": args.api_token' in source or '"pucky_api_token": args.api_token,' in source
     assert 'payload["token"] = args.device_token' in source
     assert 'surface="chrome_auth"' in source
@@ -484,6 +491,7 @@ def test_emulator_connect_auth_proof_uses_chrome_cdp_and_no_mock_http_server() -
     assert "chromium.connectOverCDP" in helper
     assert 'mode === "chrome_auth"' in helper
     assert "filtered_slugs" in helper
+    assert source.index('summary["connect_browser"] = connect_browser') < source.index('connect_device = args.report_dir / "01-connect-device.png"')
 
 
 def test_live_user_session_proof_checks_task_focus_ring_is_gone() -> None:

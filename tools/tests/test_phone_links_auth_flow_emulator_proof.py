@@ -113,3 +113,26 @@ def test_browser_helper_timeout_covers_requested_operation_budget() -> None:
         )
         == "com.pucky.device.debug/com.pucky.device.MainActivity"
     )
+
+
+def test_chrome_focus_requires_setup_only_for_first_run_activity() -> None:
+    assert proof.chrome_focus_requires_setup(
+        "com.android.chrome/org.chromium.chrome.browser.firstrun.FirstRunActivity"
+    )
+    assert not proof.chrome_focus_requires_setup(
+        "com.android.chrome/org.chromium.chrome.browser.ChromeTabbedActivity"
+    )
+    assert not proof.chrome_focus_requires_setup(
+        "com.pucky.device.debug/com.pucky.device.MainActivity"
+    )
+
+
+def test_find_devtools_sockets_keeps_plain_chrome_and_webview_targets() -> None:
+    sockets = proof.find_devtools_sockets(
+        "@chrome_devtools_remote ... @webview_devtools_remote_24828 ... @chrome_devtools_remote"
+    )
+
+    assert sockets == [
+        "chrome_devtools_remote",
+        "webview_devtools_remote_24828",
+    ]
