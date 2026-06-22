@@ -136,6 +136,28 @@ function resolveApiToken() {
   });
 }
 
+async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
+  const token = String(apiToken || "").trim();
+  if (!token) {
+    return;
+  }
+  const apiBase = `${String(baseUrl || "").replace(/\/+$/, "")}/api/**`;
+  await context.route(apiBase, async route => {
+    const request = route.request();
+    const headers = { ...request.headers() };
+    delete headers.origin;
+    if (!headers.authorization) {
+      headers.authorization = `Bearer ${token}`;
+    }
+    const response = await route.fetch({
+      method: request.method(),
+      headers,
+      postData: request.postDataBuffer() || undefined,
+    });
+    await route.fulfill({ response });
+  });
+}
+
 function timestampSlug() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
@@ -1766,6 +1788,7 @@ async function runProofMode(browser, config, mode, seed) {
       // Ignore localStorage bootstrap failures in proof mode.
     }
   });
+  await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
 
   const page = await context.newPage();
   const consoleLogPath = path.join(config.reportDir, `${mode}.console.log`);
