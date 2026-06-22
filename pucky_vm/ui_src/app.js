@@ -95,7 +95,7 @@
   const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)
     ? routeCatalog.HOME_SHELL_CANONICAL_ROUTES
     : []);
-  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);
+  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);
   const LIGHT_ROUTE_PARENTS = routeCatalog.LIGHT_ROUTE_PARENTS && typeof routeCatalog.LIGHT_ROUTE_PARENTS === "object"
     ? routeCatalog.LIGHT_ROUTE_PARENTS
     : {};
@@ -132,7 +132,7 @@
     "selectedReminderId",
     "selectedNoteId",
     "selectedTaskId",
-    "selectedTagId",
+    "selectedProjectId",
     "selectedFeedId"
   ];
   let nativeProtectedAuthorization = "";
@@ -167,7 +167,7 @@
     selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
     selectedTaskId: String(persistedNavState.selected_task_id || "").trim() || "demo-task-do-paint-samples",
-    selectedTagId: String(persistedNavState.selected_tag_id || persistedNavState.selected_project_id || "").trim() || "aurora",
+    selectedProjectId: String(persistedNavState.selected_project_id || persistedNavState.selected_tag_id || "").trim() || "aurora",
     selectedFeedId: "maya-budget",
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarDayRailStartMonth: "",
@@ -188,7 +188,7 @@
       tasks: { items: [], loaded: false, loading: false, error: "" },
       "calendar-events": { items: [], loaded: false, loading: false, error: "" },
       "feed-items": { items: [], loaded: false, loading: false, error: "" },
-      tags: { items: [], loaded: false, loading: false, error: "" },
+      projects: { items: [], loaded: false, loading: false, error: "" },
       contacts: { items: [], loaded: false, loading: false, error: "" },
       messages: { items: [], loaded: false, loading: false, error: "" },
       "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
@@ -4051,11 +4051,9 @@
         view.append(lightTaskDetailPage());
         break;
       case "projects":
-      case "tags":
         view.append(lightProjectsPage());
         break;
       case "project-detail":
-      case "tag-detail":
         view.append(lightProjectDetailPage());
         break;
       case "home":
@@ -5460,7 +5458,7 @@
     if (surface === "reminders") {
       return "light-list light-graph-list";
     }
-    if (surface === "tags") {
+    if (surface === "projects") {
       return "light-list";
     }
     if (surface === "meetings") {
@@ -5680,19 +5678,19 @@
   function universalProjectFeedTileDescriptor(project, sectionKey = "") {
     return normalizeUniversalFeedTileDescriptor({
       id: String(project?.id || "").trim(),
-      surface: "tags",
+      surface: "projects",
       variant: "project",
       sectionKey: String(sectionKey || "").trim().toLowerCase(),
-      title: project?.title || "Untitled tag",
+      title: project?.title || "Untitled project",
       meta: { project },
-      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Tag"}`,
-      chips: projectChips(project),
-      leading: { icon: "sell", show: true },
+      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
+      chips: [],
+      leading: { icon: "folder", show: true },
       trailing: null,
       interactive: true,
       open: () => {
-        state.selectedTagId = project.id;
-        lightNavigate("tag-detail", { from: "tags" });
+        state.selectedProjectId = project.id;
+        lightNavigate("project-detail", { from: "projects" });
       },
       renderMode: "flat",
     });
@@ -6803,7 +6801,7 @@
       task: "Task",
       calendar_event: "Calendar",
       feed_item: "Inbox",
-      project: "Tag",
+      project: "Project",
       contact: "Contact",
       message: "Message",
       meeting_note: "Meeting note",
@@ -6822,7 +6820,7 @@
       task: "checklist",
       calendar_event: "calendar",
       feed_item: "text",
-      project: "sell",
+      project: "folder",
       contact: "contacts",
       message: "chat",
       meeting_note: "record_voice_over",
@@ -6851,7 +6849,7 @@
       task: "task-detail",
       calendar_event: "meeting-detail",
       feed_item: "inbox-detail",
-      project: "tag-detail",
+      project: "project-detail",
       contact: "contact-detail",
       meeting_note: "meeting-note-detail",
       reminder: "reminder-detail"
@@ -6861,7 +6859,7 @@
       task: "selectedTaskId",
       calendar_event: "selectedMeetingId",
       feed_item: "selectedFeedId",
-      project: "selectedTagId",
+      project: "selectedProjectId",
       contact: "selectedContactId",
       meeting_note: "selectedMeetingNoteId",
       reminder: "selectedReminderId"
@@ -8563,19 +8561,19 @@
   }
 
   function lightProjectsPage() {
-    const status = lightWorkspaceStatus("tags", "sell", "No tags yet");
+    const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
     return renderUniversalFeedPage({
-      title: "Tags",
-      surface: "tags",
+      title: "Projects",
+      surface: "projects",
       status,
       sections: [{
-        key: "tags",
+        key: "projects",
         label: "",
         count: allProjects().length,
         collapsible: false,
         expanded: true,
         emptyState: null,
-        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))
+        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))
       }],
     });
   }
@@ -8585,14 +8583,13 @@
     const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     row.type = "button";
     row.dataset.projectId = project.id;
-    row.dataset.tagId = project.id;
     row.addEventListener("click", () => {
-      state.selectedTagId = project.id;
-      lightNavigate("tag-detail", { from: "tags" });
+      state.selectedProjectId = project.id;
+      lightNavigate("project-detail", { from: "projects" });
     });
     row.append(
-      lightSmallIcon("sell"),
-      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`)
+      lightSmallIcon("folder"),
+      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`)
     );
     return row;
   }
@@ -8620,17 +8617,15 @@
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
-      return lightPage("Tag", { subtitle: "Tag not found.", detail: true });
+      return lightPage("Project", { subtitle: "Project not found.", detail: true });
     }
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
     page.classList.add("light-project-detail-page");
-    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`, "sell"));
-    page.append(lightChipCloud(projectChips(project)));
     page.append(lightLinkedRecordSection(project, {
       title: "Connected",
       showWhenEmpty: true,
-      fromRoute: "tag-detail",
+      fromRoute: "project-detail",
       dedupeTargets: true,
       showChips: false,
       showChevron: false,
@@ -8817,7 +8812,7 @@
       "reminder-detail": "selectedReminderId",
       "note-detail": "selectedNoteId",
       "task-detail": "selectedTaskId",
-      "tag-detail": "selectedTagId",
+      "project-detail": "selectedProjectId",
       "contact-detail": "selectedContactId",
       "contact-edit": "selectedContactId"
     })[String(route || "")] || "";
@@ -8848,8 +8843,8 @@
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       normalized[key] = String(snapshot[key] || "");
     });
-    if (!normalized.selectedTagId) {
-      normalized.selectedTagId = String(snapshot.selectedProjectId || "");
+    if (!normalized.selectedProjectId) {
+      normalized.selectedProjectId = String(snapshot.selectedTagId || "");
     }
     return normalized;
   }
@@ -8933,9 +8928,9 @@
         state[key] = String(selectionPatch[key] || "");
       }
     });
-    if (!Object.prototype.hasOwnProperty.call(selectionPatch, "selectedTagId")
-      && Object.prototype.hasOwnProperty.call(selectionPatch, "selectedProjectId")) {
-      state.selectedTagId = String(selectionPatch.selectedProjectId || "");
+    if (!Object.prototype.hasOwnProperty.call(selectionPatch, "selectedProjectId")
+      && Object.prototype.hasOwnProperty.call(selectionPatch, "selectedTagId")) {
+      state.selectedProjectId = String(selectionPatch.selectedTagId || "");
     }
   }
 
@@ -9454,18 +9449,6 @@
     return hero;
   }
 
-  function lightDetailHero(title, detail, icon) {
-    const hero = el("section", "light-card light-detail-hero");
-    hero.append(lightSmallIcon(icon), lightTextStack(title, detail));
-    return hero;
-  }
-
-  function lightChipCloud(chips) {
-    const cloud = el("div", "light-chip-cloud");
-    chips.forEach(chip => cloud.append(el("span", "", chip)));
-    return cloud;
-  }
-
   function calendarFormatTime(timestampMs, timeZone = calendarEffectiveTimeZone()) {
     const value = Number(timestampMs || 0);
     if (!Number.isFinite(value) || value <= 0) {
@@ -9809,21 +9792,11 @@
   }
 
   function selectedProject() {
-    return selectedWorkspaceRecord("tags", state.selectedTagId);
+    return selectedWorkspaceRecord("projects", state.selectedProjectId);
   }
 
   function allProjects() {
-    return workspaceItems("tags");
-  }
-
-  function projectChips(project) {
-    const meta = project?.metadata || {};
-    if (Array.isArray(meta.chips) && meta.chips.length) {
-      return meta.chips.map(String);
-    }
-    const threads = projectThreads(project).filter(item => item !== "Nothing linked yet").length;
-    const links = Array.isArray(project?.links) ? project.links.length : 0;
-    return [`${threads} thread${threads === 1 ? "" : "s"}`, `${links} link${links === 1 ? "" : "s"}`];
+    return workspaceItems("projects");
   }
 
   function projectThreads(project) {
@@ -9844,7 +9817,7 @@
       "reminder-detail",
       "note-detail",
       "task-detail",
-      "tag-detail",
+      "project-detail",
       "contact-detail",
       "contact-edit"
     ].includes(String(route || ""));
@@ -18017,7 +17990,7 @@
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         selected_task_id: state.selectedTaskId || null,
-        selected_tag_id: state.selectedTagId || null,
+        selected_project_id: state.selectedProjectId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),

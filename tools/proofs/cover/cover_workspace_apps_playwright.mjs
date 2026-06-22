@@ -2026,7 +2026,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.locator(`[data-workspace-target-kind="note"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     for (const [kind, route, id, text] of [
       ["note", "note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
-      ["project", "tag-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
+      ["project", "project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting_note", "meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
       await page.locator(`[data-workspace-target-kind="${kind}"][data-workspace-target-id="${id}"]`).first().click();

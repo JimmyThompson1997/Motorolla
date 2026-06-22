@@ -39,7 +39,7 @@ const REQUIRED_HOME_ROUTES = [
   "notes",
   "tasks",
   "calendar",
-  "tags",
+  "projects",
   "contacts",
 ];
 const UNIVERSAL_FEED_TILE_ROUTES = [
@@ -48,7 +48,7 @@ const UNIVERSAL_FEED_TILE_ROUTES = [
   "meeting-notes",
   "reminders",
   "notes",
-  "tags",
+  "projects",
 ];
 const LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"];
 const TASK_LINKS = [
@@ -69,7 +69,7 @@ const TASK_LINKS = [
   {
     kind: "project",
     label: "project",
-    route: "tag-detail",
+    route: "project-detail",
     idKey: "projectId",
     titleKey: "projectTitle",
   },
@@ -1030,7 +1030,7 @@ async function runRouteTour(page, config, mode, seed) {
   await recorder.capture({
     route: "home",
     action: "Open launcher",
-      expected: "Launcher tiles for inbox, meetings, meeting notes, reminders, connect, settings, notes, tasks, calendar, tags, and contacts are visible.",
+      expected: "Launcher tiles for inbox, meetings, meeting notes, reminders, connect, settings, notes, tasks, calendar, projects, and contacts are visible.",
     confirmation: "Required launcher tiles are present.",
     observed: { tiles: homeTiles },
   });
@@ -1484,17 +1484,17 @@ async function runRouteTour(page, config, mode, seed) {
     });
   }
 
-  if (shouldRunRoute(config, "tags") || shouldRunRoute(config, "projects")) {
+  if (shouldRunRoute(config, "projects")) {
     await goHome(page, config);
-    await openRouteFromHome(page, "tags", config.timeoutMs);
+    await openRouteFromHome(page, "projects", config.timeoutMs);
     await waitForSeededProject(page, seed, config.timeoutMs);
     await page.locator(`.light-project-row[data-project-id="${seed.projectId}"]`).first().click();
-    await waitForRoute(page, "tag-detail", config.timeoutMs);
+    await waitForRoute(page, "project-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.projectTitle, config.timeoutMs);
     await recorder.capture({
-      route: "tag-detail",
+      route: "project-detail",
       action: "Open seeded project detail",
-      expected: "The seeded tag detail opens from the Tags route.",
+      expected: "The seeded project detail opens from the Projects route.",
       confirmation: "Seeded project detail opened.",
       observed: { project_title: seed.projectTitle },
     });

@@ -77,7 +77,8 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_supports_contac
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert '"notes"' in source
-    assert '"tags"' in source
+    assert '"projects"' in source
+    assert '"tags"' not in source
 
 
 def test_live_user_session_browser_proof_tracks_failed_requests_and_mobile_connect_noise() -> None:
@@ -229,7 +230,7 @@ def test_calendar_browser_proof_retries_manifest_fetch_and_reacquires_event_cont
     assert "await page.waitForFunction(({ targetSelector, targetText }) => {" in source
     assert 'targetRow.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });' in source
     assert "targetRow.click();" in source
-    assert 'const allowedRoutes = route === "project-detail" ? new Set(["project-detail", "tag-detail"]) : new Set([route]);' in source
+    assert 'const allowedRoutes = new Set([route]);' in source
     assert "async function openCalendarProofRoot(page, config, theme)" in source
     assert 'await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });' in source
     assert 'await openCalendarProofRoot(page, config, theme);' in source

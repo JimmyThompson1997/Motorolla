@@ -382,7 +382,7 @@ async function collectRouteMetrics(page, routeConfig) {
         graphChevrons: count(".light-graph-row .light-chevron"),
         reminderChips: count(".light-reminder-row .light-graph-chip-row"),
         reminderSnoozedRows: count(".light-reminder-row.delivery-snoozed"),
-        projectChipRows: count(".light-project-chip-row"),
+        listRowPills: count(".light-project-chip-row"),
         inboxCards: count(".card-wrap > article.card"),
         archiveActions: count(".archive-reveal-action"),
         inlineAudioTriggers: count(".card-inline-audio-trigger"),
@@ -415,6 +415,8 @@ async function collectDetailMetrics(page) {
       reminderHasDeliveryText: String(reminderShell?.textContent || "").includes("Delivery:"),
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
       connectedLinkedRecordSections: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"]').length,
+      detailHeroCount: document.querySelectorAll(".light-detail-hero").length,
+      chipCloudCount: document.querySelectorAll(".light-chip-cloud").length,
       detailShells: document.querySelectorAll(".detail-shell").length,
       detailPanels: document.querySelectorAll(`${detailSelector}.is-open, ${detailSelector}[aria-hidden="false"]`).length,
     };
@@ -477,7 +479,7 @@ function assertRouteSpecificState(routeConfig, metrics) {
     assert(metrics.selectorCounts.reminderChips === 0, "Reminders: chips should stay hidden");
   }
   if (routeConfig.route === "projects") {
-    assert(metrics.selectorCounts.projectChipRows > 0, "Projects: chip rows should remain visible");
+    assert(metrics.selectorCounts.listRowPills === 0, "Projects: list rows should not render gray pills");
   }
   if (routeConfig.route === "inbox" && metrics.selectorCounts.primary > 0) {
     assert(metrics.selectorCounts.inboxCards > 0, "Inbox: canonical cards should render");
@@ -585,6 +587,8 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
   }
   if (routeConfig.route === "projects") {
     assert(detailMetrics.connectedLinkedRecordSections > 0, "Projects: connected detail section should render");
+    assert(detailMetrics.detailHeroCount === 0, "Expected project detail hero card to be removed");
+    assert(detailMetrics.chipCloudCount === 0, "Expected project detail chip cloud to be removed");
   }
   const detailScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-detail-open.png`));
   const returned = await backToList(page, routeConfig, timeoutMs);

@@ -997,7 +997,7 @@ async function selectCalendarDetailTarget(page, config, route, targetId, expecte
     "reminder-detail": "reminder",
     "contact-detail": "contact"
   };
-  const allowedRoutes = route === "project-detail" ? new Set(["project-detail", "tag-detail"]) : new Set([route]);
+  const allowedRoutes = new Set([route]);
   const targetKind = String(kindByRoute[route] || "").trim();
   const selector = targetKind
     ? `.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row[data-linked-record-kind="${targetKind}"]`
@@ -1282,7 +1282,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     detailState = await readMeetingDetailState(page);
     assert(detailState.connectedExpanded, "Expected Back from Who chip to preserve Connected expanded state.");
     for (const target of [
-      { id: `${seed.runId}-project`, route: "tag-detail", expectedText: "Proof freelance follow-up" },
+      { id: `${seed.runId}-project`, route: "project-detail", expectedText: "Proof freelance follow-up" },
       { id: `${seed.runId}-task`, route: "task-detail", expectedText: "Send proof review notes" },
       { id: `${seed.runId}-note`, route: "note-detail", expectedText: "Proof review outline" },
       { id: `${seed.runId}-meeting-note`, route: "meeting-note-detail", expectedText: "Proof freelance prep" },
@@ -1601,7 +1601,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
     await selectCalendarDetailTarget(page, config, "project-detail", `${seed.runId}-project`, "Proof freelance follow-up");
     await page.getByRole("button", { name: "Back" }).click();
-    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from the linked project target to restore meeting-detail, got ${await currentLightRoute(page)}.`);
+    assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from project-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
