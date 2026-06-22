@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .desktop_audio_store import DesktopAudioError
 from .http_surface import (
     cors_header_items,
     inline_content_disposition,
@@ -252,6 +253,25 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     ),
                 )
                 return
+            if path.startswith("/api/desktop-audio/v1/bundles/"):
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                suffix = path.removeprefix("/api/desktop-audio/v1/bundles/").strip("/")
+                parts = [unquote(part).strip() for part in suffix.split("/") if part.strip()]
+                try:
+                    if len(parts) == 1:
+                        self._json(HTTPStatus.OK, service.desktop_audio_bundle_detail(parts[0]))
+                        return
+                    if len(parts) == 3 and parts[1] == "tracks":
+                        body, mime_type, filename = service.desktop_audio_track_bytes(parts[0], parts[2])
+                        self._bytes(HTTPStatus.OK, body, mime_type, filename=filename)
+                        return
+                except DesktopAudioError as exc:
+                    self._json(exc.status, {"error": exc.error})
+                    return
+                self._json(HTTPStatus.NOT_FOUND, {"error": "desktop_audio_route_not_found"})
+                return
             if path == "/api/meetings":
                 query = parse_qs(parsed.query)
                 include_archived = _truthy_query(query.get("include_archived", ["0"])[0])
@@ -478,6 +498,37 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     return
                 self._json(HTTPStatus.OK, result)
                 return
+            if path == "/api/desktop-audio/v1/bundles/init":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise DesktopAudioError("desktop_audio_payload_must_be_object")
+                    result = service.desktop_audio_bundle_init(payload, base_url=self._request_base_url())
+                except DesktopAudioError as exc:
+                    self._json(exc.status, {"error": exc.error})
+                    return
+                except json.JSONDecodeError:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            if path.startswith("/api/desktop-audio/v1/bundles/") and path.endswith("/complete"):
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                suffix = path.removeprefix("/api/desktop-audio/v1/bundles/").removesuffix("/complete").strip("/")
+                bundle_id = unquote(suffix).strip()
+                try:
+                    self._read_body(256 * 1024)
+                    result = service.desktop_audio_bundle_complete(bundle_id)
+                except DesktopAudioError as exc:
+                    self._json(exc.status, {"error": exc.error})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             if path == "/api/meetings":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -621,6 +672,36 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "turn_failed", "detail": str(exc)})
                 return
             self._json(HTTPStatus.OK, result)
+
+        def do_PUT(self) -> None:
+            parsed = urlsplit(self.path)
+            path = parsed.path
+            if path.startswith("/api/desktop-audio/v1/bundles/") and "/tracks/" in path:
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                suffix = path.removeprefix("/api/desktop-audio/v1/bundles/").strip("/")
+                raw_bundle_id, _, raw_track_id = suffix.partition("/tracks/")
+                bundle_id = unquote(raw_bundle_id).strip()
+                track_id = unquote(raw_track_id).strip()
+                content_type = self.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0].strip()
+                try:
+                    result = service.desktop_audio_track_upload(
+                        bundle_id,
+                        track_id,
+                        self._read_body(service.desktop_audio.max_track_bytes),
+                        content_type=content_type,
+                        content_sha256=self.headers.get("X-Pucky-Content-Sha256", ""),
+                    )
+                except DesktopAudioError as exc:
+                    self._json(exc.status, {"error": exc.error})
+                    return
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            self.send_error(int(HTTPStatus.NOT_FOUND))
 
         def do_PATCH(self) -> None:
             parsed = urlsplit(self.path)

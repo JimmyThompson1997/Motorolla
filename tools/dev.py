@@ -74,6 +74,8 @@ TASK_HELP = {
     "proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
     "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
+    "proof-local-desktop-audio": "Run the local desktop audio capture/upload proof with the Swift probe.",
+    "proof-live-desktop-audio": "Run the live desktop audio capture/upload proof against the hosted VM.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
     "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
@@ -721,6 +723,18 @@ def run_hosted_bug_hunt(extra_args: list[str]) -> int:
     )
 
 
+def run_desktop_audio_proof(target: str, extra_args: list[str]) -> int:
+    command = [
+        PYTHON,
+        "desktop_audio_probe/proofs/desktop_audio_probe_proof.py",
+        "--target",
+        target,
+    ]
+    if target == "live":
+        command.extend(["--base-url", "https://pucky.fly.dev"])
+    return run_command(command + extra_args, env=proof_env())
+
+
 def fetch_live_manifest(vm_base_url: str = "https://pucky.fly.dev") -> dict[str, object]:
     manifest_url = append_refresh_param(
         f"{vm_base_url.rstrip('/')}/ui/pucky/latest/manifest.json",
@@ -834,6 +848,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-live-universal-tiles":
         return run_live_universal_feed_tiles_proof(args.extra_args)
+    if args.task == "proof-local-desktop-audio":
+        return run_desktop_audio_proof("local", args.extra_args)
+    if args.task == "proof-live-desktop-audio":
+        return run_desktop_audio_proof("live", args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":

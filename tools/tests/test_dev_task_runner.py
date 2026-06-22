@@ -48,3 +48,14 @@ def test_release_hosted_web_task_is_registered_and_wires_release_lane() -> None:
     assert "verify_live_manifest_matches_head()" in source
     assert "return run_node_proofs(node_binary, scripts, env=proof_env())" in source
     assert 'if args.task == "release-hosted-web":' in source
+
+
+def test_desktop_audio_proof_tasks_are_registered_and_dispatched() -> None:
+    source = Path(tools_dev.__file__).read_text(encoding="utf-8")
+
+    assert '"proof-local-desktop-audio": "Run the local desktop audio capture/upload proof with the Swift probe."' in source
+    assert '"proof-live-desktop-audio": "Run the live desktop audio capture/upload proof against the hosted VM."' in source
+    assert "def run_desktop_audio_proof(target: str, extra_args: list[str]) -> int:" in source
+    assert 'if args.task == "proof-local-desktop-audio":' in source
+    assert 'if args.task == "proof-live-desktop-audio":' in source
+    assert '"desktop_audio_probe/proofs/desktop_audio_probe_proof.py"' in source

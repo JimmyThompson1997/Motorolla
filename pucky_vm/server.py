@@ -25,6 +25,7 @@ from .action_ledger import ActionLedger
 from .attachment_manifest import normalize_attachment
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
+from .desktop_audio_store import DesktopAudioStore
 from .feed_store import FeedStore
 from .http_handler import make_handler as _build_http_handler
 from .http_surface import (
@@ -661,6 +662,11 @@ class PuckyVoiceService:
         self._meetings_lock = threading.Lock()
         self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
         self._meetings_index_path = self._meetings_dir / "meetings.json"
+        self._desktop_audio_dir = Path(self.config.feed_db_path).with_name("pucky_desktop_audio")
+        self.desktop_audio = DesktopAudioStore(
+            self._desktop_audio_dir,
+            max_track_bytes=max(1, int(self.config.max_audio_bytes)),
+        )
         self._meeting_agent_state_lock = threading.Lock()
         self._meeting_agent_state_by_id: dict[str, dict[str, object]] = {}
         self._reminder_poll_lock = threading.Lock()
@@ -721,6 +727,35 @@ class PuckyVoiceService:
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
             "composio": "present" if self.config.composio_api_key else "missing",
         }
+
+    def desktop_audio_bundle_init(self, payload: dict[str, object], *, base_url: str = "") -> dict[str, object]:
+        return self.desktop_audio.init_bundle(payload, base_url=base_url)
+
+    def desktop_audio_track_upload(
+        self,
+        bundle_id: str,
+        track_id: str,
+        body: bytes,
+        *,
+        content_type: str,
+        content_sha256: str,
+    ) -> dict[str, object]:
+        return self.desktop_audio.upload_track(
+            bundle_id,
+            track_id,
+            body,
+            content_type=content_type,
+            content_sha256=content_sha256,
+        )
+
+    def desktop_audio_bundle_complete(self, bundle_id: str) -> dict[str, object]:
+        return self.desktop_audio.complete_bundle(bundle_id)
+
+    def desktop_audio_bundle_detail(self, bundle_id: str) -> dict[str, object]:
+        return self.desktop_audio.bundle_detail(bundle_id)
+
+    def desktop_audio_track_bytes(self, bundle_id: str, track_id: str) -> tuple[bytes, str, str]:
+        return self.desktop_audio.track_bytes(bundle_id, track_id)
 
     def _reminder_poll_loop(self) -> None:
         while not self._reminder_stop_event.is_set():

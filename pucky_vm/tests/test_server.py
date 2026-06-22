@@ -982,6 +982,144 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertGreater(len(response.read()), 0)
 
+    def test_desktop_audio_routes_require_auth_and_are_not_public_browser_reads(self) -> None:
+        init_body = self.desktop_bundle_init_payload("desktop-audio-auth-proof")
+        for path, method, data in (
+            ("/api/desktop-audio/v1/bundles/init", "POST", json.dumps(init_body).encode("utf-8")),
+            ("/api/desktop-audio/v1/bundles/desktop-audio-auth-proof", "GET", None),
+            ("/api/desktop-audio/v1/bundles/desktop-audio-auth-proof/tracks/mic", "PUT", b"audio"),
+            ("/api/desktop-audio/v1/bundles/desktop-audio-auth-proof/complete", "POST", b"{}"),
+        ):
+            with self.subTest(path=path, method=method):
+                headers = {"Content-Type": "application/json"} if data and method != "PUT" else {}
+                if method == "PUT":
+                    headers = {
+                        "Content-Type": "audio/wav",
+                        "X-Pucky-Content-Sha256": hashlib.sha256(b"audio").hexdigest(),
+                    }
+                request = urllib.request.Request(self.base_url + path, data=data, method=method, headers=headers)
+                with self.assertRaises(urllib.error.HTTPError) as exc:
+                    urllib.request.urlopen(request, timeout=10)
+                self.assertEqual(exc.exception.code, 401)
+
+        self.assertFalse(
+            self.server.RequestHandlerClass._allows_public_browser_user_read(
+                self.server.RequestHandlerClass,
+                "/api/desktop-audio/v1/bundles/init",
+            )
+        )
+        self.assertFalse(
+            self.server.RequestHandlerClass._allows_public_browser_user_read(
+                self.server.RequestHandlerClass,
+                "/api/desktop-audio/v1/bundles/desktop-audio-auth-proof",
+            )
+        )
+
+    def test_desktop_audio_bundle_upload_complete_and_metadata_are_hash_verified(self) -> None:
+        bundle_id = "desktop-audio-good-proof"
+        mic_audio = b"RIFFdesktop-mic-audio"
+        system_audio = b"RIFFdesktop-system-audio"
+        init = self.post_json(
+            "/api/desktop-audio/v1/bundles/init",
+            self.desktop_bundle_init_payload(
+                bundle_id,
+                tracks=[
+                    self.desktop_track("mic", mic_audio),
+                    self.desktop_track("system", system_audio),
+                ],
+            ),
+        )
+
+        self.assertTrue(init["ok"])
+        self.assertEqual(init["schema"], "pucky.desktop_audio_bundle_init.v1")
+        self.assertEqual(init["bundle_id"], bundle_id)
+        self.assertEqual([item["track_id"] for item in init["uploads"]], ["mic", "system"])
+
+        mic_upload = self.put_bytes(init["uploads"][0]["upload_url"], mic_audio, "audio/wav")
+        system_upload = self.put_bytes(init["uploads"][1]["upload_url"], system_audio, "audio/wav")
+        self.assertEqual(mic_upload["state"], "uploaded")
+        self.assertEqual(system_upload["state"], "uploaded")
+
+        completed = self.post_json(init["complete_url"], {})
+        self.assertTrue(completed["ok"])
+        self.assertEqual(completed["state"], "complete")
+
+        detail = self.get_json(f"/api/desktop-audio/v1/bundles/{bundle_id}", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(detail["schema"], "pucky.desktop_audio_bundle.v1")
+        self.assertEqual(detail["bundle"]["bundle_id"], bundle_id)
+        self.assertEqual(detail["bundle"]["state"], "complete")
+        tracks = {item["track_id"]: item for item in detail["bundle"]["tracks"]}
+        self.assertEqual(tracks["mic"]["sha256"], hashlib.sha256(mic_audio).hexdigest())
+        self.assertEqual(tracks["system"]["sha256"], hashlib.sha256(system_audio).hexdigest())
+        self.assertNotIn("audio_base64", json.dumps(detail))
+        manifest_text = (self.service._desktop_audio_dir / bundle_id / "manifest.json").read_text(encoding="utf-8")
+        self.assertNotIn("RIFFdesktop", manifest_text)
+
+    def test_desktop_audio_init_rejects_invalid_and_duplicate_mismatched_manifests(self) -> None:
+        valid = self.desktop_bundle_init_payload("desktop-audio-idempotent")
+        first = self.post_json("/api/desktop-audio/v1/bundles/init", valid)
+        second = self.post_json("/api/desktop-audio/v1/bundles/init", valid)
+        self.assertEqual(first["bundle_id"], second["bundle_id"])
+        self.assertEqual(first["uploads"], second["uploads"])
+
+        for bundle_id, error in (("../escape", "invalid_bundle_id"), ("", "bundle_id_required")):
+            with self.subTest(bundle_id=bundle_id):
+                self.assert_http_json_error(
+                    "/api/desktop-audio/v1/bundles/init",
+                    self.desktop_bundle_init_payload(bundle_id),
+                    400,
+                    error,
+                )
+
+        missing_tracks = dict(valid)
+        missing_tracks["bundle_id"] = "desktop-audio-missing-tracks"
+        missing_tracks["tracks"] = []
+        self.assert_http_json_error(
+            "/api/desktop-audio/v1/bundles/init",
+            missing_tracks,
+            400,
+            "tracks_required",
+        )
+
+        mismatched = self.desktop_bundle_init_payload("desktop-audio-idempotent")
+        mismatched["tracks"] = [self.desktop_track("mic", b"different")]
+        self.assert_http_json_error(
+            "/api/desktop-audio/v1/bundles/init",
+            mismatched,
+            409,
+            "bundle_manifest_conflict",
+        )
+
+    def test_desktop_audio_upload_rejects_hash_mismatch_and_complete_requires_all_tracks(self) -> None:
+        bundle_id = "desktop-audio-incomplete"
+        mic_audio = b"RIFFmic"
+        system_audio = b"RIFFsystem"
+        init = self.post_json(
+            "/api/desktop-audio/v1/bundles/init",
+            self.desktop_bundle_init_payload(
+                bundle_id,
+                tracks=[self.desktop_track("mic", mic_audio), self.desktop_track("system", system_audio)],
+            ),
+        )
+
+        bad_request = urllib.request.Request(
+            self.base_url + init["uploads"][0]["upload_url"],
+            data=b"RIFXmic",
+            method="PUT",
+            headers={
+                "Authorization": "Bearer secret",
+                "Content-Type": "audio/wav",
+                "X-Pucky-Content-Sha256": hashlib.sha256(mic_audio).hexdigest(),
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(bad_request, timeout=10)
+        self.assertEqual(exc.exception.code, 400)
+        self.assertEqual(json.loads(exc.exception.read().decode("utf-8"))["error"], "track_sha256_mismatch")
+
+        self.put_bytes(init["uploads"][0]["upload_url"], mic_audio, "audio/wav")
+        self.assert_http_json_error(init["complete_url"], {}, 409, "bundle_tracks_missing")
+
     def test_same_origin_public_task_status_patch_allows_status_only_and_rejects_other_writes(self) -> None:
         task = self.post_json(
             "/api/workspace/tasks",
@@ -4448,6 +4586,56 @@ class ServerTests(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def put_bytes(self, path: str, body: bytes, content_type: str) -> dict:
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=body,
+            method="PUT",
+            headers={
+                "Authorization": "Bearer secret",
+                "Content-Type": content_type,
+                "X-Pucky-Content-Sha256": hashlib.sha256(body).hexdigest(),
+            },
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def assert_http_json_error(self, path: str, body: dict, status: int, error: str) -> None:
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer secret",
+                "Content-Type": "application/json",
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(exc.exception.code, status)
+        payload = json.loads(exc.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], error)
+
+    def desktop_track(self, track_id: str, audio: bytes, *, kind: str | None = None, mime_type: str = "audio/wav") -> dict:
+        return {
+            "track_id": track_id,
+            "kind": kind or track_id,
+            "mime_type": mime_type,
+            "bytes": len(audio),
+            "sha256": hashlib.sha256(audio).hexdigest(),
+        }
+
+    def desktop_bundle_init_payload(self, bundle_id: str, *, tracks: list[dict] | None = None) -> dict:
+        audio = b"RIFFdesktop-audio"
+        return {
+            "bundle_id": bundle_id,
+            "device_id": "macbook-proof",
+            "platform": "macos",
+            "started_at": "2026-06-22T12:00:00Z",
+            "ended_at": "2026-06-22T12:00:05Z",
+            "tracks": tracks if tracks is not None else [self.desktop_track("mic", audio)],
+        }
 
     def portal_token(self, portal_url: str) -> str:
         parsed = urllib.parse.urlsplit(portal_url)
