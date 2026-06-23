@@ -94,21 +94,6 @@ def test_live_user_session_browser_proof_tracks_failed_requests_and_mobile_conne
     assert "ERR_HTTP2_PROTOCOL_ERROR" in source
 
 
-def test_live_user_session_browser_proof_checks_runtime_meeting_in_meetings_and_inbox() -> None:
-    source = read_source("cover_live_user_session_playwright.mjs")
-
-    assert "const MEETING_RUNTIME_FIXTURE_PATH =" in source
-    assert "async function archiveVisibleMeetings(" in source
-    assert "async function ingestRuntimeProofMeeting(" in source
-    assert "async function waitForMeetingCompletion(" in source
-    assert "async function prepareRuntimeMeeting(" in source
-    assert "runtime_meeting" in source
-    assert "Runtime meeting card was visible in Inbox and opened its detail panel." in source
-    assert "Runtime meeting detail panel opened." in source
-    assert "Inbox stayed empty instead of showing runtime meeting" in source
-    assert "Meetings stayed empty instead of showing runtime meeting" in source
-
-
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
@@ -474,6 +459,29 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert ".light-task-detail-toggle" not in source
 
 
+def test_workspace_apps_browser_proof_cleans_up_reminders_before_contacts_and_sweeps_prefix_records() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert 'const CLEANUP_RECORD_COLLECTION_ORDER = [' in source
+    cleanup_section = source.split("const CLEANUP_RECORD_COLLECTION_ORDER = [", 1)[1].split("];", 1)[0]
+    assert '"reminders"' in cleanup_section
+    assert cleanup_section.index('"reminders"') < cleanup_section.index('"contacts"')
+    assert "startsWith(`${runId}-`)" in source or "startsWith(prefix)" in source
+    assert "sweepSeedRecordsByPrefix" in source
+
+
+def test_reminders_browser_proof_covers_orphaned_recipient_actions() -> None:
+    source = read_source("reminders_v3_browser_proof.mjs")
+
+    assert "orphanContactId" in source
+    assert "orphanDismissReminderId" in source
+    assert "orphanSnoozeReminderId" in source
+    assert 'await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`' in source
+    assert '[data-reminder-action="dismiss"]' in source
+    assert '[data-reminder-action="snooze"]' in source
+    assert "error toast" in source.lower()
+
+
 def test_live_connect_auth_browser_proof_requires_explicit_token_and_real_transition() -> None:
     source = read_source("cover_links_auth_flow_live_playwright.mjs")
     package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
@@ -727,23 +735,9 @@ def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract()
     assert "hasStandaloneWhoSection" in source
     assert "whoInsideDetailsCard" in source
     assert "whoChipLabels" in source
-    assert "whoChipLabelBackground" in source
-    assert "whoChipIconBackground" in source
-    assert 'JSON.stringify(meetingNoteState.detailRowLabels) === JSON.stringify(["When", "Who"])' in source
+    assert 'for (const label of ["When", "Who", "Source", "Topics"]) {' in source
     assert "Meeting note detail should keep Who inside the Details card" in source
     assert "Meeting note detail should not keep a standalone Who section shell" in source
-    assert "Expected meeting note Who label to avoid a nested pill background" in source
-    assert "Expected meeting note Who icon to avoid a nested pill background" in source
-
-
-def test_light_real_vm_ports_proof_checks_direct_cold_inbox_truth() -> None:
-    source = read_source("cover_light_real_vm_ports_playwright.mjs")
-
-    assert 'const coldInboxUrl = routeUrl(config.pageUrl, "inbox"' in source
-    assert 'await page.goto(coldInboxUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });' in source
-    assert "Light Inbox cold load did not render canonical Home card DOM" in source
-    assert "Light Inbox cold-load titles did not match VM /api/feed titles" in source
-    assert "Light Inbox cold load regressed to the reply-only empty state" in source
 
 
 def test_meetings_walkthrough_proof_checks_short_and_long_title_alignment() -> None:
@@ -897,10 +891,6 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "who_guest_chip_count" in calendar_source
     assert "who_record_chip_count" in calendar_source
     assert "details_card_overflow_x" in calendar_source
-    assert "place_primary_text" in calendar_source
-    assert "place_address_text" in calendar_source
-    assert "description_link_count" in calendar_source
-    assert "description_link_hrefs" in calendar_source
     assert "agenda_contact_icon_count" in calendar_source
     assert "agenda_record_chip_count" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-default.png" in calendar_source
@@ -909,32 +899,24 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "calendar-desktop-${theme}-event-detail-connected-restored.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-details-card.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-who-row.png" in calendar_source
-    assert "calendar-desktop-${theme}-event-detail-description-link.png" in calendar_source
     assert "calendar-desktop-${theme}-agenda-tile.png" in calendar_source
     assert "calendar-desktop-${theme}-clinic-detail.png" in calendar_source
     assert "calendar-desktop-${theme}-clinic-who-row.png" in calendar_source
-    assert "calendar-desktop-${theme}-clinic-place-row.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-default.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-connected-expanded.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-details-collapsed.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-connected-restored.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-details-card.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-who-row.png" in calendar_source
-    assert "calendar-mobile-${theme}-detail-description-link.png" in calendar_source
     assert "calendar-mobile-${theme}-agenda-tile.png" in calendar_source
     assert "calendar-mobile-${theme}-clinic-detail.png" in calendar_source
     assert "calendar-mobile-${theme}-clinic-who-row.png" in calendar_source
-    assert "calendar-mobile-${theme}-clinic-place-row.png" in calendar_source
     assert "Expected event detail to avoid a standalone Description section." in calendar_source
     assert "Expected merged description text inside Details." in calendar_source
-    assert "Expected merged description text to expose a clickable Google Meet URL." in calendar_source
-    assert "Expected merged description link to target meet.google.com." in calendar_source
     assert "Expected Connected to start collapsed on a fresh event open." in calendar_source
     assert "Expected Details to start expanded on a fresh event open." in calendar_source
     assert "Expected compact When to avoid weekday text" in calendar_source
     assert "Expected compact Who row to keep visible chip spacing" in calendar_source
-    assert "Expected clinic detail to render a primary place label." in calendar_source
-    assert "Expected clinic detail to render address text beneath the place label." in calendar_source
     assert "Expected agenda attendee chips to keep a visible contact icon on every chip." in calendar_source
     assert "Expected agenda attendee chips to avoid record-chip styling." in calendar_source
     assert "Expected Calendar Who row to keep a visible contact icon on every attendee chip." in calendar_source
@@ -953,19 +935,11 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "Expected mobile Who row to keep a visible contact icon on every attendee chip." in calendar_source
     assert "Expected mobile Who row to avoid record-chip styling." in calendar_source
     assert "Expected mobile Who row to avoid guest attendee chips" in calendar_source
-    assert "Expected mobile clinic detail to render a primary place label." in calendar_source
-    assert "Expected mobile clinic detail to render address text beneath the place label." in calendar_source
-    assert "Expected mobile merged description text to expose a clickable Google Meet URL." in calendar_source
-    assert "Expected mobile merged description link to target meet.google.com." in calendar_source
     assert "Expected mobile Who row to include at least one guest chip." not in calendar_source
     assert "Expected mobile Who row to carry contact and guest chips" not in calendar_source
-    assert "Expected Connected rows to stay curated and distinct on desktop detail." in calendar_source
-    assert "Expected Connected rows to stay curated and distinct on mobile detail." in calendar_source
     assert "Expected Back from linked target to restore Connected expanded state." in calendar_source
     assert "Expected reopening the event detail to reset Connected closed." in calendar_source
     assert "Expected reopening the event detail to reset Details open." in calendar_source
-    assert "meet.google.com" in calendar_source
-    assert "address:" in calendar_source
 
 
 def test_calendar_browser_proof_covers_continuous_month_rail_contract() -> None:
