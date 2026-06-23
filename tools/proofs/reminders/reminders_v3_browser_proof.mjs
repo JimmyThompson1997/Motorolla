@@ -361,7 +361,10 @@ async function main() {
 
   const reminderAId = `browser-proof-live-a-${Date.now()}`;
   const reminderBId = `browser-proof-live-b-${Date.now()}`;
-  const createdReminderIds = [reminderAId];
+  const orphanContactId = `browser-proof-orphan-contact-${Date.now()}`;
+  const orphanDismissReminderId = `browser-proof-orphan-dismiss-${Date.now()}`;
+  const orphanSnoozeReminderId = `browser-proof-orphan-snooze-${Date.now()}`;
+  const createdReminderIds = [reminderAId, orphanDismissReminderId, orphanSnoozeReminderId];
   const baselineActive = await activeReminderCount(config);
   const reminderADueAtMs = Date.now() + LIVE_A_DELAY_MS;
   let reminderBDueAtMs = 0;
@@ -549,9 +552,108 @@ async function main() {
     await waitForReminderBadge(page, baselineActive, config.timeoutMs);
     summary.screenshots.b2_home_after_dismiss = await saveScreenshot(page, config.reportDir, "b2-home-after-dismiss");
 
+    await apiRequest(config, "POST", "/api/workspace/contacts", {
+      id: orphanContactId,
+      title: "Browser Proof Orphan Contact",
+      summary: "Temporary contact for orphaned reminder action verification.",
+      metadata: {
+        phone: "+14155550168",
+      }
+    });
+    for (const [reminderId, title, summaryText] of [
+      [
+        orphanDismissReminderId,
+        "Browser Proof Orphan Dismiss",
+        "Dismiss should still work after the linked recipient contact is deleted."
+      ],
+      [
+        orphanSnoozeReminderId,
+        "Browser Proof Orphan Snooze",
+        "Snooze should still work after the linked recipient contact is deleted."
+      ]
+    ]) {
+      await apiRequest(config, "POST", "/api/workspace/reminders", {
+        id: reminderId,
+        title,
+        summary: summaryText,
+        status: "open",
+        due_at_ms: Date.now() + 30 * 60 * 1000,
+        metadata: {
+          recipients: [
+            { id: "self", kind: "self", label: "Me" },
+            { id: orphanContactId, kind: "contact", contact_id: orphanContactId, label: "Browser Proof Orphan Contact" },
+          ],
+          destinations: [{ channel: "sms", recipient_ids: [orphanContactId] }],
+        }
+      });
+    }
+    await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`);
+    for (const reminderId of [orphanDismissReminderId, orphanSnoozeReminderId]) {
+      await apiRequest(config, "PATCH", `/api/workspace/reminders/${reminderId}`, {
+        due_at_ms: Date.now() - 60_000,
+        metadata: {
+          delivery_state: "pending",
+          last_fired_at_ms: 0,
+          last_fired_due_at_ms: 0,
+          last_delivery_error: "",
+          snoozed_until_ms: 0,
+        }
+      });
+    }
+
+    await waitForReminderBadge(page, baselineActive + 2, config.timeoutMs);
+    await openTile(page, "Reminders", "reminders", config.timeoutMs);
+    await page.locator(`.light-reminder-row[data-reminder-id="${orphanDismissReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`.light-reminder-row[data-reminder-id="${orphanSnoozeReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    summary.screenshots.orphan_list_before_actions = await saveScreenshot(page, config.reportDir, "orphan-list-before-actions");
+
+    await page.locator(`.light-reminder-row[data-reminder-id="${orphanDismissReminderId}"]`).click();
+    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+    const orphanDismissDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
+    summary.lifecycle.orphan_dismiss_before = orphanDismissDetail;
+    summary.screenshots.orphan_dismiss_before = await saveScreenshot(page, config.reportDir, "orphan-dismiss-before");
+    await page.locator('[data-reminder-action="dismiss"]').click();
+    await waitForReminderRecord(
+      config,
+      orphanDismissReminderId,
+      reminder => reminderIsDismissed(reminder),
+      "orphan reminder should dismiss even after contact cleanup",
+      30_000
+    );
+    await assertNoToast(page, "Orphan reminder dismiss");
+    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), orphanDismissReminderId, { timeout: config.timeoutMs });
+    summary.screenshots.orphan_dismiss_after = await saveScreenshot(page, config.reportDir, "orphan-dismiss-after");
+
+    await page.locator(`.light-reminder-row[data-reminder-id="${orphanSnoozeReminderId}"]`).click();
+    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+    const orphanSnoozeLive = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
+    summary.lifecycle.orphan_snooze_before = orphanSnoozeLive;
+    summary.screenshots.orphan_snooze_before = await saveScreenshot(page, config.reportDir, "orphan-snooze-before");
+    await page.locator('[data-reminder-action="snooze"]').click();
+    const orphanSnoozedRecord = await waitForReminderRecord(
+      config,
+      orphanSnoozeReminderId,
+      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + 70_000,
+      "orphan reminder should snooze back into a non-live state",
+      30_000
+    );
+    assert(
+      Number(orphanSnoozedRecord?.metadata?.snoozed_until_ms || 0) === Number(orphanSnoozedRecord?.due_at_ms || 0),
+      `Expected orphan snooze due_at_ms and snoozed_until_ms to stay aligned, saw ${Number(orphanSnoozedRecord?.due_at_ms || 0)} vs ${Number(orphanSnoozedRecord?.metadata?.snoozed_until_ms || 0)}`
+    );
+    const orphanSnoozeDetail = await assertCompactReminderDetail(page, "snoozed", [], { expectedConnectedLabels: [] });
+    summary.lifecycle.orphan_snooze_after = orphanSnoozeDetail;
+    await assertNoToast(page, "Orphan reminder snooze");
+    summary.screenshots.orphan_snooze_after_detail = await saveScreenshot(page, config.reportDir, "orphan-snooze-after-detail");
+    await backToRoute(page, "reminders", config.timeoutMs);
+    await waitForReminderRowState(page, orphanSnoozeReminderId, "snoozed", config.timeoutMs);
+    summary.screenshots.orphan_snooze_after_list = await saveScreenshot(page, config.reportDir, "orphan-snooze-after-list");
+
     summary.assertions.push("Reminder detail stays compact, hides status/delivery pills, shows Dismiss and Snooze only while live, and hides Connected entirely when a proof reminder has no graph links.");
     summary.assertions.push("Live reminders expose Dismiss and Snooze only when firing, while Upcoming reminders stay action-free.");
     summary.assertions.push("Snoozed reminders remain inside Upcoming with a live countdown ring and refire into Live without manual reload.");
+    summary.assertions.push("Orphaned-recipient reminders still allow Dismiss and Snooze after the linked contact record is deleted, without surfacing an error toast.");
 
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
   } finally {
@@ -563,6 +665,9 @@ async function main() {
         await apiRequest(config, "DELETE", `/api/workspace/reminders/${reminderId}`);
       } catch {}
     }
+    try {
+      await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`);
+    } catch {}
   }
 }
 
