@@ -240,6 +240,16 @@ def test_home_route_forces_reminder_collection_refresh() -> None:
     assert 'return;' in load_workspace_for_route
 
 
+def test_reminder_visible_refresh_rerenders_time_based_ui_even_when_records_are_unchanged() -> None:
+    app = read("app.js")
+    load_workspace_collection = function_block(app, "loadWorkspaceCollection")
+
+    assert 'if (options.render && (changed || options.renderWhenUnchanged === true)) {' in load_workspace_collection
+    assert 'renderWhenUnchanged: true,' in app
+    assert 'reason: "visible_stale"' in app
+    assert 'reason: "visibility_visible"' in app
+
+
 def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_workspace_routes() -> None:
     app = read("app.js")
     light_navigate = function_block(app, "lightNavigate")

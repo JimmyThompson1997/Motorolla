@@ -1848,7 +1848,7 @@
     } finally {
       bucket.loading = false;
     }
-    if (options.render && changed) {
+    if (options.render && (changed || options.renderWhenUnchanged === true)) {
       requestRender(`workspace:${collection}:${String(options.reason || "refresh")}`);
     }
     return changed;
@@ -19702,6 +19702,7 @@
       recordPerfPollTick("workspace_reminders_visible");
       void loadWorkspaceCollection("reminders", {
         render: true,
+        renderWhenUnchanged: true,
         force: true,
         reason: "visible_stale"
       });
@@ -19752,7 +19753,12 @@
     }
     if (state.route === "home") {
       if (workspaceBucketNeedsRefresh("reminders", WORKSPACE_REMINDER_STALE_VISIBLE_MS)) {
-        void loadWorkspaceCollection("reminders", { render: true, force: true, reason: "visibility_visible" });
+        void loadWorkspaceCollection("reminders", {
+          render: true,
+          renderWhenUnchanged: true,
+          force: true,
+          reason: "visibility_visible"
+        });
       }
       return;
     }
