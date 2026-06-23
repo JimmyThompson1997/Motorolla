@@ -834,6 +834,7 @@ class WorkspaceStore:
             graph_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v1'").fetchone()
             graph_v2_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v2'").fetchone()
             graph_v3_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_v3'").fetchone()
+            reminder_graph_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_reminder_connected_graph_v1'").fetchone()
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             task_proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'task_proof_cleanup_v1'").fetchone()
@@ -881,6 +882,8 @@ class WorkspaceStore:
                     ("seeded_graph_v1", "1", now),
                 )
                 self._conn.commit()
+        if not reminder_graph_seeded:
+            self._refresh_seeded_reminder_connected_graph_v1(now)
         if not graph_v2_seeded:
             self._reseed_graph_v2(now)
         if not graph_v3_seeded:
@@ -1395,6 +1398,43 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("seeded_graph_content_refresh_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _refresh_seeded_reminder_connected_graph_v1(self, now_ms: int) -> None:
+        reminder_ids = {
+            "demo-reminder-paint-samples",
+            "demo-reminder-health-call",
+            "demo-reminder-book-note",
+            "demo-reminder-freelance-followup",
+        }
+        reminder_links = []
+        related_record_ids = set()
+        for link in default_workspace_graph_links():
+            source_kind = str(link.get("source_kind") or "").strip()
+            source_id = str(link.get("source_id") or "").strip()
+            target_kind = str(link.get("target_kind") or "").strip()
+            target_id = str(link.get("target_id") or "").strip()
+            source_matches = source_kind == "reminder" and source_id in reminder_ids
+            target_matches = target_kind == "reminder" and target_id in reminder_ids
+            if not source_matches and not target_matches:
+                continue
+            reminder_links.append(link)
+            if source_matches and target_kind and target_kind != "reminder" and target_id:
+                related_record_ids.add(target_id)
+            if target_matches and source_kind and source_kind != "reminder" and source_id:
+                related_record_ids.add(source_id)
+        defaults = default_workspace_graph_records(now_ms)
+        for collection, records in defaults.items():
+            for record in records:
+                if str(record.get("id") or "").strip() in related_record_ids:
+                    self.upsert_record(collection, record)
+        for link in reminder_links:
+            self.upsert_link(link)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_reminder_connected_graph_v1", "1", now_ms),
             )
             self._conn.commit()
 

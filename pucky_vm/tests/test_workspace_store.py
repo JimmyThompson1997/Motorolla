@@ -1380,6 +1380,102 @@ def test_seeded_graph_content_refresh_updates_existing_demo_calendar_examples(tm
     assert meta["value"] == "1"
 
 
+def test_seeded_reminder_connected_graph_refresh_restores_seeded_reminder_links(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    store.patch_record(
+        "reminders",
+        "demo-reminder-health-call",
+        {"summary": "Custom clinic reminder summary"},
+    )
+    store._conn.execute(
+        """
+        DELETE FROM workspace_links
+        WHERE link_id IN (
+            'graph-reminder-health-contact',
+            'graph-reminder-health-calendar',
+            'graph-reminder-health-note',
+            'graph-reminder-paint-task',
+            'graph-reminder-paint-meeting',
+            'graph-reminder-note-note',
+            'graph-reminder-note-feed',
+            'graph-reminder-freelance-task',
+            'graph-reminder-freelance-meeting'
+        )
+        """
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_reminder_connected_graph_v1'")
+    store._conn.commit()
+    store.close()
+
+    clock.value += 60_000
+    refreshed = WorkspaceStore(str(db_path), clock_ms=clock)
+
+    health_links = {
+        (row[0], row[1])
+        for row in refreshed._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'reminder' AND source_id = 'demo-reminder-health-call'
+            """
+        ).fetchall()
+    }
+    assert ("contact", "clinic-front-desk") in health_links
+    assert ("calendar_event", "clinic-checkin") in health_links
+    assert ("note", "clinic-prep-note") in health_links
+
+    paint_links = {
+        (row[0], row[1])
+        for row in refreshed._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'reminder' AND source_id = 'demo-reminder-paint-samples'
+            """
+        ).fetchall()
+    }
+    assert ("task", "demo-task-do-paint-samples") in paint_links
+    assert ("meeting_note", "demo-meeting-home-refresh") in paint_links
+
+    note_links = {
+        (row[0], row[1])
+        for row in refreshed._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'reminder' AND source_id = 'demo-reminder-book-note'
+            """
+        ).fetchall()
+    }
+    assert ("note", "clinic-prep-note") in note_links
+    assert ("feed_item", "calendar-change") in note_links
+
+    freelance_links = {
+        (row[0], row[1])
+        for row in refreshed._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'reminder' AND source_id = 'demo-reminder-freelance-followup'
+            """
+        ).fetchall()
+    }
+    assert ("task", "demo-task-send-freelance-mockup") in freelance_links
+    assert ("meeting_note", "demo-meeting-freelance-followup") in freelance_links
+
+    health_reminder = refreshed.get_record("reminders", "demo-reminder-health-call")
+    assert health_reminder is not None
+    assert health_reminder["summary"] == "Custom clinic reminder summary"
+
+    meta = refreshed._conn.execute(
+        "SELECT value FROM workspace_meta WHERE key = 'seeded_reminder_connected_graph_v1'"
+    ).fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
+
+
 def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
 
