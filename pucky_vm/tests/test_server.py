@@ -1021,6 +1021,35 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
 
+    def test_ui_route_perf_events_endpoint_records_and_lists_run_slice(self) -> None:
+        create = self.post_json(
+            "/api/ui/route-perf-events",
+            {
+                "schema": "pucky.ui_route_perf_event.v1",
+                "surface": "android_webview",
+                "route": "calendar",
+                "run_id": "proof-run-1",
+                "session_id": "session-a",
+                "sample_reason": "debug_perf",
+                "wall_elapsed_ms": 1200,
+                "route_ready_elapsed_ms": 440,
+                "bridge_calls_by_command": {"pucky.turn.status": 2},
+            },
+        )
+
+        self.assertTrue(create["ok"])
+
+        payload = self.get_json(
+            "/api/ui/route-perf-events?run_id=proof-run-1&limit=5",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema"], "pucky.ui_route_perf_events.v1")
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["route"], "calendar")
+        self.assertEqual(payload["items"][0]["bridge_calls_by_command"]["pucky.turn.status"], 2)
+
     def test_unauthenticated_browser_reads_allow_feed_meetings_workspace_and_artifacts(self) -> None:
         self.post_json(
             "/api/meetings",

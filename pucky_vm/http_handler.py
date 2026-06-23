@@ -62,6 +62,24 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     return
                 self._json(HTTPStatus.OK, service.agent_runtime_catalog())
                 return
+            if path == "/api/ui/route-perf-events":
+                if not self._is_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                query = parse_qs(parsed.query)
+                try:
+                    limit = int(query.get("limit", ["250"])[0])
+                except ValueError:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_limit"})
+                    return
+                self._json(
+                    HTTPStatus.OK,
+                    service.recent_ui_route_perf_events(
+                        run_id=query.get("run_id", [""])[0],
+                        limit=limit,
+                    ),
+                )
+                return
             if path == "/api/links/composio/portal-url":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -537,6 +555,22 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     return
                 except Exception as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": "feed_action_failed", "detail": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            if path == "/api/ui/route-perf-events":
+                if not self._is_authorized():
+                    self._drain_request_body(256 * 1024)
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                try:
+                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                    result = service.record_ui_route_perf_event(payload)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "ui_route_perf_ingest_failed", "detail": str(exc)})
                     return
                 self._json(HTTPStatus.OK, result)
                 return

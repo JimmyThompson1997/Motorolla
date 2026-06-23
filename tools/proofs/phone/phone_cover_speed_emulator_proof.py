@@ -7,6 +7,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -59,6 +61,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--devtools-port", type=int, default=9222)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--perf-run-id", default="")
     args = parser.parse_args(argv)
     args.adb = args.adb.resolve()
     args.apk = args.apk.resolve()
@@ -72,6 +75,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.app_slug = str(args.app_slug or "slack").strip().lower() or "slack"
     args.iterations = max(1, int(args.iterations or 1))
     args.baseline = args.baseline.resolve() if args.baseline else None
+    args.perf_run_id = str(args.perf_run_id or "").strip()
     return args
 
 
@@ -172,8 +176,40 @@ def build_diff(summary: dict[str, Any], baseline_path: Path | None) -> dict[str,
     return diff
 
 
+def telemetry_base_url(args: argparse.Namespace) -> str:
+    parsed = urlsplit(str(args.base_url or auth_proof.DEFAULT_BASE_URL))
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return auth_proof.DEFAULT_BASE_URL.rstrip("/")
+
+
+def fetch_server_telemetry(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not args.api_token or not args.perf_run_id:
+        return None
+    request = Request(
+        f"{telemetry_base_url(args)}/api/ui/route-perf-events?run_id={args.perf_run_id}&limit=500",
+        headers={"Authorization": f"Bearer {args.api_token}"},
+    )
+    with urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def clear_logcat(args: argparse.Namespace) -> None:
+    auth_proof.run(args, ["logcat", "-c"], timeout=20, check=False)
+
+
+def dump_logcat(args: argparse.Namespace, target: Path) -> None:
+    try:
+        completed = auth_proof.run(args, ["logcat", "-d"], timeout=30, check=False)
+        target.write_text((completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else ""), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - defensive fallback for live adb failures
+        target.write_text(f"logcat capture failed: {exc}\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if not args.perf_run_id:
+        args.perf_run_id = f"emulator-speed-loop-{int(time.time() * 1000)}"
     auth_proof.ensure_dir(args.report_dir)
     summary: dict[str, Any] = {
         "schema": RESULT_SCHEMA,
@@ -184,11 +220,15 @@ def main(argv: list[str] | None = None) -> int:
         "app_slug": args.app_slug,
         "api_token_present": bool(args.api_token),
         "device_token_present": bool(args.device_token),
+        "perf_run_id": args.perf_run_id,
         "fresh_loads": {},
         "route_opens": {},
         "detail_opens": {},
         "connect_auth": None,
         "screenshots": {},
+        "logcat_path": "",
+        "server_telemetry": None,
+        "server_telemetry_path": "",
         "diff": None,
     }
     cover_forward_port = ""
@@ -197,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         auth_proof.ensure_live_credentials(args)
         auth_proof.ensure_device(args)
         auth_proof.ensure_chrome_available(args)
+        clear_logcat(args)
         auth_proof.clear_chrome(args)
         auth_proof.install_apk(args)
         auth_proof.clear_app(args)
@@ -369,12 +410,20 @@ def main(argv: list[str] | None = None) -> int:
             "handoff": last_handoff,
         }
 
+        summary["server_telemetry"] = fetch_server_telemetry(args)
+        if summary["server_telemetry"] is not None:
+            summary["server_telemetry_path"] = str(args.report_dir / "server-telemetry.json")
+            auth_proof.write_json(args.report_dir / "server-telemetry.json", summary["server_telemetry"])
+        summary["logcat_path"] = str(args.report_dir / "logcat.txt")
+        dump_logcat(args, args.report_dir / "logcat.txt")
         summary["diff"] = build_diff(summary, args.baseline)
         summary["ok"] = True
         auth_proof.write_json(args.report_dir / "summary.json", summary)
         return 0
     except Exception as exc:
         summary["error"] = str(exc)
+        summary["logcat_path"] = str(args.report_dir / "logcat.txt")
+        dump_logcat(args, args.report_dir / "logcat.txt")
         auth_proof.write_json(args.report_dir / "summary.json", summary)
         print(str(exc), file=sys.stderr)
         return 1

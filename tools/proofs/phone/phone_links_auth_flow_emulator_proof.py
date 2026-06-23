@@ -579,6 +579,9 @@ def browser_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     node_path = str(args.node_modules)
     env["NODE_PATH"] = node_path if not env.get("NODE_PATH") else os.pathsep.join([node_path, env["NODE_PATH"]])
+    perf_run_id = str(getattr(args, "perf_run_id", "") or "").strip()
+    if perf_run_id:
+        env["PUCKY_PERF_RUN_ID"] = perf_run_id
     return env
 
 

@@ -228,7 +228,10 @@ def test_boot_and_navigation_no_longer_depend_on_legacy_shell_state() -> None:
     assert "state.openTrayRoute" not in light_back
     assert "syncThemeQueryParam(state.theme);" in app
     assert "syncRouteQueryParam(state.route);" in app
-    assert re.search(r"\n  render\(\);\n  syncPerfDebugState\(\"boot\"\);\n  installFeedScrollPersistence\(\);", app)
+    assert re.search(
+        r"\n  render\(\);\n  setPerfBootPhase\(\"initial_render\"\);\n  syncPerfDebugState\(\"boot\"\);\n  installFeedScrollPersistence\(\);",
+        app,
+    )
 
 
 def test_home_route_forces_reminder_collection_refresh() -> None:
@@ -562,7 +565,7 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'bucket.items = nextItems;' in load_workspace
     assert 'bucket.fingerprint = nextFingerprint;' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
-    assert 'bucket.lastRefreshAt = Date.now();' in load_workspace
+    assert 'bucket.lastRefreshAt = refreshedAt;' in load_workspace
     assert 'bucket.dirty = false;' in load_workspace
     assert "pucky-ui-state.js" in index_html
     assert legacy_browser_state not in index_html
@@ -601,16 +604,67 @@ def test_perf_debug_contract_exposes_route_ready_render_bridge_and_poll_metrics(
     assert 'function perfDebugMetrics() {' in app
     assert 'route_ready: Boolean(perfDebugState.route_ready),' in perf_metrics
     assert 'route_ready_reason: String(perfDebugState.route_ready_reason || ""),' in perf_metrics
+    assert 'route_enter_at_ms: safeNumber(perfDebugState.route_enter_at_ms),' in perf_metrics
+    assert 'route_data_start_at_ms: safeNumber(perfDebugState.route_data_start_at_ms),' in perf_metrics
+    assert 'route_data_end_at_ms: safeNumber(perfDebugState.route_data_end_at_ms),' in perf_metrics
+    assert 'wall_elapsed_ms: Math.max(0, Date.now() - safeNumber(perfDebugState.route_enter_at_ms)),' in perf_metrics
+    assert 'bridge_total_ms: safeNumber(perfDebugState.bridge_total_ms),' in perf_metrics
     assert 'render_count: safeNumber(perfDebugState.render_count),' in perf_metrics
     assert 'bridge_calls_by_command: { ...perfDebugState.bridge_calls_by_command },' in perf_metrics
     assert 'fetches_by_key: { ...perfDebugState.fetches_by_key },' in perf_metrics
     assert 'poll_ticks_by_lane: { ...perfDebugState.poll_ticks_by_lane },' in perf_metrics
+    assert 'cache_hits_by_key: { ...perfDebugState.cache_hits_by_key },' in perf_metrics
+    assert 'deferred_tasks_started: safeNumber(perfDebugState.deferred_tasks_started),' in perf_metrics
+    assert 'deferred_tasks_completed: safeNumber(perfDebugState.deferred_tasks_completed),' in perf_metrics
+    assert 'unchanged_refresh_skips: safeNumber(perfDebugState.unchanged_refresh_skips),' in perf_metrics
+    assert 'sample_reason: String(perfDebugState.sample_reason || ""),' in perf_metrics
+    assert 'surface: String(perfDebugState.surface || ""),' in perf_metrics
+    assert 'device_class: String(perfDebugState.device_class || ""),' in perf_metrics
     assert 'case "connect":' in route_ready
     assert 'case "tasks":' in route_ready
     assert 'case "calendar":' in route_ready
+    assert '"connect_catalog_ready"' in route_ready
     assert 'if (action === "perf_metrics") {' in ui_dispatch
     assert 'metrics: perfDebugMetrics(),' in ui_dispatch
     assert 'perfMetrics: perfDebugMetrics' in app
+
+
+def test_perf_telemetry_sampling_and_flush_posts_route_events_to_dedicated_endpoint() -> None:
+    app = read("app.js")
+    initial_perf = function_block(app, "initialPerfDebugState")
+    route_perf_payload = function_block(app, "routePerfEventPayload")
+    flush_route_perf = function_block(app, "flushRoutePerfTelemetry")
+
+    assert 'const PERF_BROWSER_SAMPLE_RATE = 0.01;' in app
+    assert 'const PERF_ANDROID_SAMPLE_RATE = 0.05;' in app
+    assert 'function perfTelemetrySampleReason() {' in app
+    assert 'enabled: perfDebugEnabled() || Boolean(sampleReason),' in initial_perf
+    assert 'schema: "pucky.ui_route_perf_event.v1",' in app
+    assert 'function flushRoutePerfTelemetry(trigger = "route_ready") {' in app
+    assert "/api/ui/route-perf-events" in flush_route_perf
+    assert 'app_version: "",' in route_perf_payload
+    assert 'ui_version: String(state.uiSurface?.ui_version || bundleUiVersion() || ""),' in route_perf_payload
+
+
+def test_shared_bridge_cache_and_calendar_day_cache_support_android_shell_tax_reduction() -> None:
+    app = read("app.js")
+    load_workspace = function_block(app, "loadWorkspaceCollection")
+    load_workspace_for_route = function_block(app, "loadWorkspaceForRoute")
+    request_native_config = function_block(app, "requestNativeLinksConfig")
+
+    assert "const bridgeReadCache = new Map();" in app
+    assert "function cachedBridgeRead(command, args = {}, options = {}) {" in app
+    assert 'invalidateBridgeReadCache("pucky.turn.settings.get");' in app
+    assert 'invalidateBridgeReadCache("wake.status");' in app
+    assert 'invalidateBridgeReadCache("ui.default_audio_speed.get");' in app
+    assert 'queryKey: "",' in app
+    assert "queryCache: {}" in app
+    assert 'recordPerfCacheHit(`workspace:${collection}`);' in load_workspace
+    assert 'allowCachedRender: true,' in load_workspace
+    assert 'rememberWorkspaceCache(bucket, queryKey, nextItems, nextFingerprint, refreshedAt);' in load_workspace
+    assert 'shiftCalendarDateKey(dayKey, -1)' in load_workspace
+    assert 'const queryKey = workspaceRouteQueryKey(route, options);' in load_workspace_for_route
+    assert 'const cached = !options.force ? readBridgeCache("pucky.config.get", {}, PERF_BRIDGE_CACHE_TTL_MS) : null;' in request_native_config
 
 
 def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:

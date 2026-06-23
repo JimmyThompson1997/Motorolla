@@ -69,6 +69,11 @@
   const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];
   const AUDIO_PROBE_EVENT_LIMIT = 48;
   const PERF_DEBUG_EVENT_LIMIT = 96;
+  const PERF_BRIDGE_CACHE_TTL_MS = 30000;
+  const PERF_DEFERRED_TASK_DELAY_MS = 120;
+  const PERF_CALENDAR_PRELOAD_DELAY_MS = 180;
+  const PERF_BROWSER_SAMPLE_RATE = 0.01;
+  const PERF_ANDROID_SAMPLE_RATE = 0.05;
   const AUDIO_START_CONFIRMATION_TIMEOUT_MS = 1800;
   const AUDIO_EARLY_END_WINDOW_MS = 2000;
   const AUDIO_TERMINAL_RESET_MS = 1600;
@@ -268,6 +273,8 @@
   ensureStoredHomeMenuIcons();
 
   const pending = new Map();
+  const bridgeReadCache = new Map();
+  const deferredPerfTasks = new Map();
   let seq = 0;
   let feedSyncIntervalId = 0;
   let audioProbeResetTimerId = 0;
@@ -279,6 +286,7 @@
   let lastPlayerStatePollAt = 0;
   let lastWakeStatusPollAt = 0;
   let lastMeetingStatusPollAt = 0;
+  let perfTelemetryInFlight = 0;
   const archiveRevealDebugTrace = [];
   const archiveRevealDebugState = {
     enabled: archiveRevealDebugEnabled(),
@@ -644,24 +652,90 @@
       error: "",
       dirty: false,
       lastRefreshAt: 0,
-      fingerprint: ""
+      fingerprint: "",
+      queryKey: "",
+      queryCache: {}
     };
   }
 
+  function perfDebugSessionId() {
+    try {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+      }
+    } catch (_) {
+      // Ignore crypto unavailability in previews.
+    }
+    return `perf-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  }
+
+  function resolvePerfRunId() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return String(params.get("perf_run_id") || params.get("debug_perf_run_id") || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function perfSurfaceName() {
+    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      return "android_webview";
+    }
+    return /^https?:/i.test(String(window.location && window.location.protocol || "")) ? "hosted_browser" : "browser_preview";
+  }
+
+  function perfDeviceClass() {
+    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
+      return "android_webview";
+    }
+    const width = Math.max(0, Number(window.innerWidth || 0));
+    return width && width <= 700 ? "mobile_browser" : "desktop_browser";
+  }
+
+  function perfTelemetrySampleReason() {
+    if (perfDebugEnabled()) {
+      return "debug_perf";
+    }
+    const rate = window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function"
+      ? PERF_ANDROID_SAMPLE_RATE
+      : PERF_BROWSER_SAMPLE_RATE;
+    return Math.random() < rate
+      ? (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" ? "android_sampled" : "browser_sampled")
+      : "";
+  }
+
   function initialPerfDebugState(initialRoute = "") {
+    const now = Date.now();
+    const sampleReason = perfTelemetrySampleReason();
     return {
-      enabled: perfDebugEnabled(),
+      enabled: perfDebugEnabled() || Boolean(sampleReason),
+      session_id: perfDebugSessionId(),
+      run_id: resolvePerfRunId(),
+      sample_reason: sampleReason,
+      surface: perfSurfaceName(),
+      device_class: perfDeviceClass(),
+      boot_phase: "booting",
       route: String(initialRoute || "home").trim() || "home",
       route_sequence: 1,
-      route_started_at_ms: Date.now(),
+      route_started_at_ms: now,
+      route_enter_at_ms: now,
+      route_data_start_at_ms: 0,
+      route_data_end_at_ms: 0,
       route_ready: false,
       route_ready_reason: "",
       route_ready_at_ms: 0,
+      route_perf_sent: false,
       render_count: 0,
       last_render_ms: 0,
+      bridge_total_ms: 0,
       bridge_calls_by_command: {},
       fetches_by_key: {},
       poll_ticks_by_lane: {},
+      cache_hits_by_key: {},
+      deferred_tasks_started: 0,
+      deferred_tasks_completed: 0,
+      unchanged_refresh_skips: 0,
       recent_events: []
     };
   }
@@ -700,20 +774,110 @@
   function clearPerfDebugState() {
     const next = initialPerfDebugState(state.route);
     perfDebugState.enabled = next.enabled;
+    perfDebugState.session_id = next.session_id;
+    perfDebugState.run_id = next.run_id;
+    perfDebugState.sample_reason = next.sample_reason;
+    perfDebugState.surface = next.surface;
+    perfDebugState.device_class = next.device_class;
+    perfDebugState.boot_phase = next.boot_phase;
     perfDebugState.route = next.route;
     perfDebugState.route_sequence = next.route_sequence;
     perfDebugState.route_started_at_ms = next.route_started_at_ms;
+    perfDebugState.route_enter_at_ms = next.route_enter_at_ms;
+    perfDebugState.route_data_start_at_ms = next.route_data_start_at_ms;
+    perfDebugState.route_data_end_at_ms = next.route_data_end_at_ms;
     perfDebugState.route_ready = next.route_ready;
     perfDebugState.route_ready_reason = next.route_ready_reason;
     perfDebugState.route_ready_at_ms = next.route_ready_at_ms;
+    perfDebugState.route_perf_sent = next.route_perf_sent;
     perfDebugState.render_count = next.render_count;
     perfDebugState.last_render_ms = next.last_render_ms;
+    perfDebugState.bridge_total_ms = next.bridge_total_ms;
     perfDebugState.bridge_calls_by_command = {};
     perfDebugState.fetches_by_key = {};
     perfDebugState.poll_ticks_by_lane = {};
+    perfDebugState.cache_hits_by_key = {};
+    perfDebugState.deferred_tasks_started = 0;
+    perfDebugState.deferred_tasks_completed = 0;
+    perfDebugState.unchanged_refresh_skips = 0;
     perfDebugState.recent_events = [];
     perfDebugPushEvent("perf_debug_cleared", {});
     syncPerfDebugState("perf_debug_cleared");
+  }
+
+  function setPerfBootPhase(phase) {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    const nextPhase = String(phase || "").trim();
+    if (!nextPhase || perfDebugState.boot_phase === nextPhase) {
+      return;
+    }
+    perfDebugState.boot_phase = nextPhase;
+    perfDebugPushEvent("boot_phase", { phase: nextPhase });
+  }
+
+  function recordPerfRouteDataStart(label) {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    if (!safeNumber(perfDebugState.route_data_start_at_ms)) {
+      perfDebugState.route_data_start_at_ms = Date.now();
+    }
+    perfDebugPushEvent("route_data_start", { label: String(label || "").trim() || "unknown" });
+  }
+
+  function recordPerfRouteDataEnd(label) {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    perfDebugState.route_data_end_at_ms = Date.now();
+    perfDebugPushEvent("route_data_end", { label: String(label || "").trim() || "unknown" });
+  }
+
+  function recordPerfCacheHit(key) {
+    perfDebugIncrementCounter("cache_hits_by_key", key);
+  }
+
+  function recordPerfUnchangedRefreshSkip(key) {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    perfDebugState.unchanged_refresh_skips = safeNumber(perfDebugState.unchanged_refresh_skips) + 1;
+    perfDebugPushEvent("unchanged_refresh_skip", { key: String(key || "").trim() || "unknown" });
+  }
+
+  function queueDeferredPerfTask(name, work, options = {}) {
+    const taskName = String(name || "").trim();
+    if (!taskName || typeof work !== "function") {
+      return false;
+    }
+    if (deferredPerfTasks.has(taskName)) {
+      return false;
+    }
+    const delayMs = Math.max(0, safeNumber(options.delayMs, PERF_DEFERRED_TASK_DELAY_MS));
+    const token = setTimeout(async () => {
+      deferredPerfTasks.delete(taskName);
+      if (perfDebugState.enabled) {
+        perfDebugState.deferred_tasks_started = safeNumber(perfDebugState.deferred_tasks_started) + 1;
+        perfDebugPushEvent("deferred_task_start", { name: taskName });
+      }
+      try {
+        await work();
+      } catch (error) {
+        perfDebugPushEvent("deferred_task_error", {
+          name: taskName,
+          error: String(error && error.message || error || "unknown")
+        });
+      } finally {
+        if (perfDebugState.enabled) {
+          perfDebugState.deferred_tasks_completed = safeNumber(perfDebugState.deferred_tasks_completed) + 1;
+          perfDebugPushEvent("deferred_task_complete", { name: taskName });
+        }
+      }
+    }, delayMs);
+    deferredPerfTasks.set(taskName, token);
+    return true;
   }
 
   function stableJsonFingerprint(value) {
@@ -852,17 +1016,19 @@
             reason: "waiting_selector:.links-search"
           };
         }
-        if (state.links.loading && !state.links.connectedLoaded && !state.links.error && !state.links.message) {
+        if (state.links.loading && !state.links.firstPageReady && !state.links.connectedLoaded && !state.links.error && !state.links.message) {
           return {
             ready: false,
             reason: "loading:connect"
           };
         }
-        if (state.links.connectedLoaded || state.links.error || state.links.message || state.links.token || state.links.userId) {
+        if (state.links.firstPageReady || state.links.connectedLoaded || state.links.error || state.links.message || state.links.token || state.links.userId) {
           return {
             ready: true,
             reason: state.links.error
               ? "connect_error"
+              : state.links.firstPageReady
+                ? "connect_catalog_ready"
               : state.links.connectedLoaded
                 ? "connect_connected_loaded"
                 : "connect_session_ready"
@@ -907,12 +1073,30 @@
     }
     const route = String(state.route || "home").trim() || "home";
     if (perfDebugState.route !== route) {
+      if (perfDebugState.route_ready && !perfDebugState.route_perf_sent) {
+        void flushRoutePerfTelemetry("route_change");
+      }
       perfDebugState.route = route;
       perfDebugState.route_sequence += 1;
       perfDebugState.route_started_at_ms = Date.now();
+      perfDebugState.route_enter_at_ms = perfDebugState.route_started_at_ms;
+      perfDebugState.route_data_start_at_ms = 0;
+      perfDebugState.route_data_end_at_ms = 0;
       perfDebugState.route_ready = false;
       perfDebugState.route_ready_reason = "";
       perfDebugState.route_ready_at_ms = 0;
+      perfDebugState.route_perf_sent = false;
+      perfDebugState.render_count = 0;
+      perfDebugState.last_render_ms = 0;
+      perfDebugState.bridge_total_ms = 0;
+      perfDebugState.bridge_calls_by_command = {};
+      perfDebugState.fetches_by_key = {};
+      perfDebugState.poll_ticks_by_lane = {};
+      perfDebugState.cache_hits_by_key = {};
+      perfDebugState.deferred_tasks_started = 0;
+      perfDebugState.deferred_tasks_completed = 0;
+      perfDebugState.unchanged_refresh_skips = 0;
+      perfDebugState.recent_events = [];
       perfDebugPushEvent("route_changed", { route, reason: String(reason || "").trim() || "unknown" });
     }
     const snapshot = routeReadyState(route);
@@ -920,10 +1104,14 @@
     if (snapshot.ready && !perfDebugState.route_ready) {
       perfDebugState.route_ready = true;
       perfDebugState.route_ready_at_ms = Date.now();
+      setPerfBootPhase("route_ready");
       perfDebugPushEvent("route_ready", {
         route,
         reason: perfDebugState.route_ready_reason,
         elapsed_ms: Math.max(0, perfDebugState.route_ready_at_ms - perfDebugState.route_started_at_ms)
+      });
+      queueDeferredPerfTask(`perf_flush:${route}:${safeNumber(perfDebugState.route_sequence)}`, () => flushRoutePerfTelemetry("route_ready"), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS
       });
     } else if (!snapshot.ready) {
       perfDebugState.route_ready = false;
@@ -939,17 +1127,32 @@
       route: String(perfDebugState.route || state.route || "home").trim() || "home",
       route_sequence: safeNumber(perfDebugState.route_sequence, 1),
       route_started_at_ms: safeNumber(perfDebugState.route_started_at_ms),
+      route_enter_at_ms: safeNumber(perfDebugState.route_enter_at_ms),
+      route_data_start_at_ms: safeNumber(perfDebugState.route_data_start_at_ms),
+      route_data_end_at_ms: safeNumber(perfDebugState.route_data_end_at_ms),
       route_ready: Boolean(perfDebugState.route_ready),
       route_ready_reason: String(perfDebugState.route_ready_reason || ""),
       route_ready_at_ms: safeNumber(perfDebugState.route_ready_at_ms),
       route_ready_elapsed_ms: perfDebugState.route_ready_at_ms
         ? Math.max(0, safeNumber(perfDebugState.route_ready_at_ms) - safeNumber(perfDebugState.route_started_at_ms))
         : 0,
+      wall_elapsed_ms: Math.max(0, Date.now() - safeNumber(perfDebugState.route_enter_at_ms)),
+      bridge_total_ms: safeNumber(perfDebugState.bridge_total_ms),
       render_count: safeNumber(perfDebugState.render_count),
       last_render_ms: safeNumber(perfDebugState.last_render_ms),
+      boot_phase: String(perfDebugState.boot_phase || ""),
+      session_id: String(perfDebugState.session_id || ""),
+      run_id: String(perfDebugState.run_id || ""),
+      sample_reason: String(perfDebugState.sample_reason || ""),
+      surface: String(perfDebugState.surface || ""),
+      device_class: String(perfDebugState.device_class || ""),
       bridge_calls_by_command: { ...perfDebugState.bridge_calls_by_command },
       fetches_by_key: { ...perfDebugState.fetches_by_key },
       poll_ticks_by_lane: { ...perfDebugState.poll_ticks_by_lane },
+      cache_hits_by_key: { ...perfDebugState.cache_hits_by_key },
+      deferred_tasks_started: safeNumber(perfDebugState.deferred_tasks_started),
+      deferred_tasks_completed: safeNumber(perfDebugState.deferred_tasks_completed),
+      unchanged_refresh_skips: safeNumber(perfDebugState.unchanged_refresh_skips),
       recent_events: perfDebugState.recent_events.slice(-PERF_DEBUG_EVENT_LIMIT)
     };
   }
@@ -963,6 +1166,7 @@
       return;
     }
     perfDebugIncrementCounter("bridge_calls_by_command", name);
+    perfDebugState.bridge_total_ms = safeNumber(perfDebugState.bridge_total_ms) + Math.max(0, perfNowMs() - safeNumber(startedAt));
     if (!ok || error) {
       perfDebugPushEvent("bridge_error", {
         command: name,
@@ -1044,10 +1248,22 @@
     return 0;
   }
 
-  function workspaceBucketNeedsRefresh(collection, staleMs) {
+  function workspaceRouteQueryKey(route = state.route, options = {}) {
+    const currentRoute = String(route || "").trim();
+    if (currentRoute === "calendar") {
+      return normalizeCalendarDateKey(options.date || options.queryKey || selectedCalendarDateKey()) || "";
+    }
+    return "";
+  }
+
+  function workspaceBucketNeedsRefresh(collection, staleMs, options = {}) {
     const bucket = workspaceBucket(collection);
     if (!bucket) {
       return false;
+    }
+    const queryKey = String(options.queryKey || "").trim();
+    if (queryKey && String(bucket.queryKey || "").trim() !== queryKey) {
+      return true;
     }
     if (!bucket.loaded || bucket.dirty) {
       return true;
@@ -1819,36 +2035,152 @@
     }
   }
 
-  async function loadWorkspaceCollection(collection, options = {}) {
-    const bucket = state.workspace[collection];
-    if (!bucket || bucket.loading) {
+  function workspaceQueryKey(collection, options = {}) {
+    if (String(collection || "").trim() === "calendar-events") {
+      return normalizeCalendarDateKey(options.date || options.queryKey || selectedCalendarDateKey()) || "";
+    }
+    return "";
+  }
+
+  function workspaceCacheEntry(bucket, queryKey) {
+    if (!bucket || !queryKey || !(bucket.queryCache && typeof bucket.queryCache === "object")) {
+      return null;
+    }
+    const cached = bucket.queryCache[queryKey];
+    return cached && typeof cached === "object" ? cached : null;
+  }
+
+  function rememberWorkspaceCache(bucket, queryKey, items, fingerprint, lastRefreshAt) {
+    if (!bucket || !queryKey) {
       return;
     }
-    const hadError = Boolean(bucket.error);
-    bucket.loading = true;
+    const nextCache = bucket.queryCache && typeof bucket.queryCache === "object"
+      ? { ...bucket.queryCache }
+      : {};
+    nextCache[queryKey] = {
+      items: Array.isArray(items) ? items.slice() : [],
+      fingerprint: String(fingerprint || ""),
+      lastRefreshAt: safeNumber(lastRefreshAt)
+    };
+    const keys = Object.keys(nextCache).sort((left, right) => {
+      const leftTime = safeNumber(nextCache[left] && nextCache[left].lastRefreshAt);
+      const rightTime = safeNumber(nextCache[right] && nextCache[right].lastRefreshAt);
+      return rightTime - leftTime;
+    });
+    while (keys.length > 5) {
+      const staleKey = keys.pop();
+      if (!staleKey) {
+        break;
+      }
+      delete nextCache[staleKey];
+    }
+    bucket.queryCache = nextCache;
+  }
+
+  function applyWorkspaceCacheEntry(bucket, queryKey, entry) {
+    if (!bucket || !entry || typeof entry !== "object") {
+      return false;
+    }
+    const nextItems = Array.isArray(entry.items) ? entry.items.slice() : [];
+    const nextFingerprint = String(entry.fingerprint || stableJsonFingerprint(nextItems));
+    const changed = bucket.fingerprint !== nextFingerprint || String(bucket.queryKey || "") !== queryKey || !bucket.loaded;
+    bucket.items = nextItems;
+    bucket.fingerprint = nextFingerprint;
+    bucket.queryKey = String(queryKey || "");
+    bucket.loaded = true;
+    bucket.loading = false;
     bucket.error = "";
+    bucket.lastRefreshAt = safeNumber(entry.lastRefreshAt);
+    bucket.dirty = false;
+    return changed;
+  }
+
+  async function loadWorkspaceCollection(collection, options = {}) {
+    const bucket = state.workspace[collection];
+    if (!bucket || (bucket.loading && options.preload !== true)) {
+      return;
+    }
+    const queryKey = workspaceQueryKey(collection, options);
+    const staleMs = workspaceCollectionStaleMs(collection);
+    const cachedEntry = workspaceCacheEntry(bucket, queryKey);
+    const cachedFresh = Boolean(
+      cachedEntry
+      && !bucket.dirty
+      && (Date.now() - safeNumber(cachedEntry.lastRefreshAt)) < Math.max(1000, staleMs)
+    );
+    if (!options.force && cachedEntry && (cachedFresh || options.allowCachedRender === true)) {
+      recordPerfCacheHit(`workspace:${collection}`);
+      recordPerfRouteDataStart(`workspace:${collection}:cache`);
+      const changedFromCache = applyWorkspaceCacheEntry(bucket, queryKey, cachedEntry);
+      recordPerfRouteDataEnd(`workspace:${collection}:cache`);
+      if (options.render && changedFromCache) {
+        requestRender(`workspace:${collection}:${String(options.reason || "cache")}`);
+      }
+      if (cachedFresh) {
+        return changedFromCache;
+      }
+    }
+    const hadError = Boolean(bucket.error);
+    if (options.preload !== true) {
+      bucket.loading = true;
+      bucket.error = "";
+    }
     let changed = !bucket.loaded || hadError;
     try {
       await ensureLinksApiConfig();
-      const date = "";
+      const date = String(options.date || queryKey || "");
+      recordPerfRouteDataStart(`workspace:${collection}`);
       const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }), {
         metricKey: `workspace:${collection}`
       });
       const nextItems = Array.isArray(payload && payload.items) ? payload.items : [];
       const nextFingerprint = stableJsonFingerprint(nextItems);
-      if (bucket.fingerprint !== nextFingerprint) {
+      const refreshedAt = Date.now();
+      rememberWorkspaceCache(bucket, queryKey, nextItems, nextFingerprint, refreshedAt);
+      if (options.preload !== true && (bucket.fingerprint !== nextFingerprint || String(bucket.queryKey || "") !== queryKey)) {
         bucket.items = nextItems;
         bucket.fingerprint = nextFingerprint;
+        bucket.queryKey = queryKey;
+        changed = true;
+      } else if (options.preload !== true) {
+        recordPerfUnchangedRefreshSkip(`workspace:${collection}`);
+      }
+      if (options.preload !== true) {
+        bucket.loaded = true;
+        bucket.lastRefreshAt = refreshedAt;
+        bucket.dirty = false;
+      }
+      recordPerfRouteDataEnd(`workspace:${collection}`);
+    } catch (error) {
+      if (options.preload !== true) {
+        bucket.error = String(error && error.message || error || "Workspace request failed");
         changed = true;
       }
-      bucket.loaded = true;
-      bucket.lastRefreshAt = Date.now();
-      bucket.dirty = false;
-    } catch (error) {
-      bucket.error = String(error && error.message || error || "Workspace request failed");
-      changed = true;
     } finally {
-      bucket.loading = false;
+      if (options.preload !== true) {
+        bucket.loading = false;
+      }
+    }
+    if (String(collection || "") === "calendar-events" && options.preload !== true) {
+      const dayKey = normalizeCalendarDateKey(queryKey || selectedCalendarDateKey());
+      if (dayKey) {
+        queueDeferredPerfTask(`calendar-preload:${dayKey}:prev`, () => loadWorkspaceCollection("calendar-events", {
+          render: false,
+          preload: true,
+          allowCachedRender: true,
+          date: shiftCalendarDateKey(dayKey, -1),
+          queryKey: shiftCalendarDateKey(dayKey, -1),
+          reason: "calendar_preload_prev"
+        }), { delayMs: PERF_CALENDAR_PRELOAD_DELAY_MS });
+        queueDeferredPerfTask(`calendar-preload:${dayKey}:next`, () => loadWorkspaceCollection("calendar-events", {
+          render: false,
+          preload: true,
+          allowCachedRender: true,
+          date: shiftCalendarDateKey(dayKey, 1),
+          queryKey: shiftCalendarDateKey(dayKey, 1),
+          reason: "calendar_preload_next"
+        }), { delayMs: PERF_CALENDAR_PRELOAD_DELAY_MS });
+      }
     }
     if (options.render && (changed || options.renderWhenUnchanged === true)) {
       requestRender(`workspace:${collection}:${String(options.reason || "refresh")}`);
@@ -1865,10 +2197,15 @@
     if (!collection) {
       return;
     }
-    if (!options.force && !workspaceBucketNeedsRefresh(collection, workspaceCollectionStaleMs(collection))) {
+    const queryKey = workspaceRouteQueryKey(route, options);
+    if (!options.force && !workspaceBucketNeedsRefresh(collection, workspaceCollectionStaleMs(collection), { queryKey })) {
       return false;
     }
-    return loadWorkspaceCollection(collection, options);
+    return loadWorkspaceCollection(collection, {
+      ...options,
+      queryKey,
+      date: queryKey || options.date || ""
+    });
   }
 
   function workspaceItems(collection) {
@@ -1930,8 +2267,10 @@
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
     try {
+      recordPerfRouteDataStart("inbox:feed");
       const snapshot = await fetchVmFeedSnapshot({ includeArchived: Boolean(options.includeArchived || state.showArchivedFeed) });
       const applied = applyFeedSnapshot(snapshot, { render: options.render !== false });
+      recordPerfRouteDataEnd("inbox:feed");
       await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
       return applied;
     } catch (error) {
@@ -1989,6 +2328,64 @@
     return state.vmFeedSnapshotPromise;
   }
 
+  function cloneCachedBridgeValue(value) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+      return value;
+    }
+  }
+
+  function bridgeReadCacheKey(command, args = {}) {
+    return `${String(command || "").trim()}\u001f${stableJsonFingerprint(args && typeof args === "object" ? args : {})}`;
+  }
+
+  function readBridgeCache(command, args = {}, ttlMs = PERF_BRIDGE_CACHE_TTL_MS) {
+    const key = bridgeReadCacheKey(command, args);
+    const entry = bridgeReadCache.get(key);
+    if (!entry) {
+      return null;
+    }
+    if ((Date.now() - safeNumber(entry.at)) >= Math.max(1000, safeNumber(ttlMs, PERF_BRIDGE_CACHE_TTL_MS))) {
+      bridgeReadCache.delete(key);
+      return null;
+    }
+    recordPerfCacheHit(`bridge:${String(command || "").trim()}`);
+    return cloneCachedBridgeValue(entry.value);
+  }
+
+  function writeBridgeCache(command, args = {}, value) {
+    const key = bridgeReadCacheKey(command, args);
+    bridgeReadCache.set(key, {
+      at: Date.now(),
+      value: cloneCachedBridgeValue(value)
+    });
+  }
+
+  function invalidateBridgeReadCache(command) {
+    const prefix = `${String(command || "").trim()}\u001f`;
+    for (const key of Array.from(bridgeReadCache.keys())) {
+      if (key.startsWith(prefix)) {
+        bridgeReadCache.delete(key);
+      }
+    }
+  }
+
+  async function cachedBridgeRead(command, args = {}, options = {}) {
+    const ttlMs = Math.max(0, safeNumber(options.ttlMs, PERF_BRIDGE_CACHE_TTL_MS));
+    if (!options.force && ttlMs > 0) {
+      const cached = readBridgeCache(command, args, ttlMs);
+      if (cached !== null) {
+        return cached;
+      }
+    }
+    const snapshot = await Pucky.request({ command, args });
+    if (ttlMs > 0) {
+      writeBridgeCache(command, args, snapshot);
+    }
+    return snapshot;
+  }
+
   async function loadTurnStatus(options = {}) {
     const before = stableJsonFingerprint(normalizeTurnStatus(state.turn));
     try {
@@ -2007,7 +2404,7 @@
 
   async function loadTurnSettings(options = {}) {
     try {
-      const snapshot = await Pucky.request({ command: "pucky.turn.settings.get", args: {} });
+      const snapshot = await cachedBridgeRead("pucky.turn.settings.get", {}, options);
       state.turnSettings = normalizeTurnSettings(snapshot);
       if (options.render) {
         render();
@@ -2020,7 +2417,7 @@
   async function loadWakeStatus(options = {}) {
     const before = stableJsonFingerprint(normalizeWakeStatus(state.wakeStatus));
     try {
-      const snapshot = await Pucky.request({ command: "wake.status", args: {} });
+      const snapshot = await cachedBridgeRead("wake.status", {}, options);
       state.wakeStatus = normalizeWakeStatus(snapshot);
       const changed = before !== stableJsonFingerprint(normalizeWakeStatus(state.wakeStatus));
       if (options.render && changed) {
@@ -2035,7 +2432,7 @@
 
   async function loadUiSurfaceStatus(options = {}) {
     try {
-      const snapshot = await Pucky.request({ command: "ui.surface.get", args: {} });
+      const snapshot = await cachedBridgeRead("ui.surface.get", {}, options);
       state.uiSurface = normalizeUiSurfaceStatus(snapshot);
       if (options.render) {
         render();
@@ -2047,7 +2444,7 @@
 
   async function loadDefaultAudioSpeed(options = {}) {
     try {
-      const snapshot = await Pucky.request({ command: "ui.default_audio_speed.get", args: {} });
+      const snapshot = await cachedBridgeRead("ui.default_audio_speed.get", {}, options);
       state.defaultAudioSpeed = clampSpeed(snapshot && snapshot.speed);
       state.defaultAudioSpeedAvailable = true;
     } catch (_) {
@@ -2063,7 +2460,7 @@
     const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     if (hasNativeBridge) {
       try {
-        const snapshot = await Pucky.request({ command: "phone.role.status", args: {} });
+        const snapshot = await cachedBridgeRead("phone.role.status", {}, options);
         state.phoneRole = normalizePhoneRoleStatus({
           ...snapshot,
           source: "native_bridge",
@@ -2174,6 +2571,7 @@
     if (!options.force && state.links.firstPageReady && state.links.apps.length) {
       return;
     }
+    recordPerfRouteDataStart("connect:catalog_bundle");
     const payload = bundledLinksCatalogPayload();
     const apps = payload.apps.map(normalizeLinksApp).filter(item => item.slug && item.name);
     apps.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)));
@@ -2197,6 +2595,7 @@
         "route"
       );
     }
+    recordPerfRouteDataEnd("connect:catalog_bundle");
   }
 
   function resetLinksCatalogState(options = {}) {
@@ -2548,6 +2947,14 @@
     if (!state.links.token && !hostedConnectReadOnlyMode()) {
       return;
     }
+    const age = Date.now() - safeNumber(state.links.lastRefreshAt);
+    if (!options.force && state.links.connectedLoaded && age >= 0 && age < PERF_BRIDGE_CACHE_TTL_MS) {
+      recordPerfCacheHit("links:my-apps");
+      if (options.render) {
+        render();
+      }
+      return;
+    }
     linksDebugRecord(
       "my_apps_start",
       {
@@ -2556,6 +2963,7 @@
       },
       "route"
     );
+    recordPerfRouteDataStart("connect:my_apps");
     const query = new URLSearchParams();
     if (state.links.token) {
       query.set("token", state.links.token);
@@ -2584,6 +2992,7 @@
     state.links.connectedLoaded = true;
     state.links.userId = String(payload && payload.user_id || "").trim();
     state.links.lastRefreshAt = Date.now();
+    recordPerfRouteDataEnd("connect:my_apps");
     linksDebugRecord(
       "my_apps_end",
       {
@@ -3019,6 +3428,10 @@
     const deadlineAt = Date.now() + LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS;
     let lastError = null;
     let lastConfig = null;
+    const cached = !options.force ? readBridgeCache("pucky.config.get", {}, PERF_BRIDGE_CACHE_TTL_MS) : null;
+    if (cached && (!requireApiToken || Boolean(String(cached && cached.api_token || "").trim()) || cached && cached.has_api_token === true)) {
+      return cached;
+    }
     while (Date.now() < deadlineAt) {
       if (!(window.Pucky && typeof window.Pucky.request === "function")) {
         await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
@@ -3029,6 +3442,7 @@
         lastConfig = config && typeof config === "object" ? config : {};
         const hasApiToken = Boolean(String(config && config.api_token || "").trim()) || config && config.has_api_token === true;
         if (!requireApiToken || hasApiToken) {
+          writeBridgeCache("pucky.config.get", {}, config);
           return config;
         }
       } catch (error) {
@@ -3195,6 +3609,84 @@
     }
   }
 
+  function routePerfEventPayload(trigger = "route_ready") {
+    const metrics = perfDebugMetrics();
+    if (!metrics.route_ready || !String(metrics.sample_reason || "").trim()) {
+      return null;
+    }
+    return {
+      schema: "pucky.ui_route_perf_event.v1",
+      surface: String(metrics.surface || perfSurfaceName()),
+      route: String(metrics.route || state.route || "home"),
+      cold_start: safeNumber(metrics.route_sequence, 1) === 1,
+      wall_elapsed_ms: safeNumber(metrics.wall_elapsed_ms),
+      route_ready_elapsed_ms: safeNumber(metrics.route_ready_elapsed_ms),
+      bridge_total_ms: safeNumber(metrics.bridge_total_ms),
+      bridge_calls_by_command: { ...(metrics.bridge_calls_by_command || {}) },
+      fetches_by_key: { ...(metrics.fetches_by_key || {}) },
+      poll_ticks_by_lane: { ...(metrics.poll_ticks_by_lane || {}) },
+      cache_hits_by_key: { ...(metrics.cache_hits_by_key || {}) },
+      deferred_tasks_started: safeNumber(metrics.deferred_tasks_started),
+      deferred_tasks_completed: safeNumber(metrics.deferred_tasks_completed),
+      unchanged_refresh_skips: safeNumber(metrics.unchanged_refresh_skips),
+      device_class: String(metrics.device_class || perfDeviceClass()),
+      app_version: "",
+      ui_version: String(state.uiSurface?.ui_version || bundleUiVersion() || ""),
+      sample_reason: String(metrics.sample_reason || ""),
+      boot_phase: String(metrics.boot_phase || ""),
+      route_ready_reason: String(metrics.route_ready_reason || ""),
+      render_count: safeNumber(metrics.render_count),
+      last_render_ms: safeNumber(metrics.last_render_ms),
+      route_enter_at_ms: safeNumber(metrics.route_enter_at_ms),
+      route_data_start_at_ms: safeNumber(metrics.route_data_start_at_ms),
+      route_data_end_at_ms: safeNumber(metrics.route_data_end_at_ms),
+      route_ready_at_ms: safeNumber(metrics.route_ready_at_ms),
+      session_id: String(metrics.session_id || ""),
+      run_id: String(metrics.run_id || ""),
+      trigger: String(trigger || "route_ready")
+    };
+  }
+
+  async function flushRoutePerfTelemetry(trigger = "route_ready") {
+    if (!perfDebugState.enabled || perfDebugState.route_perf_sent || perfTelemetryInFlight > 0) {
+      return false;
+    }
+    const payload = routePerfEventPayload(trigger);
+    if (!payload) {
+      return false;
+    }
+    perfDebugState.route_perf_sent = true;
+    perfTelemetryInFlight += 1;
+    try {
+      await ensureLinksApiConfig();
+      const headers = await protectedApiAuthorizationHeaders({ method: "POST", authorized: true });
+      if (!((headers && headers.Authorization) || state.links.apiToken)) {
+        perfDebugState.route_perf_sent = false;
+        return false;
+      }
+      const response = await fetch(`${linksApiBaseUrl()}/api/ui/route-perf-events`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          ...(headers || {}),
+          ...(state.links.apiToken ? { Authorization: `Bearer ${state.links.apiToken}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        perfDebugState.route_perf_sent = false;
+        return false;
+      }
+      return true;
+    } catch (_) {
+      perfDebugState.route_perf_sent = false;
+      return false;
+    } finally {
+      perfTelemetryInFlight = Math.max(0, perfTelemetryInFlight - 1);
+    }
+  }
+
   async function loadMeetings(options = {}) {
     if (state.meetings.loading) {
       return;
@@ -3207,6 +3699,7 @@
       renderFeed();
     }
     try {
+      recordPerfRouteDataStart("meetings:list");
       const payload = await linksApiRequest("/api/meetings?compact=1", {
         cache: "no-store",
         metricKey: "links:meetings"
@@ -3220,6 +3713,7 @@
       }
       state.meetings.loaded = true;
       state.meetings.lastRefreshAt = Date.now();
+      recordPerfRouteDataEnd("meetings:list");
     } catch (error) {
       state.meetings.error = meetingsApiErrorMessage(error, "Unable to load meetings");
       changed = true;
@@ -3537,7 +4031,7 @@
 
   function initialSurfaceKind() {
     const url = String(window.location && window.location.href || "");
-    return /^https:\/\/pucky\.fly\.dev\/ui\/pucky\/latest\/index\.html/i.test(url)
+    return /^https:\/\/pucky\.fly\.dev\/ui\/pucky\/latest(?:\/|\/index\.html)/i.test(url)
       ? "hosted_vm"
       : "bundle_current";
   }
@@ -5557,6 +6051,11 @@
     input.addEventListener("change", () => {
       state.selectedCalendarDate = normalizeCalendarDateKey(input.value) || calendarTodayDateKey();
       render();
+      void loadWorkspaceForRoute("calendar", {
+        render: true,
+        allowCachedRender: true,
+        reason: "calendar_day_change"
+      });
     });
     field.append(input);
     controls.append(field);
@@ -5720,6 +6219,11 @@
     chip.addEventListener("click", () => {
       state.selectedCalendarDate = dayKey;
       render();
+      void loadWorkspaceForRoute("calendar", {
+        render: true,
+        allowCachedRender: true,
+        reason: "calendar_day_click"
+      });
     });
     const dots = el("span", "light-calendar-day-dots");
     calendarDayMarkers(dayKey).forEach(tone => dots.append(el("span", `light-calendar-day-dot ${tone}`, "")));
@@ -12491,6 +12995,7 @@
           arrival_cue_mode: state.turnSettings.arrival_cue_mode
         }
       });
+      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -12551,6 +13056,7 @@
         command: enabled ? "wake.start" : "wake.stop",
         args: { enabled }
       });
+      invalidateBridgeReadCache("wake.status");
       state.wakeStatus = normalizeWakeStatus(updated);
       render();
     } catch (_) {
@@ -12573,6 +13079,7 @@
           arrival_cue_mode: arrivalCueMode
         }
       });
+      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -12624,6 +13131,7 @@
           model: nextModel
         }
       });
+      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -12667,6 +13175,7 @@
           reasoning_effort: nextEffort
         }
       });
+      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -16372,6 +16881,7 @@
         event.stopPropagation();
         if (isSetting) {
           const result = await Pucky.request({ command: "ui.default_audio_speed.set", args: { speed } });
+          invalidateBridgeReadCache("ui.default_audio_speed.get");
           state.defaultAudioSpeed = clampSpeed(result && result.speed);
           state.defaultAudioSpeedAvailable = true;
         } else {
@@ -19788,6 +20298,7 @@
         linksDebugRecord("document_hidden", { slug: String(state.links.openingSlug || "") }, "click");
         releaseLinksHandoff({ render: false, reason: "document_hidden" });
       }
+      void flushRoutePerfTelemetry("pagehide");
       persistNavState();
       return;
     }
@@ -19828,6 +20339,62 @@
     void loadWorkspaceForRoute(state.route, { render: true, force: true, reason: "visibility_visible" });
   });
 
+  function runBootRouteSideEffects() {
+    const route = String(state.route || "home").trim() || "home";
+    setPerfBootPhase("boot_critical_dispatch");
+    void syncVoiceThreadScope({ reason: "boot", render: true });
+    if (route === "connect") {
+      linksDebugStartSession("route", { reason: "boot_route" });
+      linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
+      loadLinksPortal({ render: true });
+    } else if (route === "meetings") {
+      loadTurnStatus({ render: false });
+      refreshMeetingRecordingStatus({ render: true });
+      loadMeetings({ render: true, reason: "boot" });
+    } else if (route === "settings") {
+      loadSettingsState({ render: false, ensureSurface: true });
+    } else if (route === "inbox") {
+      loadTurnStatus({ render: false });
+      loadCardIconRegistry({ render: false });
+      loadCards();
+    } else if (route !== "home" && WORKSPACE_ROUTE_COLLECTIONS[route]) {
+      void loadWorkspaceForRoute(route, { render: true, force: true, reason: "boot" });
+    }
+    queueDeferredPerfTask("boot:home:reminders", async () => {
+      if (route === "home") {
+        await loadWorkspaceCollection("reminders", { render: true, force: true, reason: "boot_deferred" });
+      }
+    }, { delayMs: PERF_DEFERRED_TASK_DELAY_MS });
+    queueDeferredPerfTask("boot:ambient:turn_status", async () => {
+      if (route !== "inbox" && route !== "meetings") {
+        await loadTurnStatus({ render: false });
+      }
+    }, { delayMs: PERF_DEFERRED_TASK_DELAY_MS });
+    queueDeferredPerfTask("boot:ambient:ui_surface", () => loadUiSurfaceStatus({ render: false }), {
+      delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
+    });
+    queueDeferredPerfTask("boot:ambient:turn_settings", () => loadTurnSettings({ render: false }), {
+      delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
+    });
+    queueDeferredPerfTask("boot:ambient:default_audio_speed", () => loadDefaultAudioSpeed({ render: false }), {
+      delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
+    });
+    if (route !== "settings") {
+      queueDeferredPerfTask("boot:ambient:phone_role", () => loadPhoneRoleStatus({ render: false }), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
+      });
+      queueDeferredPerfTask("boot:ambient:wake_status", () => loadWakeStatus({ render: false }), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
+      });
+    }
+    if (route !== "inbox") {
+      queueDeferredPerfTask("boot:idle:feed", () => loadCards(), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 5
+      });
+    }
+    setPerfBootPhase("boot_deferred_queued");
+  }
+
   window.PuckyHandleAndroidBack = handleAndroidBack;
   window.PuckyUiDebug = {
     describe: describeUiSurface,
@@ -19838,24 +20405,11 @@
   syncThemeQueryParam(state.theme);
   syncRouteQueryParam(state.route);
   render();
+  setPerfBootPhase("initial_render");
   syncPerfDebugState("boot");
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
   installArchiveRevealOutsideDismiss();
-  void syncVoiceThreadScope({ reason: "boot", render: true });
-  loadTurnStatus({ render: false });
-  refreshMeetingRecordingStatus({ render: true });
-  loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
-  loadCardIconRegistry({ render: false });
-  loadCards();
-  void loadWorkspaceForRoute(state.route, { render: true, force: true, reason: "boot" });
-  if (state.route === "connect") {
-    linksDebugStartSession("route", { reason: "boot_route" });
-    linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
-    loadLinksPortal({ render: true });
-  } else if (state.route === "meetings") {
-    refreshMeetingRecordingStatus({ render: true });
-    loadMeetings({ render: true, reason: "boot" });
-  }
+  runBootRouteSideEffects();
 })();

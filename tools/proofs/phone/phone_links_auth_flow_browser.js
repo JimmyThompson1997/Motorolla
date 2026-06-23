@@ -231,14 +231,21 @@ async function readPerfState(client) {
 async function ensureRoute(client, route, timeoutMs) {
   const targetRoute = String(route || "").trim() || "home";
   const currentRoute = await client.evaluate(`document.querySelector(".app-shell")?.getAttribute("data-view") || ""`);
+  const currentUrl = await client.evaluate(`window.location.href || ""`).catch(() => "");
   const currentPerfMetrics = await client.evaluate(`window.PuckyUiDebug?.perfMetrics?.() || null`).catch(() => null);
   const perfEnabled = Boolean(currentPerfMetrics && currentPerfMetrics.enabled);
-  if (currentRoute !== targetRoute || !perfEnabled) {
+  const perfRunId = String(process.env.PUCKY_PERF_RUN_ID || "").trim();
+  const missingPerfRunId = perfRunId && !String(currentUrl || "").includes(`perf_run_id=${encodeURIComponent(perfRunId)}`);
+  if (currentRoute !== targetRoute || !perfEnabled || missingPerfRunId) {
     await client.evaluate(`(() => {
       const url = new URL(window.location.href);
       url.searchParams.set("route", ${JSON.stringify(targetRoute)});
       url.searchParams.set("reset_nav", "1");
       url.searchParams.set("debug_perf", "1");
+      const perfRunId = ${JSON.stringify(perfRunId)};
+      if (perfRunId) {
+        url.searchParams.set("perf_run_id", perfRunId);
+      }
       window.location.assign(url.toString());
       return true;
     })()`);

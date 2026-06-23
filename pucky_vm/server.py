@@ -50,6 +50,7 @@ from .prompt_context import (
 )
 from .providers import DeepgramSTT, KokoroTTS
 from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
+from .ui_route_perf_ledger import UiRoutePerfLedger
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
 from .workspace_store import SELF_CONTACT_ID, WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
@@ -400,6 +401,7 @@ class Config:
     self_email: str = ""
     self_phone_number: str = ""
     public_base_url: str | None = None
+    ui_route_perf_ledger_path: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -464,6 +466,10 @@ class Config:
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
             public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
+            ui_route_perf_ledger_path=os.environ.get(
+                "PUCKY_UI_ROUTE_PERF_LEDGER_PATH",
+                str((Path.cwd() / "pucky_ui_route_perf.sqlite3").resolve()),
+            ),
         )
 
 
@@ -635,6 +641,10 @@ class PuckyVoiceService:
         self.config = config
         ledger_path = config.action_ledger_path or str(Path(config.feed_db_path).with_suffix(".actions.sqlite3"))
         self.action_ledger = ActionLedger(ledger_path)
+        ui_route_perf_ledger_path = config.ui_route_perf_ledger_path or str(
+            Path(config.feed_db_path).with_suffix(".ui-route-perf.sqlite3")
+        )
+        self.ui_route_perf_ledger = UiRoutePerfLedger(ui_route_perf_ledger_path)
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
         self.tts = tts or KokoroTTS(
             config.deepinfra_api_key,
@@ -1789,6 +1799,33 @@ class PuckyVoiceService:
 
     def agent_runtime_catalog(self) -> dict[str, object]:
         return agent_runtime_catalog_payload()
+
+    def record_ui_route_perf_event(self, payload: dict[str, object]) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise ValueError("ui_route_perf_payload_must_be_object")
+        schema = str(payload.get("schema") or "").strip()
+        if schema != "pucky.ui_route_perf_event.v1":
+            raise ValueError("unsupported_ui_route_perf_schema")
+        self.ui_route_perf_ledger.record(
+            user_id=self.composio_user_id(),
+            payload=payload,
+        )
+        return {
+            "ok": True,
+            "schema": "pucky.ui_route_perf_ingest.v1",
+            "recorded": 1,
+        }
+
+    def recent_ui_route_perf_events(self, *, run_id: str = "", limit: int = 250) -> dict[str, object]:
+        return {
+            "ok": True,
+            "schema": "pucky.ui_route_perf_events.v1",
+            "items": self.ui_route_perf_ledger.recent(
+                self.composio_user_id(),
+                run_id=str(run_id or ""),
+                limit=limit,
+            ),
+        }
 
     def agent_runtime_call(self, payload: dict[str, object]) -> dict[str, object]:
         method = str(payload.get("method") or payload.get("action") or "").strip()

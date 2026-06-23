@@ -56,6 +56,7 @@ function parseArgs(argv) {
     apiToken: "",
     refreshKey: process.env.PUCKY_SPEED_LOOP_REFRESH || "",
     baseline: "",
+    perfRunId: process.env.PUCKY_PERF_RUN_ID || "",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -110,6 +111,11 @@ function parseArgs(argv) {
       index += 1;
       continue;
     }
+    if (arg === "--perf-run-id" && next) {
+      config.perfRunId = String(next || "").trim();
+      index += 1;
+      continue;
+    }
   }
   config.baseUrl = String(config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "");
   config.apiBaseUrl = String(config.apiBaseUrl || "").trim().replace(/\/+$/, "");
@@ -153,6 +159,9 @@ function buildRouteUrl(config, route) {
   }
   if (config.refreshKey) {
     url.searchParams.set("_pucky_refresh", config.refreshKey);
+  }
+  if (config.perfRunId) {
+    url.searchParams.set("perf_run_id", config.perfRunId);
   }
   return url.toString();
 }
@@ -430,10 +439,41 @@ function buildDiff(summary, baselinePath) {
   return diff;
 }
 
+function telemetryBaseUrl(config) {
+  if (config.apiBaseUrl) {
+    return String(config.apiBaseUrl || "").replace(/\/+$/, "");
+  }
+  try {
+    return new URL(config.baseUrl).origin.replace(/\/+$/, "");
+  } catch (_) {
+    return DEFAULT_BASE_URL;
+  }
+}
+
+async function fetchServerTelemetry(config) {
+  if (!config.apiToken || !config.perfRunId) {
+    return null;
+  }
+  const response = await fetch(
+    `${telemetryBaseUrl(config)}/api/ui/route-perf-events?run_id=${encodeURIComponent(config.perfRunId)}&limit=500`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${config.apiToken}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Telemetry slice request failed (${response.status}).`);
+  }
+  return response.json();
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   config.apiToken = resolveApiToken(config);
   config.refreshKey = config.refreshKey || (process.env.PUCKY_SPEED_LOOP_REFRESH || String(Date.now()));
+  config.perfRunId = config.perfRunId || `speed-loop-${config.viewport}-${Date.now()}`;
   ensureDir(config.reportDir);
 
   const summary = {
@@ -446,6 +486,7 @@ async function main() {
     iterations: config.iterations,
     app_slug: config.appSlug,
     api_token_present: Boolean(config.apiToken),
+    perf_run_id: config.perfRunId,
     fresh_loads: {},
     route_opens: {},
     detail_opens: {},
@@ -455,6 +496,9 @@ async function main() {
     http_error_responses: [],
     console_errors: [],
     page_errors: [],
+    console_log_path: "",
+    server_telemetry: null,
+    server_telemetry_path: "",
     diff: null,
   };
 
@@ -470,6 +514,7 @@ async function main() {
   const consoleLogPath = path.join(config.reportDir, `console-${config.viewport}.log`);
   attachPageLogging(page, consoleLogPath);
   const tracking = buildPageTracking(page, consoleLogPath);
+  summary.console_log_path = consoleLogPath;
 
   try {
     const homeFreshSamples = [];
@@ -555,6 +600,11 @@ async function main() {
     summary.http_error_responses = tracking.httpErrorResponses;
     summary.console_errors = tracking.consoleErrors;
     summary.page_errors = tracking.pageErrors;
+    summary.server_telemetry = await fetchServerTelemetry(config);
+    if (summary.server_telemetry) {
+      summary.server_telemetry_path = path.join(config.reportDir, "server-telemetry.json");
+      writeJsonFile(summary.server_telemetry_path, summary.server_telemetry);
+    }
     summary.diff = buildDiff(summary, config.baseline);
     summary.ok = true;
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);

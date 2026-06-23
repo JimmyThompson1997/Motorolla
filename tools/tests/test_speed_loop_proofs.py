@@ -42,8 +42,14 @@ def test_browser_speed_loop_proof_captures_route_matrix_perf_debug_and_connect_a
     assert 'summary.fresh_loads.connect = summarizeSamples(connectFreshSamples);' in source
     assert 'summary.route_opens[routeConfig.key] = summarizeSamples(samples);' in source
     assert 'summary.detail_opens.task = summarizeSamples(taskDetailSamples);' in source
+    assert 'url.searchParams.set("perf_run_id", config.perfRunId);' in source
+    assert 'perf_run_id: config.perfRunId,' in source
     assert 'envKeys: ["PUCKY_API_TOKEN", "PUCKY_SPEED_LOOP_TOKEN", "PUCKY_LIVE_USER_SESSION_TOKEN"]' in source
     assert 'sharedKeys: ["PUCKY_API_TOKEN"]' in source
+    assert 'async function fetchServerTelemetry(config)' in source
+    assert "/api/ui/route-perf-events?run_id=" in source
+    assert 'summary.console_log_path = consoleLogPath;' in source
+    assert 'summary.server_telemetry = await fetchServerTelemetry(config);' in source
     assert 'throw new Error(`Connect popup never navigated to a real auth target for ${config.appSlug}.`);' in source
     assert "buildDiff(summary, config.baseline)" in source
 
@@ -66,6 +72,9 @@ def test_emulator_speed_loop_proof_reuses_live_auth_handoff_and_reports_route_me
     assert 'summary["connect_auth"] = {' in source
     assert 'summary["route_opens"][route] = summarize(samples)' in source
     assert 'summary["detail_opens"]["calendar"] = summarize(calendar_samples)' in source
+    assert 'clear_logcat(args)' in source
+    assert 'dump_logcat(args, args.report_dir / "logcat.txt")' in source
+    assert 'fetch_server_telemetry(args)' in source
     assert 'summary["diff"] = build_diff(summary, args.baseline)' in source
 
 
@@ -75,7 +84,9 @@ def test_phone_browser_helper_supports_generic_perf_route_and_click_ops() -> Non
     assert "async function readPerfState(client)" in source
     assert "async function ensureRoute(client, route, timeoutMs)" in source
     assert 'const currentPerfMetrics = await client.evaluate(`window.PuckyUiDebug?.perfMetrics?.() || null`).catch(() => null);' in source
-    assert "if (currentRoute !== targetRoute || !perfEnabled) {" in source
+    assert "if (currentRoute !== targetRoute || !perfEnabled || missingPerfRunId) {" in source
+    assert 'const perfRunId = String(process.env.PUCKY_PERF_RUN_ID || "").trim();' in source
+    assert 'url.searchParams.set("perf_run_id", perfRunId);' in source
     assert "async function clickHomeTile(client, route, timeoutMs)" in source
     assert "async function clickSelector(client, selector, timeoutMs)" in source
     assert "async function waitForSelector(client, selector, timeoutMs)" in source
