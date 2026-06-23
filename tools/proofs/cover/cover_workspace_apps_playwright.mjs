@@ -2719,13 +2719,11 @@ async function readMeetingNoteDetailState(page) {
       .filter(Boolean);
     const detailRowLabels = Array.from(detail?.querySelectorAll(".light-meeting-note-detail-row .light-calendar-detail-row-label") || [])
       .map(node => String(node.textContent || "").trim());
-    const whoChipLabels = Array.from(detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip, .light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-record-chip-label') || [])
+    const whoChipLabels = Array.from(detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip') || [])
       .map(node => String(node.textContent || "").trim())
       .filter(Boolean);
-    const whoChipLabel = detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-calendar-attendee-chip-label');
-    const whoChipIcon = detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-calendar-attendee-chip-icon');
-    const whoChipLabelStyle = whoChipLabel ? getComputedStyle(whoChipLabel) : null;
-    const whoChipIconStyle = whoChipIcon ? getComputedStyle(whoChipIcon) : null;
+    const whoChipRoot = detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip');
+    const whoChipRootStyle = whoChipRoot ? getComputedStyle(whoChipRoot) : null;
     const hasStandaloneWhoSection = Boolean(detail?.querySelector(".light-meeting-note-who-section"));
     const whoInsideDetailsCard = Boolean(detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"]'));
     const connectedRowTexts = Array.from(detail?.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row') || [])
@@ -2737,10 +2735,10 @@ async function readMeetingNoteDetailState(page) {
       eyebrowTexts,
       detailRowLabels,
       whoChipLabels,
-      whoChipLabelBackground: String(whoChipLabelStyle?.backgroundColor || ""),
-      whoChipLabelBorderRadius: String(whoChipLabelStyle?.borderRadius || ""),
-      whoChipIconBackground: String(whoChipIconStyle?.backgroundColor || ""),
-      whoChipIconBorderRadius: String(whoChipIconStyle?.borderRadius || ""),
+      whoChipCount: detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip').length || 0,
+      whoChipRootBackground: String(whoChipRootStyle?.backgroundColor || ""),
+      whoChipRootColor: String(whoChipRootStyle?.color || ""),
+      whoChipRootBorderRadius: String(whoChipRootStyle?.borderRadius || ""),
       hasStandaloneWhoSection,
       whoInsideDetailsCard,
       connectedRowTexts,
@@ -2866,10 +2864,10 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(meetingNoteState.whoInsideDetailsCard, "Meeting note detail should keep Who inside the Details card.");
   assert(!meetingNoteState.hasStandaloneWhoSection, "Meeting note detail should not keep a standalone Who section shell.");
   assert(meetingNoteState.whoChipLabels.includes("Proof Contact One"), `Expected Who chips to reuse the calendar-style contact label logic, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
-  assert(["rgba(0, 0, 0, 0)", "transparent"].includes(String(meetingNoteState.whoChipLabelBackground || "").trim().toLowerCase()), `Expected meeting note Who label to avoid a nested pill background, got ${meetingNoteState.whoChipLabelBackground}.`);
-  assert(["0px", "0px 0px 0px 0px", "0"].includes(String(meetingNoteState.whoChipLabelBorderRadius || "").trim().toLowerCase()), `Expected meeting note Who label to avoid a nested pill radius, got ${meetingNoteState.whoChipLabelBorderRadius}.`);
-  assert(["rgba(0, 0, 0, 0)", "transparent"].includes(String(meetingNoteState.whoChipIconBackground || "").trim().toLowerCase()), `Expected meeting note Who icon to avoid a nested pill background, got ${meetingNoteState.whoChipIconBackground}.`);
-  assert(["0px", "0px 0px 0px 0px", "0"].includes(String(meetingNoteState.whoChipIconBorderRadius || "").trim().toLowerCase()), `Expected meeting note Who icon to avoid a nested pill radius, got ${meetingNoteState.whoChipIconBorderRadius}.`);
+  assert(meetingNoteState.whoChipCount >= 1, "Expected meeting note Who to render at least one attendee chip.");
+  assert(!isTransparentColor(meetingNoteState.whoChipRootBackground), `Expected meeting note Who chip to keep a visible tinted root background, got ${meetingNoteState.whoChipRootBackground}.`);
+  assert(String(meetingNoteState.whoChipRootColor || "").trim().toLowerCase() !== String(meetingNoteState.whoChipRootBackground || "").trim().toLowerCase(), `Expected meeting note Who chip text to keep readable contrast, got text ${meetingNoteState.whoChipRootColor} on ${meetingNoteState.whoChipRootBackground}.`);
+  assert(!isZeroishPx(meetingNoteState.whoChipRootBorderRadius), `Expected meeting note Who chip to keep a coherent rounded root shape, got ${meetingNoteState.whoChipRootBorderRadius}.`);
   assert(meetingConnectedState.sectionCount === 1, "Expected meeting note detail to render one Connected section.");
   assert(meetingConnectedState.bodyIsFlat, "Expected meeting note Connected to render inside one shared flat-feed shell.");
   assert(meetingConnectedState.rowCount === 5, `Expected meeting note Connected to render five linked rows after dedupe/contact exclusion, got ${meetingConnectedState.rowCount}.`);
@@ -2887,9 +2885,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
     ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-meeting-linked-note"],
     ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project", "graph-meeting-linked-project"]
   ]) {
-    const locator = route === "meeting-detail"
-      ? page.locator(`[data-detail-row="source"][data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`)
-      : page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first();
+    const locator = page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first();
     await locator.click();
     await waitForLightRoute(page, route, config.timeoutMs);
     await waitForGraphText(page, text, config.timeoutMs);

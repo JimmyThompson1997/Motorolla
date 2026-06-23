@@ -3600,6 +3600,20 @@ class PuckyVoiceService:
         item["failure_stage"] = failure_stage
         return item
 
+    @staticmethod
+    def _meeting_failure_stage(stage: object, error: BaseException | None = None) -> str:
+        clean_stage = str(stage or "meeting_agent_call").strip() or "meeting_agent_call"
+        if clean_stage != "meeting_agent_call":
+            return clean_stage
+        message = str(error or "").strip().lower()
+        if isinstance(error, TimeoutError) or "timed out" in message or "timeout" in message:
+            return "meeting_agent_timeout"
+        return clean_stage
+
+    @staticmethod
+    def _meeting_transcript_validation_reason(record: dict[str, object]) -> str:
+        return str(record.get("transcript_error") or "").strip() or "Meeting Transcript attachment missing or empty."
+
     def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
         record["updated_at"] = _iso_time(time.time())
         record["transcript_status"] = "agent_pending"
@@ -3672,23 +3686,27 @@ class PuckyVoiceService:
             self._apply_meeting_agent_state(record)
             self._apply_meeting_agent_state_to_feed_item(record)
             if record.get("transcript_status") == "missing_transcript_attachment":
-                record["state"] = "completed_with_missing_result"
-                record["failure_reason"] = "meeting_agent_missing_transcript_attachment"
+                failure_reason = self._meeting_transcript_validation_reason(record)
+                record["state"] = "failed"
+                record["transcript_status"] = "failed"
+                record["transcript_error"] = failure_reason
+                record["diarization_status"] = "failed"
+                record["failure_reason"] = failure_reason
                 record["failure_stage"] = "meeting_transcript_validation"
-                blocker = _run_staged_operation(
-                    "meeting_missing_result_card_upsert",
-                    lambda: self._upsert_meeting_missing_result_card(record, audio, mime_type),
+                failed = _run_staged_operation(
+                    "meeting_failed_card_upsert",
+                    lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
                     sqlite_retry=True,
                 )
-                record["card_id"] = str(blocker.get("card_id") or "")
-                record["card"] = blocker.get("card") if isinstance(blocker.get("card"), dict) else {}
-                record["feed_item"] = blocker
+                record["card_id"] = str(failed.get("card_id") or "")
+                record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
+                record["feed_item"] = failed
         except Exception as exc:
             stage = exc.stage if isinstance(exc, _StagedOperationError) else "meeting_agent_call"
             root = exc.original if isinstance(exc, _StagedOperationError) else exc
             record["state"] = "failed"
             record["updated_at"] = _iso_time(time.time())
-            record["failure_stage"] = str(stage or "meeting_agent_call")
+            record["failure_stage"] = self._meeting_failure_stage(stage, root)
             record["failure_reason"] = f"{root.__class__.__name__}: {root}"
             record["transcript_status"] = "failed"
             record["transcript_error"] = str(record["failure_reason"])
@@ -4283,6 +4301,17 @@ class PuckyVoiceService:
         card = item.get("card")
         if isinstance(card, dict):
             icon = card.get("icon") or icon
+        origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+        card_origin = card.get("origin") if isinstance(card, dict) and isinstance(card.get("origin"), dict) else {}
+        for key in ("card_kind", "meeting_state", "failure_stage"):
+            value = (
+                item.get(key)
+                or (card.get(key) if isinstance(card, dict) else "")
+                or origin.get(key)
+                or card_origin.get(key)
+            )
+            if value not in (None, ""):
+                item[key] = value
         accent = self._card_icon_accent(icon)
         item["accent"] = accent
         if isinstance(card, dict):

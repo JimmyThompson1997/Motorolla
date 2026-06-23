@@ -6685,11 +6685,7 @@
     const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
     attendees.forEach(entry => {
       if (entry.target) {
-        cloud.append(lightRecordChip({
-          label: entry.label,
-          target: entry.target,
-          kind: "contact"
-        }, { fromRoute: "meeting-note-detail" }));
+        cloud.append(lightCalendarContactChip(entry, { fromRoute: "meeting-note-detail" }));
         return;
       }
       cloud.append(lightGuestAttendeeChip(entry.label));

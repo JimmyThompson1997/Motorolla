@@ -2705,7 +2705,7 @@ class ServerTests(unittest.TestCase):
             "duration_ms": 30000,
             "device_id": "device-1",
             "failure_reason": "Upload completed but meeting agent timed out",
-            "failure_stage": "meeting_agent_call",
+            "failure_stage": "meeting_agent_timeout",
             "transcript_status": "failed",
             "diarization_status": "failed",
             "card": None,
@@ -2737,7 +2737,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["feed_item"]["meeting_state"], "failed")
         self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_failed")
         self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "failed")
-        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_call")
+        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_timeout")
         self.assertNotEqual(meeting["card"]["title"], "Processing meeting recording")
         self.assertIn("timed out", meeting["card"]["summary"])
 
@@ -2840,7 +2840,73 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(attachment["title"], "Meeting Audio")
         self.assertNotIn("path", attachment)
 
-    def test_meeting_agent_missing_result_is_not_marked_successful(self) -> None:
+    def test_meeting_agent_transcript_text_fallback_completes_successfully(self) -> None:
+        class TranscriptTextOnlyCodex(FakeCodex):
+            def send_turn(
+                self,
+                text: str,
+                *,
+                thread_id: str | None = None,
+                output_schema: dict[str, object] | None = None,
+            ):
+                self.turns.append(text)
+                self.output_schemas.append(output_schema)
+                return type(
+                    "FakeTurnResult",
+                    (),
+                    {
+                        "reply_text": json.dumps(
+                            {
+                                "reply_text": "I processed the meeting.",
+                                "card_title": "Meeting Summary",
+                                "recording_title": "Transcript Text Fallback",
+                                "card_icon": "mic",
+                                "transcript_text": (
+                                    "[00:00-00:02] Jimmy: We should ship on Thursday.\n"
+                                    "[00:02-00:04] Jack: I can own the deploy."
+                                ),
+                                "html": None,
+                                "attachments": [],
+                            }
+                        ),
+                        "used_thread_id": "thread-transcript-text",
+                        "requested_thread_id": "",
+                        "thread_mode": "new",
+                        "reused_existing_thread": False,
+                        "fallback_reason": "",
+                    },
+                )()
+
+        self.service.meeting_codex = TranscriptTextOnlyCodex()
+        meeting_id = "meeting-20260601-120655-device-abc123ef"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:06:55Z",
+                "stopped_at": "2026-06-01T12:07:00Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+        meeting = {}
+        for _ in range(50):
+            rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+        self.assertEqual(meeting["state"], "completed")
+        self.assertEqual(meeting["transcript_status"], "completed")
+        self.assertEqual(meeting["diarization_status"], "speaker_turns")
+        self.assertIn("[00:00-00:02] Jimmy: We should ship on Thursday.", meeting["transcript_text"])
+        self.assertFalse(meeting.get("failure_reason"))
+        self.assertNotIn("meeting_result", self.service.meeting_codex.output_schemas[-1]["properties"])
+
+    def test_meeting_agent_missing_result_is_hard_failed(self) -> None:
         class MissingMeetingResultCodex(FakeCodex):
             def send_turn(
                 self,
@@ -2891,16 +2957,64 @@ class ServerTests(unittest.TestCase):
         for _ in range(50):
             rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
             meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
-            if meeting.get("state") == "completed_with_missing_result":
+            if meeting.get("state") == "failed":
                 break
             time.sleep(0.1)
-        self.assertEqual(meeting["state"], "completed_with_missing_result")
-        self.assertEqual(meeting["transcript_status"], "missing_transcript_attachment")
-        self.assertEqual(meeting["diarization_status"], "missing_transcript_attachment")
-        self.assertEqual(meeting["failure_reason"], "meeting_agent_missing_transcript_attachment")
-        self.assertEqual(meeting["feed_item"]["card"]["title"], "Meeting needs review")
+        self.assertEqual(meeting["state"], "failed")
+        self.assertEqual(meeting["transcript_status"], "failed")
+        self.assertEqual(meeting["diarization_status"], "failed")
+        self.assertEqual(meeting["failure_stage"], "meeting_transcript_validation")
+        self.assertEqual(meeting["failure_reason"], "Meeting Transcript attachment missing or empty.")
+        self.assertEqual(meeting["feed_item"]["card"]["title"], "Meeting processing failed")
+        self.assertEqual(meeting["feed_item"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_transcript_validation")
         self.assertFalse(meeting["feed_item"]["read"])
+        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
+        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
+        self.assertEqual(item["card_kind"], "meeting_failed")
+        self.assertEqual(item["meeting_state"], "failed")
+        self.assertEqual(item["origin"]["card_kind"], "meeting_failed")
+        self.assertEqual(item["origin"]["failure_stage"], "meeting_transcript_validation")
+        self.assertNotEqual(item["title"], "Meeting needs review")
         self.assertNotIn("meeting_result", self.service.meeting_codex.output_schemas[-1]["properties"])
+
+    def test_meeting_agent_timeout_is_hard_failed(self) -> None:
+        blocking = BlockingCodex()
+        self.service.meeting_codex = blocking
+        meeting_id = "meeting-20260601-120706-device-timeoutproof"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:07:06Z",
+                "stopped_at": "2026-06-01T12:07:11Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+        self.assertTrue(blocking.codex_started.wait(timeout=2))
+        meeting = {}
+        for _ in range(90):
+            rows = self.get_json("/api/meetings?include_archived=1", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") == "failed":
+                break
+            time.sleep(0.1)
+        self.assertEqual(meeting["state"], "failed")
+        self.assertEqual(meeting["failure_stage"], "meeting_agent_timeout")
+        self.assertEqual(meeting["transcript_status"], "failed")
+        self.assertEqual(meeting["diarization_status"], "failed")
+        self.assertTrue(str(meeting["failure_reason"]).startswith("TimeoutError:"))
+        self.assertEqual(meeting["feed_item"]["card_kind"], "meeting_failed")
+        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_timeout")
+        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
+        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
+        self.assertEqual(item["card_kind"], "meeting_failed")
+        self.assertEqual(item["origin"]["failure_stage"], "meeting_agent_timeout")
 
     def test_meeting_attachment_builder_falls_back_to_tool_transcript_when_agent_omits_transcript_attachment(self) -> None:
         meeting_id = "meeting-20260601-120701-device-abc123ef"

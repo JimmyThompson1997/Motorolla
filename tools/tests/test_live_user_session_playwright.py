@@ -89,6 +89,10 @@ def test_live_user_session_runner_requires_runtime_meeting_to_appear_in_meetings
     assert "async function ingestRuntimeProofMeeting(" in source
     assert "async function waitForMeetingCompletion(" in source
     assert "async function prepareRuntimeMeeting(" in source
+    assert 'if (stateName === "completed_with_missing_result") {' in source
+    assert "regressed to completed_with_missing_result" in source
+    assert '["completed", "failed"]' in source or '"completed", "failed"' in source
+    assert "meeting stayed in processing past the allowed proof timeout" in source
     assert 'mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);' in source
     assert 'desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);' in source
     assert "Runtime meeting card was visible in Inbox and opened its detail panel." in source

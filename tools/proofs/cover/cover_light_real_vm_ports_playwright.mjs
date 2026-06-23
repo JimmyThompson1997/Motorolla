@@ -79,6 +79,25 @@ async function clickLightTile(page, route) {
   await tile.click();
 }
 
+async function waitForUniversalInboxReady(page, timeoutMs) {
+  await page.locator('.light-shell[data-light-route="inbox"] .light-inbox-surface').waitFor({ state: "visible", timeout: timeoutMs });
+  await page.waitForFunction(() => {
+    const shell = document.querySelector('.light-shell[data-light-route="inbox"]');
+    if (!shell) {
+      return false;
+    }
+    if (shell.querySelector("article.card")) {
+      return true;
+    }
+    const empty = shell.querySelector(".empty");
+    if (!empty) {
+      return false;
+    }
+    const text = String(empty.textContent || "").trim();
+    return Boolean(text) && !/loading inbox/i.test(text);
+  }, null, { timeout: timeoutMs });
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
@@ -131,8 +150,7 @@ async function main() {
     screenshots.home = await saveScreenshot(page, config.reportDir, "01-vm-light-home");
 
     await clickLightTile(page, "inbox");
-    await page.locator(".light-shell[data-light-route=\"inbox\"] .light-real-feed-list").waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.waitForFunction(() => document.querySelectorAll(".light-shell[data-light-route='inbox'] .card-wrap article.card").length > 0, null, { timeout: config.timeoutMs });
+    await waitForUniversalInboxReady(page, config.timeoutMs);
     const inboxCardCount = await page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card").count();
     const inboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card h2.title");
     const apiFeedTitles = titleSet(feedItems);
@@ -143,19 +161,7 @@ async function main() {
 
     const coldInboxUrl = routeUrl(config.pageUrl, "inbox", `cold-${Date.now()}`);
     await page.goto(coldInboxUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-    await page.locator(".light-shell[data-light-route=\"inbox\"] .light-real-feed-list").waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.waitForFunction(() => {
-      const cards = document.querySelectorAll(".light-shell[data-light-route='inbox'] .card-wrap article.card");
-      if (cards.length > 0) {
-        return true;
-      }
-      const empty = document.querySelector(".light-shell[data-light-route='inbox'] .empty");
-      if (!empty) {
-        return false;
-      }
-      const text = String(empty.textContent || "").trim();
-      return Boolean(text) && !/loading inbox/i.test(text);
-    }, null, { timeout: config.timeoutMs });
+    await waitForUniversalInboxReady(page, config.timeoutMs);
     const coldInboxCardCount = await page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card").count();
     const coldInboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card h2.title");
     const matchingColdInboxTitles = coldInboxTitles.filter(title => apiFeedTitles.has(title));

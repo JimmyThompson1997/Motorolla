@@ -420,13 +420,17 @@ async function waitForMeetingCompletion(baseUrl, apiToken, meetingId, timeoutMs)
     const meetings = await listLiveMeetings(baseUrl, apiToken);
     lastMeeting = meetings.find(item => String(item?.meeting_id || "").trim() === String(meetingId || "").trim()) || null;
     const stateName = String(lastMeeting?.state || "").trim().toLowerCase();
-    if (lastMeeting && ["completed", "completed_with_missing_result", "failed"].includes(stateName)) {
-      if (stateName === "failed") {
-        throw new Error(`Runtime meeting ${meetingId} failed: ${String(lastMeeting?.failure_reason || lastMeeting?.transcript_error || "unknown failure")}`);
-      }
+    if (stateName === "completed_with_missing_result") {
+      throw new Error(`Runtime meeting ${meetingId} regressed to completed_with_missing_result.`);
+    }
+    if (lastMeeting && ["completed", "failed"].includes(stateName)) {
       return lastMeeting;
     }
     await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  const lastState = String(lastMeeting?.state || "").trim().toLowerCase();
+  if (lastState === "processing") {
+    throw new Error(`Runtime meeting ${meetingId} meeting stayed in processing past the allowed proof timeout (last state processing).`);
   }
   throw new Error(`Timed out waiting for runtime meeting ${meetingId} to complete (last state ${String(lastMeeting?.state || "")})`);
 }
@@ -434,14 +438,27 @@ async function waitForMeetingCompletion(baseUrl, apiToken, meetingId, timeoutMs)
 async function prepareRuntimeMeeting(baseUrl, apiToken, runId, timeoutMs) {
   const archivedMeetingIds = await archiveVisibleMeetings(baseUrl, apiToken, runId);
   const ingested = await ingestRuntimeProofMeeting(baseUrl, apiToken, runId);
-  const completed = await waitForMeetingCompletion(baseUrl, apiToken, ingested.meetingId, timeoutMs);
   return {
     archivedMeetingIds,
-    meetingId: String(completed?.meeting_id || ingested.meetingId),
-    title: normalizeText(completed?.title || completed?.recording_title || ingested.meetingId),
+    meetingId: String(ingested.meetingId || ""),
+    title: normalizeText(ingested.meetingId),
+    state: String(ingested.ingestState || "processing"),
+    transcriptStatus: "",
+    summary: "",
+    ingestState: String(ingested.ingestState || ""),
+  };
+}
+
+async function finalizeRuntimeMeeting(baseUrl, apiToken, runtimeMeeting, timeoutMs) {
+  const completed = await waitForMeetingCompletion(baseUrl, apiToken, runtimeMeeting?.meetingId, timeoutMs);
+  return {
+    ...(runtimeMeeting && typeof runtimeMeeting === "object" ? runtimeMeeting : {}),
+    meetingId: String(completed?.meeting_id || runtimeMeeting?.meetingId || ""),
+    title: normalizeText(completed?.title || completed?.recording_title || runtimeMeeting?.meetingId || ""),
     state: String(completed?.state || ""),
     transcriptStatus: String(completed?.transcript_status || ""),
-    summary: normalizeText(completed?.summary || ""),
+    summary: normalizeText(completed?.summary || completed?.failure_reason || completed?.transcript_error || ""),
+    failureReason: normalizeText(completed?.failure_reason || completed?.transcript_error || ""),
   };
 }
 
@@ -1310,35 +1327,37 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const feedError = await page.locator(".feed-load-error").count();
     assert(feedError === 0, `${mode}: inbox route reported a feed load error`);
     const inboxCards = page.locator("article[data-card-id] .card-body");
-    const runtimeMeetingTitle = normalizeText(runtimeMeeting?.title || "");
-    if (runtimeMeetingTitle) {
+    const runtimeMeetingId = String(runtimeMeeting?.meetingId || "").trim();
+    if (runtimeMeetingId) {
       await page.waitForFunction(
-        expectedTitle => Array.from(document.querySelectorAll("article[data-card-id] .title"))
-          .some(node => String(node.textContent || "").replace(/\s+/g, " ").trim() === expectedTitle),
-        runtimeMeetingTitle,
+        expectedId => Boolean(document.querySelector(`article[data-card-session-id="${expectedId}"] .card-body`)),
+        runtimeMeetingId,
         { timeout: config.timeoutMs }
       );
     }
     if (await inboxCards.count()) {
-      const targetTitle = runtimeMeetingTitle || normalizeText(await page.locator("article[data-card-id] .title").first().textContent());
-      const targetCard = page.locator("article[data-card-id]").filter({ has: page.locator(".title", { hasText: targetTitle }) }).first();
+      const targetCard = runtimeMeetingId
+        ? page.locator(`article[data-card-session-id="${runtimeMeetingId}"]`).first()
+        : page.locator("article[data-card-id]").first();
+      const targetTitle = normalizeText(await targetCard.locator(".title").first().textContent().catch(() => runtimeMeetingId));
+      const targetCardKind = String(await targetCard.getAttribute("data-card-kind").catch(() => ""));
       const targetBody = targetCard.locator(".card-body").first();
       await targetBody.click();
       await waitForDetailOpen(page, config.timeoutMs);
       const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
       await recorder.capture({
         route: "inbox",
-        action: runtimeMeetingTitle ? "Open runtime meeting card from Inbox" : "Open first inbox card",
-        expected: runtimeMeetingTitle
+        action: runtimeMeetingId ? "Open runtime meeting card from Inbox" : "Open first inbox card",
+        expected: runtimeMeetingId
           ? "The runtime-generated meeting card appears in Inbox and opens its detail panel."
           : "The first inbox card opens its detail panel.",
-        confirmation: runtimeMeetingTitle ? "Runtime meeting card was visible in Inbox and opened its detail panel." : "Inbox detail panel opened.",
-        observed: { empty: false, inbox_card_title: targetTitle, detail_title: detailTitle },
+        confirmation: runtimeMeetingId ? "Runtime meeting card was visible in Inbox and opened its detail panel." : "Inbox detail panel opened.",
+        observed: { empty: false, inbox_card_title: targetTitle, inbox_card_kind: targetCardKind, detail_title: detailTitle, meeting_id: runtimeMeetingId },
       });
       await closeDetailPanel(page, config.timeoutMs);
     } else {
       const emptyText = normalizeText(await page.locator(".empty").first().textContent().catch(() => "No inbox items yet."));
-      assert(!runtimeMeetingTitle, `${mode}: Inbox stayed empty instead of showing runtime meeting ${runtimeMeetingTitle}`);
+      assert(!runtimeMeetingId, `${mode}: Inbox stayed empty instead of showing runtime meeting ${runtimeMeetingId}`);
       await recorder.capture({
         route: "inbox",
         action: "Check empty inbox state",
@@ -1407,18 +1426,20 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const meetingsError = await page.locator(".meetings-empty.is-error").count();
     assert(meetingsError === 0, `${mode}: meetings route reported an error`);
     const meetingCards = page.locator("article[data-card-session-id] .card-body");
-    const runtimeMeetingTitle = normalizeText(runtimeMeeting?.title || "");
-    if (runtimeMeetingTitle) {
+    const runtimeMeetingId = String(runtimeMeeting?.meetingId || "").trim();
+    if (runtimeMeetingId) {
       await page.waitForFunction(
-        expectedTitle => Array.from(document.querySelectorAll("article[data-card-session-id] .title"))
-          .some(node => String(node.textContent || "").replace(/\s+/g, " ").trim() === expectedTitle),
-        runtimeMeetingTitle,
+        expectedId => Boolean(document.querySelector(`article[data-card-session-id="${expectedId}"] .card-body`)),
+        runtimeMeetingId,
         { timeout: config.timeoutMs }
       );
     }
     if (await meetingCards.count()) {
-      const targetTitle = runtimeMeetingTitle || normalizeText(await page.locator("article[data-card-session-id] .title").first().textContent());
-      const targetCard = page.locator("article[data-card-session-id]").filter({ has: page.locator(".title", { hasText: targetTitle }) }).first();
+      const targetCard = runtimeMeetingId
+        ? page.locator(`article[data-card-session-id="${runtimeMeetingId}"]`).first()
+        : page.locator("article[data-card-session-id]").first();
+      const targetTitle = normalizeText(await targetCard.locator(".title").first().textContent().catch(() => runtimeMeetingId));
+      const targetCardKind = String(await targetCard.getAttribute("data-card-kind").catch(() => ""));
       const targetBody = targetCard.locator(".card-body").first();
       await targetBody.click();
       await waitForDetailOpen(page, config.timeoutMs);
@@ -1426,18 +1447,18 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       const detailText = normalizeText(await page.locator("#detail").textContent().catch(() => ""));
       await recorder.capture({
         route: "meetings",
-        action: runtimeMeetingTitle ? "Open runtime meeting record" : "Open first meeting record",
-        expected: runtimeMeetingTitle
+        action: runtimeMeetingId ? "Open runtime meeting record" : "Open first meeting record",
+        expected: runtimeMeetingId
           ? "The runtime-ingested meeting appears in Meetings and opens its summary detail."
           : "The first meeting record opens its detail panel.",
-        confirmation: runtimeMeetingTitle ? "Runtime meeting detail panel opened." : "Meeting detail panel opened.",
-        observed: { empty: false, meeting_title: targetTitle, detail_title: detailTitle, detail_text: detailText },
+        confirmation: runtimeMeetingId ? "Runtime meeting detail panel opened." : "Meeting detail panel opened.",
+        observed: { empty: false, meeting_title: targetTitle, meeting_card_kind: targetCardKind, detail_title: detailTitle, detail_text: detailText, meeting_id: runtimeMeetingId },
       });
       await closeDetailPanel(page, config.timeoutMs);
     } else {
       const emptyText = normalizeText(await page.locator(".meetings-empty").first().textContent().catch(() => "No meeting recordings yet."));
       assert(!/loading meetings/i.test(emptyText), `${mode}: meetings route never resolved past loading`);
-      assert(!runtimeMeetingTitle, `${mode}: Meetings stayed empty instead of showing runtime meeting ${runtimeMeetingTitle}`);
+      assert(!runtimeMeetingId, `${mode}: Meetings stayed empty instead of showing runtime meeting ${runtimeMeetingId}`);
       await recorder.capture({
         route: "meetings",
         action: "Check empty meetings state",
@@ -2290,6 +2311,7 @@ async function main() {
     mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);
     await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
     desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
+    runtimeMeeting = await finalizeRuntimeMeeting(config.baseUrl, config.apiToken, runtimeMeeting, config.timeoutMs);
   } catch (error) {
     pendingError = error;
   } finally {

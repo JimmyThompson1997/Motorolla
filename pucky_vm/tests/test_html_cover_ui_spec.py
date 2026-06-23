@@ -1312,7 +1312,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'const row = el("div", "light-calendar-detail-row light-meeting-note-detail-row");' in meeting_note_who_row
     assert 'const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");' in meeting_note_who_row
     assert 'const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");' in meeting_note_who_row
-    assert 'lightRecordChip({' in meeting_note_who_row
+    assert 'lightCalendarContactChip(entry, { fromRoute: "meeting-note-detail" })' in meeting_note_who_row
     assert "lightGuestAttendeeChip(entry.label)" in meeting_note_who_row
     assert 'if (kind === "calendar_event") {' in meeting_note_connected_detail
     assert 'const timestamp = kind === "note"' in meeting_note_connected_detail
