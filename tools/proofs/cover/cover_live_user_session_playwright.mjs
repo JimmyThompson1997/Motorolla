@@ -886,17 +886,123 @@ async function readContactsSearchState(page) {
     const search = document.querySelector(".light-contacts-search");
     const rows = Array.from(document.querySelectorAll(".light-contact-row"));
     const empty = document.querySelector(".light-empty-state");
+    const rowData = rows.map(node => ({
+      id: String(node.getAttribute("data-contact-id") || "").trim(),
+      title: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+      avatarText: String(node.querySelector(".light-avatar")?.textContent || "").trim(),
+    }));
     return {
       route: shell?.getAttribute("data-light-route") || "",
       search_visible: Boolean(search),
       query: search instanceof HTMLInputElement ? search.value : "",
-      row_ids: rows.map(node => String(node.getAttribute("data-contact-id") || "").trim()).filter(Boolean),
-      row_titles: rows
-        .map(node => String(node.querySelector(".light-text-stack strong")?.textContent || "").trim())
-        .filter(Boolean),
+      row_ids: rowData.map(row => row.id).filter(Boolean),
+      row_titles: rowData.map(row => row.title).filter(Boolean),
+      row_avatar_texts: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.avatarText])),
       empty_text: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
     };
   });
+}
+
+async function installContactsSearchTrace(page) {
+  await page.evaluate(() => {
+    if (!window.__contactsSearchTraceStore) {
+      const store = {
+        currentNode: null,
+        currentToken: 0,
+        events: [],
+        initialToken: 0,
+        initialValue: "",
+      };
+      const bindSearchNode = () => {
+        const next = document.getElementById("contactsSearch");
+        if (next !== store.currentNode) {
+          store.currentNode = next instanceof HTMLInputElement ? next : null;
+          store.currentToken += 1;
+          if (store.currentNode) {
+            store.currentNode.dataset.traceToken = String(store.currentToken);
+          }
+          return true;
+        }
+        return false;
+      };
+      const readValue = () => store.currentNode instanceof HTMLInputElement ? store.currentNode.value : "";
+      const record = (type, event = null) => {
+        const target = event?.target instanceof HTMLElement ? event.target : null;
+        const shouldRecord = !target || target.id === "contactsSearch" || target === store.currentNode;
+        if (!shouldRecord) {
+          return;
+        }
+        store.events.push({
+          type,
+          nodeToken: store.currentToken,
+          activeId: document.activeElement?.id || "",
+          targetId: target?.id || "",
+          value: readValue(),
+          key: event?.key || "",
+          data: event?.data || "",
+          inputType: event?.inputType || "",
+        });
+      };
+      bindSearchNode();
+      ["focusin", "focusout", "blur", "beforeinput", "input", "keydown", "keyup"].forEach(type => {
+        document.addEventListener(type, event => {
+          if (bindSearchNode()) {
+            record("search-node-changed", null);
+          }
+          record(type, event);
+        }, true);
+      });
+      new MutationObserver(() => {
+        if (bindSearchNode()) {
+          record("search-node-changed", null);
+        }
+      }).observe(document.documentElement, { childList: true, subtree: true });
+      window.__contactsSearchTraceStore = store;
+    }
+    const store = window.__contactsSearchTraceStore;
+    const current = document.getElementById("contactsSearch");
+    store.currentNode = current instanceof HTMLInputElement ? current : null;
+    if (store.currentNode && !store.currentToken) {
+      store.currentToken = 1;
+      store.currentNode.dataset.traceToken = String(store.currentToken);
+    }
+    store.events = [];
+    store.initialToken = store.currentToken;
+    store.initialValue = store.currentNode instanceof HTMLInputElement ? store.currentNode.value : "";
+  });
+}
+
+async function traceContactsSearchTyping(page, query, timeoutMs) {
+  await setContactsSearchQuery(page, "", timeoutMs);
+  const search = page.locator(".light-contacts-search").first();
+  await search.click();
+  await installContactsSearchTrace(page);
+  await search.type(query, { delay: 40 });
+  await page.waitForFunction(expectedQuery => {
+    const input = document.querySelector(".light-contacts-search");
+    return input instanceof HTMLInputElement && input.value === expectedQuery;
+  }, query, { timeout: timeoutMs });
+  const trace = await page.evaluate(() => {
+    const store = window.__contactsSearchTraceStore || {};
+    const current = document.getElementById("contactsSearch");
+    return {
+      initialToken: Number(store.initialToken || 0),
+      initialValue: String(store.initialValue || ""),
+      finalToken: Number(store.currentToken || 0),
+      finalValue: current instanceof HTMLInputElement ? current.value : "",
+      events: Array.isArray(store.events) ? store.events.slice() : [],
+    };
+  });
+  const eventCounts = trace.events.reduce((counts, event) => {
+    const key = String(event?.type || "");
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    ...trace,
+    eventCounts,
+    searchState: await readContactsSearchState(page),
+  };
 }
 
 async function readContactEditState(page) {
@@ -1545,10 +1651,12 @@ async function runRouteTour(page, config, mode, seed) {
   }
 
   if (shouldRunRoute(config, "contacts")) {
+    const stabilityQuery = "dav";
     const phraseQuery = "Linked to live alpha";
     const phoneQuery = "0188";
     const reminderQuery = "reminder";
     const noMatchQuery = "zzzz-no-match";
+    const initialsQuery = "single-name proof";
 
     await goHome(page, config);
     await openRouteFromHome(page, "contacts", config.timeoutMs);
@@ -1560,6 +1668,9 @@ async function runRouteTour(page, config, mode, seed) {
     assert(contactsListFlatness.first_contact_id === "contact-me", `${mode}: Me contact should remain pinned first in Contacts (saw ${contactsListFlatness.first_contact_id || "none"})`);
     assert(baselineSearchState.search_visible, `${mode}: Contacts search should be visible once contacts load`);
     assert(baselineSearchState.query === "", `${mode}: Contacts search should start empty, got ${baselineSearchState.query}`);
+    assert(baselineSearchState.row_avatar_texts["contact-me"] === "ME", `${mode}: Expected contact-me avatar to stay ME, got ${baselineSearchState.row_avatar_texts["contact-me"] || "<missing>"}`);
+    assert(baselineSearchState.row_avatar_texts[seed.davidContactId] === "D", `${mode}: Expected David avatar to render a single D initial, got ${baselineSearchState.row_avatar_texts[seed.davidContactId] || "<missing>"}`);
+    assert(baselineSearchState.row_avatar_texts[seed.danielContactId] === "D", `${mode}: Expected Daniel avatar to render a single D initial, got ${baselineSearchState.row_avatar_texts[seed.danielContactId] || "<missing>"}`);
     assert(contactsListFlatness.row_class_list.includes("is-flat-feed"), `${mode}: Contacts list should render flat-feed rows (${contactsListFlatness.row_class_list.join(" ")})`);
     assert(isTransparentColor(contactsListFlatness.row_background), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_background})`);
     assert(isNoShadow(contactsListFlatness.row_box_shadow), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_box_shadow})`);
@@ -1590,6 +1701,41 @@ async function runRouteTour(page, config, mode, seed) {
         contacts_search: baselineSearchState,
       },
     });
+
+    const initialsSearchState = await expectContactsSearchRows(page, initialsQuery, [seed.danielContactId, seed.davidContactId], config.timeoutMs);
+    assert(initialsSearchState.row_avatar_texts[seed.davidContactId] === "D", `${mode}: Expected David avatar to render a single D initial, got ${initialsSearchState.row_avatar_texts[seed.davidContactId] || "<missing>"}`);
+    assert(initialsSearchState.row_avatar_texts[seed.danielContactId] === "D", `${mode}: Expected Daniel avatar to render a single D initial, got ${initialsSearchState.row_avatar_texts[seed.danielContactId] || "<missing>"}`);
+    await recorder.capture({
+      route: "contacts",
+      action: "Inspect Contacts single-name initials",
+      expected: "Seeded one-token contacts render a single initial while Me stays ME.",
+      confirmation: "David and Daniel each rendered D, and contact-me stayed ME.",
+      observed: { query: initialsQuery, contacts_search: initialsSearchState },
+    });
+
+    const stabilityTrace = await traceContactsSearchTyping(page, stabilityQuery, config.timeoutMs);
+    assert((stabilityTrace.eventCounts.blur || 0) === 0 && (stabilityTrace.eventCounts.focusout || 0) === 0, `${mode}: Expected Contacts search typing to avoid blur/focusout while filtering; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
+    assert((stabilityTrace.eventCounts["search-node-changed"] || 0) === 0, `${mode}: Expected Contacts search typing to keep the same mounted input; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
+    assert(stabilityTrace.initialToken === stabilityTrace.finalToken, `${mode}: Expected Contacts search typing to keep the same mounted input (token ${stabilityTrace.initialToken} -> ${stabilityTrace.finalToken})`);
+    assert(stabilityTrace.finalValue === stabilityQuery, `${mode}: expected Contacts search to finish with ${stabilityQuery}, got ${stabilityTrace.finalValue}`);
+    assert(
+      JSON.stringify(stabilityTrace.searchState.row_ids) === JSON.stringify([seed.davidContactId]),
+      `${mode}: expected ${stabilityQuery} to filter to David only, got ${stabilityTrace.searchState.row_ids.join(", ")}`
+    );
+    await recorder.capture({
+      route: "contacts",
+      action: "Type into Contacts search without remounting",
+      expected: "Typing into Contacts search keeps the same mounted input and never triggers blur or focusout while filtering.",
+      confirmation: "Contacts search accepted dav without blur, focusout, or input replacement.",
+      observed: {
+        query: stabilityQuery,
+        trace_event_counts: stabilityTrace.eventCounts,
+        initial_token: stabilityTrace.initialToken,
+        final_token: stabilityTrace.finalToken,
+        contacts_search: stabilityTrace.searchState,
+      },
+    });
+    await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
 
     const phraseSearchState = await expectContactsSearchRows(page, phraseQuery, [seed.contactId], config.timeoutMs);
     assert(phraseSearchState.row_titles.includes(seed.contactTitle), `${mode}: phrase query should return the seeded contact, got ${phraseSearchState.row_titles.join(", ")}`);

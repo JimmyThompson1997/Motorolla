@@ -1805,9 +1805,15 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     styles = read("styles.css")
     contacts_page = function_block(app, "lightContactsPage")
     contacts_search = function_block(app, "lightContactsSearchField")
+    sync_contacts_page = function_block(app, "syncContactsPage")
+    sync_contacts_search_input = function_block(app, "syncContactsSearchInput")
     contact_search_terms = function_block(app, "contactSearchTerms")
     contact_matches_search = function_block(app, "contactMatchesSearch")
     filtered_contacts = function_block(app, "filteredContactsListItems")
+    contact_initials_from_text = function_block(app, "contactInitialsFromText")
+    contact_avatar_text = function_block(app, "contactAvatarText")
+    contact_draft_avatar = function_block(app, "contactDraftAvatar")
+    light_avatar = function_block(app, "lightAvatar")
     contact_detail = function_block(app, "lightContactDetailPage")
     contact_edit = function_block(app, "lightContactEditPage")
     contact_profile_card = css_block(styles, ".light-contact-detail-page .light-profile-card")
@@ -1823,12 +1829,18 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
     assert "function normalizeSearchDigits(value)" in app
+    assert "let contactsPageNode = null;" in app
+    assert "let contactsPageRefs = null;" in app
     assert '"contact-edit"' in app
+    assert "function syncContactsPage()" in app
+    assert "function syncContactsSearchInput(refs)" in app
+    assert 'function contactInitialsFromText(value, fallback = "CT") {' in app
+    assert "function contactAvatarText(contact) {" in app
     assert "const searchWrap = lightContactsSearchField();" in contacts_page
-    assert "const contacts = filteredContactsListItems();" in contacts_page
-    assert "page.append(searchWrap);" in contacts_page
-    assert "list.append(...contacts.map(contact => {" in contacts_page
-    assert "contactsListItems().map(contact => {" not in contacts_page
+    assert "if (!contactsPageNode) {" in contacts_page
+    assert "contactsPageRefs = {" in contacts_page
+    assert "contactsPageNode = page;" in contacts_page
+    assert "syncContactsPage();" in contacts_page
     assert 'search.type = "search";' in contacts_search
     assert 'search.setAttribute("aria-label", "Search contacts");' in contacts_search
     assert 'search.placeholder = "Search contacts";' in contacts_search
@@ -1836,7 +1848,12 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert 'search.addEventListener("search", onSearchInput);' in contacts_search
     assert "state.contacts.search = nextValue;" in contacts_search
     assert "resetLightRouteScroll();" in contacts_search
-    assert "queueContactsSearchFieldFocus(selectionStart, selectionEnd);" in contacts_search
+    assert "syncContactsPage();" in contacts_search
+    assert "render();" not in contacts_search
+    assert "queueContactsSearchFieldFocus(" not in app
+    assert 'if (document.activeElement !== refs.search && refs.search.value !== state.contacts.search) {' in sync_contacts_search_input
+    assert "const contacts = filteredContactsListItems();" in sync_contacts_page
+    assert 'refs.list.replaceChildren(fragment);' in sync_contacts_page
     assert "return contactsListItems().filter(contact => contactMatchesSearch(contact));" in filtered_contacts
     assert "meta.display_name" in contact_search_terms
     assert "meta.first_name" in contact_search_terms
@@ -1845,10 +1862,20 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert "meta.phone" in contact_search_terms
     assert "...activity," in contact_search_terms
     assert "phoneDigits.includes(queryDigits)" in contact_matches_search
-    assert 'No contacts match your search.' in contacts_page
-    assert 'Clear the search field to see every contact again.' in contacts_page
-    assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in contacts_page
-    assert 'const row = el("button", "light-card light-contact-row");' not in contacts_page
+    assert 'refs.empty.hidden = contacts.length > 0;' in sync_contacts_page
+    assert 'refs.list.hidden = contacts.length === 0;' in sync_contacts_page
+    assert 'No contacts match your search.' in sync_contacts_page
+    assert 'Clear the search field to see every contact again.' in sync_contacts_page
+    assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in sync_contacts_page
+    assert 'const row = el("button", "light-card light-contact-row");' not in sync_contacts_page
+    assert 'return letters[0].charAt(0).toUpperCase();' in contact_initials_from_text
+    assert 'return letters[0].slice(0, 2).toUpperCase();' not in contact_initials_from_text
+    assert 'if (contactIsSelf(contact)) {' in contact_avatar_text
+    assert 'return "ME";' in contact_avatar_text
+    assert "contactInitialsFromText(" in contact_draft_avatar
+    assert 'return letters[0].slice(0, 2).toUpperCase();' not in contact_draft_avatar
+    assert "const initials = contactAvatarText(contact);" in light_avatar
+    assert 'meta.avatar || contact.title || "?"' not in light_avatar
     assert 'const page = lightPage("Contact", {' in contact_detail
     assert "detail: true," in contact_detail
     assert 'page.classList.add("light-contact-detail-page");' in contact_detail

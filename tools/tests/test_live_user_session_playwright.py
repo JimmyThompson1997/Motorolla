@@ -174,6 +174,13 @@ def test_live_user_session_runner_supports_contacts_route_filter_and_search_cont
     assert 'action: "Open seeded contact detail from filtered list"' in source
     assert 'action: "Return to filtered Contacts list"' in source
     assert "Contacts search should reset after leaving the Contacts surface" in source
+    assert "installContactsSearchTrace" in source
+    assert "traceContactsSearchTyping" in source
+    assert 'const stabilityQuery = "dav";' in source
+    assert "Expected Contacts search typing to avoid blur/focusout while filtering" in source
+    assert "Expected Contacts search typing to keep the same mounted input" in source
+    assert "Expected David avatar to render a single D initial" in source
+    assert "Expected Daniel avatar to render a single D initial" in source
     assert "Requested routes" in source
     assert "requested_routes:" in source
 
