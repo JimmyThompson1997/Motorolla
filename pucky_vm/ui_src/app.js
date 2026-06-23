@@ -1328,6 +1328,10 @@
   }
 
   async function loadWorkspaceForRoute(route = state.route, options = {}) {
+    if (String(route || "").trim() === "home") {
+      await loadWorkspaceCollection("reminders", options);
+      return;
+    }
     const collection = WORKSPACE_ROUTE_COLLECTIONS[String(route || "")];
     if (!collection) {
       return;

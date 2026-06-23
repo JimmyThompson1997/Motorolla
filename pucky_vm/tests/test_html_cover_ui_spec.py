@@ -231,6 +231,15 @@ def test_boot_and_navigation_no_longer_depend_on_legacy_shell_state() -> None:
     assert re.search(r"\n  render\(\);\n  installFeedScrollPersistence\(\);", app)
 
 
+def test_home_route_forces_reminder_collection_refresh() -> None:
+    app = read("app.js")
+    load_workspace_for_route = function_block(app, "loadWorkspaceForRoute")
+
+    assert 'if (String(route || "").trim() === "home") {' in load_workspace_for_route
+    assert 'await loadWorkspaceCollection("reminders", options);' in load_workspace_for_route
+    assert 'return;' in load_workspace_for_route
+
+
 def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_workspace_routes() -> None:
     app = read("app.js")
     light_navigate = function_block(app, "lightNavigate")
