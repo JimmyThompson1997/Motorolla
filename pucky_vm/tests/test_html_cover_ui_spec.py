@@ -1880,6 +1880,7 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     inbox_page = function_block(app, "lightInboxPage")
     overlay = function_block(app, "renderInboxManageOverlay")
     card_view = function_block(app, "cardView")
+    meeting_processing_view = function_block(app, "meetingProcessingCardView")
     select_button = function_block(app, "inboxManageSelectButton")
     inbox_shell = css_block(styles, '.light-shell[data-light-route="inbox"]')
     timestamp = css_block(styles, ".card-timestamp")
@@ -1904,6 +1905,11 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert '"delete"' not in function_block(app, "cardOverflowMenu")
     assert 'const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);' in card_view
     assert 'if (manageableInboxCard && !inboxManageMode) {' in card_view
+    assert 'const manageableInboxCard = inboxSurface && canManageInboxCard(card);' in meeting_processing_view
+    assert 'wrapper.classList.add("has-inbox-menu");' in meeting_processing_view
+    assert 'wrapper.append(inboxManageSelectButton(card));' in meeting_processing_view
+    assert 'wrapper.append(inboxCardMenuButton(card));' in meeting_processing_view
+    assert 'wrapper.append(cardOverflowMenu(card));' in meeting_processing_view
     assert 'check: {' in icons
     assert 'select.innerHTML = selected ? iconSvg("check", { filled: true }) : "";' in select_button
     assert 'iconSvg("checklist", { filled: selected })' not in select_button
@@ -1911,7 +1917,8 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert "--light-shell-column-padding: 12px;" in inbox_shell
     assert "text-align: right;" in timestamp
     assert ".card-wrap.has-inbox-menu .card-timestamp" not in styles
-    assert '.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"]' in styles
+    assert '.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"],' in styles
+    assert '.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="meeting_processing"]' in styles
     assert ".inbox-manage-bar" in styles
     assert ".inbox-manage-select" in styles
     assert ".inbox-card-menu" in styles

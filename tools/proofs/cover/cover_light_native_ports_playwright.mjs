@@ -24,6 +24,24 @@ const INBOX_MANAGE_SELECT_SELECTOR = '[data-card-action="manage_select"]';
 const INBOX_MANAGE_MENU_SELECTOR = '[data-card-action="manage_menu"]';
 const INBOX_MANAGE_BAR_SELECTOR = '.app-shell[data-canonical-route="inbox"] .inbox-manage-bar';
 const INBOX_MANAGE_PRIMARY_ACTION_SELECTOR = `${INBOX_MANAGE_BAR_SELECTOR} .inbox-manage-action.is-primary`;
+const INBOX_MANAGEMENT_PROCESSING_PROOF_CARD_ID = "proof_card_meeting_processing_escape_hatch";
+const INBOX_MANAGEMENT_PROCESSING_PROOF_CARD = {
+  card_id: INBOX_MANAGEMENT_PROCESSING_PROOF_CARD_ID,
+  session_id: "proof_meeting_processing_escape_hatch",
+  title: "Processing meeting recording",
+  summary: "Transcribing, diarizing, and checking for follow-up instructions...",
+  created_at: "2026-06-23T00:00:00Z",
+  updated_at: "2026-06-23T00:00:00Z",
+  archived: false,
+  card_kind: "meeting_processing",
+  meeting_state: "processing",
+  accent: "#72c2ff",
+  origin: {
+    card_kind: "meeting_processing",
+    meeting_state: "processing",
+    meeting_id: "proof_meeting_processing_escape_hatch"
+  }
+};
 
 function parseViewport(value, fallback = VIEWPORT) {
   const match = String(value || "").trim().match(/^(\d{2,5})x(\d{2,5})$/i);
@@ -216,6 +234,21 @@ function assertNoUnexpectedAudio(guard, label) {
   assert(summary.clicked_audio_count === 0, `${label} clicked audio controls ${summary.clicked_audio_count} times`);
   assert(summary.media_request_count === 0, `${label} observed unexpected media requests`);
   return summary;
+}
+
+function withInboxManagementProcessingProofCard(items) {
+  const currentItems = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (currentItems.some(item => String(item?.card_id || "").trim() === INBOX_MANAGEMENT_PROCESSING_PROOF_CARD_ID)) {
+    return currentItems;
+  }
+  if (currentItems.length === 0) {
+    return [{ ...INBOX_MANAGEMENT_PROCESSING_PROOF_CARD }];
+  }
+  return [
+    currentItems[0],
+    { ...INBOX_MANAGEMENT_PROCESSING_PROOF_CARD },
+    ...currentItems.slice(1)
+  ];
 }
 
 function cssAttributeValue(value) {
@@ -827,6 +860,28 @@ async function readInboxManagementState(page) {
     const selectedButton = shell?.querySelector("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]");
     const archiveToggle = shell?.querySelector(".inbox-archive-toggle");
     const openMenu = shell?.querySelector(".inbox-card-menu");
+    const processingCards = wraps
+      .map(wrap => {
+        const article = wrap.querySelector("article.card-meeting-processing[data-card-id]");
+        if (!article) {
+          return null;
+        }
+        const menuButton = wrap.querySelector("[data-card-action=\"manage_menu\"]");
+        const selectControl = wrap.querySelector("[data-card-action=\"manage_select\"]");
+        return {
+          card_id: String(article.getAttribute("data-card-id") || "").trim(),
+          session_id: String(article.getAttribute("data-card-session-id") || "").trim(),
+          wrap_class: String(wrap.className || ""),
+          article_rect: rect(article),
+          menu_button: readButtonStyles(menuButton),
+          select_control: readButtonStyles(selectControl),
+          has_menu_button: Boolean(menuButton),
+          menu_visible: Boolean(menuButton instanceof HTMLElement && getComputedStyle(menuButton).display !== "none" && menuButton.getBoundingClientRect().width > 0 && menuButton.getBoundingClientRect().height > 0),
+          has_select_control: Boolean(selectControl),
+          select_visible: Boolean(selectControl instanceof HTMLElement && getComputedStyle(selectControl).display !== "none" && selectControl.getBoundingClientRect().width > 0 && selectControl.getBoundingClientRect().height > 0)
+        };
+      })
+      .filter(Boolean);
     const viewport = {
       width: Number(window.innerWidth.toFixed(2)),
       height: Number(window.innerHeight.toFixed(2))
@@ -867,6 +922,8 @@ async function readInboxManagementState(page) {
       menu_actions: Array.from(openMenu?.querySelectorAll(".inbox-card-menu-item") || [])
         .map(node => String(node.getAttribute("data-card-menu-action") || "").trim())
         .filter(Boolean),
+      processing_card_count: processingCards.length,
+      processing_cards: processingCards,
       archive_reveal_count: shell?.querySelectorAll(".archive-reveal-action").length || 0,
       visible_card_count: shell?.querySelectorAll(".card-wrap article.card").length || 0,
       selected_card_ids: Array.from(shell?.querySelectorAll(".card-wrap.is-inbox-manage-selected article.card[data-card-id]") || [])
@@ -930,6 +987,10 @@ async function readInboxManagementState(page) {
           pressed: archiveToggle?.getAttribute("aria-pressed") === "true",
           label: String(archiveToggle?.getAttribute("aria-label") || archiveToggle?.textContent || "").trim(),
           visible_card_count: shell?.querySelectorAll(".card-wrap article.card").length || 0
+        },
+        processing_escape_hatch: {
+          count: processingCards.length,
+          cards: processingCards
         }
       }
     };
@@ -962,6 +1023,18 @@ function assertInboxManagementLayout(state, phase) {
     if (menu.action_column_rect) {
       assert(menu.button_rect.right < menu.action_column_rect.x, "Tile menu should not overlap the right mic/paperclip action column");
     }
+    for (const processing of state.processing_cards || []) {
+      assert(processing.has_menu_button, `Processing meeting card ${processing.card_id} should expose a left-rail menu button`);
+      assert(processing.menu_visible, `Processing meeting card ${processing.card_id} left-rail menu button should be visible`);
+      const menuRect = processing.menu_button?.rect || null;
+      const articleRect = processing.article_rect || null;
+      if (menuRect && articleRect) {
+        const centerDelta = (menuRect.y + (menuRect.height / 2)) - (articleRect.y + (articleRect.height / 2));
+        assert(Math.abs(centerDelta) <= 2, `Processing meeting menu should be vertically centered, delta ${centerDelta}`);
+        assert(menuRect.x >= articleRect.x + 4, `Processing meeting menu left ${menuRect.x} should sit inside left rail`);
+        assert(menuRect.right <= articleRect.x + 48, `Processing meeting menu right ${menuRect.right} should stay inside left rail`);
+      }
+    }
   }
   if (phase === "manage") {
     const bar = state.layout?.manage_bar || {};
@@ -979,6 +1052,17 @@ function assertInboxManagementLayout(state, phase) {
       const selectCenter = selectRect.y + (selectRect.height / 2);
       const articleCenter = articleRect.y + (articleRect.height / 2);
       assert(Math.abs(selectCenter - articleCenter) <= 2, `Manage select control should be vertically centered, delta ${selectCenter - articleCenter}`);
+    }
+    for (const processing of state.processing_cards || []) {
+      assert(!processing.has_menu_button, `Processing meeting card ${processing.card_id} should replace menu with select in Manage mode`);
+      assert(processing.has_select_control, `Processing meeting card ${processing.card_id} should expose Manage select control`);
+      assert(processing.select_visible, `Processing meeting card ${processing.card_id} Manage select control should be visible`);
+      const selectControlRect = processing.select_control?.rect || null;
+      const articleRect = processing.article_rect || null;
+      if (selectControlRect && articleRect) {
+        const centerDelta = (selectControlRect.y + (selectControlRect.height / 2)) - (articleRect.y + (articleRect.height / 2));
+        assert(Math.abs(centerDelta) <= 2, `Processing meeting select should be vertically centered, delta ${centerDelta}`);
+      }
     }
   }
   if (phase === "selected") {
@@ -1087,7 +1171,8 @@ async function installInboxManagementActionInterceptor(page, actionRequests) {
         return;
       }
       const includeArchived = /^(1|true|yes)$/i.test(String(url.searchParams.get("include_archived") || ""));
-      const nextItems = payload.items
+      const proofItems = withInboxManagementProcessingProofCard(payload.items);
+      const nextItems = proofItems
         .map(item => {
           const cardId = String(item?.card_id || "").trim();
           if (cardId && archivedCardIds.has(cardId)) {
@@ -1182,6 +1267,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   const noAudioGuard = options.noAudioGuard || null;
   const actionRequests = [];
   const feedEmulation = await installInboxManagementActionInterceptor(page, actionRequests);
+  await reloadLightInbox(page, timeoutMs);
   const before = await readInboxManagementState(page);
   assert(before.manage_button_visible, "Light Inbox should render a visible Manage control");
   assert(before.archive_toggle_visible, "Light Inbox should render a visible archived-feed toggle");
@@ -1289,6 +1375,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
       normal_menu: before.layout?.normal_menu || null,
       feed_width: before.layout?.feed_width || null,
       timestamp_alignment: before.layout?.timestamp_alignment || null,
+      processing_escape_hatch: before.layout?.processing_escape_hatch || null,
       manage_bar: manageMode.layout?.manage_bar || null,
       manage_bar_scroll: manageBarScroll,
       selected_control: afterSelect.layout?.selected_control || null,

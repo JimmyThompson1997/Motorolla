@@ -13341,6 +13341,21 @@
     const wrapper = el("div", flatFeed ? "card-wrap card-wrap-meeting-processing is-flat-feed" : "card-wrap card-wrap-meeting-processing");
     setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
+    const inboxSurface = surface === "inbox";
+    const manageableInboxCard = inboxSurface && canManageInboxCard(card);
+    const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
+    if (inboxSurface) {
+      wrapper.classList.add("is-inbox-card");
+    }
+    if (manageableInboxCard) {
+      wrapper.classList.add("has-inbox-menu");
+    }
+    if (inboxManageMode) {
+      wrapper.classList.add("is-inbox-manage-mode");
+    }
+    if (manageableInboxCard && isInboxCardSelected(card)) {
+      wrapper.classList.add("is-inbox-manage-selected");
+    }
     const cardEl = el("article", flatFeed ? "card card-meeting-processing is-flat-feed" : "card card-meeting-processing");
     setDataAttribute(cardEl, "data-card-surface", surface);
     applyCardDataAttributes(cardEl, card, "meeting_processing");
@@ -13356,7 +13371,16 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
+    if (inboxManageMode) {
+      wrapper.append(inboxManageSelectButton(card));
+    }
     wrapper.append(cardEl);
+    if (manageableInboxCard && !inboxManageMode) {
+      wrapper.append(inboxCardMenuButton(card));
+      if (isInboxCardMenuOpen(card)) {
+        wrapper.append(cardOverflowMenu(card));
+      }
+    }
     return wrapper;
   }
 

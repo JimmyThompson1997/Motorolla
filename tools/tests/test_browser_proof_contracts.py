@@ -735,6 +735,9 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "normal_menu" in source
     assert "feed_width" in source
     assert "timestamp_alignment" in source
+    assert "processing_escape_hatch" in source
+    assert "proof_card_meeting_processing_escape_hatch" in source
+    assert "Processing meeting card" in source
     assert "manage_bar_scroll" in source
     assert "assertInboxManageBarScrollStickiness(" in source
     assert "feed_contains_manage_bar" in source

@@ -6505,7 +6505,8 @@ button {
   box-shadow: 0 10px 24px color-mix(in srgb, var(--accent-primary) 26%, transparent);
 }
 
-.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] {
+.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"],
+.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="meeting_processing"] {
   padding-left: 50px;
 }
 
