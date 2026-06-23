@@ -310,6 +310,11 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'function appendCalendarDescriptionNodes(container, description) {' in app
     assert 'function lightCalendarDescriptionLink(url) {' in app
     assert 'command: "browser.open", args: { url: href }' in app
+    open_external_browser_url = function_block(app, "openExternalBrowserUrl")
+    assert "window.location.assign" not in open_external_browser_url
+    light_calendar_description_link = function_block(app, "lightCalendarDescriptionLink")
+    assert 'if (typeof Pucky !== "undefined" && Pucky && typeof Pucky.request === "function") {' in light_calendar_description_link
+    assert "event.preventDefault();" in light_calendar_description_link
     assert 'function lightCalendarDetailRow(rowKey, label, value, options = {}) {' in app
     assert 'function lightCalendarContactChip(entry, options = {}) {' in app
     assert 'const icon = el("span", "light-calendar-attendee-chip-icon");' in app

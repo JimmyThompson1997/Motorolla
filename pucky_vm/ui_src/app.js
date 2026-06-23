@@ -5468,11 +5468,7 @@
         }
       }
     } catch (_) {
-      // Fall through to same-tab navigation as a last resort.
-    }
-    if (window.location && typeof window.location.assign === "function") {
-      window.location.assign(href);
-      return true;
+      // Leave the Pucky shell in place when popup creation is unavailable.
     }
     return false;
   }
@@ -5486,8 +5482,10 @@
     link.target = "_blank";
     link.textContent = href;
     link.addEventListener("click", event => {
-      event.preventDefault();
-      void openExternalBrowserUrl(href);
+      if (typeof Pucky !== "undefined" && Pucky && typeof Pucky.request === "function") {
+        event.preventDefault();
+        void openExternalBrowserUrl(href);
+      }
     });
     return link;
   }
