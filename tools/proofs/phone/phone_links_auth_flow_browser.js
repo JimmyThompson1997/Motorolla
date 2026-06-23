@@ -231,7 +231,9 @@ async function readPerfState(client) {
 async function ensureRoute(client, route, timeoutMs) {
   const targetRoute = String(route || "").trim() || "home";
   const currentRoute = await client.evaluate(`document.querySelector(".app-shell")?.getAttribute("data-view") || ""`);
-  if (currentRoute !== targetRoute) {
+  const currentPerfMetrics = await client.evaluate(`window.PuckyUiDebug?.perfMetrics?.() || null`).catch(() => null);
+  const perfEnabled = Boolean(currentPerfMetrics && currentPerfMetrics.enabled);
+  if (currentRoute !== targetRoute || !perfEnabled) {
     await client.evaluate(`(() => {
       const url = new URL(window.location.href);
       url.searchParams.set("route", ${JSON.stringify(targetRoute)});

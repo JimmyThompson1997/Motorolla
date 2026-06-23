@@ -696,6 +696,8 @@ def test_connect_native_config_waits_for_bridge_request_before_declaring_missing
     assert 'const hasApiToken = Boolean(String(config && config.api_token || "").trim()) || config && config.has_api_token === true;' in request_native_config
     assert 'return await Pucky.request({ command: "pucky.config.get", args: {} });' not in request_native_config
     assert 'const config = await requestNativeLinksConfig({ requireApiToken: true });' in ensure_links_api_config
+    assert 'if (state.links.apiBaseUrl && state.links.apiToken) {' in ensure_links_api_config
+    assert 'if (state.links.apiBaseUrl) {' not in ensure_links_api_config
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:

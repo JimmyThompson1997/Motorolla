@@ -57,7 +57,9 @@ def test_emulator_speed_loop_proof_reuses_live_auth_handoff_and_reports_route_me
     assert '{"kind": "click_home_tile", "route": route}' in source
     assert '{"kind": "click_selector", "selector": click_selector}' in source
     assert '{"kind": "wait_for_selector", "selector": wait_selector}' in source
+    assert '{"kind": "wait_for_connect_ready", "timeout_ms": int(args.timeout_seconds * 1000)}' in source
     assert 'auth_proof.ensure_live_credentials(args)' in source
+    assert 'connect_error = auth_proof.has_forbidden_connect_error(search_state)' in source
     assert 'auth_proof.resolve_browser_surface(args, timeout_seconds=args.timeout_seconds)' in source
     assert 'auth_proof.discover_chrome_cdp_url(args)' in source
     assert 'auth_proof.wait_for_rendered_auth_snapshot(args, str(chrome["cdp_url"]))' in source
@@ -72,6 +74,8 @@ def test_phone_browser_helper_supports_generic_perf_route_and_click_ops() -> Non
 
     assert "async function readPerfState(client)" in source
     assert "async function ensureRoute(client, route, timeoutMs)" in source
+    assert 'const currentPerfMetrics = await client.evaluate(`window.PuckyUiDebug?.perfMetrics?.() || null`).catch(() => null);' in source
+    assert "if (currentRoute !== targetRoute || !perfEnabled) {" in source
     assert "async function clickHomeTile(client, route, timeoutMs)" in source
     assert "async function clickSelector(client, selector, timeoutMs)" in source
     assert "async function waitForSelector(client, selector, timeoutMs)" in source

@@ -3113,7 +3113,7 @@
       refreshHostedBrowserAuthState();
       return;
     }
-    if (state.links.apiBaseUrl) {
+    if (state.links.apiBaseUrl && state.links.apiToken) {
       return;
     }
     try {

@@ -8,6 +8,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from tools.proofs.phone import phone_links_auth_flow_emulator_proof as auth_proof
 
 
@@ -52,6 +56,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=90)
     parser.add_argument("--browser-timeout-seconds", type=int, default=30)
     parser.add_argument("--devtools-timeout-seconds", type=int, default=25)
+    parser.add_argument("--devtools-port", type=int, default=9222)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--baseline", type=Path)
     args = parser.parse_args(argv)
@@ -291,11 +296,17 @@ def main(argv: list[str] | None = None) -> int:
             args.report_dir / "connect-search.png",
             [
                 {"kind": "ensure_connect_route"},
+                {"kind": "wait_for_connect_ready", "timeout_ms": int(args.timeout_seconds * 1000)},
+                {"kind": "links_state"},
                 {"kind": "search_app", "slug": args.app_slug},
                 {"kind": "links_state"},
             ],
         )
         summary["screenshots"]["connect_search"] = str(args.report_dir / "connect-search.png")
+        search_state = search_browser.get("final_state") or {}
+        connect_error = auth_proof.has_forbidden_connect_error(search_state)
+        if connect_error:
+            raise EmulatorSpeedProofError(connect_error)
         filtered = ((search_browser.get("final_state") or {}).get("metrics") or {}).get("filtered_slugs") or []
         if args.app_slug not in filtered:
             raise EmulatorSpeedProofError(f"Connect search never exposed {args.app_slug} in filtered_slugs.")
