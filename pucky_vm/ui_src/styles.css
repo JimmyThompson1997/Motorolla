@@ -3538,6 +3538,21 @@ button {
   color: var(--text-danger-soft);
 }
 
+.meetings-embedded-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.meetings-refresh {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(245, 249, 255, 0.08);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(245, 249, 255, 0.12);
+}
+
 .meetings-refreshing {
   color: var(--muted);
   font-size: 11px;

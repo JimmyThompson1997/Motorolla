@@ -89,6 +89,20 @@ function assert(condition, message) {
   }
 }
 
+function isDisposableRouteFetchError(error) {
+  const message = String(error && error.message ? error.message : error || "");
+  return /target page, context or browser has been closed/i.test(message)
+    || /fetch response has been disposed/i.test(message);
+}
+
+async function abortRouteIfDisposed(route, error) {
+  if (!isDisposableRouteFetchError(error)) {
+    return false;
+  }
+  await route.abort("failed").catch(() => {});
+  return true;
+}
+
 function authHeaders(token) {
   const cleanToken = String(token || "").trim();
   return cleanToken ? { Authorization: `Bearer ${cleanToken}` } : {};
@@ -1044,95 +1058,109 @@ async function installInboxManagementActionInterceptor(page, actionRequests) {
   const archivedCardIds = new Set();
   const feedRequests = [];
   await page.route(/\/api\/feed(?:\?.*)?$/, async route => {
-    const request = route.request();
-    if (request.method() !== "GET") {
-      await route.continue();
-      return;
-    }
-    const response = await route.fetch();
-    const headers = await response.headers();
-    const bodyText = await response.text();
-    const url = new URL(request.url());
-    feedRequests.push({
-      url: request.url(),
-      include_archived: String(url.searchParams.get("include_archived") || "")
-    });
-    let payload = null;
     try {
-      payload = JSON.parse(bodyText);
-    } catch (_error) {
-      payload = null;
-    }
-    if (!payload || !Array.isArray(payload.items)) {
+      const request = route.request();
+      if (request.method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      const headers = await response.headers();
+      const bodyText = await response.text();
+      const url = new URL(request.url());
+      feedRequests.push({
+        url: request.url(),
+        include_archived: String(url.searchParams.get("include_archived") || "")
+      });
+      let payload = null;
+      try {
+        payload = JSON.parse(bodyText);
+      } catch (_error) {
+        payload = null;
+      }
+      if (!payload || !Array.isArray(payload.items)) {
+        await route.fulfill({
+          status: response.status(),
+          headers,
+          body: bodyText
+        });
+        return;
+      }
+      const includeArchived = /^(1|true|yes)$/i.test(String(url.searchParams.get("include_archived") || ""));
+      const nextItems = payload.items
+        .map(item => {
+          const cardId = String(item?.card_id || "").trim();
+          if (cardId && archivedCardIds.has(cardId)) {
+            return { ...item, archived: true };
+          }
+          return item;
+        })
+        .filter(item => {
+          const cardId = String(item?.card_id || "").trim();
+          return includeArchived || !cardId || !archivedCardIds.has(cardId);
+        });
+      const responseHeaders = {
+        ...headers,
+        "content-type": "application/json"
+      };
+      delete responseHeaders["content-length"];
+      delete responseHeaders["content-encoding"];
       await route.fulfill({
         status: response.status(),
-        headers,
-        body: bodyText
+        headers: responseHeaders,
+        body: JSON.stringify({ ...payload, items: nextItems })
       });
-      return;
+    } catch (error) {
+      if (await abortRouteIfDisposed(route, error)) {
+        return;
+      }
+      throw error;
     }
-    const includeArchived = /^(1|true|yes)$/i.test(String(url.searchParams.get("include_archived") || ""));
-    const nextItems = payload.items
-      .map(item => {
-        const cardId = String(item?.card_id || "").trim();
-        if (cardId && archivedCardIds.has(cardId)) {
-          return { ...item, archived: true };
-        }
-        return item;
-      })
-      .filter(item => {
-        const cardId = String(item?.card_id || "").trim();
-        return includeArchived || !cardId || !archivedCardIds.has(cardId);
-      });
-    const responseHeaders = {
-      ...headers,
-      "content-type": "application/json"
-    };
-    delete responseHeaders["content-length"];
-    delete responseHeaders["content-encoding"];
-    await route.fulfill({
-      status: response.status(),
-      headers: responseHeaders,
-      body: JSON.stringify({ ...payload, items: nextItems })
-    });
   });
   await page.route("**/api/feed/actions", async route => {
-    let payload = {};
     try {
-      payload = route.request().postDataJSON();
-    } catch (_error) {
+      let payload = {};
       try {
-        payload = JSON.parse(route.request().postData() || "{}");
-      } catch (_jsonError) {
-        payload = {};
+        payload = route.request().postDataJSON();
+      } catch (_error) {
+        try {
+          payload = JSON.parse(route.request().postData() || "{}");
+        } catch (_jsonError) {
+          payload = {};
+        }
       }
-    }
-    actionRequests.push({
-      url: route.request().url(),
-      method: route.request().method(),
+      actionRequests.push({
+        url: route.request().url(),
+        method: route.request().method(),
         payload
       });
-    const cardId = String(payload?.card_id || "").trim();
-    const action = String(payload?.action || "").trim();
-    if (cardId && action === "archive") {
-      archivedCardIds.add(cardId);
-    } else if (cardId && action === "unarchive") {
-      archivedCardIds.delete(cardId);
+      const cardId = String(payload?.card_id || "").trim();
+      const action = String(payload?.action || "").trim();
+      if (cardId && action === "archive") {
+        archivedCardIds.add(cardId);
+      } else if (cardId && action === "unarchive") {
+        archivedCardIds.delete(cardId);
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema: "pucky.feed_action.v1",
+          ok: true,
+          client_action_id: String(payload?.client_action_id || ""),
+          action: String(payload?.action || ""),
+          item: {
+            card_id: String(payload?.card_id || ""),
+            archived: String(payload?.action || "") === "archive"
+          }
+        })
+      });
+    } catch (error) {
+      if (await abortRouteIfDisposed(route, error)) {
+        return;
+      }
+      throw error;
     }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        schema: "pucky.feed_action.v1",
-        ok: true,
-        client_action_id: String(payload?.client_action_id || ""),
-        action: String(payload?.action || ""),
-        item: {
-          card_id: String(payload?.card_id || ""),
-          archived: String(payload?.action || "") === "archive"
-        }
-      })
-    });
   });
   return {
     archivedCardIds,

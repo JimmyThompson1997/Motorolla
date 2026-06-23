@@ -958,6 +958,15 @@ def test_calendar_and_hosted_bug_hunt_proofs_cover_event_container_clicks() -> N
     assert 'openerSelector: ".light-event-block"' in hosted_source
 
 
+def test_light_native_ports_proof_guards_route_fetch_during_context_shutdown() -> None:
+    source = read_source("cover_light_native_ports_playwright.mjs")
+
+    assert "const message = String(error && error.message ? error.message : error || \"\");" in source
+    assert "/target page, context or browser has been closed/i.test(message)" in source
+    assert "/fetch response has been disposed/i.test(message)" in source
+    assert 'await route.abort("failed").catch(() => {});' in source
+
+
 def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     calendar_source = read_source("cover_calendar_playwright.mjs")
 
