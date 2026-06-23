@@ -735,9 +735,14 @@ def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract()
     assert "hasStandaloneWhoSection" in source
     assert "whoInsideDetailsCard" in source
     assert "whoChipLabels" in source
-    assert 'for (const label of ["When", "Who", "Source", "Topics"]) {' in source
+    assert "whoChipLabelBackground" in source
+    assert "whoChipIconBackground" in source
+    assert 'JSON.stringify(meetingNoteState.detailRowLabels) === JSON.stringify(["When", "Who"])' in source
     assert "Meeting note detail should keep Who inside the Details card" in source
     assert "Meeting note detail should not keep a standalone Who section shell" in source
+    assert "Expected Who chips to reuse the calendar-style contact label logic" in source
+    assert "Expected meeting note Who label to avoid a nested pill background" in source
+    assert "Expected meeting note Who icon to avoid a nested pill background" in source
 
 
 def test_meetings_walkthrough_proof_checks_short_and_long_title_alignment() -> None:

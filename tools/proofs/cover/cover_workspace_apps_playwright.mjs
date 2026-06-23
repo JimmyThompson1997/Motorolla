@@ -2573,7 +2573,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(JSON.stringify(meetingNoteState.detailRowLabels) === JSON.stringify(["When", "Who"]), `Expected meeting note detail rows to only include When and Who, got ${meetingNoteState.detailRowLabels.join(", ")}.`);
   assert(meetingNoteState.whoInsideDetailsCard, "Meeting note detail should keep Who inside the Details card.");
   assert(!meetingNoteState.hasStandaloneWhoSection, "Meeting note detail should not keep a standalone Who section shell.");
-  assert(meetingNoteState.whoChipLabels.includes("Proof C."), `Expected Who chips to reuse the compact calendar-style contact label, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
+  assert(meetingNoteState.whoChipLabels.includes("Proof Contact One"), `Expected Who chips to reuse the calendar-style contact label logic, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
   assert(["rgba(0, 0, 0, 0)", "transparent"].includes(String(meetingNoteState.whoChipLabelBackground || "").trim().toLowerCase()), `Expected meeting note Who label to avoid a nested pill background, got ${meetingNoteState.whoChipLabelBackground}.`);
   assert(["0px", "0px 0px 0px 0px", "0"].includes(String(meetingNoteState.whoChipLabelBorderRadius || "").trim().toLowerCase()), `Expected meeting note Who label to avoid a nested pill radius, got ${meetingNoteState.whoChipLabelBorderRadius}.`);
   assert(["rgba(0, 0, 0, 0)", "transparent"].includes(String(meetingNoteState.whoChipIconBackground || "").trim().toLowerCase()), `Expected meeting note Who icon to avoid a nested pill background, got ${meetingNoteState.whoChipIconBackground}.`);
