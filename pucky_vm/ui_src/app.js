@@ -5956,7 +5956,7 @@
     const address = String(event?.metadata?.address || "").trim();
     const locationValue = lightCalendarLocationValue(place, address);
     if (place || address) {
-      card.append(lightCalendarDetailRow("place", "Place", locationValue, {
+      card.append(lightCalendarDetailRow("place", "Location", locationValue, {
         compact: true,
         valueClassName: "light-calendar-detail-location-value",
       }));

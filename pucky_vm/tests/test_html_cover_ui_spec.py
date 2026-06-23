@@ -321,7 +321,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'light-calendar-detail-guest-list' not in app
     assert 'const address = String(event?.metadata?.address || "").trim();' in app
     assert 'const locationValue = lightCalendarLocationValue(place, address);' in app
-    assert 'card.append(lightCalendarDetailRow("place", "Place", locationValue, {' in app
+    assert 'card.append(lightCalendarDetailRow("place", "Location", locationValue, {' in app
     assert 'lightCalendarDetailRow("place", "Place", place, { compact: true })' not in app
     assert 'lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone, { compact: true })' in app
     assert 'function lightCalendarDetailDescription(description) {' in app
