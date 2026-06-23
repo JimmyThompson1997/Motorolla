@@ -788,6 +788,8 @@ def test_real_vm_inbox_proof_uses_universal_feed_dom_contract() -> None:
     assert ".light-real-feed-list" not in source
     assert ".light-shell[data-light-route=\"inbox\"] .light-inbox-surface" in source
     assert "article.card" in source
+    assert 'article.card h2.title' not in source
+    assert '.light-shell[data-light-route=\\"inbox\\"] article.card .title' in source
     assert "loading inbox" in source.lower()
     assert "Light Inbox cold load regressed to the reply-only empty state" in source
 

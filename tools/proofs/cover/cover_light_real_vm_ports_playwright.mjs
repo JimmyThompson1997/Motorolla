@@ -152,7 +152,7 @@ async function main() {
     await clickLightTile(page, "inbox");
     await waitForUniversalInboxReady(page, config.timeoutMs);
     const inboxCardCount = await page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card").count();
-    const inboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card h2.title");
+    const inboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card .title");
     const apiFeedTitles = titleSet(feedItems);
     const matchingInboxTitles = inboxTitles.filter(title => apiFeedTitles.has(title));
     assert(inboxCardCount > 0, "Light Inbox did not render canonical Home card DOM");
@@ -163,7 +163,7 @@ async function main() {
     await page.goto(coldInboxUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForUniversalInboxReady(page, config.timeoutMs);
     const coldInboxCardCount = await page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card").count();
-    const coldInboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card h2.title");
+    const coldInboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card .title");
     const matchingColdInboxTitles = coldInboxTitles.filter(title => apiFeedTitles.has(title));
     const coldInboxEmptyText = normalizeText(await page.locator(".light-shell[data-light-route=\"inbox\"] .empty").first().textContent().catch(() => ""));
     assert(coldInboxCardCount > 0, "Light Inbox cold load did not render canonical Home card DOM");
