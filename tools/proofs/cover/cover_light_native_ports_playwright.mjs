@@ -1278,12 +1278,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   assert(targetCardId, "Inbox management archive proof requires a card_id");
   const normalScreenshot = await saveScreenshot(page, reportDir, "01-normal-expanded-feed");
 
-  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Open Inbox tile menu");
-  await page.waitForFunction(
-    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
-    undefined,
-    { timeout: timeoutMs }
-  );
+  await openInboxTileMenu(page, targetCardId, timeoutMs, "Open Inbox tile menu");
   const menuOpen = await readInboxManagementState(page);
   assert(menuOpen.menu_open, "Inbox tile menu did not open");
   assert(menuOpen.menu_actions.includes("archive"), "Inbox tile menu did not expose Archive");
@@ -1354,12 +1349,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   assert(archiveFilter.archive_toggle_pressed, "Archive filter should be active after toggling archived Inbox");
   const archiveFilterScreenshot = await saveScreenshot(page, reportDir, "07-archive-filter-card-visible");
 
-  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Open archived Inbox tile menu");
-  await page.waitForFunction(
-    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
-    undefined,
-    { timeout: timeoutMs }
-  );
+  await openInboxTileMenu(page, targetCardId, timeoutMs, "Open archived Inbox tile menu");
   const archivedMenu = await readInboxManagementState(page);
   assert(archivedMenu.menu_actions.includes("unarchive"), "Archived Inbox tile menu should expose Unarchive");
   assert(!archivedMenu.menu_actions.includes("delete"), "Archived Inbox tile menu must not expose Delete");
@@ -1578,12 +1568,7 @@ async function exerciseLiveTempCardArchive(page, config, reportDir, manifestBund
   await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
   const archivedVisible = await readInboxManagementState(page);
 
-  await clickLocator(page, inboxCardWrap(page, created.card_id).locator(INBOX_MANAGE_MENU_SELECTOR).first(), config.timeoutMs, "Open live temp archived menu");
-  await page.waitForFunction(
-    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
-    undefined,
-    { timeout: config.timeoutMs }
-  );
+  await openInboxTileMenu(page, created.card_id, config.timeoutMs, "Open live temp archived menu");
   const archivedMenu = await readInboxManagementState(page);
   assert(archivedMenu.menu_actions.includes("unarchive"), "Live archived temp card should expose Unarchive");
   assert(!archivedMenu.menu_actions.includes("delete"), "Live archived temp card must not expose Delete");
@@ -1810,6 +1795,30 @@ async function clickLocator(page, locator, timeoutMs, label) {
         throw new Error(`Could not click ${label}: ${normalClickError}; ${forceClickError}; ${mouseClickError}`);
       }
     }
+  }
+}
+
+async function waitForInboxTileMenu(page, timeoutMs) {
+  await page.waitForFunction(
+    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-card-menu")),
+    undefined,
+    { timeout: timeoutMs }
+  );
+}
+
+async function openInboxTileMenu(page, cardId, timeoutMs, label) {
+  const menuButton = inboxCardWrap(page, cardId).locator(INBOX_MANAGE_MENU_SELECTOR).first();
+  await clickLocator(page, menuButton, timeoutMs, label);
+  try {
+    await waitForInboxTileMenu(page, Math.min(1500, timeoutMs));
+    return;
+  } catch (_error) {
+    const box = await menuButton.boundingBox();
+    if (!box) {
+      throw _error;
+    }
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await waitForInboxTileMenu(page, timeoutMs);
   }
 }
 
