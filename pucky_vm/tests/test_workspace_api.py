@@ -127,7 +127,7 @@ def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(t
         server.shutdown()
 
 
-def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path: Path) -> None:
+def test_workspace_api_allows_same_origin_public_task_status_and_archive_patch_only(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
         task = request_json(
@@ -246,6 +246,20 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
             )
         assert caught.value.code == 401
 
+        archived = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="",
+            headers=same_origin_headers,
+            body={"archived": True},
+        )
+        active_tasks = request_json(base_url, "/api/workspace/tasks", method="GET", token="test-token")
+        all_tasks = request_json(base_url, "/api/workspace/tasks?include_archived=1", method="GET", token="test-token")
+        assert archived["archived"] is True
+        assert task["id"] not in {item["id"] for item in active_tasks["items"]}
+        assert task["id"] in {item["id"] for item in all_tasks["items"]}
+
         note = request_json(
             base_url,
             "/api/workspace/notes",
@@ -263,6 +277,33 @@ def test_workspace_api_allows_same_origin_public_task_status_patch_only(tmp_path
                 body={"pinned": True},
             )
         assert caught.value.code == 401
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_task_archive_patch_hides_task_from_default_reads(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        task = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={"id": "archive-task", "title": "Archive Task", "status": "todo"},
+        )
+        archived = request_json(
+            base_url,
+            f"/api/workspace/tasks/{task['id']}",
+            method="PATCH",
+            token="test-token",
+            body={"archived": True},
+        )
+        visible = request_json(base_url, "/api/workspace/tasks", method="GET", token="test-token")
+        all_tasks = request_json(base_url, "/api/workspace/tasks?include_archived=1", method="GET", token="test-token")
+
+        assert archived["archived"] is True
+        assert task["id"] not in {item["id"] for item in visible["items"]}
+        assert task["id"] in {item["id"] for item in all_tasks["items"]}
     finally:
         server.shutdown()
 

@@ -780,6 +780,12 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             payload: dict[str, object],
         ) -> tuple[bool, HTTPStatus, str]:
             payload_keys = set(payload.keys())
+            if payload_keys == {"archived"}:
+                if not bool(payload.get("archived")):
+                    return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
+                if not self._is_same_origin_ui_request():
+                    return False, HTTPStatus.UNAUTHORIZED, "unauthorized"
+                return True, HTTPStatus.OK, ""
             if payload_keys not in ({"status"}, {"checklist"}, {"checklist", "status"}):
                 return False, HTTPStatus.BAD_REQUEST, "workspace_task_public_status_patch_invalid"
             if "status" in payload_keys:

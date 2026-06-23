@@ -90,6 +90,17 @@ async function waitForText(page, selector, expected, timeoutMs) {
   await page.waitForTimeout(120);
 }
 
+async function waitForTaskAbsent(page, taskId, timeoutMs) {
+  await page.waitForFunction(expectedTaskId => {
+    return !document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`);
+  }, String(taskId || ""), { timeout: timeoutMs });
+  await page.waitForFunction(() => {
+    const title = String(document.querySelector(".light-page-title")?.textContent || "").trim();
+    return title !== "Select tasks" && !document.querySelector(".light-task-bulk-bar");
+  }, undefined, { timeout: timeoutMs }).catch(() => {});
+  await page.waitForTimeout(120);
+}
+
 async function currentRoute(page) {
   return page.evaluate(() => document.querySelector(".light-shell")?.getAttribute("data-light-route") || "");
 }
@@ -243,43 +254,11 @@ async function readTaskState(page) {
         rowIds,
       };
     });
-    const filterButton = document.querySelector(".light-task-filter-button");
-    const filters = filterButton ? [{
-      key: String(filterButton.dataset.taskFilterCurrent || filterButton.dataset.taskFilter || ""),
-      label: String(filterButton.querySelector(".light-task-filter-button-label")?.textContent || filterButton.textContent || "").trim(),
-      active: true,
-    }] : [];
-    const filterVisual = filterButton ? (() => {
-      const style = getComputedStyle(filterButton);
-      const chevron = filterButton.querySelector(".light-task-filter-button-chevron");
-      const chevronStyle = chevron ? getComputedStyle(chevron) : null;
-      const svg = chevron?.querySelector("svg");
-      const path = svg?.querySelector("path");
-      return {
-        theme: String(appShell?.getAttribute("data-theme") || ""),
-        buttonColor: String(style.color || ""),
-        buttonBackground: String(style.backgroundColor || ""),
-        chevronColor: String(chevronStyle?.color || ""),
-        chevronPath: String(path?.getAttribute("d") || ""),
-        chevronHasRect: Boolean(svg?.querySelector("rect")),
-      };
-    })() : null;
-    const filterSelectorOptions = Array.from(document.querySelectorAll(".settings-selector-option")).map(option => {
-      const leading = option.querySelector(".settings-selector-option-leading");
-      return {
-        value: String(option.getAttribute("data-selector-value") || ""),
-        label: String(option.querySelector(".settings-selector-option-label")?.textContent || "").trim(),
-        meta: String(option.querySelector(".settings-selector-option-meta")?.textContent || "").trim(),
-        hasLeadingVisual: Boolean(
-          leading
-          && (
-            leading.children.length > 0
-            || leading.querySelector("svg, .light-check-circle")
-            || String(leading.textContent || "").trim()
-          )
-        ),
-      };
-    });
+    const bulkBar = document.querySelector(".light-task-bulk-bar");
+    const bulkArchive = bulkBar?.querySelector(".light-task-bulk-archive");
+    const selectedTaskIds = Array.from(document.querySelectorAll('.light-task-row[data-task-selected="true"]'))
+      .map(row => String(row.getAttribute("data-task-id") || "").trim())
+      .filter(Boolean);
     const checklist = detail
       ? Array.from(detail.querySelectorAll(".light-task-checklist-row")).map(row => ({
           id: String(row.getAttribute("data-checklist-item-id") || ""),
@@ -320,6 +299,7 @@ async function readTaskState(page) {
       : [];
     return {
       route: shell?.getAttribute("data-light-route") || "",
+      pageTitle: String(document.querySelector(".light-page-title")?.textContent || "").trim(),
       taskDetailId: detail?.getAttribute("data-task-detail-id") || "",
       taskStatus: detail?.getAttribute("data-task-status") || "",
       title: String(detail?.querySelector(".light-task-detail-title")?.textContent || "").trim(),
@@ -334,12 +314,16 @@ async function readTaskState(page) {
       hasTaskConnectedChips: Boolean(connectedSection?.querySelector(".light-record-chip")),
       statusHeaderPresent: Boolean(detail?.querySelector(".light-task-detail-card")),
       statusCirclePresent: Boolean(detail?.querySelector(".light-task-status-circle")),
+      detailActionPresent: Boolean(detail?.querySelector(".light-task-detail-action-trigger")),
       people,
       connected,
       sections,
-      filters,
-      filterVisual,
-      filterSelectorOptions,
+      hasFilterButton: Boolean(document.querySelector(".light-task-filter-button")),
+      selectModeActive: String(document.querySelector(".light-page-title")?.textContent || "").trim() === "Select tasks",
+      selectedTaskIds,
+      bulkBarPresent: Boolean(bulkBar),
+      bulkCountLabel: String(bulkBar?.querySelector(".light-task-bulk-count")?.textContent || "").trim(),
+      bulkArchiveDisabled: bulkArchive instanceof HTMLButtonElement ? bulkArchive.disabled : true,
       checklist,
       connectedRowCount: connected.length,
     };
@@ -412,6 +396,14 @@ async function runOperation(page, request, op) {
     }
     await waitForTaskStatus(page, status, timeoutMs);
     return { kind: op.kind, status, state: await readTaskState(page) };
+  }
+  if (op.kind === "wait_for_task_absent") {
+    const taskId = String(op.task_id || "").trim();
+    if (!taskId) {
+      throw new Error("wait_for_task_absent requires task_id");
+    }
+    await waitForTaskAbsent(page, taskId, timeoutMs);
+    return { kind: op.kind, task_id: taskId, state: await readTaskState(page) };
   }
   if (op.kind === "reload_page") {
     await reloadPage(page, timeoutMs);

@@ -847,6 +847,8 @@ async function readTaskDetailState(page) {
 
 async function readTaskListState(page) {
   return page.evaluate(() => {
+    const bulkBar = document.querySelector(".light-task-bulk-bar");
+    const legacyFilterClass = ["light", "task", "filter", "button"].join("-");
     const headers = Array.from(document.querySelectorAll(".light-task-section-title")).map(node => node.textContent?.trim() || "");
     const countLine = document.querySelector(".light-task-counts")?.textContent?.trim() || "";
     const sectionExpanded = Object.fromEntries(
@@ -856,11 +858,20 @@ async function readTaskListState(page) {
       ])
     );
     const visibleTaskIds = Array.from(document.querySelectorAll("[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
+    const selectedRows = Array.from(document.querySelectorAll('.light-task-row[data-task-selected="true"]'))
+      .map(node => String(node.getAttribute("data-task-id") || "").trim())
+      .filter(Boolean);
     return {
+      pageTitle: String(document.querySelector(".light-page-title")?.textContent || "").trim(),
       headers,
       countLine,
       sectionExpanded,
-      visibleTaskIds
+      visibleTaskIds,
+      hasFilterPill: Array.from(document.querySelectorAll("button")).some(node => node.classList.contains(legacyFilterClass)),
+      selectModeActive: String(document.querySelector(".light-page-title")?.textContent || "").trim() === "Select tasks",
+      selectedRows,
+      bulkBarPresent: Boolean(bulkBar),
+      bulkCountLabel: String(bulkBar?.querySelector(".light-task-bulk-count")?.textContent || "").trim(),
     };
   });
 }
@@ -871,6 +882,14 @@ async function waitForTaskRowStatus(page, taskId, status, timeoutMs) {
       return document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`)?.getAttribute("data-task-status") === expectedStatus;
     },
     [String(taskId || ""), String(status || "")],
+    { timeout: timeoutMs }
+  );
+}
+
+async function waitForTaskAbsent(page, taskId, timeoutMs) {
+  await page.waitForFunction(
+    expectedTaskId => !document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`),
+    String(taskId || ""),
     { timeout: timeoutMs }
   );
 }
@@ -1044,6 +1063,32 @@ function taskRowControl(page, taskId) {
   return page.locator(`[data-task-id="${taskId}"] .light-task-row-main`);
 }
 
+async function ensureTaskSectionExpanded(page, group) {
+  const toggle = page.locator(`button.light-task-section-toggle[data-task-section="${group}"]`).first();
+  if (!(await toggle.count())) {
+    return;
+  }
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+}
+
+async function taskRowVisible(page, taskId) {
+  return page.locator(`.light-task-row[data-task-id="${taskId}"]`).first().isVisible().catch(() => false);
+}
+
+async function revealTaskRow(page, taskId) {
+  if (await taskRowVisible(page, taskId)) {
+    return;
+  }
+  for (const group of ["do", "overdue", "soon", "done"]) {
+    await ensureTaskSectionExpanded(page, group);
+    if (await taskRowVisible(page, taskId)) {
+      return;
+    }
+  }
+}
+
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Notes", "notes", config.timeoutMs);
   const note = seed.writeEnabled
@@ -1133,7 +1178,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   }, { timeout: config.timeoutMs }).catch(() => null);
 
   const availableLabels = [];
-  for (const label of ["Overdue", "Today", "Upcoming", "Done"]) {
+  for (const label of ["Today", "Overdue", "Upcoming", "Done"]) {
     try {
       const count = await page.getByText(label, { exact: true }).count();
       if (count > 0) {
@@ -1163,9 +1208,10 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   });
   if (seed.writeEnabled) {
     assert(
-      JSON.stringify(listState.headers) === JSON.stringify(["Overdue", "Today", "Upcoming", "Done"]),
-      `Expected task section order Overdue/Today/Upcoming/Done, got ${JSON.stringify(listState.headers)}`
+      JSON.stringify(listState.headers) === JSON.stringify(["Today", "Overdue", "Upcoming", "Done"]),
+      `Expected task section order Today/Overdue/Upcoming/Done, got ${JSON.stringify(listState.headers)}`
     );
+    assert(!listState.hasFilterPill, "Expected Tasks to render without the legacy filter pill");
     assert(listState.sectionExpanded.done === false, "Expected Done section to start collapsed");
     assert(listState.sectionExpanded.overdue === true, "Expected Overdue section to start expanded");
     assert(listState.sectionExpanded.do === true, "Expected Today section to start expanded");
@@ -1447,6 +1493,68 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   summary.taskDetail.push({ theme, type: "done_status", taskId: doneId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due, createdMeta: detailState.createdMeta });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+
+  const bulkArchiveIds = [assetId, emptyId].filter(Boolean);
+  if (bulkArchiveIds.length >= 2) {
+    await page.locator(".light-task-select-toggle").first().click();
+    let selectState = await readTaskListState(page);
+    assert(selectState.pageTitle === "Select tasks", `Expected Select tasks page title, got ${selectState.pageTitle}`);
+    assert(selectState.selectModeActive, "Expected Select mode to activate");
+    assert(selectState.bulkBarPresent, "Expected Select mode to render the bulk archive bar");
+    for (const taskId of bulkArchiveIds) {
+      await page.locator(`.light-task-row[data-task-id="${taskId}"] .light-task-row-main`).first().click();
+    }
+    selectState = await readTaskListState(page);
+    assert(
+      JSON.stringify(selectState.selectedRows.slice().sort()) === JSON.stringify(bulkArchiveIds.slice().sort()),
+      `Expected bulk-select state to track ${JSON.stringify(bulkArchiveIds)}, got ${JSON.stringify(selectState.selectedRows)}`
+    );
+    assert(selectState.bulkCountLabel === `${bulkArchiveIds.length} selected`, `Expected bulk archive count to say ${bulkArchiveIds.length} selected, got ${selectState.bulkCountLabel}`);
+    screenshots[`${theme}_tasks_bulk_select`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-bulk-select`);
+    await page.locator(".light-task-bulk-archive").first().click();
+    for (const taskId of bulkArchiveIds) {
+      await waitForTaskAbsent(page, taskId, config.timeoutMs);
+    }
+    await page.waitForFunction(() => {
+      const title = String(document.querySelector(".light-page-title")?.textContent || "").trim();
+      return title !== "Select tasks" && !document.querySelector(".light-task-bulk-bar");
+    }, { timeout: config.timeoutMs });
+    const bulkArchiveState = await readTaskListState(page);
+    assert(!bulkArchiveState.selectModeActive, "Expected bulk archive to exit Select mode");
+    assert(!bulkArchiveState.selectedRows.length, "Expected bulk archive to clear selected task rows");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+    for (const taskId of bulkArchiveIds) {
+      await waitForTaskAbsent(page, taskId, config.timeoutMs);
+    }
+    summary.taskArchive = summary.taskArchive || [];
+    summary.taskArchive.push({
+      theme,
+      type: "bulk_archive",
+      archivedTaskIds: bulkArchiveIds,
+      selectState,
+      listState: bulkArchiveState,
+    });
+  }
+
+  await revealTaskRow(page, `${seed.runId}-overdue-task`);
+  await taskRowControl(page, `${seed.runId}-overdue-task`).click();
+  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
+  await page.locator(".light-task-detail-action-trigger").first().click();
+  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.locator('.settings-selector-option[data-selector-value="archive_task"]').first().click();
+  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
+  await waitForTaskAbsent(page, `${seed.runId}-overdue-task`, config.timeoutMs);
+  const detailArchiveState = await readTaskListState(page);
+  summary.taskArchive = summary.taskArchive || [];
+  summary.taskArchive.push({
+    theme,
+    type: "detail_archive",
+    archivedTaskId: `${seed.runId}-overdue-task`,
+    archiveActionLabel: "Archive task",
+    listState: detailArchiveState,
+  });
+  screenshots[`${theme}_tasks_detail_archive`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-detail-archive`);
 
   screenshots[`${theme}_tasks_before_deadline`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-before-deadline`);
   await page.waitForTimeout(8500);

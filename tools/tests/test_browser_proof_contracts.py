@@ -459,6 +459,18 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert ".light-task-detail-toggle" not in source
 
 
+def test_workspace_tasks_archive_proof_covers_today_first_select_mode_and_detail_archive() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert 'JSON.stringify(["Today", "Overdue", "Upcoming", "Done"])' in source
+    assert "Expected task section order Today/Overdue/Upcoming/Done" in source
+    assert "Select tasks" in source
+    assert "Archive task" in source
+    assert "bulk_archive" in source
+    assert "detail_archive" in source
+    assert ".light-task-filter-button" not in source
+
+
 def test_live_connect_auth_browser_proof_requires_explicit_token_and_real_transition() -> None:
     source = read_source("cover_links_auth_flow_live_playwright.mjs")
     package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
@@ -543,15 +555,16 @@ def test_live_user_session_proof_requires_clean_task_detail_layout_and_chevron_f
 def test_live_user_session_proof_checks_task_filter_selector_icons_and_checklist_autostatus() -> None:
     source = read_source("cover_live_user_session_playwright.mjs")
 
-    assert "function readTaskFilterSelectorState(page)" in source
-    assert "function assertTaskFilterSelectorLeadingVisuals(state, context)" in source
-    assert "task_filter_selector_options" in source
-    assert "selector_option_count" in source
-    assert "has_leading_visual" in source
-    assert "Open dark task filter selector" in source
-    assert "Open light task filter selector" in source
-    assert "Task filter selector renders leading visuals for every task category in dark mode." in source
-    assert "Task filter selector renders leading visuals for every task category in light mode." in source
+    assert "function readTaskListSelectionState(page)" in source
+    assert "has_filter_pill" in source
+    assert "select_mode_active" in source
+    assert "selected_rows" in source
+    assert "bulk_bar_present" in source
+    assert "bulk_count_label" in source
+    assert "Open task bulk select mode" in source
+    assert "Archive two selected tasks from the Tasks list" in source
+    assert "Archive current task from task detail actions" in source
+    assert "Tasks opens without a filter pill and orders sections as Today, Overdue, Upcoming, and Done." in source
     assert "Complete final task checklist item" in source
     assert "Reopen task by unchecking a completed checklist item" in source
     assert 'assert(taskStateAfterChecklistDone.task_status === "done"' in source

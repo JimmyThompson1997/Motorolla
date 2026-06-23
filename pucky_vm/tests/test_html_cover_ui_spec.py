@@ -1331,37 +1331,42 @@ def test_note_flash_debug_surface_and_browser_delay_contracts_stay_notes_only() 
     assert 'const wrapper = detail?.querySelector(".light-detail-html-body");' in app
 
 
-def test_tasks_use_single_filter_selector_and_drop_count_summary() -> None:
+def test_tasks_drop_filter_selector_and_render_select_archive_controls() -> None:
     app = read("app.js")
     styles = read("styles.css")
 
-    task_filters = function_block(app, "lightTaskFilters")
     workspace_page = function_block(app, "lightTaskWorkspacePage")
     tasks_page = function_block(app, "lightTasksPage")
+    render_task_groups = function_block(app, "renderTaskGroups")
 
     assert "function lightTaskCountLine" not in app
     assert "lightTaskCountLine()," not in workspace_page
     assert "lightTaskCountLine()" not in tasks_page
-    assert "listPane.append(lightTaskFilters());" in workspace_page
-    assert "page.append(lightTaskFilters());" in tasks_page
-    assert 'title: "Filter tasks"' in task_filters
-    assert 'openSettingsSelector({' in task_filters
-    assert 'options: taskStatusFilterSelectorOptions(counts),' in task_filters
-    assert "function taskStatusFilterSelectorOptions(counts)" in app
-    assert 'button.dataset.taskFilterCurrent = currentKey;' in task_filters
-    assert 'light-task-filter-button' in task_filters
-    assert 'light-task-filter-button-chevron' in task_filters
-    assert 'iconSvg("expand_more", { filled: true })' in task_filters
-    assert 'chevron-down' not in task_filters
-    assert 'taskFilter: "all",' in app
-    assert 'task_filter: state.taskFilter || "all"' not in app
+    assert "function lightTaskFilters" not in app
+    assert "taskFilter:" not in app
+    assert "function taskStatusFilterSelectorOptions(counts)" not in app
+    assert "function currentTaskFilterChoice()" not in app
+    assert "function taskStatusCounts()" not in app
+    assert "listPane.append(lightTaskBulkActionBar());" in workspace_page
+    assert "page.append(lightTaskBulkActionBar());" in tasks_page
+    assert "taskPageTitle()" in workspace_page
+    assert "taskPageTitle()" in tasks_page
+    assert "taskPageHeaderAction()" in workspace_page
+    assert "taskPageHeaderAction()" in tasks_page
+    assert "function taskSelectionModeActive()" in app
+    assert "function lightTaskBulkActionBar()" in app
+    assert "function taskPageHeaderAction()" in app
+    assert "function taskPageTitle()" in app
+    assert render_task_groups.index('["do", "Today"]') < render_task_groups.index('["overdue", "Overdue"]')
+    assert render_task_groups.index('["overdue", "Overdue"]') < render_task_groups.index('["soon", "Upcoming"]')
     assert ".light-task-counts" not in styles
-    assert ".light-task-filter-button" in styles
-    assert ".light-task-filter-button-chevron" in styles
-    assert "transform: rotate(90deg);" not in styles
-    assert ".light-task-filter-button-icon {" in styles
-    assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active' in styles
-    assert '.app-shell[data-theme="dark"] .light-task-filter-button.is-active .light-task-filter-button-chevron' in styles
+    assert ".light-task-filter-strip" not in styles
+    assert ".light-task-filter-button" not in styles
+    assert ".light-task-filter-button-chevron" not in styles
+    assert ".light-task-filter-button-icon" not in styles
+    assert ".light-task-bulk-bar" in styles
+    assert ".light-task-selection-trigger" in styles
+    assert ".light-task-detail-action-trigger" in styles
 
 
 def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_trigger_and_reset_scroll_on_open() -> None:
@@ -1378,8 +1383,9 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     toggle_task_checklist_item = function_block(app, "toggleTaskChecklistItem")
     task_connected_rows = function_block(app, "taskConnectedRows")
     task_connected_section = function_block(app, "lightTaskConnectedSection")
-    task_filters = function_block(app, "lightTaskFilters")
-    task_filter_selector_options = function_block(app, "taskStatusFilterSelectorOptions")
+    task_selection_control = function_block(app, "lightTaskSelectionControl")
+    task_bulk_action_bar = function_block(app, "lightTaskBulkActionBar")
+    task_detail_action_button = function_block(app, "lightTaskDetailActionButton")
     light_info_row = function_block(app, "lightInfoRow")
     light_navigate = function_block(app, "lightNavigate")
     reset_scroll = function_block(app, "resetLightRouteScroll")
@@ -1405,9 +1411,9 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert "function taskDetailRows(task)" not in app
     assert "function lightTaskPeopleSection(task)" not in app
     assert "explicitOwners" not in app
-    assert 'const statusTrigger = el("button", "light-task-row-status-trigger");' in task_group
-    assert 'statusTrigger.type = "button";' in task_group
-    assert 'openTaskStatusSelector(task, "list");' in task_group
+    assert "function lightTaskRowStatusTrigger(task)" in app
+    assert 'const leading = selectionMode ? lightTaskSelectionControl(task) : lightTaskRowStatusTrigger(task);' in task_group
+    assert 'openTaskStatusSelector(task, "list");' in function_block(app, "lightTaskRowStatusTrigger")
     assert 'const main = el("button", "light-task-row-main");' in task_group
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in tasks_page
     assert 'ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));' not in task_workspace_page
@@ -1441,8 +1447,13 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert "function taskMutationPending(taskId, scope)" in app
     assert "function setTaskMutationPending(taskId, scope, pending)" in app
     assert "async function toggleTaskChecklistItem(task, itemId)" in app
-    assert "function taskStatusFilterSelectorOptions(counts)" in app
     assert "function openTaskStatusSelector(task, source)" in app
+    assert "function taskSelectionModeActive()" in app
+    assert "function clearTaskSelection()" in app
+    assert "function toggleTaskSelection(task)" in app
+    assert "async function archiveSelectedTasks()" in app
+    assert "async function archiveTask(task, options = {})" in app
+    assert "function openTaskActions(task)" in app
     assert 'const row = el("button", item.done ? "light-task-checklist-row is-done" : "light-task-checklist-row");' in task_checklist_section
     assert 'row.type = "button";' in task_checklist_section
     assert 'row.dataset.checklistDone = item.done ? "true" : "false";' in task_checklist_section
@@ -1474,15 +1485,14 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'const headerMetaAt = current === "done" ? (completedAt > 0 ? completedAt : createdAt) : createdAt;' in task_detail_card
     assert 'if (Number.isFinite(headerMetaAt) && headerMetaAt > 0) {' in task_detail_card
     assert 'copy.append(el("span", "light-task-detail-created", `${headerMetaPrefix} ${taskDateTimeLabel(headerMetaAt, "")}`));' in task_detail_card
-    assert 'const icon = el("span", "light-task-filter-button-icon");' in task_filters
-    assert 'options: taskStatusFilterSelectorOptions(counts),' in task_filters
-    assert 'return taskStatusFilterChoices().map(([value, label]) => {' in task_filter_selector_options
-    assert 'const leadingNode = el("span", "settings-selector-option-task-status");' in task_filter_selector_options
-    assert 'if (value === "all") {' in task_filter_selector_options
-    assert 'leadingNode.innerHTML = iconSvg("tune", { filled: true });' in task_filter_selector_options
-    assert 'leadingNode.append(el("span", taskStatusCircleClass(value)));' in task_filter_selector_options
-    assert "leadingNode," in task_filter_selector_options
-    assert 'meta: String(counts[value] || 0),' in task_filter_selector_options
+    assert 'const selectionMode = taskSelectionModeActive();' in task_group
+    assert 'void toggleTaskSelection(task);' in task_group
+    assert 'const trigger = el("button", selected ? "light-task-selection-trigger is-selected" : "light-task-selection-trigger");' in task_selection_control
+    assert 'bar.append(el("span", "light-task-bulk-count", `${count} selected`));' in task_bulk_action_bar
+    assert 'const archive = el("button", "light-task-bulk-archive", "Archive");' in task_bulk_action_bar
+    assert 'const actionButton = el("button", "light-task-detail-action-trigger");' in task_detail_action_button
+    assert 'actionButton.setAttribute("aria-label", "Task actions");' in task_detail_action_button
+    assert 'patchWorkspaceRecord("tasks", taskId, { archived: true })' in app
     assert 'Object.entries(row.dataset).forEach(([key, value]) => {' in light_info_row
     assert 'item.dataset[key] = String(value || "");' in light_info_row
     assert 'row.fromRoute || state.route || ""' in light_info_row
@@ -1501,12 +1511,15 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert ".light-task-detail-surface > .light-task-detail-body" not in styles
     assert ".light-record-chip-icon" in styles
     assert ".light-task-row-status-trigger" in styles
+    assert ".light-task-selection-trigger" in styles
     assert ".light-task-status-circle" in styles
     assert ".light-task-status-circle-trigger" not in styles
     assert ".light-task-status-control" not in styles
     assert ".light-task-status-trigger" not in styles
     assert ".light-task-person-row" not in styles
-    assert ".light-task-filter-button-icon" in styles
+    assert ".light-task-filter-button-icon" not in styles
+    assert ".light-task-bulk-bar" in styles
+    assert ".light-task-detail-action-trigger" in styles
     assert ".light-task-detail-card" in styles
     assert ".light-task-detail-created" in styles
     assert ".light-task-row:focus-within" not in styles
