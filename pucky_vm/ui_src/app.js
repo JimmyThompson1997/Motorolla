@@ -5455,7 +5455,13 @@
       return false;
     }
     try {
-      if (typeof Pucky !== "undefined" && Pucky && typeof Pucky.request === "function") {
+      if (
+        window.PuckyAndroid
+        && typeof window.PuckyAndroid.postMessage === "function"
+        && typeof Pucky !== "undefined"
+        && Pucky
+        && typeof Pucky.request === "function"
+      ) {
         const result = await Pucky.request({ command: "browser.open", args: { url: href } });
         if (result && result.launched) {
           return true;
@@ -5486,7 +5492,13 @@
     link.target = "_blank";
     link.textContent = href;
     link.addEventListener("click", event => {
-      if (typeof Pucky !== "undefined" && Pucky && typeof Pucky.request === "function") {
+      if (
+        window.PuckyAndroid
+        && typeof window.PuckyAndroid.postMessage === "function"
+        && typeof Pucky !== "undefined"
+        && Pucky
+        && typeof Pucky.request === "function"
+      ) {
         event.preventDefault();
         void openExternalBrowserUrl(href);
       }
