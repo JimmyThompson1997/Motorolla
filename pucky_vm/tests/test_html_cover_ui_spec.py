@@ -1233,8 +1233,8 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'const who = lightMeetingNoteWhoRow(meeting);' in meeting_note_details
     assert "if (who) {" in meeting_note_details
     assert "card.append(who);" in meeting_note_details
-    assert 'card.append(lightMeetingNoteDetailRow("topics", "Topics", meetingNoteTopicsLabel(meeting)));' in meeting_note_details
-    assert 'lightMeetingNoteDetailRow("source", "Source", workspaceTargetLabel(sourceKind, sourceId),' in meeting_note_details
+    assert '"Topics"' not in meeting_note_details
+    assert '"Source"' not in meeting_note_details
     assert "const contact = workspaceContactByName(label);" in meeting_note_attendees
     assert "label: contact ? calendarContactChipLabel(contact) : label," in meeting_note_attendees
     assert "contact: contact || null," in meeting_note_attendees
@@ -1687,6 +1687,7 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
 
     assert "function lightProjectRow(" in app
     assert "function lightInboxSection(" in app
+    inbox_section = function_block(app, "lightInboxSection")
     assert "function lightMeetingsSection(" in app
     assert "return renderUniversalFeedPage({" in projects_page
     assert 'surface: "projects",' in projects_page
@@ -1711,6 +1712,12 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert '"meetings-refresh"' not in app
     assert 'renderMode: "flat",' in reply_descriptor
     assert 'renderMode: "flat",' in meeting_descriptor
+    assert "const displayCards = feedDisplayCards();" in inbox_section
+    assert 'workspaceItems("feed-items")' not in inbox_section
+    assert "if (!displayCards.length && !state.feedLastAppliedAt) {" in inbox_section
+    assert 'emptyState: el("div", "empty", "Loading inbox..."),' in inbox_section
+    assert 'empty.append("No inbox items yet.", document.createElement("br"), "Replies and meeting summaries will appear here.");' in inbox_section
+    assert '"No replies yet."' not in inbox_section
     assert "const card = descriptor.meta?.card;" in render_universal_tile
     assert 'return cardView(card, { surface: descriptor.surface, flatFeed: descriptor.renderMode === "flat" });' in render_universal_tile
     assert "const meeting = descriptor.meta?.meeting;" in render_universal_tile
@@ -1755,6 +1762,7 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert '.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-1 {' in styles
     assert '.light-inbox-surface .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] .card-actions.action-count-2 {' in styles
     assert '.light-meetings-surface .card.is-flat-feed[data-card-surface="meetings"]' not in styles
+    assert ".light-chip-cloud span," not in styles
 
 
 def test_light_inbox_unread_attachment_actions_use_light_theme_icon_color() -> None:

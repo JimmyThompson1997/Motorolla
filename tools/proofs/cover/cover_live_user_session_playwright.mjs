@@ -81,6 +81,7 @@ const TASK_LINKS = [
     titleKey: "noteTitle",
   },
 ];
+const MEETING_RUNTIME_FIXTURE_PATH = path.join(ROOT, "pucky_vm", "ui_src", "fixtures", "artifacts", "meeting.wav");
 
 function slug(value) {
   return String(value || "")
@@ -333,6 +334,117 @@ async function waitForTaskRecord(baseUrl, taskId, refreshKey, predicate, timeout
   throw new Error(`${failureMessage} (last task record: ${JSON.stringify(lastSummary)})`);
 }
 
+async function authorizedJsonRequest(baseUrl, apiToken, pathName, options = {}) {
+  const token = String(apiToken || "").trim();
+  if (!token) {
+    throw new Error("Authorized request requires an API token");
+  }
+  const url = new URL(String(pathName || ""), `${String(baseUrl || "").replace(/\/+$/, "")}/`);
+  const headers = {
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`,
+    ...(options.headers || {}),
+  };
+  let body = options.body;
+  if (body && typeof body !== "string" && !(body instanceof Uint8Array)) {
+    headers["Content-Type"] = headers["Content-Type"] || "application/json";
+    body = JSON.stringify(body);
+  }
+  const response = await fetch(url, {
+    method: String(options.method || "GET").toUpperCase(),
+    headers,
+    body,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`${headers["Content-Type"] === "application/json" ? "JSON " : ""}${options.method || "GET"} ${url.toString()} failed with ${response.status}: ${String(payload?.detail || payload?.error || "")}`);
+  }
+  return payload;
+}
+
+async function listLiveMeetings(baseUrl, apiToken) {
+  const payload = await authorizedJsonRequest(baseUrl, apiToken, "/api/meetings?compact=1");
+  return Array.isArray(payload?.meetings) ? payload.meetings : [];
+}
+
+async function archiveVisibleMeetings(baseUrl, apiToken, runId) {
+  const meetings = await listLiveMeetings(baseUrl, apiToken);
+  const archivedIds = [];
+  for (const [index, meeting] of meetings.entries()) {
+    const meetingId = String(meeting?.meeting_id || "").trim();
+    if (!meetingId) {
+      continue;
+    }
+    await authorizedJsonRequest(baseUrl, apiToken, "/api/meetings/actions", {
+      method: "POST",
+      body: {
+        client_action_id: `${slug(runId)}-archive-${index + 1}-${Date.now()}`,
+        meeting_id: meetingId,
+        action: "archive",
+      },
+    });
+    archivedIds.push(meetingId);
+  }
+  return archivedIds;
+}
+
+async function ingestRuntimeProofMeeting(baseUrl, apiToken, runId) {
+  const fixture = fs.readFileSync(MEETING_RUNTIME_FIXTURE_PATH);
+  const meetingId = `meeting-${timestampSlug()}-${slug(runId)}-runtime-check`;
+  const now = Date.now();
+  const startedAt = new Date(now - 6000).toISOString();
+  const stoppedAt = new Date(now).toISOString();
+  const payload = await authorizedJsonRequest(baseUrl, apiToken, "/api/meetings", {
+    method: "POST",
+    body: {
+      meeting_id: meetingId,
+      started_at: startedAt,
+      stopped_at: stoppedAt,
+      duration_ms: 32044,
+      device_id: "codex-live-session-proof",
+      device_path: `/data/user/0/com.pucky.device.debug/files/voice/${meetingId}.wav`,
+      mime_type: "audio/wav",
+      audio_base64: fixture.toString("base64"),
+    },
+  });
+  return {
+    meetingId,
+    ingestState: String(payload?.state || ""),
+  };
+}
+
+async function waitForMeetingCompletion(baseUrl, apiToken, meetingId, timeoutMs) {
+  const deadline = Date.now() + Math.max(5000, Number(timeoutMs || 0) || 0);
+  let lastMeeting = null;
+  while (Date.now() <= deadline) {
+    const meetings = await listLiveMeetings(baseUrl, apiToken);
+    lastMeeting = meetings.find(item => String(item?.meeting_id || "").trim() === String(meetingId || "").trim()) || null;
+    const stateName = String(lastMeeting?.state || "").trim().toLowerCase();
+    if (lastMeeting && ["completed", "completed_with_missing_result", "failed"].includes(stateName)) {
+      if (stateName === "failed") {
+        throw new Error(`Runtime meeting ${meetingId} failed: ${String(lastMeeting?.failure_reason || lastMeeting?.transcript_error || "unknown failure")}`);
+      }
+      return lastMeeting;
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error(`Timed out waiting for runtime meeting ${meetingId} to complete (last state ${String(lastMeeting?.state || "")})`);
+}
+
+async function prepareRuntimeMeeting(baseUrl, apiToken, runId, timeoutMs) {
+  const archivedMeetingIds = await archiveVisibleMeetings(baseUrl, apiToken, runId);
+  const ingested = await ingestRuntimeProofMeeting(baseUrl, apiToken, runId);
+  const completed = await waitForMeetingCompletion(baseUrl, apiToken, ingested.meetingId, timeoutMs);
+  return {
+    archivedMeetingIds,
+    meetingId: String(completed?.meeting_id || ingested.meetingId),
+    title: normalizeText(completed?.title || completed?.recording_title || ingested.meetingId),
+    state: String(completed?.state || ""),
+    transcriptStatus: String(completed?.transcript_status || ""),
+    summary: normalizeText(completed?.summary || ""),
+  };
+}
+
 async function loadChromium() {
   const require = createRequire(import.meta.url);
   const candidates = [];
@@ -546,9 +658,10 @@ async function waitForInboxReady(page, timeoutMs) {
     if (document.querySelector("article[data-card-id] .card-body")) {
       return true;
     }
-    return Array.from(document.querySelectorAll(".empty")).some(node =>
-      /No replies yet\.|Could not load the Home feed\./i.test(String(node.textContent || ""))
-    );
+    return Array.from(document.querySelectorAll(".empty")).some(node => {
+      const text = String(node.textContent || "").trim();
+      return Boolean(text) && !/loading inbox/i.test(text);
+    });
   }, undefined, { timeout: timeoutMs });
 }
 
@@ -1085,7 +1198,7 @@ function createModeRecorder(mode, config, page) {
   };
 }
 
-async function runRouteTour(page, config, mode, seed) {
+async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
   const recorder = createModeRecorder(mode, config, page);
   await goHome(page, config);
   const homeTiles = await readHomeTiles(page);
@@ -1105,21 +1218,35 @@ async function runRouteTour(page, config, mode, seed) {
     const feedError = await page.locator(".feed-load-error").count();
     assert(feedError === 0, `${mode}: inbox route reported a feed load error`);
     const inboxCards = page.locator("article[data-card-id] .card-body");
+    const runtimeMeetingTitle = normalizeText(runtimeMeeting?.title || "");
+    if (runtimeMeetingTitle) {
+      await page.waitForFunction(
+        expectedTitle => Array.from(document.querySelectorAll("article[data-card-id] .title"))
+          .some(node => String(node.textContent || "").replace(/\s+/g, " ").trim() === expectedTitle),
+        runtimeMeetingTitle,
+        { timeout: config.timeoutMs }
+      );
+    }
     if (await inboxCards.count()) {
-      const firstTitle = normalizeText(await page.locator("article[data-card-id] .title").first().textContent());
-      await inboxCards.first().click();
+      const targetTitle = runtimeMeetingTitle || normalizeText(await page.locator("article[data-card-id] .title").first().textContent());
+      const targetCard = page.locator("article[data-card-id]").filter({ has: page.locator(".title", { hasText: targetTitle }) }).first();
+      const targetBody = targetCard.locator(".card-body").first();
+      await targetBody.click();
       await waitForDetailOpen(page, config.timeoutMs);
       const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
       await recorder.capture({
         route: "inbox",
-        action: "Open first inbox card",
-        expected: "The first inbox card opens its detail panel.",
-        confirmation: "Inbox detail panel opened.",
-        observed: { empty: false, first_card_title: firstTitle, detail_title: detailTitle },
+        action: runtimeMeetingTitle ? "Open runtime meeting card from Inbox" : "Open first inbox card",
+        expected: runtimeMeetingTitle
+          ? "The runtime-generated meeting card appears in Inbox and opens its detail panel."
+          : "The first inbox card opens its detail panel.",
+        confirmation: runtimeMeetingTitle ? "Runtime meeting card was visible in Inbox and opened its detail panel." : "Inbox detail panel opened.",
+        observed: { empty: false, inbox_card_title: targetTitle, detail_title: detailTitle },
       });
       await closeDetailPanel(page, config.timeoutMs);
     } else {
-      const emptyText = normalizeText(await page.locator(".empty").first().textContent().catch(() => "No replies yet."));
+      const emptyText = normalizeText(await page.locator(".empty").first().textContent().catch(() => "No inbox items yet."));
+      assert(!runtimeMeetingTitle, `${mode}: Inbox stayed empty instead of showing runtime meeting ${runtimeMeetingTitle}`);
       await recorder.capture({
         route: "inbox",
         action: "Check empty inbox state",
@@ -1188,22 +1315,37 @@ async function runRouteTour(page, config, mode, seed) {
     const meetingsError = await page.locator(".meetings-empty.is-error").count();
     assert(meetingsError === 0, `${mode}: meetings route reported an error`);
     const meetingCards = page.locator("article[data-card-session-id] .card-body");
+    const runtimeMeetingTitle = normalizeText(runtimeMeeting?.title || "");
+    if (runtimeMeetingTitle) {
+      await page.waitForFunction(
+        expectedTitle => Array.from(document.querySelectorAll("article[data-card-session-id] .title"))
+          .some(node => String(node.textContent || "").replace(/\s+/g, " ").trim() === expectedTitle),
+        runtimeMeetingTitle,
+        { timeout: config.timeoutMs }
+      );
+    }
     if (await meetingCards.count()) {
-      const firstTitle = normalizeText(await page.locator("article[data-card-session-id] .title").first().textContent());
-      await meetingCards.first().click();
+      const targetTitle = runtimeMeetingTitle || normalizeText(await page.locator("article[data-card-session-id] .title").first().textContent());
+      const targetCard = page.locator("article[data-card-session-id]").filter({ has: page.locator(".title", { hasText: targetTitle }) }).first();
+      const targetBody = targetCard.locator(".card-body").first();
+      await targetBody.click();
       await waitForDetailOpen(page, config.timeoutMs);
       const detailTitle = normalizeText(await page.locator("#detail .light-page-title").last().textContent().catch(() => ""));
+      const detailText = normalizeText(await page.locator("#detail").textContent().catch(() => ""));
       await recorder.capture({
         route: "meetings",
-        action: "Open first meeting record",
-        expected: "The first meeting record opens its detail panel.",
-        confirmation: "Meeting detail panel opened.",
-        observed: { empty: false, first_meeting_title: firstTitle, detail_title: detailTitle },
+        action: runtimeMeetingTitle ? "Open runtime meeting record" : "Open first meeting record",
+        expected: runtimeMeetingTitle
+          ? "The runtime-ingested meeting appears in Meetings and opens its summary detail."
+          : "The first meeting record opens its detail panel.",
+        confirmation: runtimeMeetingTitle ? "Runtime meeting detail panel opened." : "Meeting detail panel opened.",
+        observed: { empty: false, meeting_title: targetTitle, detail_title: detailTitle, detail_text: detailText },
       });
       await closeDetailPanel(page, config.timeoutMs);
     } else {
       const emptyText = normalizeText(await page.locator(".meetings-empty").first().textContent().catch(() => "No meeting recordings yet."));
       assert(!/loading meetings/i.test(emptyText), `${mode}: meetings route never resolved past loading`);
+      assert(!runtimeMeetingTitle, `${mode}: Meetings stayed empty instead of showing runtime meeting ${runtimeMeetingTitle}`);
       await recorder.capture({
         route: "meetings",
         action: "Check empty meetings state",
@@ -1835,7 +1977,7 @@ async function runRouteTour(page, config, mode, seed) {
   };
 }
 
-async function runProofMode(browser, config, mode, seed) {
+async function runProofMode(browser, config, mode, seed, runtimeMeeting = null) {
   const viewport = mode === "mobile"
     ? { width: 430, height: 932 }
     : { width: 1400, height: 1000 };
@@ -1864,7 +2006,7 @@ async function runProofMode(browser, config, mode, seed) {
   const tracking = buildPageTracking(page, consoleLogPath);
   try {
     logStep(config, `${mode}: starting live user session route tour`);
-    const result = await runRouteTour(page, config, mode, seed);
+    const result = await runRouteTour(page, config, mode, seed, runtimeMeeting);
     const pageErrors = tracking.pageErrors.slice();
     const badConsole = seriousConsoleErrors(tracking.consoleErrors);
     const badRequests = seriousFailedRequests(tracking.failedRequests, config.baseUrl);
@@ -1902,6 +2044,11 @@ function renderReport(summary) {
     `- Cleanup ok: ${summary.cleanup_ok}`,
     `- Universal feed tile acceptance routes: ${summary.universal_feed_tile_routes.join(", ")}`,
   ];
+  if (summary.runtime_meeting?.title) {
+    lines.push(`- Runtime meeting title: ${summary.runtime_meeting.title}`);
+    lines.push(`- Runtime meeting id: ${summary.runtime_meeting.meetingId || ""}`);
+    lines.push(`- Archived meetings before proof: ${(summary.runtime_meeting.archivedMeetingIds || []).length}`);
+  }
   if (summary.cleanup_error) {
     lines.push(`- Cleanup error: ${summary.cleanup_error}`);
   }
@@ -1951,6 +2098,7 @@ async function main() {
   let remoteManifestResult = null;
   let mobile = null;
   let desktop = null;
+  let runtimeMeeting = null;
   let pendingError = null;
   let cleanupOk = true;
   let cleanupError = "";
@@ -1963,9 +2111,10 @@ async function main() {
       cleanupFirst: true,
       reportDir: config.reportDir,
     });
-    mobile = await runProofMode(browser, config, "mobile", seed);
+    runtimeMeeting = await prepareRuntimeMeeting(config.baseUrl, config.apiToken, config.runId, config.timeoutMs);
+    mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);
     await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
-    desktop = await runProofMode(browser, config, "desktop", seed);
+    desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
   } catch (error) {
     pendingError = error;
   } finally {
@@ -2010,6 +2159,7 @@ async function main() {
     cleanup_skipped: Boolean(config.keepSeed),
     requested_routes: Array.isArray(config.routes) ? config.routes.slice() : [],
     universal_feed_tile_routes: UNIVERSAL_FEED_TILE_ROUTES.slice(),
+    runtime_meeting: runtimeMeeting,
     mobile,
     desktop,
   };

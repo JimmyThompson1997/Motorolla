@@ -28,6 +28,8 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert "saveScreenshot(" in source
     assert "fs.rmSync(config.reportDir, { recursive: true, force: true });" in source
     assert "seedTaskProofWorkspace(" in source
+    assert "prepareRuntimeMeeting(" in source
+    assert "runtime_meeting" in source
     assert "cleanupTaskProofSeed(" in source
     assert "failed_requests" in source
     assert "http_error_responses" in source
@@ -77,6 +79,22 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert "ERR_HTTP2_PROTOCOL_ERROR" in source
     assert 'LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"]' in source
     assert 'localStorage.removeItem("pucky.cover.browser_device_id.v1");' in source
+
+
+def test_live_user_session_runner_requires_runtime_meeting_to_appear_in_meetings_and_inbox() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "const MEETING_RUNTIME_FIXTURE_PATH =" in source
+    assert "async function archiveVisibleMeetings(" in source
+    assert "async function ingestRuntimeProofMeeting(" in source
+    assert "async function waitForMeetingCompletion(" in source
+    assert "async function prepareRuntimeMeeting(" in source
+    assert 'mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);' in source
+    assert 'desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);' in source
+    assert "Runtime meeting card was visible in Inbox and opened its detail panel." in source
+    assert "Runtime meeting detail panel opened." in source
+    assert "Inbox stayed empty instead of showing runtime meeting" in source
+    assert "Meetings stayed empty instead of showing runtime meeting" in source
 
 
 def test_live_user_session_runner_captures_contacts_list_before_detail() -> None:

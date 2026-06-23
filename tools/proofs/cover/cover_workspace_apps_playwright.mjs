@@ -2430,6 +2430,10 @@ async function readMeetingNoteDetailState(page) {
     const whoChipLabels = Array.from(detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip, .light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-record-chip-label') || [])
       .map(node => String(node.textContent || "").trim())
       .filter(Boolean);
+    const whoChipLabel = detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-calendar-attendee-chip-label');
+    const whoChipIcon = detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-calendar-attendee-chip-icon');
+    const whoChipLabelStyle = whoChipLabel ? getComputedStyle(whoChipLabel) : null;
+    const whoChipIconStyle = whoChipIcon ? getComputedStyle(whoChipIcon) : null;
     const hasStandaloneWhoSection = Boolean(detail?.querySelector(".light-meeting-note-who-section"));
     const whoInsideDetailsCard = Boolean(detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"]'));
     const connectedRowTexts = Array.from(detail?.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row') || [])
@@ -2441,6 +2445,10 @@ async function readMeetingNoteDetailState(page) {
       eyebrowTexts,
       detailRowLabels,
       whoChipLabels,
+      whoChipLabelBackground: String(whoChipLabelStyle?.backgroundColor || ""),
+      whoChipLabelBorderRadius: String(whoChipLabelStyle?.borderRadius || ""),
+      whoChipIconBackground: String(whoChipIconStyle?.backgroundColor || ""),
+      whoChipIconBorderRadius: String(whoChipIconStyle?.borderRadius || ""),
       hasStandaloneWhoSection,
       whoInsideDetailsCard,
       connectedRowTexts,
@@ -2562,12 +2570,14 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   assert(!meetingNoteState.sectionTitles.includes("CONTEXT"), `Expected meeting note detail to remove CONTEXT, got ${meetingNoteState.sectionTitles.join(", ")}.`);
   assert(!meetingNoteState.sectionTitles.includes("NOTES"), `Expected meeting note detail to remove the separate NOTES section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
   assert(!meetingNoteState.sectionTitles.includes("LINKED RECORDS"), `Expected meeting note detail to remove the separate LINKED RECORDS section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  for (const label of ["When", "Who", "Source", "Topics"]) {
-    assert(meetingNoteState.detailRowLabels.includes(label), `Expected meeting note detail rows to include ${label}, got ${meetingNoteState.detailRowLabels.join(", ")}.`);
-  }
+  assert(JSON.stringify(meetingNoteState.detailRowLabels) === JSON.stringify(["When", "Who"]), `Expected meeting note detail rows to only include When and Who, got ${meetingNoteState.detailRowLabels.join(", ")}.`);
   assert(meetingNoteState.whoInsideDetailsCard, "Meeting note detail should keep Who inside the Details card.");
   assert(!meetingNoteState.hasStandaloneWhoSection, "Meeting note detail should not keep a standalone Who section shell.");
   assert(meetingNoteState.whoChipLabels.includes("Proof C."), `Expected Who chips to reuse the compact calendar-style contact label, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
+  assert(["rgba(0, 0, 0, 0)", "transparent"].includes(String(meetingNoteState.whoChipLabelBackground || "").trim().toLowerCase()), `Expected meeting note Who label to avoid a nested pill background, got ${meetingNoteState.whoChipLabelBackground}.`);
+  assert(["0px", "0px 0px 0px 0px", "0"].includes(String(meetingNoteState.whoChipLabelBorderRadius || "").trim().toLowerCase()), `Expected meeting note Who label to avoid a nested pill radius, got ${meetingNoteState.whoChipLabelBorderRadius}.`);
+  assert(["rgba(0, 0, 0, 0)", "transparent"].includes(String(meetingNoteState.whoChipIconBackground || "").trim().toLowerCase()), `Expected meeting note Who icon to avoid a nested pill background, got ${meetingNoteState.whoChipIconBackground}.`);
+  assert(["0px", "0px 0px 0px 0px", "0"].includes(String(meetingNoteState.whoChipIconBorderRadius || "").trim().toLowerCase()), `Expected meeting note Who icon to avoid a nested pill radius, got ${meetingNoteState.whoChipIconBorderRadius}.`);
   assert(meetingConnectedState.sectionCount === 1, "Expected meeting note detail to render one Connected section.");
   assert(meetingConnectedState.bodyIsFlat, "Expected meeting note Connected to render inside one shared flat-feed shell.");
   assert(meetingConnectedState.rowCount === 5, `Expected meeting note Connected to render five linked rows after dedupe/contact exclusion, got ${meetingConnectedState.rowCount}.`);

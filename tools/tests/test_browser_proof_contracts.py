@@ -94,6 +94,21 @@ def test_live_user_session_browser_proof_tracks_failed_requests_and_mobile_conne
     assert "ERR_HTTP2_PROTOCOL_ERROR" in source
 
 
+def test_live_user_session_browser_proof_checks_runtime_meeting_in_meetings_and_inbox() -> None:
+    source = read_source("cover_live_user_session_playwright.mjs")
+
+    assert "const MEETING_RUNTIME_FIXTURE_PATH =" in source
+    assert "async function archiveVisibleMeetings(" in source
+    assert "async function ingestRuntimeProofMeeting(" in source
+    assert "async function waitForMeetingCompletion(" in source
+    assert "async function prepareRuntimeMeeting(" in source
+    assert "runtime_meeting" in source
+    assert "Runtime meeting card was visible in Inbox and opened its detail panel." in source
+    assert "Runtime meeting detail panel opened." in source
+    assert "Inbox stayed empty instead of showing runtime meeting" in source
+    assert "Meetings stayed empty instead of showing runtime meeting" in source
+
+
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
@@ -712,9 +727,23 @@ def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract()
     assert "hasStandaloneWhoSection" in source
     assert "whoInsideDetailsCard" in source
     assert "whoChipLabels" in source
-    assert 'for (const label of ["When", "Who", "Source", "Topics"]) {' in source
+    assert "whoChipLabelBackground" in source
+    assert "whoChipIconBackground" in source
+    assert 'JSON.stringify(meetingNoteState.detailRowLabels) === JSON.stringify(["When", "Who"])' in source
     assert "Meeting note detail should keep Who inside the Details card" in source
     assert "Meeting note detail should not keep a standalone Who section shell" in source
+    assert "Expected meeting note Who label to avoid a nested pill background" in source
+    assert "Expected meeting note Who icon to avoid a nested pill background" in source
+
+
+def test_light_real_vm_ports_proof_checks_direct_cold_inbox_truth() -> None:
+    source = read_source("cover_light_real_vm_ports_playwright.mjs")
+
+    assert 'const coldInboxUrl = routeUrl(config.pageUrl, "inbox"' in source
+    assert 'await page.goto(coldInboxUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });' in source
+    assert "Light Inbox cold load did not render canonical Home card DOM" in source
+    assert "Light Inbox cold-load titles did not match VM /api/feed titles" in source
+    assert "Light Inbox cold load regressed to the reply-only empty state" in source
 
 
 def test_meetings_walkthrough_proof_checks_short_and_long_title_alignment() -> None:

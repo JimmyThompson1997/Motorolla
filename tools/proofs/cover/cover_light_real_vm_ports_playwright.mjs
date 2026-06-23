@@ -13,6 +13,10 @@ import {
 const DEFAULT_PAGE_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html?theme=light&reset_nav=1";
 const VIEWPORT = { width: 430, height: 932 };
 
+function normalizeText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
 function parseArgs(argv) {
   const config = {
     pageUrl: process.env.PUCKY_LIGHT_VM_PORTS_URL || DEFAULT_PAGE_URL,
@@ -34,6 +38,16 @@ function parseArgs(argv) {
 
 function apiUrl(pageUrl, pathName) {
   return new URL(pathName, new URL(pageUrl).origin).toString();
+}
+
+function routeUrl(pageUrl, route, refreshKey = "") {
+  const url = new URL(pageUrl);
+  url.searchParams.set("route", String(route || "").trim());
+  url.searchParams.set("reset_nav", "1");
+  if (refreshKey) {
+    url.searchParams.set("_pucky_refresh", refreshKey);
+  }
+  return url.toString();
 }
 
 async function fetchJson(url) {
@@ -126,6 +140,30 @@ async function main() {
     assert(inboxCardCount > 0, "Light Inbox did not render canonical Home card DOM");
     assert(matchingInboxTitles.length > 0, `Light Inbox visible titles did not match VM /api/feed titles: ${JSON.stringify(inboxTitles.slice(0, 5))}`);
     screenshots.inbox = await saveScreenshot(page, config.reportDir, "02-vm-light-inbox");
+
+    const coldInboxUrl = routeUrl(config.pageUrl, "inbox", `cold-${Date.now()}`);
+    await page.goto(coldInboxUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await page.locator(".light-shell[data-light-route=\"inbox\"] .light-real-feed-list").waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.waitForFunction(() => {
+      const cards = document.querySelectorAll(".light-shell[data-light-route='inbox'] .card-wrap article.card");
+      if (cards.length > 0) {
+        return true;
+      }
+      const empty = document.querySelector(".light-shell[data-light-route='inbox'] .empty");
+      if (!empty) {
+        return false;
+      }
+      const text = String(empty.textContent || "").trim();
+      return Boolean(text) && !/loading inbox/i.test(text);
+    }, null, { timeout: config.timeoutMs });
+    const coldInboxCardCount = await page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card").count();
+    const coldInboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card h2.title");
+    const matchingColdInboxTitles = coldInboxTitles.filter(title => apiFeedTitles.has(title));
+    const coldInboxEmptyText = normalizeText(await page.locator(".light-shell[data-light-route=\"inbox\"] .empty").first().textContent().catch(() => ""));
+    assert(coldInboxCardCount > 0, "Light Inbox cold load did not render canonical Home card DOM");
+    assert(matchingColdInboxTitles.length > 0, `Light Inbox cold-load titles did not match VM /api/feed titles: ${JSON.stringify(coldInboxTitles.slice(0, 5))}`);
+    assert(!/No replies yet\./i.test(coldInboxEmptyText), `Light Inbox cold load regressed to the reply-only empty state: ${coldInboxEmptyText}`);
+    screenshots.inboxCold = await saveScreenshot(page, config.reportDir, "03-vm-light-inbox-cold");
 
     const detailTarget = page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card:not(.card-meeting-processing) .card-body");
     await detailTarget.first().click();

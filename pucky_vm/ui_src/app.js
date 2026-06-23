@@ -5796,16 +5796,7 @@
     }
   }
 
-  function meetingNoteTopicsLabel(meeting) {
-    const topics = Array.isArray(meeting?.metadata?.extracted_topics) ? meeting.metadata.extracted_topics : [];
-    return topics.length ? topics.join(", ") : "No topics yet";
-  }
-
   function lightMeetingNoteDetailsSection(meeting) {
-    const meta = meeting?.metadata || {};
-    const sourceKind = String(meta.source_kind || "calendar_event").trim();
-    const sourceId = String(meta.source_id || meta.source || "").trim();
-    const sourceTarget = sourceId ? workspaceTargetForKind(sourceKind, sourceId) : null;
     const section = el("section", "light-calendar-detail-section light-meeting-note-details-section");
     section.append(lightSectionTitle("Details"));
     const card = el("div", "light-calendar-detail-card");
@@ -5814,13 +5805,6 @@
     if (who) {
       card.append(who);
     }
-    if (sourceId) {
-      card.append(lightMeetingNoteDetailRow("source", "Source", workspaceTargetLabel(sourceKind, sourceId), {
-        target: sourceTarget,
-        fromRoute: "meeting-note-detail",
-      }));
-    }
-    card.append(lightMeetingNoteDetailRow("topics", "Topics", meetingNoteTopicsLabel(meeting)));
     section.append(card);
     return section;
   }
@@ -8704,9 +8688,20 @@
         items: []
       };
     }
+    if (!displayCards.length && !state.feedLastAppliedAt) {
+      return {
+        key: "inbox",
+        label: "",
+        count: 0,
+        collapsible: false,
+        expanded: true,
+        emptyState: el("div", "empty", "Loading inbox..."),
+        items: []
+      };
+    }
     if (!displayCards.length) {
       const empty = el("div", "empty");
-      empty.append("No replies yet.", document.createElement("br"), "Pucky will place agent replies here.");
+      empty.append("No inbox items yet.", document.createElement("br"), "Replies and meeting summaries will appear here.");
       return {
         key: "inbox",
         label: "",
