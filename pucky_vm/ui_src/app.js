@@ -12,6 +12,9 @@
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
   const TURN_STATUS_POLL_MS = 250;
+  const TURN_STATUS_LIVE_ROUTE_INTERVAL_MS = 1000;
+  const TURN_STATUS_IDLE_ROUTE_INTERVAL_MS = 3000;
+  const PLAYER_STATE_POLL_INTERVAL_MS = 500;
   const ARCHIVE_REVEAL_WIDTH_PX = 88;
   const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44;
   const ARCHIVE_REVEAL_SLOP_PX = 12;
@@ -45,8 +48,10 @@
     "unknown"
   ]);
   const MEETING_STATUS_POLL_MS = 1000;
-  const WORKSPACE_TASK_REFRESH_MS = 2000;
-  const WORKSPACE_REMINDER_REFRESH_MS = 15000;
+  const MEETING_STATUS_IDLE_ROUTE_INTERVAL_MS = 2000;
+  const WORKSPACE_REFRESH_TICK_MS = 1000;
+  const WORKSPACE_TASK_STALE_VISIBLE_MS = 15000;
+  const WORKSPACE_REMINDER_STALE_VISIBLE_MS = 15000;
   const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
   const CALENDAR_CLUSTER_WINDOW_MS = 15 * 60 * 1000;
   const CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX = 180;
@@ -61,6 +66,7 @@
   const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
   const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];
   const AUDIO_PROBE_EVENT_LIMIT = 48;
+  const PERF_DEBUG_EVENT_LIMIT = 96;
   const AUDIO_START_CONFIRMATION_TIMEOUT_MS = 1800;
   const AUDIO_EARLY_END_WINDOW_MS = 2000;
   const AUDIO_TERMINAL_RESET_MS = 1600;
@@ -187,15 +193,15 @@
     meetingDetailSections: null,
     meetingDetailSectionCache: {},
     workspace: {
-      notes: { items: [], loaded: false, loading: false, error: "" },
-      tasks: { items: [], loaded: false, loading: false, error: "" },
-      "calendar-events": { items: [], loaded: false, loading: false, error: "" },
-      "feed-items": { items: [], loaded: false, loading: false, error: "" },
-      projects: { items: [], loaded: false, loading: false, error: "" },
-      contacts: { items: [], loaded: false, loading: false, error: "" },
-      messages: { items: [], loaded: false, loading: false, error: "" },
-      "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
-      reminders: { items: [], loaded: false, loading: false, error: "" }
+      notes: initialWorkspaceBucketState(),
+      tasks: initialWorkspaceBucketState(),
+      "calendar-events": initialWorkspaceBucketState(),
+      "feed-items": initialWorkspaceBucketState(),
+      projects: initialWorkspaceBucketState(),
+      contacts: initialWorkspaceBucketState(),
+      messages: initialWorkspaceBucketState(),
+      "meeting-notes": initialWorkspaceBucketState(),
+      reminders: initialWorkspaceBucketState()
     },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
@@ -266,6 +272,11 @@
   let sharedBrowserAudio = null;
   let activeArchiveReveal = null;
   let archiveRevealGestureSeq = 0;
+  let scheduledRenderToken = 0;
+  let lastTurnStatusPollAt = 0;
+  let lastPlayerStatePollAt = 0;
+  let lastWakeStatusPollAt = 0;
+  let lastMeetingStatusPollAt = 0;
   const archiveRevealDebugTrace = [];
   const archiveRevealDebugState = {
     enabled: archiveRevealDebugEnabled(),
@@ -299,6 +310,7 @@
     reason: "",
     trace_count: 0
   };
+  const perfDebugState = initialPerfDebugState(initialRouteValue);
   window.__puckyArchiveRevealDebug = {
     schema: "pucky.archive_reveal_debug.v1",
     push(entry) {
@@ -365,6 +377,16 @@
     },
     getState() {
       return noteFlashDebugSnapshot();
+    }
+  };
+  window.__PUCKY_PERF_DEBUG__ = {
+    schema: "pucky.perf_debug.v1",
+    getState() {
+      return perfDebugMetrics();
+    },
+    clear() {
+      clearPerfDebugState();
+      return perfDebugMetrics();
     }
   };
 
@@ -603,10 +625,462 @@
     return next;
   }
 
+  function perfDebugEnabled() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return params.get("debug_perf") === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function initialWorkspaceBucketState() {
+    return {
+      items: [],
+      loaded: false,
+      loading: false,
+      error: "",
+      dirty: false,
+      lastRefreshAt: 0,
+      fingerprint: ""
+    };
+  }
+
+  function initialPerfDebugState(initialRoute = "") {
+    return {
+      enabled: perfDebugEnabled(),
+      route: String(initialRoute || "home").trim() || "home",
+      route_sequence: 1,
+      route_started_at_ms: Date.now(),
+      route_ready: false,
+      route_ready_reason: "",
+      route_ready_at_ms: 0,
+      render_count: 0,
+      last_render_ms: 0,
+      bridge_calls_by_command: {},
+      fetches_by_key: {},
+      poll_ticks_by_lane: {},
+      recent_events: []
+    };
+  }
+
+  function perfDebugPushEvent(type, detail = {}) {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    const entry = {
+      type: String(type || "").trim(),
+      route: String(state.route || perfDebugState.route || "home").trim() || "home",
+      ts_ms: Date.now(),
+      detail: detail && typeof detail === "object" ? { ...detail } : { value: detail }
+    };
+    perfDebugState.recent_events.push(entry);
+    if (perfDebugState.recent_events.length > PERF_DEBUG_EVENT_LIMIT) {
+      perfDebugState.recent_events.splice(0, perfDebugState.recent_events.length - PERF_DEBUG_EVENT_LIMIT);
+    }
+  }
+
+  function perfDebugIncrementCounter(storeKey, counterKey, amount = 1) {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    const store = perfDebugState[storeKey] && typeof perfDebugState[storeKey] === "object"
+      ? perfDebugState[storeKey]
+      : {};
+    const key = String(counterKey || "").trim();
+    if (!key) {
+      return;
+    }
+    store[key] = safeNumber(store[key]) + Math.max(1, safeNumber(amount, 1));
+    perfDebugState[storeKey] = store;
+  }
+
+  function clearPerfDebugState() {
+    const next = initialPerfDebugState(state.route);
+    perfDebugState.enabled = next.enabled;
+    perfDebugState.route = next.route;
+    perfDebugState.route_sequence = next.route_sequence;
+    perfDebugState.route_started_at_ms = next.route_started_at_ms;
+    perfDebugState.route_ready = next.route_ready;
+    perfDebugState.route_ready_reason = next.route_ready_reason;
+    perfDebugState.route_ready_at_ms = next.route_ready_at_ms;
+    perfDebugState.render_count = next.render_count;
+    perfDebugState.last_render_ms = next.last_render_ms;
+    perfDebugState.bridge_calls_by_command = {};
+    perfDebugState.fetches_by_key = {};
+    perfDebugState.poll_ticks_by_lane = {};
+    perfDebugState.recent_events = [];
+    perfDebugPushEvent("perf_debug_cleared", {});
+    syncPerfDebugState("perf_debug_cleared");
+  }
+
+  function stableJsonFingerprint(value) {
+    try {
+      return JSON.stringify(value) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function perfNowMs() {
+    try {
+      return typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    } catch (_) {
+      return Date.now();
+    }
+  }
+
+  function readySelector(selectors) {
+    const candidates = Array.isArray(selectors) ? selectors : [];
+    for (const selector of candidates) {
+      if (selector && document.querySelector(selector)) {
+        return {
+          ready: true,
+          reason: `selector:${selector}`
+        };
+      }
+    }
+    return {
+      ready: false,
+      reason: candidates.length ? `waiting_selector:${candidates[0]}` : "waiting_selector"
+    };
+  }
+
+  function workspaceRouteReadyState(collection, selectors) {
+    const bucket = workspaceBucket(collection);
+    if (!bucket) {
+      return {
+        ready: false,
+        reason: `missing_bucket:${collection}`
+      };
+    }
+    if (bucket.error) {
+      return {
+        ready: true,
+        reason: `error:${collection}`
+      };
+    }
+    if (!bucket.loaded) {
+      return {
+        ready: false,
+        reason: `loading:${collection}`
+      };
+    }
+    if (!workspaceItems(collection).length) {
+      return {
+        ready: true,
+        reason: `empty:${collection}`
+      };
+    }
+    const selectorState = readySelector(selectors);
+    if (selectorState.ready) {
+      return selectorState;
+    }
+    return {
+      ready: true,
+      reason: `loaded:${collection}`
+    };
+  }
+
+  function routeReadyState(route = state.route) {
+    const currentRoute = String(route || "").trim() || "home";
+    switch (currentRoute) {
+      case "home":
+        return readySelector([".light-app-tile", ".light-home-page", '.app-shell[data-view="home"]']);
+      case "inbox":
+        if (state.feedLoadError) {
+          return {
+            ready: true,
+            reason: "error:inbox"
+          };
+        }
+        if (Array.isArray(state.cards) && state.cards.length) {
+          return readySelector(["article[data-card-id] .card-body", "article[data-card-session-id] .card-body"]);
+        }
+        if (document.querySelector(".empty")) {
+          return {
+            ready: true,
+            reason: "empty:inbox"
+          };
+        }
+        return {
+          ready: false,
+          reason: "loading:inbox"
+        };
+      case "meetings":
+        if (state.meetings.error) {
+          return {
+            ready: true,
+            reason: "error:meetings"
+          };
+        }
+        if (!state.meetings.loaded) {
+          return {
+            ready: false,
+            reason: "loading:meetings"
+          };
+        }
+        if (!Array.isArray(state.meetings.records) || !state.meetings.records.length) {
+          return {
+            ready: true,
+            reason: "empty:meetings"
+          };
+        }
+        return readySelector(["article[data-card-session-id] .card-body", ".meetings-list-card article[data-card-session-id] .card-body"]);
+      case "notes":
+        return workspaceRouteReadyState("notes", [".light-note-row"]);
+      case "tasks":
+        return workspaceRouteReadyState("tasks", [".light-task-row", ".light-task-workspace", ".light-task-detail-surface"]);
+      case "calendar":
+        return workspaceRouteReadyState("calendar-events", [".light-event-block", ".light-calendar-page"]);
+      case "projects":
+        return workspaceRouteReadyState("projects", [".light-project-row"]);
+      case "contacts":
+        return workspaceRouteReadyState("contacts", [".light-contact-row"]);
+      case "meeting-notes":
+        return workspaceRouteReadyState("meeting-notes", [".light-graph-row"]);
+      case "reminders":
+        return workspaceRouteReadyState("reminders", [".light-reminder-row"]);
+      case "connect":
+        if (!document.querySelector(".links-search")) {
+          return {
+            ready: false,
+            reason: "waiting_selector:.links-search"
+          };
+        }
+        if (state.links.loading && !state.links.connectedLoaded && !state.links.error && !state.links.message) {
+          return {
+            ready: false,
+            reason: "loading:connect"
+          };
+        }
+        if (state.links.connectedLoaded || state.links.error || state.links.message || state.links.token || state.links.userId) {
+          return {
+            ready: true,
+            reason: state.links.error
+              ? "connect_error"
+              : state.links.connectedLoaded
+                ? "connect_connected_loaded"
+                : "connect_session_ready"
+          };
+        }
+        return {
+          ready: false,
+          reason: "waiting_connect_session"
+        };
+      case "task-detail":
+        if (!workspaceBucket("tasks")?.loaded) {
+          return {
+            ready: false,
+            reason: "loading:tasks"
+          };
+        }
+        return readySelector([".light-task-detail-surface", ".light-task-detail-page", ".light-task-detail-pane [data-task-detail-id]"]);
+      case "contact-detail":
+        return readySelector([".light-contact-detail-page"]);
+      case "contact-edit":
+        return readySelector([".light-contact-edit-page"]);
+      case "project-detail":
+        return readySelector([".light-project-detail-page"]);
+      case "reminder-detail":
+        return readySelector([".light-reminder-detail-surface", ".light-reminder-detail-page"]);
+      case "note-detail":
+        return readySelector([".light-note-detail-page"]);
+      case "meeting-detail":
+        return readySelector([".light-event-detail-page", ".light-event-document"]);
+      case "meeting-note-detail":
+        return readySelector([".light-meeting-note-detail-page"]);
+      case "settings":
+        return readySelector([".light-settings-real .settings-card", ".light-settings-real", '.app-shell[data-view="settings"]']);
+      default:
+        return readySelector([`.app-shell[data-view="${currentRoute}"]`]);
+    }
+  }
+
+  function syncPerfDebugState(reason = "") {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    const route = String(state.route || "home").trim() || "home";
+    if (perfDebugState.route !== route) {
+      perfDebugState.route = route;
+      perfDebugState.route_sequence += 1;
+      perfDebugState.route_started_at_ms = Date.now();
+      perfDebugState.route_ready = false;
+      perfDebugState.route_ready_reason = "";
+      perfDebugState.route_ready_at_ms = 0;
+      perfDebugPushEvent("route_changed", { route, reason: String(reason || "").trim() || "unknown" });
+    }
+    const snapshot = routeReadyState(route);
+    perfDebugState.route_ready_reason = String(snapshot.reason || "").trim();
+    if (snapshot.ready && !perfDebugState.route_ready) {
+      perfDebugState.route_ready = true;
+      perfDebugState.route_ready_at_ms = Date.now();
+      perfDebugPushEvent("route_ready", {
+        route,
+        reason: perfDebugState.route_ready_reason,
+        elapsed_ms: Math.max(0, perfDebugState.route_ready_at_ms - perfDebugState.route_started_at_ms)
+      });
+    } else if (!snapshot.ready) {
+      perfDebugState.route_ready = false;
+      perfDebugState.route_ready_at_ms = 0;
+    }
+  }
+
+  function perfDebugMetrics() {
+    syncPerfDebugState("metrics_read");
+    return {
+      schema: "pucky.perf_debug_metrics.v1",
+      enabled: Boolean(perfDebugState.enabled),
+      route: String(perfDebugState.route || state.route || "home").trim() || "home",
+      route_sequence: safeNumber(perfDebugState.route_sequence, 1),
+      route_started_at_ms: safeNumber(perfDebugState.route_started_at_ms),
+      route_ready: Boolean(perfDebugState.route_ready),
+      route_ready_reason: String(perfDebugState.route_ready_reason || ""),
+      route_ready_at_ms: safeNumber(perfDebugState.route_ready_at_ms),
+      route_ready_elapsed_ms: perfDebugState.route_ready_at_ms
+        ? Math.max(0, safeNumber(perfDebugState.route_ready_at_ms) - safeNumber(perfDebugState.route_started_at_ms))
+        : 0,
+      render_count: safeNumber(perfDebugState.render_count),
+      last_render_ms: safeNumber(perfDebugState.last_render_ms),
+      bridge_calls_by_command: { ...perfDebugState.bridge_calls_by_command },
+      fetches_by_key: { ...perfDebugState.fetches_by_key },
+      poll_ticks_by_lane: { ...perfDebugState.poll_ticks_by_lane },
+      recent_events: perfDebugState.recent_events.slice(-PERF_DEBUG_EVENT_LIMIT)
+    };
+  }
+
+  function recordPerfBridgeCall(command, startedAt, ok, error = "") {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    const name = String(command || "").trim();
+    if (!name) {
+      return;
+    }
+    perfDebugIncrementCounter("bridge_calls_by_command", name);
+    if (!ok || error) {
+      perfDebugPushEvent("bridge_error", {
+        command: name,
+        elapsed_ms: Math.max(0, perfNowMs() - safeNumber(startedAt)),
+        error: String(error || "unknown")
+      });
+    }
+  }
+
+  function recordPerfFetch(key, startedAt, ok, error = "") {
+    if (!perfDebugState.enabled) {
+      return;
+    }
+    const name = String(key || "").trim();
+    if (!name) {
+      return;
+    }
+    perfDebugIncrementCounter("fetches_by_key", name);
+    if (!ok || error) {
+      perfDebugPushEvent("fetch_error", {
+        key: name,
+        elapsed_ms: Math.max(0, perfNowMs() - safeNumber(startedAt)),
+        error: String(error || "unknown")
+      });
+    }
+  }
+
+  function recordPerfPollTick(lane) {
+    perfDebugIncrementCounter("poll_ticks_by_lane", lane);
+  }
+
+  function requestRender(reason = "scheduled_render") {
+    if (scheduledRenderToken) {
+      return false;
+    }
+    const commit = () => {
+      scheduledRenderToken = 0;
+      render();
+    };
+    perfDebugPushEvent("render_scheduled", { reason: String(reason || "").trim() || "scheduled_render" });
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      scheduledRenderToken = window.requestAnimationFrame(commit);
+      return true;
+    }
+    scheduledRenderToken = window.setTimeout(commit, 0);
+    return true;
+  }
+
+  function routeUsesLiveTurnPolling(route = state.route) {
+    return ["home", "inbox", "meetings"].includes(String(route || "").trim());
+  }
+
+  function turnStatusPollIntervalMs(route = state.route) {
+    if (isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
+      return TURN_STATUS_POLL_MS;
+    }
+    if (playerHasAudioIdentity(state.player) && Boolean(state.player?.is_playing)) {
+      return PLAYER_STATE_POLL_INTERVAL_MS;
+    }
+    return routeUsesLiveTurnPolling(route) ? TURN_STATUS_LIVE_ROUTE_INTERVAL_MS : TURN_STATUS_IDLE_ROUTE_INTERVAL_MS;
+  }
+
+  function shouldPollMeetingStatus(route = state.route) {
+    const currentRoute = String(route || "").trim();
+    if (String(state.meetingRecording?.state || "idle") !== "idle") {
+      return true;
+    }
+    return currentRoute === "meetings" || currentRoute === "meeting-detail";
+  }
+
+  function meetingStatusPollIntervalMs(route = state.route) {
+    const currentRoute = String(route || "").trim();
+    if (String(state.meetingRecording?.state || "idle") !== "idle") {
+      return MEETING_STATUS_POLL_MS;
+    }
+    if (currentRoute === "meetings" || currentRoute === "meeting-detail") {
+      return MEETING_STATUS_IDLE_ROUTE_INTERVAL_MS;
+    }
+    return 0;
+  }
+
+  function workspaceBucketNeedsRefresh(collection, staleMs) {
+    const bucket = workspaceBucket(collection);
+    if (!bucket) {
+      return false;
+    }
+    if (!bucket.loaded || bucket.dirty) {
+      return true;
+    }
+    const lastRefreshAt = safeNumber(bucket.lastRefreshAt);
+    if (lastRefreshAt <= 0) {
+      return true;
+    }
+    return (Date.now() - lastRefreshAt) >= Math.max(1000, safeNumber(staleMs, 1000));
+  }
+
+  function markWorkspaceBucketDirty(collection, options = {}) {
+    const bucket = workspaceBucket(collection);
+    if (!bucket) {
+      return;
+    }
+    bucket.dirty = true;
+    perfDebugPushEvent("workspace_bucket_dirty", {
+      collection: String(collection || "").trim(),
+      reason: String(options.reason || "").trim()
+    });
+    if (options.refresh) {
+      void loadWorkspaceCollection(collection, {
+        render: options.render !== false,
+        force: true,
+        reason: String(options.reason || "").trim() || "dirty_refresh"
+      });
+    }
+  }
+
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
       const args = payload && payload.args ? payload.args : {};
+      const startedAt = perfNowMs();
       if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
         const id = String(++seq);
         const message = JSON.stringify({ id, command, args });
@@ -619,9 +1093,24 @@
               reject(new Error("Pucky native bridge timed out"));
             }
           }, 15000);
+        }).then(result => {
+          recordPerfBridgeCall(command, startedAt, true);
+          return result;
+        }).catch(error => {
+          recordPerfBridgeCall(command, startedAt, false, error && error.message ? error.message : String(error || ""));
+          throw error;
         });
       }
-      return browserRequest(command, args);
+      return Promise.resolve()
+        .then(() => browserRequest(command, args))
+        .then(result => {
+          recordPerfBridgeCall(command, startedAt, true);
+          return result;
+        })
+        .catch(error => {
+          recordPerfBridgeCall(command, startedAt, false, error && error.message ? error.message : String(error || ""));
+          throw error;
+        });
     },
     __resolve(id, payload) {
       const slot = pending.get(String(id));
@@ -643,7 +1132,7 @@
         rememberPlayerProgress(state.player);
         const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
         if (shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged) {
-          render();
+          requestRender("native_event_player_state");
         }
       }
       if (name === "voice.state") {
@@ -1216,10 +1705,7 @@
     if (state.links.apiBaseUrl) {
       return state.links.apiBaseUrl;
     }
-    if (window.location && /^https?:$/i.test(window.location.protocol || "")) {
-      return String(window.location.origin || "").replace(/\/$/, "");
-    }
-    return DEFAULT_LINKS_API_BASE;
+    return resolveHostedBrowserApiBaseUrl();
   }
 
   function feedApiPath(options = {}) {
@@ -1236,6 +1722,8 @@
   async function feedApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
+    const startedAt = perfNowMs();
+    const metricKey = String(options.metricKey || `feed:${String(path || "").split("?")[0] || "/"}`).trim();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
@@ -1246,17 +1734,25 @@
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
-    const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
+    try {
+      const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
+      }
+      recordPerfFetch(metricKey, startedAt, true);
+      return payload;
+    } catch (error) {
+      recordPerfFetch(metricKey, startedAt, false, error && error.message ? error.message : String(error || ""));
+      throw error;
     }
-    return payload;
   }
 
   async function workspaceApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
+    const startedAt = perfNowMs();
+    const metricKey = String(options.metricKey || `workspace:${String(path || "").split("?")[0] || "/"}`).trim();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
@@ -1267,12 +1763,18 @@
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
-    const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
+    try {
+      const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
+      }
+      recordPerfFetch(metricKey, startedAt, true);
+      return payload;
+    } catch (error) {
+      recordPerfFetch(metricKey, startedAt, false, error && error.message ? error.message : String(error || ""));
+      throw error;
     }
-    return payload;
   }
 
   async function patchWorkspaceRecord(collection, recordId, payload) {
@@ -1304,27 +1806,52 @@
     return WORKSPACE_COLLECTION_LABELS[String(collection || "")] || "workspace records";
   }
 
+  function workspaceCollectionStaleMs(collection) {
+    switch (String(collection || "").trim()) {
+      case "tasks":
+        return WORKSPACE_TASK_STALE_VISIBLE_MS;
+      case "reminders":
+        return WORKSPACE_REMINDER_STALE_VISIBLE_MS;
+      default:
+        return 30000;
+    }
+  }
+
   async function loadWorkspaceCollection(collection, options = {}) {
     const bucket = state.workspace[collection];
-    if (!bucket || (bucket.loading && !options.force)) {
+    if (!bucket || bucket.loading) {
       return;
     }
+    const hadError = Boolean(bucket.error);
     bucket.loading = true;
     bucket.error = "";
+    let changed = !bucket.loaded || hadError;
     try {
       await ensureLinksApiConfig();
       const date = "";
-      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
-      bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
+      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }), {
+        metricKey: `workspace:${collection}`
+      });
+      const nextItems = Array.isArray(payload && payload.items) ? payload.items : [];
+      const nextFingerprint = stableJsonFingerprint(nextItems);
+      if (bucket.fingerprint !== nextFingerprint) {
+        bucket.items = nextItems;
+        bucket.fingerprint = nextFingerprint;
+        changed = true;
+      }
       bucket.loaded = true;
+      bucket.lastRefreshAt = Date.now();
+      bucket.dirty = false;
     } catch (error) {
       bucket.error = String(error && error.message || error || "Workspace request failed");
+      changed = true;
     } finally {
       bucket.loading = false;
     }
-    if (options.render) {
-      render();
+    if (options.render && changed) {
+      requestRender(`workspace:${collection}:${String(options.reason || "refresh")}`);
     }
+    return changed;
   }
 
   async function loadWorkspaceForRoute(route = state.route, options = {}) {
@@ -1336,7 +1863,10 @@
     if (!collection) {
       return;
     }
-    await loadWorkspaceCollection(collection, options);
+    if (!options.force && !workspaceBucketNeedsRefresh(collection, workspaceCollectionStaleMs(collection))) {
+      return false;
+    }
+    return loadWorkspaceCollection(collection, options);
   }
 
   function workspaceItems(collection) {
@@ -1458,14 +1988,18 @@
   }
 
   async function loadTurnStatus(options = {}) {
+    const before = stableJsonFingerprint(normalizeTurnStatus(state.turn));
     try {
       const snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
       applyTurnStatus(snapshot);
-      if (options.render) {
-        render();
+      const changed = before !== stableJsonFingerprint(normalizeTurnStatus(state.turn));
+      if (options.render && changed) {
+        requestRender("turn_status");
       }
+      return changed;
     } catch (_) {
       // The bridge can be briefly unavailable during WebView startup.
+      return false;
     }
   }
 
@@ -1482,14 +2016,18 @@
   }
 
   async function loadWakeStatus(options = {}) {
+    const before = stableJsonFingerprint(normalizeWakeStatus(state.wakeStatus));
     try {
       const snapshot = await Pucky.request({ command: "wake.status", args: {} });
       state.wakeStatus = normalizeWakeStatus(snapshot);
-      if (options.render) {
-        render();
+      const changed = before !== stableJsonFingerprint(normalizeWakeStatus(state.wakeStatus));
+      if (options.render && changed) {
+        requestRender("wake_status");
       }
+      return changed;
     } catch (_) {
       // Keep the current placeholder wake state if the bridge is not ready yet.
+      return false;
     }
   }
 
@@ -2471,10 +3009,7 @@
     if (state.links.apiBaseUrl) {
       return state.links.apiBaseUrl;
     }
-    if (window.location && /^https?:$/i.test(window.location.protocol || "")) {
-      return String(window.location.origin || "").replace(/\/$/, "");
-    }
-    return DEFAULT_LINKS_API_BASE;
+    return resolveHostedBrowserApiBaseUrl();
   }
 
   async function requestNativeLinksConfig(options = {}) {
@@ -2522,6 +3057,28 @@
     }
   }
 
+  function resolveHostedBrowserApiBaseUrl() {
+    const fallbackApiBaseUrl = window.location && /^https?:$/i.test(window.location.protocol || "")
+      ? String(window.location.origin || "").replace(/\/$/, "")
+      : DEFAULT_LINKS_API_BASE;
+    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
+      ? window.PUCKY_UI_STATE
+      : null;
+    if (uiState && typeof uiState.resolveBrowserApiBaseUrl === "function") {
+      return String(uiState.resolveBrowserApiBaseUrl({ defaultApiBaseUrl: fallbackApiBaseUrl }) || fallbackApiBaseUrl).trim().replace(/\/$/, "");
+    }
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const queryApiBaseUrl = String(params.get("api_base_url") || params.get("apiBase") || "").trim().replace(/\/$/, "");
+      if (queryApiBaseUrl) {
+        return queryApiBaseUrl;
+      }
+    } catch (_) {
+      return fallbackApiBaseUrl;
+    }
+    return fallbackApiBaseUrl;
+  }
+
   function resolveHostedBrowserDeviceId() {
     const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
       ? window.PUCKY_UI_STATE
@@ -2546,7 +3103,7 @@
     if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
       return;
     }
-    state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+    state.links.apiBaseUrl = resolveHostedBrowserApiBaseUrl();
     state.links.apiToken = resolveHostedBrowserApiToken();
     state.links.deviceId = resolveHostedBrowserDeviceId();
   }
@@ -2603,6 +3160,8 @@
   async function linksApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
+    const startedAt = perfNowMs();
+    const metricKey = String(options.metricKey || `links:${String(path || "").split("?")[0] || "/"}`).trim();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
@@ -2616,39 +3175,59 @@
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
-    const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
-    const payload = await response.json().catch(() => ({}));
-    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-      payload._server_timing = String(response.headers.get("Server-Timing") || "");
-      payload._http_status = response.status;
+    try {
+      const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+      const payload = await response.json().catch(() => ({}));
+      if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        payload._server_timing = String(response.headers.get("Server-Timing") || "");
+        payload._http_status = response.status;
+      }
+      if (!response.ok) {
+        throw new Error(String(payload && (payload.detail || payload.error) || `Connect request failed (${response.status})`));
+      }
+      recordPerfFetch(metricKey, startedAt, true);
+      return payload;
+    } catch (error) {
+      recordPerfFetch(metricKey, startedAt, false, error && error.message ? error.message : String(error || ""));
+      throw error;
     }
-    if (!response.ok) {
-      throw new Error(String(payload && (payload.detail || payload.error) || `Connect request failed (${response.status})`));
-    }
-    return payload;
   }
 
   async function loadMeetings(options = {}) {
     if (state.meetings.loading) {
       return;
     }
+    const hadError = Boolean(state.meetings.error);
     state.meetings.loading = true;
     state.meetings.error = "";
+    let changed = !state.meetings.loaded || hadError;
     if (options.render) {
       renderFeed();
     }
     try {
-      const payload = await linksApiRequest("/api/meetings?compact=1", { cache: "no-store" });
-      state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
+      const payload = await linksApiRequest("/api/meetings?compact=1", {
+        cache: "no-store",
+        metricKey: "links:meetings"
+      });
+      const nextRecords = Array.isArray(payload.meetings) ? payload.meetings : [];
+      const nextFingerprint = stableJsonFingerprint(nextRecords);
+      if (state.meetings.fingerprint !== nextFingerprint) {
+        state.meetings.records = nextRecords;
+        state.meetings.fingerprint = nextFingerprint;
+        changed = true;
+      }
+      state.meetings.loaded = true;
       state.meetings.lastRefreshAt = Date.now();
     } catch (error) {
       state.meetings.error = meetingsApiErrorMessage(error, "Unable to load meetings");
+      changed = true;
     } finally {
       state.meetings.loading = false;
-      if (options.render) {
-        renderFeed();
+      if (options.render && changed) {
+        requestRender(`meetings:${String(options.reason || "refresh")}`);
       }
     }
+    return changed;
   }
 
   async function loadMeetingDetail(meeting) {
@@ -2670,6 +3249,7 @@
   }
 
   async function refreshMeetingRecordingStatus(options = {}) {
+    const before = stableJsonFingerprint(normalizeMeetingRecordingStatus(state.meetingRecording));
     try {
       state.meetingRecording = normalizeMeetingRecordingStatus(
         await Pucky.request({ command: "meeting.recording.status", args: {} })
@@ -2677,10 +3257,11 @@
     } catch (_) {
       state.meetingRecording = normalizeMeetingRecordingStatus(state.meetingRecording);
     }
-    if (options.render) {
+    const changed = before !== stableJsonFingerprint(normalizeMeetingRecordingStatus(state.meetingRecording));
+    if (options.render && changed) {
       renderVoiceStatus();
     }
-    return state.meetingRecording;
+    return changed;
   }
 
   function ensureSettingsSurfaceCurrent() {
@@ -2711,6 +3292,7 @@
 
 
   function render() {
+    const startedAt = perfNowMs();
     noteFlashDebugRecord("render_start");
     renderVoiceStatus();
     renderThreadScopeBadge();
@@ -2719,6 +3301,9 @@
     renderAudioDetail();
     renderDetailAudioContinuity();
     noteFlashDebugRecord("render_end");
+    perfDebugState.render_count = safeNumber(perfDebugState.render_count) + 1;
+    perfDebugState.last_render_ms = Math.max(0, perfNowMs() - startedAt);
+    syncPerfDebugState("render");
   }
 
   function renderVoiceStatus() {
@@ -3189,6 +3774,16 @@
         surface: describeUiSurface()
       };
     }
+    if (action === "perf_metrics") {
+      return {
+        schema: "pucky.ui_debug_action.v1",
+        ok: true,
+        action,
+        handled: true,
+        metrics: perfDebugMetrics(),
+        surface: describeUiSurface()
+      };
+    }
     if (action === "back") {
       return {
         schema: "pucky.ui_debug_action.v1",
@@ -3441,7 +4036,7 @@
       error: "",
       portal_url: "",
       token: "",
-      apiBaseUrl: "",
+      apiBaseUrl: resolveHostedBrowserApiBaseUrl(),
       apiToken: resolveHostedBrowserApiToken(),
       deviceId: resolveHostedBrowserDeviceId(),
       userId: "",
@@ -3475,9 +4070,11 @@
   function initialMeetingsState() {
     return {
       loading: false,
+      loaded: false,
       error: "",
       records: [],
-      lastRefreshAt: 0
+      lastRefreshAt: 0,
+      fingerprint: ""
     };
   }
 
@@ -7910,6 +8507,7 @@
       bucket.error = "";
       persistNavState();
       render();
+      markWorkspaceBucketDirty("tasks", { refresh: true, reason: "task_status_update" });
     } catch (error) {
       bucket.error = "";
       showToast(error.message);
@@ -7985,6 +8583,7 @@
       mergeTaskRecordIntoBucket(result);
       state.selectedTaskId = taskRecordId(result) || taskId;
       persistNavState();
+      markWorkspaceBucketDirty("tasks", { refresh: true, reason: "task_checklist_toggle" });
       return result;
     } catch (error) {
       bucket.items = previousItems;
@@ -8298,6 +8897,7 @@
       if (nextReminder && reminderRecordId(nextReminder) === normalizedReminderId) {
         remindersBucket.items = replaceReminderInItems(remindersBucket.items, nextReminder);
       }
+      markWorkspaceBucketDirty("reminders", { refresh: true, reason: `reminder_${normalizedScope}` });
       return nextReminder;
     } catch (error) {
       remindersBucket.items = previousItems;
@@ -9294,7 +9894,7 @@
 
   function runLightRouteSideEffects(reason = "light_app_click") {
     void syncVoiceThreadScope({ reason, render: true });
-    void loadWorkspaceForRoute(state.route, { render: true, force: true });
+    void loadWorkspaceForRoute(state.route, { render: true, reason });
     if (state.route === "connect") {
       linksDebugStartSession("route", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" }, "route");
@@ -19025,14 +19625,22 @@
     }
     let changed = false;
     try {
-      const wasTurnActive = isTurnActive(state.turn);
-      await loadTurnStatus({ render: false });
-      const turnActive = isTurnActive(state.turn);
-      if (state.route === "inbox" && (turnActive || wasTurnActive)) {
-        await refreshCardsFromVmSnapshot({ render: false });
+      const now = Date.now();
+      const turnInterval = turnStatusPollIntervalMs(state.route);
+      if ((now - lastTurnStatusPollAt) >= turnInterval) {
+        recordPerfPollTick("turn_status");
+        lastTurnStatusPollAt = now;
+        const wasTurnActive = isTurnActive(state.turn);
+        const turnChanged = await loadTurnStatus({ render: false });
+        const turnActive = isTurnActive(state.turn);
+        if (state.route === "inbox" && (turnActive || wasTurnActive)) {
+          await refreshCardsFromVmSnapshot({ render: false });
+        }
+        changed = changed || turnChanged || turnActive || wasTurnActive;
       }
-      changed = changed || turnActive || wasTurnActive;
-      if (state.activePath) {
+      if (state.activePath && (now - lastPlayerStatePollAt) >= PLAYER_STATE_POLL_INTERVAL_MS) {
+        recordPerfPollTick("player_state");
+        lastPlayerStatePollAt = now;
         const previousPlayer = state.player;
         state.player = stampPlayerState(await Pucky.request({ command: "player.state", args: {} }));
         syncActivePathFromPlayer(state.player);
@@ -19042,12 +19650,14 @@
         const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
         changed = changed || shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged;
       }
-      if (wakeProofVisualState(state.wakeStatus) !== "idle") {
-        await loadWakeStatus({ render: false });
-        changed = true;
+      if ((wakeProofVisualState(state.wakeStatus) !== "idle" || state.route === "settings")
+          && (now - lastWakeStatusPollAt) >= TURN_STATUS_LIVE_ROUTE_INTERVAL_MS) {
+        recordPerfPollTick("wake_status");
+        lastWakeStatusPollAt = now;
+        changed = (await loadWakeStatus({ render: false })) || changed;
       }
       if (changed) {
-        render();
+        requestRender("visible_poll");
       }
     } catch (_) {
       // Keep cached state visible if the bridge temporarily fails.
@@ -19062,21 +19672,45 @@
 
   setInterval(() => {
     if (document.visibilityState === "visible") {
+      const interval = meetingStatusPollIntervalMs(state.route);
+      if (!interval) {
+        return;
+      }
+      const now = Date.now();
+      if ((now - lastMeetingStatusPollAt) < interval) {
+        return;
+      }
+      recordPerfPollTick("meeting_status");
+      lastMeetingStatusPollAt = now;
       void refreshMeetingRecordingStatus({ render: true });
     }
   }, MEETING_STATUS_POLL_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible" && state.route === "tasks") {
-      void loadWorkspaceCollection("tasks", { render: true, force: true });
+    if (document.visibilityState === "visible"
+        && (state.route === "tasks" || state.route === "task-detail")
+        && workspaceBucketNeedsRefresh("tasks", WORKSPACE_TASK_STALE_VISIBLE_MS)) {
+      recordPerfPollTick("workspace_tasks_visible");
+      void loadWorkspaceCollection("tasks", {
+        render: true,
+        force: true,
+        reason: "visible_stale"
+      });
     }
-  }, WORKSPACE_TASK_REFRESH_MS);
+  }, WORKSPACE_REFRESH_TICK_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible" && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")) {
-      void loadWorkspaceCollection("reminders", { render: true, force: true });
+    if (document.visibilityState === "visible"
+        && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")
+        && workspaceBucketNeedsRefresh("reminders", WORKSPACE_REMINDER_STALE_VISIBLE_MS)) {
+      recordPerfPollTick("workspace_reminders_visible");
+      void loadWorkspaceCollection("reminders", {
+        render: true,
+        force: true,
+        reason: "visible_stale"
+      });
     }
-  }, WORKSPACE_REMINDER_REFRESH_MS);
+  }, WORKSPACE_REFRESH_TICK_MS);
 
   window.addEventListener("pagehide", persistNavState);
   let previousTaskSplitLayout = taskUsesSplitLayout();
@@ -19113,7 +19747,7 @@
     }
     if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
-      loadMeetings({ render: true });
+      loadMeetings({ render: true, reason: "visibility_visible" });
       return;
     }
     if (state.route === "settings") {
@@ -19121,24 +19755,31 @@
       return;
     }
     if (state.route === "home") {
-      void loadWorkspaceCollection("reminders", { render: true, force: true });
+      if (workspaceBucketNeedsRefresh("reminders", WORKSPACE_REMINDER_STALE_VISIBLE_MS)) {
+        void loadWorkspaceCollection("reminders", { render: true, force: true, reason: "visibility_visible" });
+      }
       return;
     }
     if (state.route === "task-detail") {
+      if (workspaceBucketNeedsRefresh("tasks", WORKSPACE_TASK_STALE_VISIBLE_MS)) {
+        void loadWorkspaceCollection("tasks", { render: true, force: true, reason: "visibility_visible" });
+      }
       return;
     }
-    void loadWorkspaceForRoute(state.route, { render: true, force: true });
+    void loadWorkspaceForRoute(state.route, { render: true, force: true, reason: "visibility_visible" });
   });
 
   window.PuckyHandleAndroidBack = handleAndroidBack;
   window.PuckyUiDebug = {
     describe: describeUiSurface,
     dispatch: uiDebugDispatch,
-    linksMetrics: linksDebugMetrics
+    linksMetrics: linksDebugMetrics,
+    perfMetrics: perfDebugMetrics
   };
   syncThemeQueryParam(state.theme);
   syncRouteQueryParam(state.route);
   render();
+  syncPerfDebugState("boot");
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
@@ -19149,13 +19790,13 @@
   loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
   loadCardIconRegistry({ render: false });
   loadCards();
-  void loadWorkspaceForRoute(state.route, { render: true, force: true });
+  void loadWorkspaceForRoute(state.route, { render: true, force: true, reason: "boot" });
   if (state.route === "connect") {
     linksDebugStartSession("route", { reason: "boot_route" });
     linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
     loadLinksPortal({ render: true });
   } else if (state.route === "meetings") {
     refreshMeetingRecordingStatus({ render: true });
-    loadMeetings({ render: true });
+    loadMeetings({ render: true, reason: "boot" });
   }
 })();

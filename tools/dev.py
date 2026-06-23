@@ -81,6 +81,8 @@ TASK_HELP = {
     "proof-live-inbox-management": "Run the no-audio Inbox management browser proof against the deployed hosted VM bundle.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
     "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
+    "proof-live-speed-browser": "Run the hosted desktop and mobile speed loop browser proof against the current base URL env/default.",
+    "proof-live-speed-emulator": "Run the Android emulator speed loop proof with hosted Connect auth validation.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "release-hosted-web": "Run the hosted-web release lane: parser checks, targeted pytest, VM sync deploy, manifest verification, and live proof.",
@@ -886,6 +888,53 @@ def run_hosted_bug_hunt(extra_args: list[str]) -> int:
     )
 
 
+def run_live_speed_browser_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    report_root = (ROOT / ".tmp" / "proof-live-speed-browser").resolve()
+    scripts = [
+        (
+            "tools/proofs/cover/cover_speed_loop_playwright.mjs",
+            [
+                "--viewport",
+                "desktop",
+                "--refresh-key",
+                refresh_seed,
+                "--report-dir",
+                str((report_root / "desktop").resolve()),
+                *extra_args,
+            ],
+        ),
+        (
+            "tools/proofs/cover/cover_speed_loop_playwright.mjs",
+            [
+                "--viewport",
+                "mobile",
+                "--refresh-key",
+                refresh_seed,
+                "--report-dir",
+                str((report_root / "mobile").resolve()),
+                *extra_args,
+            ],
+        ),
+    ]
+    return run_node_proofs(node_binary, scripts, env=proof_env())
+
+
+def run_live_speed_emulator_proof(extra_args: list[str]) -> int:
+    report_root = (ROOT / ".tmp" / "proof-live-speed-emulator").resolve()
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/phone/phone_cover_speed_emulator_proof.py",
+            "--report-dir",
+            str(report_root),
+            *extra_args,
+        ],
+        env=proof_env(),
+    )
+
+
 def fetch_live_manifest(vm_base_url: str = "https://pucky.fly.dev") -> dict[str, object]:
     manifest_url = append_refresh_param(
         f"{vm_base_url.rstrip('/')}/ui/pucky/latest/manifest.json",
@@ -1013,6 +1062,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":
         return run_live_web_proof(args.extra_args)
+    if args.task == "proof-live-speed-browser":
+        return run_live_speed_browser_proof(args.extra_args)
+    if args.task == "proof-live-speed-emulator":
+        return run_live_speed_emulator_proof(args.extra_args)
     if args.task == "qa-hosted-web":
         return run_hosted_bug_hunt(args.extra_args)
     if args.task == "release-hosted-web":

@@ -61,6 +61,34 @@ window.PUCKY_UI_STATE = (() => {
     }
   }
 
+  function resolveBrowserApiBaseUrl(options = {}) {
+    const defaultApiBaseUrl = String(options.defaultApiBaseUrl || "").trim().replace(/\/$/, "");
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const queryApiBaseUrl = String(params.get("api_base_url") || params.get("apiBase") || "").trim().replace(/\/$/, "");
+      if (queryApiBaseUrl) {
+        return queryApiBaseUrl;
+      }
+    } catch (_) {
+      return defaultApiBaseUrl;
+    }
+    const config = window.PUCKY_CONFIG && typeof window.PUCKY_CONFIG === "object"
+      ? window.PUCKY_CONFIG
+      : null;
+    const configApiBaseUrl = String(config && config.api_base_url || "").trim().replace(/\/$/, "");
+    if (configApiBaseUrl) {
+      return configApiBaseUrl;
+    }
+    const bundleConfig = window.PUCKY_BUNDLE_CONFIG && typeof window.PUCKY_BUNDLE_CONFIG === "object"
+      ? window.PUCKY_BUNDLE_CONFIG
+      : null;
+    const bundleApiBaseUrl = String(bundleConfig && bundleConfig.api_base_url || "").trim().replace(/\/$/, "");
+    if (bundleApiBaseUrl) {
+      return bundleApiBaseUrl;
+    }
+    return defaultApiBaseUrl;
+  }
+
   function shouldResetNavState() {
     try {
       const params = new URLSearchParams(window.location.search || "");
@@ -100,6 +128,7 @@ window.PUCKY_UI_STATE = (() => {
     loadNavState,
     normalizeTheme,
     persistTheme,
+    resolveBrowserApiBaseUrl,
     resolveBrowserApiToken,
     resolveBrowserDeviceId,
     resolveInitialTheme,

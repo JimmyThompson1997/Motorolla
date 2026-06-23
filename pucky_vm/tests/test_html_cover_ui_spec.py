@@ -228,7 +228,7 @@ def test_boot_and_navigation_no_longer_depend_on_legacy_shell_state() -> None:
     assert "state.openTrayRoute" not in light_back
     assert "syncThemeQueryParam(state.theme);" in app
     assert "syncRouteQueryParam(state.route);" in app
-    assert re.search(r"\n  render\(\);\n  installFeedScrollPersistence\(\);", app)
+    assert re.search(r"\n  render\(\);\n  syncPerfDebugState\(\"boot\"\);\n  installFeedScrollPersistence\(\);", app)
 
 
 def test_home_route_forces_reminder_collection_refresh() -> None:
@@ -516,12 +516,16 @@ def test_turn_status_polling_can_discover_new_walkie_activity_from_idle_routes()
     app = read("app.js")
 
     assert 'const TURN_STATUS_POLL_MS = 250;' in app
+    assert 'const TURN_STATUS_LIVE_ROUTE_INTERVAL_MS = 1000;' in app
+    assert 'const TURN_STATUS_IDLE_ROUTE_INTERVAL_MS = 3000;' in app
     assert 'if (document.visibilityState !== "visible") {' in app
+    assert 'const turnInterval = turnStatusPollIntervalMs(state.route);' in app
+    assert 'if ((now - lastTurnStatusPollAt) >= turnInterval) {' in app
+    assert 'recordPerfPollTick("turn_status");' in app
     assert 'const wasTurnActive = isTurnActive(state.turn);' in app
     assert 'await loadTurnStatus({ render: false });' in app
-    assert 'const turnActive = isTurnActive(state.turn);' in app
     assert 'if (state.route === "inbox" && (turnActive || wasTurnActive)) {' in app
-    assert 'if (state.route === "inbox" || state.activePath || isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {' not in app
+    assert 'requestRender("visible_poll");' in app
     assert '}, TURN_STATUS_POLL_MS);' in app
 
 
@@ -541,9 +545,15 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'notes: "Notes"' in routes
     assert '"calendar-events": "Calendar"' in routes
     assert 'await ensureLinksApiConfig();' in load_workspace
-    assert 'const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));' in load_workspace
-    assert 'bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];' in load_workspace
+    assert 'const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }), {' in load_workspace
+    assert 'metricKey: `workspace:${collection}`' in load_workspace
+    assert 'const nextItems = Array.isArray(payload && payload.items) ? payload.items : [];' in load_workspace
+    assert 'const nextFingerprint = stableJsonFingerprint(nextItems);' in load_workspace
+    assert 'bucket.items = nextItems;' in load_workspace
+    assert 'bucket.fingerprint = nextFingerprint;' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
+    assert 'bucket.lastRefreshAt = Date.now();' in load_workspace
+    assert 'bucket.dirty = false;' in load_workspace
     assert "pucky-ui-state.js" in index_html
     assert legacy_browser_state not in index_html
     assert legacy_browser_unlock not in index_html
@@ -566,16 +576,50 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert "box-shadow: none;" in calendar_settings_button
 
 
+def test_perf_debug_contract_exposes_route_ready_render_bridge_and_poll_metrics() -> None:
+    app = read("app.js")
+    perf_metrics = function_block(app, "perfDebugMetrics")
+    route_ready = function_block(app, "routeReadyState")
+    ui_dispatch = function_block(app, "uiDebugDispatch")
+
+    assert 'window.__PUCKY_PERF_DEBUG__ = {' in app
+    assert 'schema: "pucky.perf_debug.v1",' in app
+    assert 'function perfDebugEnabled() {' in app
+    assert 'params.get("debug_perf") === "1"' in app
+    assert 'function initialPerfDebugState(initialRoute = "") {' in app
+    assert 'function routeReadyState(route = state.route) {' in app
+    assert 'function perfDebugMetrics() {' in app
+    assert 'route_ready: Boolean(perfDebugState.route_ready),' in perf_metrics
+    assert 'route_ready_reason: String(perfDebugState.route_ready_reason || ""),' in perf_metrics
+    assert 'render_count: safeNumber(perfDebugState.render_count),' in perf_metrics
+    assert 'bridge_calls_by_command: { ...perfDebugState.bridge_calls_by_command },' in perf_metrics
+    assert 'fetches_by_key: { ...perfDebugState.fetches_by_key },' in perf_metrics
+    assert 'poll_ticks_by_lane: { ...perfDebugState.poll_ticks_by_lane },' in perf_metrics
+    assert 'case "connect":' in route_ready
+    assert 'case "tasks":' in route_ready
+    assert 'case "calendar":' in route_ready
+    assert 'if (action === "perf_metrics") {' in ui_dispatch
+    assert 'metrics: perfDebugMetrics(),' in ui_dispatch
+    assert 'perfMetrics: perfDebugMetrics' in app
+
+
 def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     app = read("app.js")
     ui_state = read("pucky-ui-state.js")
 
     initial_links = function_block(app, "initialLinksState")
+    resolve_hosted_browser_api_base = function_block(app, "resolveHostedBrowserApiBaseUrl")
     resolve_hosted_browser_api_token = function_block(app, "resolveHostedBrowserApiToken")
     resolve_hosted_browser_device = function_block(app, "resolveHostedBrowserDeviceId")
     hydrate_links_session = function_block(app, "hydrateLinksSession")
 
+    assert 'apiBaseUrl: resolveHostedBrowserApiBaseUrl(),' in initial_links
     assert 'apiToken: resolveHostedBrowserApiToken(),' in initial_links
+    assert "function resolveBrowserApiBaseUrl(" in ui_state
+    assert 'params.get("api_base_url")' in ui_state
+    assert 'const fallbackApiBaseUrl = window.location && /^https?:$/i.test(window.location.protocol || "")' in resolve_hosted_browser_api_base
+    assert 'if (uiState && typeof uiState.resolveBrowserApiBaseUrl === "function") {' in resolve_hosted_browser_api_base
+    assert 'return String(uiState.resolveBrowserApiBaseUrl({ defaultApiBaseUrl: fallbackApiBaseUrl }) || fallbackApiBaseUrl).trim().replace(/\\/$/, "");' in resolve_hosted_browser_api_base
     assert "function resolveBrowserApiToken(" in ui_state
     assert "browser_api_token" in ui_state
     assert 'new URLSearchParams(window.location.search || "").get("api_token")' in app
@@ -1418,14 +1462,11 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     reset_scroll = function_block(app, "resetLightRouteScroll")
     workspace_linked_entries = function_block(app, "workspaceLinkedEntries")
     linked_record_recency = function_block(app, "linkedRecordRecencyMs")
-    task_refresh_interval = re.search(
-        r'setInterval\(\(\) => \{\s*'
-        r'if \((?P<condition>.*?)\) \{\s*'
-        r'void loadWorkspaceCollection\("tasks", \{ render: true, force: true \}\);',
-        app,
-        re.S,
-    )
-    assert task_refresh_interval, "Missing task refresh interval"
+    assert 'const WORKSPACE_TASK_STALE_VISIBLE_MS = 15000;' in app
+    assert '&& (state.route === "tasks" || state.route === "task-detail")' in app
+    assert '&& workspaceBucketNeedsRefresh("tasks", WORKSPACE_TASK_STALE_VISIBLE_MS)) {' in app
+    assert 'recordPerfPollTick("workspace_tasks_visible");' in app
+    assert 'reason: "visible_stale"' in app
 
     assert 'el("span", "light-task-row-summary"' not in task_group
     assert "function taskRowSummary" not in app
@@ -1531,9 +1572,8 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert "resetLightRouteScroll();" in light_navigate
     assert "restoreScrollPosition(feed, 0);" in reset_scroll
     assert "window.scrollTo(0, 0);" in reset_scroll
-    assert 'document.visibilityState === "visible"' in task_refresh_interval.group("condition")
-    assert 'state.route === "tasks"' in task_refresh_interval.group("condition")
-    assert "task-detail" not in task_refresh_interval.group("condition")
+    assert 'markWorkspaceBucketDirty("tasks", { refresh: true, reason: "task_status_update" });' in app
+    assert 'markWorkspaceBucketDirty("tasks", { refresh: true, reason: "task_checklist_toggle" });' in app
     assert ".light-task-detail-page .light-detail-html-body" not in styles
     assert ".light-task-detail-surface > .light-task-detail-body" not in styles
     assert ".light-record-chip-icon" in styles

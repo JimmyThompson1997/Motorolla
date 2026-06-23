@@ -215,17 +215,45 @@ async function readLinksState(client) {
   })()`);
 }
 
-async function ensureConnectRoute(client, timeoutMs) {
-  const route = await client.evaluate(`document.querySelector(".app-shell")?.getAttribute("data-view") || ""`);
-  if (route !== "connect") {
+async function readPerfState(client) {
+  return client.evaluate(`(() => {
+    const metrics = window.PuckyUiDebug?.perfMetrics?.() || null;
+    return {
+      url: window.location.href,
+      title: document.title,
+      route: document.querySelector(".app-shell")?.getAttribute("data-view") || "",
+      metrics,
+      body_text: String(document.body?.innerText || "").replace(/\\s+/g, " ").trim(),
+    };
+  })()`);
+}
+
+async function ensureRoute(client, route, timeoutMs) {
+  const targetRoute = String(route || "").trim() || "home";
+  const currentRoute = await client.evaluate(`document.querySelector(".app-shell")?.getAttribute("data-view") || ""`);
+  if (currentRoute !== targetRoute) {
     await client.evaluate(`(() => {
       const url = new URL(window.location.href);
-      url.searchParams.set("route", "connect");
+      url.searchParams.set("route", ${JSON.stringify(targetRoute)});
       url.searchParams.set("reset_nav", "1");
+      url.searchParams.set("debug_perf", "1");
       window.location.assign(url.toString());
       return true;
     })()`);
   }
+  await client.waitFor(
+    `(() => {
+      const metrics = window.PuckyUiDebug?.perfMetrics?.();
+      return Boolean(metrics && metrics.route === ${JSON.stringify(targetRoute)} && metrics.route_ready);
+    })()`,
+    timeoutMs,
+    `Route ${targetRoute} never became perf-ready.`
+  );
+  return readPerfState(client);
+}
+
+async function ensureConnectRoute(client, timeoutMs) {
+  await ensureRoute(client, "connect", timeoutMs);
   await client.waitFor(
     `(() => document.querySelector(".app-shell")?.getAttribute("data-view") === "connect" && document.querySelector(".links-search"))()`,
     timeoutMs,
@@ -304,10 +332,69 @@ async function pageInfo(client) {
   }))()`);
 }
 
+async function clickHomeTile(client, route, timeoutMs) {
+  const targetRoute = String(route || "").trim() || "home";
+  const clicked = await client.evaluate(`(() => {
+    const tile = document.querySelector('.light-app-tile[data-light-app-route="${targetRoute.replace(/"/g, '\\"')}"]');
+    if (!(tile instanceof HTMLElement)) return false;
+    tile.click();
+    return true;
+  })()`);
+  if (!clicked) {
+    throw new Error(`Could not find Home tile for ${targetRoute}.`);
+  }
+  await client.waitFor(
+    `(() => {
+      const metrics = window.PuckyUiDebug?.perfMetrics?.();
+      return Boolean(metrics && metrics.route === ${JSON.stringify(targetRoute)} && metrics.route_ready);
+    })()`,
+    timeoutMs,
+    `Home tile ${targetRoute} never became perf-ready.`
+  );
+  return readPerfState(client);
+}
+
+async function clickSelector(client, selector, timeoutMs) {
+  const target = String(selector || "").trim();
+  const clicked = await client.evaluate(`(() => {
+    const node = document.querySelector(${JSON.stringify(target)});
+    if (!(node instanceof HTMLElement)) return false;
+    node.click();
+    return true;
+  })()`);
+  if (!clicked) {
+    throw new Error(`Could not find selector ${target}.`);
+  }
+  await delay(Math.min(timeoutMs, 250));
+  return {
+    perf: await readPerfState(client),
+    page: await pageInfo(client),
+  };
+}
+
+async function waitForSelector(client, selector, timeoutMs) {
+  const target = String(selector || "").trim();
+  await client.waitFor(
+    `(() => Boolean(document.querySelector(${JSON.stringify(target)})))()`,
+    timeoutMs,
+    `Selector never appeared: ${target}`
+  );
+  return {
+    perf: await readPerfState(client),
+    page: await pageInfo(client),
+  };
+}
+
 async function runOperation(client, request, operation) {
   const timeoutMs = Number(operation.timeout_ms || request.timeout_ms || 15000);
+  if (operation.kind === "ensure_route") {
+    return { kind: operation.kind, route: String(operation.route || ""), state: await ensureRoute(client, operation.route, timeoutMs) };
+  }
   if (operation.kind === "ensure_connect_route") {
     return { kind: operation.kind, state: await ensureConnectRoute(client, timeoutMs) };
+  }
+  if (operation.kind === "perf_state") {
+    return { kind: operation.kind, state: await readPerfState(client) };
   }
   if (operation.kind === "wait_for_connect_ready") {
     return { kind: operation.kind, state: await waitForConnectReady(client, timeoutMs) };
@@ -326,6 +413,15 @@ async function runOperation(client, request, operation) {
   }
   if (operation.kind === "page_info") {
     return { kind: operation.kind, state: await pageInfo(client) };
+  }
+  if (operation.kind === "click_home_tile") {
+    return { kind: operation.kind, route: String(operation.route || ""), state: await clickHomeTile(client, operation.route, timeoutMs) };
+  }
+  if (operation.kind === "click_selector") {
+    return { kind: operation.kind, selector: String(operation.selector || ""), state: await clickSelector(client, operation.selector, timeoutMs) };
+  }
+  if (operation.kind === "wait_for_selector") {
+    return { kind: operation.kind, selector: String(operation.selector || ""), state: await waitForSelector(client, operation.selector, timeoutMs) };
   }
   if (operation.kind === "screenshot") {
     const targetPath = path.resolve(String(operation.path || ""));
