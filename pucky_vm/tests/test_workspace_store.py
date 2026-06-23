@@ -1283,6 +1283,80 @@ def test_seeded_demo_time_refresh_preserves_seeded_edits_skips_deleted_rows_and_
     assert rerun_task["due_at_ms"] == first_due_at_ms
 
 
+def test_seeded_graph_content_refresh_updates_existing_demo_calendar_examples(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    db_path = tmp_path / "workspace.sqlite3"
+    store = WorkspaceStore(str(db_path), clock_ms=clock)
+    old_house_metadata = {"place": "Home", "attendees": ["Maya Chen"], "type": "home"}
+    old_clinic_metadata = {"place": "Westside Clinic", "attendees": ["Clinic front desk"], "type": "health"}
+    old_late_metadata = {"place": "Phone", "attendees": ["Sam Rivera"], "type": "call"}
+    store._conn.execute(
+        "UPDATE workspace_records SET summary = ?, metadata_json = ? WHERE kind = 'calendar_event' AND record_id = 'house-walkthrough'",
+        ("Walk the porch list before dinner.", json.dumps(old_house_metadata)),
+    )
+    store._conn.execute(
+        "UPDATE workspace_records SET summary = ?, metadata_json = ? WHERE kind = 'calendar_event' AND record_id = 'clinic-checkin'",
+        ("Forms and timing.", json.dumps(old_clinic_metadata)),
+    )
+    store._conn.execute(
+        "UPDATE workspace_records SET summary = ?, metadata_json = ? WHERE kind = 'calendar_event' AND record_id = 'late-night-design-call'",
+        ("Timezone-edge check before sending the morning follow-up.", json.dumps(old_late_metadata)),
+    )
+    store._conn.execute(
+        """
+        DELETE FROM workspace_links
+        WHERE link_id IN (
+            'graph-calendar-late-note',
+            'graph-calendar-late-task',
+            'graph-calendar-late-project',
+            'graph-calendar-late-reminder'
+        )
+        """
+    )
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_graph_content_refresh_v1'")
+    store._conn.commit()
+    store.close()
+
+    clock.value += 2 * 24 * 60 * 60 * 1000
+    refreshed = WorkspaceStore(str(db_path), clock_ms=clock)
+
+    expected = default_workspace_graph_records(clock.value)
+    house = refreshed.get_record("calendar-events", "house-walkthrough")
+    clinic = refreshed.get_record("calendar-events", "clinic-checkin")
+    late_call = refreshed.get_record("calendar-events", "late-night-design-call")
+    assert house is not None
+    assert clinic is not None
+    assert late_call is not None
+
+    assert house["summary"] == next(record["summary"] for record in expected["calendar-events"] if record["id"] == "house-walkthrough")
+    assert house["metadata"]["address"] == "1818 Maple Ave, Oakland, CA 94611"
+    assert clinic["summary"] == next(record["summary"] for record in expected["calendar-events"] if record["id"] == "clinic-checkin")
+    assert clinic["metadata"]["address"] == "11714 Wilshire Blvd, Suite 12, Los Angeles, CA 90025"
+    assert late_call["summary"] == next(record["summary"] for record in expected["calendar-events"] if record["id"] == "late-night-design-call")
+    assert "https://meet.google.com/qas-dsgn-late" in late_call["summary"]
+
+    late_call_links = {
+        (row[0], row[1])
+        for row in refreshed._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'calendar_event' AND source_id = 'late-night-design-call'
+            """
+        ).fetchall()
+    }
+    assert ("note", "freelance-homepage-note") in late_call_links
+    assert ("task", "demo-task-send-freelance-mockup") in late_call_links
+    assert ("project", "freelance-followup") in late_call_links
+    assert ("reminder", "demo-reminder-freelance-followup") in late_call_links
+
+    meta = refreshed._conn.execute(
+        "SELECT value FROM workspace_meta WHERE key = 'seeded_graph_content_refresh_v1'"
+    ).fetchone()
+    assert meta is not None
+    assert meta["value"] == "1"
+
+
 def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
 

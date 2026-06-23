@@ -845,6 +845,7 @@ class WorkspaceStore:
             notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
             demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
+            graph_content_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_graph_content_refresh_v1'").fetchone()
         now = self.now_ms()
         newly_seeded = not seeded
         if not seeded:
@@ -912,6 +913,8 @@ class WorkspaceStore:
             self._refresh_jimmy_thompson_photo_v1(now)
         if not demo_time_refresh_seeded:
             self._refresh_seeded_demo_time_v1(now)
+        if not graph_content_refresh_seeded:
+            self._refresh_seeded_graph_content_v1(now)
         self.ensure_self_contact()
 
     def ensure_self_contact(self) -> dict[str, object]:
@@ -1361,6 +1364,37 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("seeded_demo_time_refresh_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _refresh_seeded_graph_content_v1(self, now_ms: int) -> None:
+        refresh_record_ids = {
+            "house-walkthrough",
+            "clinic-checkin",
+            "late-night-design-call",
+            "freelance-homepage-note",
+            "demo-task-send-freelance-mockup",
+            "freelance-followup",
+            "demo-reminder-freelance-followup",
+        }
+        refresh_link_ids = {
+            "graph-calendar-late-note",
+            "graph-calendar-late-task",
+            "graph-calendar-late-project",
+            "graph-calendar-late-reminder",
+        }
+        defaults = default_workspace_graph_records(now_ms)
+        for collection, records in defaults.items():
+            for record in records:
+                if str(record.get("id") or "").strip() in refresh_record_ids:
+                    self.upsert_record(collection, record)
+        for link in default_workspace_graph_links():
+            if str(link.get("id") or "").strip() in refresh_link_ids:
+                self.upsert_link(link)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_graph_content_refresh_v1", "1", now_ms),
             )
             self._conn.commit()
 
