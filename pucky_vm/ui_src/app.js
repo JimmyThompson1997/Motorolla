@@ -50,6 +50,8 @@
   const MEETING_STATUS_POLL_MS = 1000;
   const MEETING_STATUS_IDLE_ROUTE_INTERVAL_MS = 2000;
   const WORKSPACE_REFRESH_TICK_MS = 1000;
+  const REMINDER_LIVE_UI_TICK_MS = 1000;
+  const REMINDER_BELL_ANIMATION_MS = 5600;
   const WORKSPACE_TASK_STALE_VISIBLE_MS = 15000;
   const WORKSPACE_REMINDER_STALE_VISIBLE_MS = 15000;
   const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
@@ -6823,11 +6825,24 @@
       lightNavigate("reminder-detail", { from: "reminders" });
     });
     row.append(
-      lightSmallIcon("bell", "reminders"),
+      lightReminderBellIcon(reminder),
       copy,
       lightReminderRowEnd(reminder)
     );
     return row;
+  }
+
+  function lightReminderBellIcon(reminder) {
+    const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");
+    const wrap = lightSmallIcon("bell", "reminders");
+    wrap.classList.add("light-reminder-bell-icon");
+    wrap.dataset.reminderBell = "true";
+    wrap.dataset.reminderState = reminderState;
+    if (reminderState === "live") {
+      wrap.classList.add("is-live");
+      wrap.style.setProperty("--reminder-bell-delay-ms", `-${Date.now() % REMINDER_BELL_ANIMATION_MS}ms`);
+    }
+    return wrap;
   }
 
   function lightReminderRowEnd(reminder) {
@@ -7580,6 +7595,28 @@
       return `${hours}h`;
     }
     return `${hours}h ${minutes}m`;
+  }
+
+  function routeUsesReminderLiveUiTick(route = state.route) {
+    return ["home", "reminders", "reminder-detail"].includes(String(route || "").trim());
+  }
+
+  function reminderNeedsLiveUiTick(reminder, nowMs = Date.now()) {
+    if (!reminderIsActive(reminder)) {
+      return false;
+    }
+    const dueAtMs = Number(reminder?.due_at_ms || 0);
+    if (!Number.isFinite(dueAtMs) || dueAtMs <= 0) {
+      return false;
+    }
+    return dueAtMs > nowMs || reminderIsLive(reminder) || reminderIsSnoozed(reminder);
+  }
+
+  function shouldTickReminderLiveUi(route = state.route, nowMs = Date.now()) {
+    if (document.visibilityState !== "visible" || !routeUsesReminderLiveUiTick(route)) {
+      return false;
+    }
+    return workspaceItems("reminders").some(reminder => reminderNeedsLiveUiTick(reminder, nowMs));
   }
 
   function activeReminderCount() {
@@ -19679,6 +19716,12 @@
       render();
     }
   }, 90);
+
+  setInterval(() => {
+    if (shouldTickReminderLiveUi(state.route, Date.now())) {
+      requestRender("reminder_live_ui_tick");
+    }
+  }, REMINDER_LIVE_UI_TICK_MS);
 
   setInterval(() => {
     if (document.visibilityState === "visible") {

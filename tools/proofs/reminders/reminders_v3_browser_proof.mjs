@@ -1,11 +1,19 @@
+import fs from "node:fs";
 import path from "node:path";
 
 import { chromium } from "playwright-core";
 import { ensureDir, resolveChromePath, saveScreenshot, writeJsonFile } from "../../support/cover_shared.mjs";
 
 const VIEWPORT = { width: 430, height: 932 };
-const LIVE_A_DELAY_MS = 75_000;
-const LIVE_B_DELAY_MS = 75_000;
+const LIVE_TO_SNOOZE_DELAY_MS = 4_000;
+const UPCOMING_COMPARISON_DELAY_MS = 30 * 60 * 1000;
+const LIVE_BELL_SAMPLE_INTERVAL_MS = 250;
+const LIVE_BELL_SAMPLE_DURATION_MS = 8_000;
+const LIVE_BELL_SCREENSHOT_AT_MS = [0, 2_000, 4_000, 6_000];
+const COUNTDOWN_SAMPLE_INTERVAL_MS = 1_000;
+const COUNTDOWN_SAMPLE_DURATION_MS = 12_000;
+const COUNTDOWN_SCREENSHOT_AT_MS = [0, 4_000, 8_000, 12_000];
+const REDUCED_MOTION_SAMPLE_DURATION_MS = 4_000;
 
 function parseArgs(argv) {
   const config = {
@@ -14,7 +22,8 @@ function parseArgs(argv) {
     reportDir: path.resolve("artifacts", "reminders-v3-browser", new Date().toISOString().replace(/[:.]/g, "-")),
     timeoutMs: 30_000,
     theme: "light",
-    reminderDeliveryMode: process.env.PUCKY_REMINDER_DELIVERY_MODE || "auto"
+    reminderDeliveryMode: process.env.PUCKY_REMINDER_DELIVERY_MODE || "auto",
+    expectedSha: String(process.env.PUCKY_EXPECTED_SHA || "").trim()
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -30,6 +39,8 @@ function parseArgs(argv) {
       config.theme = String(argv[++index] || config.theme).trim().toLowerCase() || "light";
     } else if (arg === "--reminder-delivery" && argv[index + 1]) {
       config.reminderDeliveryMode = String(argv[++index] || config.reminderDeliveryMode).trim().toLowerCase() || "auto";
+    } else if (arg === "--expected-sha" && argv[index + 1]) {
+      config.expectedSha = String(argv[++index] || config.expectedSha).trim();
     }
   }
   return config;
@@ -76,6 +87,31 @@ async function apiRequest(config, method, apiPath, body = undefined) {
     throw new Error(`${method} ${apiPath} failed (${response.status}): ${JSON.stringify(payload)}`);
   }
   return payload;
+}
+
+async function fetchManifest(config) {
+  const url = new URL("/ui/pucky/latest/manifest.json", `${String(config.baseUrl || "").replace(/\/+$/, "")}/`);
+  const response = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+    cache: "no-store"
+  });
+  const payload = await response.json().catch(() => ({}));
+  assert(response.ok, `Could not load manifest from ${url.toString()} (${response.status})`);
+  return {
+    manifestUrl: url.toString(),
+    manifest: payload
+  };
+}
+
+async function saveAnimatedScreenshot(page, reportDir, name) {
+  const target = path.join(reportDir, `${name}.png`);
+  await page.screenshot({
+    path: target,
+    fullPage: true,
+    animations: "allow",
+    timeout: 120000,
+  });
+  return target;
 }
 
 function reminderMeta(reminder) {
@@ -303,8 +339,219 @@ async function readReminderCountdownState(page, reminderId) {
       progress: Number(countdown?.getAttribute("data-reminder-progress") || 0),
       remainingMs: Number(countdown?.getAttribute("data-reminder-remaining-ms") || 0),
       label: String(countdown?.querySelector(".light-reminder-countdown-label")?.textContent || "").trim(),
+      cssProgress: String(countdown?.style?.getPropertyValue("--progress") || "").trim(),
     };
   }, reminderId);
+}
+
+async function readReminderBellStates(page, reminderIds = []) {
+  return page.evaluate((targetIds) => {
+    return targetIds.reduce((result, targetId) => {
+      const row = document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`);
+      const bell = row?.querySelector('[data-reminder-bell="true"]');
+      const style = bell ? window.getComputedStyle(bell) : null;
+      result[targetId] = {
+        exists: Boolean(bell),
+        rowState: row?.getAttribute("data-reminder-state") || "",
+        bellState: bell?.getAttribute("data-reminder-state") || "",
+        className: bell?.className || "",
+        transform: style?.transform || "none",
+        animationName: style?.animationName || "none",
+        animationPlayState: style?.animationPlayState || "",
+        animationDuration: style?.animationDuration || "",
+      };
+      return result;
+    }, {});
+  }, reminderIds);
+}
+
+async function sampleReminderBellTimeline(page, reportDir, reminderIds, options = {}) {
+  const durationMs = Math.max(250, Number(options.durationMs || LIVE_BELL_SAMPLE_DURATION_MS));
+  const stepMs = Math.max(100, Number(options.stepMs || LIVE_BELL_SAMPLE_INTERVAL_MS));
+  const screenshotAtMs = Array.isArray(options.screenshotAtMs) ? options.screenshotAtMs.slice().sort((left, right) => left - right) : [];
+  const screenshotNamePrefix = String(options.screenshotNamePrefix || "bell-timeline").trim();
+  const sampleLabel = String(options.sampleLabel || "bell").trim();
+  const samples = [];
+  const screenshots = [];
+  const startedAt = Date.now();
+  let screenshotIndex = 0;
+  while (true) {
+    const elapsedMs = Date.now() - startedAt;
+    while (screenshotIndex < screenshotAtMs.length && elapsedMs >= screenshotAtMs[screenshotIndex]) {
+      const name = `${screenshotNamePrefix}-t${Math.round(screenshotAtMs[screenshotIndex] / 1000)}s`;
+      screenshots.push({
+        label: `${sampleLabel}_t${Math.round(screenshotAtMs[screenshotIndex] / 1000)}s`,
+        elapsedMs,
+        path: await saveAnimatedScreenshot(page, reportDir, name)
+      });
+      screenshotIndex += 1;
+    }
+    samples.push({
+      elapsedMs,
+      bells: await readReminderBellStates(page, reminderIds)
+    });
+    if (elapsedMs >= durationMs) {
+      break;
+    }
+    await page.waitForTimeout(Math.min(stepMs, durationMs - elapsedMs));
+  }
+  while (screenshotIndex < screenshotAtMs.length) {
+    const targetMs = screenshotAtMs[screenshotIndex];
+    const name = `${screenshotNamePrefix}-t${Math.round(targetMs / 1000)}s`;
+    screenshots.push({
+      label: `${sampleLabel}_t${Math.round(targetMs / 1000)}s`,
+      elapsedMs: Date.now() - startedAt,
+      path: await saveAnimatedScreenshot(page, reportDir, name)
+    });
+    screenshotIndex += 1;
+  }
+  return { samples, screenshots };
+}
+
+async function sampleReminderCountdownTimeline(page, reportDir, reminderId, options = {}) {
+  const durationMs = Math.max(1_000, Number(options.durationMs || COUNTDOWN_SAMPLE_DURATION_MS));
+  const stepMs = Math.max(250, Number(options.stepMs || COUNTDOWN_SAMPLE_INTERVAL_MS));
+  const screenshotAtMs = Array.isArray(options.screenshotAtMs) ? options.screenshotAtMs.slice().sort((left, right) => left - right) : [];
+  const screenshotNamePrefix = String(options.screenshotNamePrefix || "countdown-timeline").trim();
+  const sampleLabel = String(options.sampleLabel || "countdown").trim();
+  const samples = [];
+  const screenshots = [];
+  const startedAt = Date.now();
+  let screenshotIndex = 0;
+  while (true) {
+    const elapsedMs = Date.now() - startedAt;
+    while (screenshotIndex < screenshotAtMs.length && elapsedMs >= screenshotAtMs[screenshotIndex]) {
+      const name = `${screenshotNamePrefix}-t${Math.round(screenshotAtMs[screenshotIndex] / 1000)}s`;
+      screenshots.push({
+        label: `${sampleLabel}_t${Math.round(screenshotAtMs[screenshotIndex] / 1000)}s`,
+        elapsedMs,
+        path: await saveScreenshot(page, reportDir, name)
+      });
+      screenshotIndex += 1;
+    }
+    const previous = samples.length ? samples[samples.length - 1].countdown : null;
+    let countdown = await readReminderCountdownState(page, reminderId);
+    if (previous?.exists && countdown?.exists) {
+      let retryCount = 0;
+      while (retryCount < 4 && Number(countdown.progress || 0) <= Number(previous.progress || 0)) {
+        await page.waitForTimeout(150);
+        countdown = await readReminderCountdownState(page, reminderId);
+        retryCount += 1;
+      }
+    }
+    samples.push({
+      elapsedMs: Date.now() - startedAt,
+      countdown
+    });
+    if (elapsedMs >= durationMs) {
+      break;
+    }
+    await page.waitForTimeout(Math.min(stepMs, durationMs - elapsedMs));
+  }
+  while (screenshotIndex < screenshotAtMs.length) {
+    const targetMs = screenshotAtMs[screenshotIndex];
+    const name = `${screenshotNamePrefix}-t${Math.round(targetMs / 1000)}s`;
+    screenshots.push({
+      label: `${sampleLabel}_t${Math.round(targetMs / 1000)}s`,
+      elapsedMs: Date.now() - startedAt,
+      path: await saveScreenshot(page, reportDir, name)
+    });
+    screenshotIndex += 1;
+  }
+  return { samples, screenshots };
+}
+
+function identityTransform(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !normalized
+    || normalized === "none"
+    || normalized === "matrix(1, 0, 0, 1, 0, 0)"
+    || normalized === "matrix(1,0,0,1,0,0)";
+}
+
+function distinctNonIdentityTransforms(samples, reminderId) {
+  return [...new Set(samples
+    .map(sample => String(sample?.bells?.[reminderId]?.transform || "").trim())
+    .filter(transform => !identityTransform(transform)))];
+}
+
+function countdownProgressValues(samples) {
+  return samples.map(sample => Number(sample?.countdown?.progress || 0));
+}
+
+function countdownRemainingValues(samples) {
+  return samples.map(sample => Number(sample?.countdown?.remainingMs || 0));
+}
+
+function valuesStrictlyIncrease(values) {
+  for (let index = 1; index < values.length; index += 1) {
+    if (!(values[index] > values[index - 1])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function valuesStrictlyDecrease(values) {
+  for (let index = 1; index < values.length; index += 1) {
+    if (!(values[index] < values[index - 1])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function writeReminderProofSummary(reportDir, summary) {
+  const bellTimeline = summary.motion?.live_bell || {};
+  const countdownTimeline = summary.motion?.snooze_countdown || {};
+  const reducedMotion = summary.motion?.reduced_motion || {};
+  const manifest = summary.remote_manifest?.manifest || {};
+  const lines = [
+    "# Reminder Motion Proof",
+    "",
+    `- Base URL: ${summary.base_url}`,
+    `- Theme: ${summary.theme}`,
+    `- Manifest URL: ${summary.remote_manifest?.manifestUrl || ""}`,
+    `- Manifest commit: ${manifest.source_commit_full || ""}`,
+    `- Manifest ui_version: ${manifest.ui_version || ""}`,
+    "",
+    "## Live Bell",
+    "",
+    `- Verdict: ${bellTimeline.verdict || "unknown"}`,
+    `- Distinct non-identity transforms: ${Number(bellTimeline.distinct_non_identity_transforms || 0)}`,
+    `- Comparison row stayed still: ${String(Boolean(bellTimeline.comparison_stayed_still))}`,
+    "",
+    "| Sample | Elapsed ms | Transform | Animation | State |",
+    "| --- | ---: | --- | --- | --- |",
+    ...(Array.isArray(bellTimeline.samples) ? bellTimeline.samples : []).map((sample, index) => {
+      const live = sample?.bells?.live || {};
+      return `| ${index + 1} | ${Number(sample?.elapsedMs || 0)} | ${String(live.transform || "")} | ${String(live.animationName || "")} | ${String(live.rowState || "")} |`;
+    }),
+    "",
+    "## Snooze Countdown",
+    "",
+    `- Verdict: ${countdownTimeline.verdict || "unknown"}`,
+    `- Distinct progress values: ${Number(countdownTimeline.distinct_progress_values || 0)}`,
+    "",
+    "| Sample | Elapsed ms | Progress | Remaining ms | Label | State |",
+    "| --- | ---: | ---: | ---: | --- | --- |",
+    ...(Array.isArray(countdownTimeline.samples) ? countdownTimeline.samples : []).map((sample, index) => {
+      const countdown = sample?.countdown || {};
+      return `| ${index + 1} | ${Number(sample?.elapsedMs || 0)} | ${Number(countdown.progress || 0).toFixed(3)} | ${Number(countdown.remainingMs || 0)} | ${String(countdown.label || "")} | ${String(countdown.rowState || "")} |`;
+    }),
+    "",
+    "## Reduced Motion",
+    "",
+    `- Verdict: ${reducedMotion.verdict || "unknown"}`,
+    `- Live bell animation disabled: ${String(Boolean(reducedMotion.live_bell_disabled))}`,
+    `- Countdown still updated: ${String(Boolean(reducedMotion.countdown_still_updates))}`,
+    "",
+    "## Screenshots",
+    "",
+    ...(Object.entries(summary.screenshots || {})).map(([key, target]) => `- ${key}: ${target}`),
+    "",
+  ];
+  fs.writeFileSync(path.join(reportDir, "summary.md"), lines.join("\n"), "utf8");
 }
 
 async function assertNoToast(page, label) {
@@ -359,75 +606,183 @@ async function main() {
     lifecycle: {}
   };
 
-  const reminderAId = `browser-proof-live-a-${Date.now()}`;
-  const reminderBId = `browser-proof-live-b-${Date.now()}`;
-  const orphanContactId = `browser-proof-orphan-contact-${Date.now()}`;
-  const orphanDismissReminderId = `browser-proof-orphan-dismiss-${Date.now()}`;
-  const orphanSnoozeReminderId = `browser-proof-orphan-snooze-${Date.now()}`;
-  const createdReminderIds = [reminderAId, orphanDismissReminderId, orphanSnoozeReminderId];
+  const runId = Date.now();
+  const reminderAId = `browser-proof-snooze-${runId}`;
+  const reminderBId = `browser-proof-dismiss-${runId}`;
+  const comparisonReminderId = `browser-proof-upcoming-${runId}`;
+  const orphanContactId = `browser-proof-orphan-contact-${runId}`;
+  const orphanDismissReminderId = `browser-proof-orphan-dismiss-${runId}`;
+  const orphanSnoozeReminderId = `browser-proof-orphan-snooze-${runId}`;
+  const createdReminderIds = [reminderAId, reminderBId, comparisonReminderId, orphanDismissReminderId, orphanSnoozeReminderId];
   const baselineActive = await activeReminderCount(config);
-  const reminderADueAtMs = Date.now() + LIVE_A_DELAY_MS;
-  let reminderBDueAtMs = 0;
+  const reminderADueAtMs = Date.now() + LIVE_TO_SNOOZE_DELAY_MS;
+  const reminderBDueAtMs = Date.now() - 60_000;
+  const comparisonDueAtMs = Date.now() + UPCOMING_COMPARISON_DELAY_MS;
 
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: reminderAId,
-    title: "Browser Proof Live Reminder A",
-    summary: "This reminder should move from Upcoming to Live, then snooze and refire.",
-    status: "open",
-    due_at_ms: reminderADueAtMs,
-    metadata: {
-      recipients: [{ id: "self", kind: "self", label: "Me" }],
-      destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+  summary.motion = {};
+  summary.remote_manifest = await fetchManifest(config);
+  summary.manifest_url = String(summary.remote_manifest?.manifestUrl || "");
+  summary.source_commit_full = String(summary.remote_manifest?.manifest?.source_commit_full || "");
+  summary.ui_version = String(summary.remote_manifest?.manifest?.ui_version || "");
+  writeJsonFile(path.join(config.reportDir, "manifest.json"), summary.remote_manifest?.manifest || {});
+  if (config.expectedSha) {
+    assert(
+      String(summary.remote_manifest?.manifest?.source_commit_full || "") === config.expectedSha,
+      `Hosted manifest commit ${String(summary.remote_manifest?.manifest?.source_commit_full || "<empty>")} did not match expected ${config.expectedSha}`
+    );
+  }
+
+  for (const payload of [
+    {
+      id: comparisonReminderId,
+      title: "Browser Proof Upcoming Reminder",
+      summary: "Upcoming reminder detail should stay action-free and bell animation should stay still.",
+      status: "open",
+      due_at_ms: comparisonDueAtMs,
+      metadata: {
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      }
+    },
+    {
+      id: reminderAId,
+      title: "Browser Proof Snooze Reminder",
+      summary: "This reminder should move from Upcoming to Live, then snooze with a smooth countdown.",
+      status: "open",
+      due_at_ms: reminderADueAtMs,
+      metadata: {
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      }
+    },
+    {
+      id: reminderBId,
+      title: "Browser Proof Dismiss Reminder",
+      summary: "This live reminder should wiggle, dismiss cleanly, and decrement the active badge.",
+      status: "open",
+      due_at_ms: reminderBDueAtMs,
+      metadata: {
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      }
     }
-  });
+  ]) {
+    await apiRequest(config, "POST", "/api/workspace/reminders", payload);
+  }
   const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
   const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: config.reportDir, size: VIEWPORT } });
   const page = await context.newPage();
 
   try {
-    const expectedInitialActive = baselineActive + 1;
+    const expectedInitialActive = baselineActive + 3;
     await page.goto(pageUrl(config.baseUrl, config.theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
     await waitForHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, expectedInitialActive, config.timeoutMs);
     summary.screenshots.home = await saveScreenshot(page, config.reportDir, "home");
 
     await openTile(page, "Reminders", "reminders", config.timeoutMs);
+    await page.locator(`.light-reminder-row[data-reminder-id="${comparisonReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
     await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-    const initialList = await readReminderListState(page, [reminderAId]);
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    const initialList = await readReminderListState(page, [comparisonReminderId, reminderAId, reminderBId]);
+    assert(initialList.sectionTitles.includes("LIVE"), `Expected Live section, saw ${JSON.stringify(initialList.sectionTitles)}`);
     assert(initialList.sectionTitles.includes("UPCOMING"), `Expected Upcoming section, saw ${JSON.stringify(initialList.sectionTitles)}`);
     assert(!initialList.sectionTitles.includes("SNOOZED"), `Expected Snoozed section to stay removed, saw ${JSON.stringify(initialList.sectionTitles)}`);
+    assert(initialList.rows[comparisonReminderId]?.state === "upcoming", `Expected comparison reminder to start upcoming, saw ${initialList.rows[comparisonReminderId]?.state}`);
     assert(initialList.rows[reminderAId]?.state === "upcoming", `Expected reminder A to start upcoming, saw ${initialList.rows[reminderAId]?.state}`);
+    assert(initialList.rows[reminderBId]?.state === "live", `Expected reminder B to start live, saw ${initialList.rows[reminderBId]?.state}`);
     summary.screenshots.reminders_list_initial = await saveScreenshot(page, config.reportDir, "reminders-list-initial");
 
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).click();
+    await page.locator(`.light-reminder-row[data-reminder-id="${comparisonReminderId}"]`).click();
     await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
     await page.waitForFunction(() => Boolean(document.querySelector('[data-reminder-detail-card="true"]')), { timeout: config.timeoutMs });
-    const detailUrlBeforeLive = await page.url();
-    const aUpcomingDetail = await assertCompactReminderDetail(page, "upcoming", [], { expectedConnectedLabels: [] });
+    const comparisonUpcomingDetail = await assertCompactReminderDetail(page, "upcoming", [], { expectedConnectedLabels: [] });
     await assertNoToast(page, "Upcoming reminder detail");
-    summary.lifecycle.reminder_a_upcoming = aUpcomingDetail;
-    summary.screenshots.a1_upcoming_detail = await saveScreenshot(page, config.reportDir, "a1-upcoming-detail");
+    summary.lifecycle.comparison_upcoming_detail = comparisonUpcomingDetail;
+    summary.screenshots.upcoming_detail = await saveScreenshot(page, config.reportDir, "upcoming-detail");
+    await backToRoute(page, "reminders", config.timeoutMs);
 
-    const aLiveObservation = await waitForReminderDetailStateObserved(
+    const bellTimeline = await sampleReminderBellTimeline(
       page,
-      "live",
-      ["Dismiss", "Snooze"],
-      LIVE_A_DELAY_MS + 90_000
+      config.reportDir,
+      [reminderBId, comparisonReminderId],
+      {
+        durationMs: LIVE_BELL_SAMPLE_DURATION_MS,
+        stepMs: LIVE_BELL_SAMPLE_INTERVAL_MS,
+        screenshotAtMs: LIVE_BELL_SCREENSHOT_AT_MS,
+        screenshotNamePrefix: "lane-a-live-bell",
+        sampleLabel: "lane_a_live_bell"
+      }
     );
-    assert(await page.url() === detailUrlBeforeLive, "Reminder A should become Live without a page reload");
+    const liveBellTransforms = distinctNonIdentityTransforms(bellTimeline.samples, reminderBId);
+    const comparisonBellTransforms = distinctNonIdentityTransforms(bellTimeline.samples, comparisonReminderId);
+    const comparisonAnimated = bellTimeline.samples.some(sample => {
+      const bell = sample?.bells?.[comparisonReminderId] || {};
+      return !identityTransform(bell.transform) || String(bell.animationName || "none") !== "none";
+    });
+    assert(
+      liveBellTransforms.length >= 2,
+      `Expected live reminder bell to report at least two distinct non-identity transforms, saw ${JSON.stringify(liveBellTransforms)}`
+    );
+    assert(comparisonBellTransforms.length === 0 && !comparisonAnimated, "Expected upcoming comparison reminder bell to stay still");
+    summary.motion.live_bell = {
+      verdict: "pass",
+      distinct_non_identity_transforms: liveBellTransforms.length,
+      comparison_stayed_still: true,
+      samples: bellTimeline.samples.map(sample => ({
+        elapsedMs: sample.elapsedMs,
+        bells: {
+          live: sample?.bells?.[reminderBId] || {},
+          comparison: sample?.bells?.[comparisonReminderId] || {}
+        }
+      })),
+      screenshots: bellTimeline.screenshots
+    };
+    bellTimeline.screenshots.forEach((shot, index) => {
+      summary.screenshots[`live_bell_t${index}`] = shot.path;
+    });
+
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).click();
+    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+    const bLiveDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
+    await assertNoToast(page, "Live dismiss reminder detail");
+    summary.lifecycle.reminder_b_live_detail = bLiveDetail;
+    summary.screenshots.dismiss_before = await saveScreenshot(page, config.reportDir, "dismiss-before");
+    await page.locator('[data-reminder-action="dismiss"]').click();
+    const dismissedReminder = await waitForReminderRecord(
+      config,
+      reminderBId,
+      reminder => reminderIsDismissed(reminder),
+      "reminder B should dismiss from the live detail page",
+      30_000
+    );
+    await assertNoToast(page, "Reminder B dismiss");
+    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderBId, { timeout: config.timeoutMs });
+    summary.lifecycle.reminder_b_dismiss = {
+      status: String(dismissedReminder?.status || "").trim().toLowerCase()
+    };
+    summary.screenshots.dismiss_after = await saveScreenshot(page, config.reportDir, "dismiss-after");
+    await backToHome(page, config.theme, config.timeoutMs);
+    await waitForReminderBadge(page, baselineActive + 2, config.timeoutMs);
+    summary.screenshots.home_after_dismiss = await saveScreenshot(page, config.reportDir, "home-after-dismiss");
+
+    await openTile(page, "Reminders", "reminders", config.timeoutMs);
+    const aLiveObservation = await waitForReminderRowStateObserved(page, reminderAId, "live", LIVE_TO_SNOOZE_DELAY_MS + 25_000);
     assert(
       Number(aLiveObservation?.observedAtMs || 0) <= reminderADueAtMs + 20_000,
       `Reminder A should become Live within 20s of due (${reminderADueAtMs}), saw ${aLiveObservation?.observedAtMs || 0}`
     );
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).click();
+    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
     const aLiveDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
-    await assertNoToast(page, "Live reminder detail");
+    await assertNoToast(page, "Live snooze reminder detail");
     summary.lifecycle.reminder_a_live = {
       due_at_ms: reminderADueAtMs,
       observed_at_ms: Number(aLiveObservation?.observedAtMs || 0),
       detail: aLiveDetail
     };
-    summary.screenshots.a2_live_detail = await saveScreenshot(page, config.reportDir, "a2-live-detail");
-
+    summary.screenshots.snooze_before = await saveScreenshot(page, config.reportDir, "snooze-before");
     await page.locator('[data-reminder-action="snooze"]').click();
     const aSnoozedRecord = await waitForReminderRecord(
       config,
@@ -441,116 +796,47 @@ async function main() {
       `Reminder A snooze should keep due_at_ms and snoozed_until_ms aligned, saw ${Number(aSnoozedRecord?.due_at_ms || 0)} vs ${Number(aSnoozedRecord?.metadata?.snoozed_until_ms || 0)}`
     );
     await assertNoToast(page, "Reminder A snooze");
-    await page.waitForFunction(() => {
-      const card = document.querySelector('[data-reminder-detail-card="true"]');
-      return card?.getAttribute("data-reminder-state") === "snoozed"
-        && !document.querySelector('[data-reminder-action-row="true"]');
-    }, { timeout: config.timeoutMs });
+    const aSnoozedDetail = await assertCompactReminderDetail(page, "snoozed", [], { expectedConnectedLabels: [] });
+    summary.lifecycle.reminder_a_snoozed_detail = aSnoozedDetail;
+    summary.screenshots.snooze_after_detail = await saveScreenshot(page, config.reportDir, "snooze-after-detail");
     await backToRoute(page, "reminders", config.timeoutMs);
     await waitForReminderRowState(page, reminderAId, "snoozed", config.timeoutMs);
-    const aCountdownStart = await readReminderCountdownState(page, reminderAId);
-    assert(aCountdownStart.exists, "Reminder A should show a snoozed countdown in Upcoming");
     const afterSnoozeList = await readReminderListState(page, [reminderAId]);
     assert(afterSnoozeList.sectionTitles.includes("UPCOMING"), `Expected Upcoming after snooze, saw ${JSON.stringify(afterSnoozeList.sectionTitles)}`);
     assert(!afterSnoozeList.sectionTitles.includes("SNOOZED"), `Expected no Snoozed section after snooze, saw ${JSON.stringify(afterSnoozeList.sectionTitles)}`);
-    summary.lifecycle.reminder_a_snoozed = {
-      due_at_ms: Number(aSnoozedRecord?.due_at_ms || 0),
-      countdown_start: aCountdownStart
-    };
-    summary.screenshots.a3_snoozed_upcoming = await saveScreenshot(page, config.reportDir, "a3-snoozed-upcoming");
-
-    await page.waitForTimeout(30_000);
-    const aCountdownMid = await readReminderCountdownState(page, reminderAId);
-    assert(aCountdownMid.exists, "Reminder A countdown should still be visible after 30 seconds");
-    assert(aCountdownMid.progress > aCountdownStart.progress, `Reminder A countdown progress should advance (${aCountdownStart.progress} -> ${aCountdownMid.progress})`);
-    assert(aCountdownMid.remainingMs < aCountdownStart.remainingMs, `Reminder A countdown remaining time should shrink (${aCountdownStart.remainingMs} -> ${aCountdownMid.remainingMs})`);
-    summary.lifecycle.reminder_a_snooze_mid = aCountdownMid;
-    await page.waitForTimeout(30_000);
-    const aCountdownLate = await readReminderCountdownState(page, reminderAId);
-    assert(aCountdownLate.exists, "Reminder A countdown should still be visible during the second 30-second observation");
-    assert(aCountdownLate.progress > aCountdownMid.progress, `Reminder A countdown should keep advancing (${aCountdownMid.progress} -> ${aCountdownLate.progress})`);
-    assert(aCountdownLate.remainingMs < aCountdownMid.remainingMs, `Reminder A countdown should keep shrinking (${aCountdownMid.remainingMs} -> ${aCountdownLate.remainingMs})`);
-    summary.lifecycle.reminder_a_snooze_late = aCountdownLate;
-
-    const aRefireObservation = await waitForReminderRowStateObserved(page, reminderAId, "live", 90_000);
-    assert(
-      Number(aRefireObservation?.observedAtMs || 0) <= Number(aSnoozedRecord?.due_at_ms || 0) + 20_000,
-      `Reminder A should refire into Live within 20s of snooze expiry (${Number(aSnoozedRecord?.due_at_ms || 0)}), saw ${aRefireObservation?.observedAtMs || 0}`
-    );
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).click();
-    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    const aRefiredDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
-    summary.lifecycle.reminder_a_refired = {
-      observed_at_ms: Number(aRefireObservation?.observedAtMs || 0),
-      detail: aRefiredDetail
-    };
-    summary.screenshots.a4_refired_live_detail = await saveScreenshot(page, config.reportDir, "a4-refired-live-detail");
-
-    await page.locator('[data-reminder-action="dismiss"]').click();
-    await waitForReminderRecord(
-      config,
+    const countdownTimeline = await sampleReminderCountdownTimeline(
+      page,
+      config.reportDir,
       reminderAId,
-      reminder => reminderIsDismissed(reminder),
-      "reminder A should dismiss after refiring",
-      30_000
-    );
-    await assertNoToast(page, "Reminder A dismiss");
-    await waitForLightRoute(page, "reminders", config.timeoutMs);
-    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderAId, { timeout: config.timeoutMs });
-    await backToHome(page, config.theme, config.timeoutMs);
-    await waitForReminderBadge(page, baselineActive, config.timeoutMs);
-    summary.screenshots.a5_home_after_final_dismiss = await saveScreenshot(page, config.reportDir, "a5-home-after-final-dismiss");
-
-    reminderBDueAtMs = Date.now() + LIVE_B_DELAY_MS;
-    await apiRequest(config, "POST", "/api/workspace/reminders", {
-      id: reminderBId,
-      title: "Browser Proof Live Reminder B",
-      summary: "This reminder should dismiss cleanly on first fire.",
-      status: "open",
-      due_at_ms: reminderBDueAtMs,
-      metadata: {
-        recipients: [{ id: "self", kind: "self", label: "Me" }],
-        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      {
+        durationMs: COUNTDOWN_SAMPLE_DURATION_MS,
+        stepMs: COUNTDOWN_SAMPLE_INTERVAL_MS,
+        screenshotAtMs: COUNTDOWN_SCREENSHOT_AT_MS,
+        screenshotNamePrefix: "lane-b-snooze-countdown",
+        sampleLabel: "lane_b_snooze_countdown"
       }
-    });
-    createdReminderIds.push(reminderBId);
-    await waitForReminderBadge(page, baselineActive + 1, config.timeoutMs);
-    await openTile(page, "Reminders", "reminders", config.timeoutMs);
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-    const reminderBInitial = await readReminderListState(page, [reminderBId]);
-    assert(reminderBInitial.rows[reminderBId]?.state === "upcoming", `Expected reminder B to start upcoming, saw ${reminderBInitial.rows[reminderBId]?.state}`);
-
-    const bLiveObservation = await waitForReminderRowStateObserved(page, reminderBId, "live", LIVE_B_DELAY_MS + 90_000);
-    assert(
-      Number(bLiveObservation?.observedAtMs || 0) <= reminderBDueAtMs + 20_000,
-      `Reminder B should become Live within 20s of due (${reminderBDueAtMs}), saw ${bLiveObservation?.observedAtMs || 0}`
     );
-    const liveList = await readReminderListState(page, [reminderBId]);
-    assert(liveList.sectionTitles.includes("LIVE"), `Expected Live section when reminder B fires, saw ${JSON.stringify(liveList.sectionTitles)}`);
-    assert(liveList.rows[reminderBId]?.state === "live", `Expected reminder B to become live, saw ${liveList.rows[reminderBId]?.state}`);
-    summary.lifecycle.reminder_b_live = {
-      ...liveList.rows[reminderBId],
-      observed_at_ms: Number(bLiveObservation?.observedAtMs || 0)
+    const countdownProgress = countdownProgressValues(countdownTimeline.samples);
+    const countdownRemaining = countdownRemainingValues(countdownTimeline.samples);
+    const distinctProgressValues = new Set(countdownProgress.map(value => value.toFixed(3))).size;
+    assert(countdownTimeline.samples.every(sample => Boolean(sample?.countdown?.exists)), "Expected snoozed countdown to stay visible for the full observation window");
+    assert(countdownTimeline.samples.every(sample => String(sample?.countdown?.rowState || "") === "snoozed"), "Expected snoozed reminder row state to stay snoozed while observed");
+    assert(valuesStrictlyIncrease(countdownProgress), `Expected countdown progress to increase every sample, saw ${countdownProgress.join(", ")}`);
+    assert(valuesStrictlyDecrease(countdownRemaining), `Expected countdown remainingMs to decrease every sample, saw ${countdownRemaining.join(", ")}`);
+    assert(distinctProgressValues >= 6, `Expected at least six distinct countdown progress values in twelve seconds, saw ${distinctProgressValues}`);
+    summary.motion.snooze_countdown = {
+      verdict: "pass",
+      distinct_progress_values: distinctProgressValues,
+      samples: countdownTimeline.samples,
+      screenshots: countdownTimeline.screenshots,
+      api_record_after_snooze: aSnoozedRecord
     };
-    summary.screenshots.b1_live_list = await saveScreenshot(page, config.reportDir, "b1-live-list");
-
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).click();
-    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
-    await page.locator('[data-reminder-action="dismiss"]').click();
-    await waitForReminderRecord(
-      config,
-      reminderBId,
-      reminder => reminderIsDismissed(reminder),
-      "reminder B should dismiss on first fire",
-      30_000
-    );
-    await assertNoToast(page, "Reminder B dismiss");
-    await waitForLightRoute(page, "reminders", config.timeoutMs);
-    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderBId, { timeout: config.timeoutMs });
+    countdownTimeline.screenshots.forEach((shot, index) => {
+      summary.screenshots[`snooze_countdown_t${index}`] = shot.path;
+    });
     await backToHome(page, config.theme, config.timeoutMs);
-    await waitForReminderBadge(page, baselineActive, config.timeoutMs);
-    summary.screenshots.b2_home_after_dismiss = await saveScreenshot(page, config.reportDir, "b2-home-after-dismiss");
+    await waitForReminderBadge(page, baselineActive + 2, config.timeoutMs);
+    summary.screenshots.home_after_snooze = await saveScreenshot(page, config.reportDir, "home-after-snooze");
 
     await apiRequest(config, "POST", "/api/workspace/contacts", {
       id: orphanContactId,
@@ -601,7 +887,7 @@ async function main() {
       });
     }
 
-    await waitForReminderBadge(page, baselineActive + 2, config.timeoutMs);
+    await waitForReminderBadge(page, baselineActive + 4, config.timeoutMs);
     await openTile(page, "Reminders", "reminders", config.timeoutMs);
     await page.locator(`.light-reminder-row[data-reminder-id="${orphanDismissReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
     await page.locator(`.light-reminder-row[data-reminder-id="${orphanSnoozeReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -650,12 +936,88 @@ async function main() {
     await waitForReminderRowState(page, orphanSnoozeReminderId, "snoozed", config.timeoutMs);
     summary.screenshots.orphan_snooze_after_list = await saveScreenshot(page, config.reportDir, "orphan-snooze-after-list");
 
-    summary.assertions.push("Reminder detail stays compact, hides status/delivery pills, shows Dismiss and Snooze only while live, and hides Connected entirely when a proof reminder has no graph links.");
-    summary.assertions.push("Live reminders expose Dismiss and Snooze only when firing, while Upcoming reminders stay action-free.");
-    summary.assertions.push("Snoozed reminders remain inside Upcoming with a live countdown ring and refire into Live without manual reload.");
+    const reducedMotionReminderId = `browser-proof-reduced-motion-${runId}`;
+    createdReminderIds.push(reducedMotionReminderId);
+    await apiRequest(config, "POST", "/api/workspace/reminders", {
+      id: reducedMotionReminderId,
+      title: "Browser Proof Reduced Motion Reminder",
+      summary: "Reduced-motion mode should disable the live bell animation without freezing the snoozed countdown.",
+      status: "open",
+      due_at_ms: Date.now() - 30_000,
+      metadata: {
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      }
+    });
+    const reducedPage = await context.newPage();
+    try {
+      await reducedPage.emulateMedia({ reducedMotion: "reduce" });
+      await reducedPage.goto(pageUrl(config.baseUrl, config.theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
+      await waitForHome(reducedPage, config.theme, config.timeoutMs);
+      await openTile(reducedPage, "Reminders", "reminders", config.timeoutMs);
+      await reducedPage.locator(`.light-reminder-row[data-reminder-id="${reducedMotionReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+      await reducedPage.locator(`.light-reminder-row[data-reminder-id="${reminderAId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+      const reducedBellTimeline = await sampleReminderBellTimeline(
+        reducedPage,
+        config.reportDir,
+        [reducedMotionReminderId],
+        {
+          durationMs: REDUCED_MOTION_SAMPLE_DURATION_MS,
+          stepMs: 500,
+          screenshotAtMs: [0, 2_000, 4_000],
+          screenshotNamePrefix: "reduced-motion-live-bell",
+          sampleLabel: "reduced_motion_live_bell"
+        }
+      );
+      const reducedCountdownTimeline = await sampleReminderCountdownTimeline(
+        reducedPage,
+        config.reportDir,
+        reminderAId,
+        {
+          durationMs: REDUCED_MOTION_SAMPLE_DURATION_MS,
+          stepMs: 1_000,
+          screenshotAtMs: [0, 2_000, 4_000],
+          screenshotNamePrefix: "reduced-motion-countdown",
+          sampleLabel: "reduced_motion_countdown"
+        }
+      );
+      const liveBellDisabled = reducedBellTimeline.samples.every(sample => {
+        const bell = sample?.bells?.[reducedMotionReminderId] || {};
+        return identityTransform(bell.transform)
+          && String(bell.animationName || "none") === "none";
+      });
+      const reducedCountdownProgress = countdownProgressValues(reducedCountdownTimeline.samples);
+      const countdownStillUpdates = valuesStrictlyIncrease(reducedCountdownProgress);
+      assert(liveBellDisabled, "Expected reduced-motion lane to disable the live bell animation");
+      assert(countdownStillUpdates, `Expected reduced-motion countdown to keep updating, saw ${reducedCountdownProgress.join(", ")}`);
+      summary.motion.reduced_motion = {
+        verdict: "pass",
+        live_bell_disabled: true,
+        countdown_still_updates: true,
+        bell_samples: reducedBellTimeline.samples,
+        countdown_samples: reducedCountdownTimeline.samples,
+        screenshots: [...reducedBellTimeline.screenshots, ...reducedCountdownTimeline.screenshots]
+      };
+      reducedBellTimeline.screenshots.forEach((shot, index) => {
+        summary.screenshots[`reduced_motion_bell_t${index}`] = shot.path;
+      });
+      reducedCountdownTimeline.screenshots.forEach((shot, index) => {
+        summary.screenshots[`reduced_motion_countdown_t${index}`] = shot.path;
+      });
+    } finally {
+      try {
+        await reducedPage.close();
+      } catch {}
+    }
+
+    summary.assertions.push("Live reminder rows expose a subtle animated bell on the hosted list while upcoming comparison rows stay still.");
+    summary.assertions.push("Dismiss removes a live reminder from the active set, routes back to reminders, and decrements the home badge without showing a toast.");
+    summary.assertions.push("Snoozed reminders remain inside Upcoming and their countdown ring advances every second without chunked 15-second plateaus.");
+    summary.assertions.push("Reduced-motion mode disables the live bell wiggle while keeping snoozed countdown updates moving.");
     summary.assertions.push("Orphaned-recipient reminders still allow Dismiss and Snooze after the linked contact record is deleted, without surfacing an error toast.");
 
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
+    writeReminderProofSummary(config.reportDir, summary);
   } finally {
     try {
       await browser.close();

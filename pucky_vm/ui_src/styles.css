@@ -4389,6 +4389,42 @@ button {
   color: color-mix(in srgb, var(--accent-primary) 72%, var(--home-shell-text));
 }
 
+.light-reminder-bell-icon {
+  transform-origin: 50% 14%;
+  will-change: transform;
+}
+
+.light-reminder-bell-icon.is-live {
+  animation: reminderBellShake 5.6s ease-in-out infinite;
+  animation-delay: var(--reminder-bell-delay-ms, 0ms);
+}
+
+@keyframes reminderBellShake {
+  0%, 88%, 100% {
+    transform: rotate(0deg) translateX(0);
+  }
+
+  90% {
+    transform: rotate(-10deg) translateX(-1px);
+  }
+
+  92% {
+    transform: rotate(10deg) translateX(1px);
+  }
+
+  94% {
+    transform: rotate(-7deg) translateX(-0.5px);
+  }
+
+  96% {
+    transform: rotate(7deg) translateX(0.5px);
+  }
+
+  98% {
+    transform: rotate(0deg) translateX(0);
+  }
+}
+
 .light-reminder-countdown {
   min-width: 72px;
   display: inline-grid;
@@ -4425,6 +4461,12 @@ button {
 
 .light-reminder-row.delivery-snoozed .light-reminder-row-summary {
   color: color-mix(in srgb, #a36411 72%, var(--home-shell-text-muted));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .light-reminder-bell-icon.is-live {
+    animation: none;
+  }
 }
 
 .light-reminder-list-section {
