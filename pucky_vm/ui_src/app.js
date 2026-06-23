@@ -2709,6 +2709,7 @@
     renderVoiceStatus();
     renderThreadScopeBadge();
     renderFeed();
+    renderInboxManageOverlay();
     renderAudioDetail();
     renderDetailAudioContinuity();
     noteFlashDebugRecord("render_end");
@@ -3938,6 +3939,7 @@
     shell?.setAttribute("data-canonical-route", route || "home");
     shell?.setAttribute("data-embedded-app", embeddedLightApp());
     shell?.setAttribute("data-chrome-mode", chromeMode());
+    shell?.classList.toggle("is-inbox-managing", route === "inbox" && Boolean(state.inboxManageMode));
     feed.classList.toggle("is-links-route", route === "connect");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     syncRouteQueryParam(route);
@@ -8777,8 +8779,7 @@
       },
       surfaceTag: "section",
       surfaceClassName: "light-canonical-port-surface light-inbox-surface",
-      sections: [lightInboxSection()],
-      afterSections: [inboxManageToolbar()].filter(Boolean)
+      sections: [lightInboxSection()]
     });
   }
 
@@ -10686,6 +10687,23 @@
     actions.append(archive, clear, cancel);
     bar.append(status, actions);
     return bar;
+  }
+
+  function renderInboxManageOverlay() {
+    const shell = document.querySelector(".app-shell");
+    document.getElementById("inboxManageOverlay")?.remove();
+    if (!shell || effectiveRoute() !== "inbox" || !state.inboxManageMode) {
+      return;
+    }
+    const toolbar = inboxManageToolbar();
+    if (!toolbar) {
+      return;
+    }
+    const overlay = el("section", "inbox-manage-overlay");
+    overlay.id = "inboxManageOverlay";
+    overlay.setAttribute("aria-label", "Inbox management actions");
+    overlay.append(toolbar);
+    shell.append(overlay);
   }
 
   function applyOptimisticInboxBatchAction(cards, action) {

@@ -658,7 +658,7 @@ def run_local_inbox_management_proof(extra_args: list[str]) -> int:
     base_url = f"http://127.0.0.1:{port}"
     refresh_seed = f"proof-local-inbox-management-{int(time.time() * 1000)}"
     scripts: list[tuple[str, list[str]]] = []
-    for viewport in ("390x844", "599x790"):
+    for viewport in ("390x844", "599x790", "1280x720"):
         local_url = append_refresh_param(
             f"{base_url}/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
             f"{refresh_seed}-{viewport}",
@@ -712,7 +712,7 @@ def run_live_inbox_management_proof(extra_args: list[str]) -> int:
     live_root = (ROOT / ".tmp" / "proof-live-inbox-management" / expected_sha).resolve()
     scripts: list[tuple[str, list[str]]] = []
     for browser_name in ("chromium", "webkit"):
-        for viewport in ("390x844", "599x790"):
+        for viewport in ("390x844", "599x790", "1280x720"):
             for attempt in range(1, 4):
                 run_name = f"run-{attempt}"
                 refresh_seed = f"{expected_sha}-{browser_name}-{viewport}-{run_name}"

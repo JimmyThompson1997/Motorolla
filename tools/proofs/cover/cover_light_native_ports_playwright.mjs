@@ -22,6 +22,8 @@ const VIEWPORT = { width: 430, height: 932 };
 const NARROW_VIEWPORT = { width: 320, height: 932 };
 const INBOX_MANAGE_SELECT_SELECTOR = '[data-card-action="manage_select"]';
 const INBOX_MANAGE_MENU_SELECTOR = '[data-card-action="manage_menu"]';
+const INBOX_MANAGE_BAR_SELECTOR = '.app-shell[data-canonical-route="inbox"] .inbox-manage-bar';
+const INBOX_MANAGE_PRIMARY_ACTION_SELECTOR = `${INBOX_MANAGE_BAR_SELECTOR} .inbox-manage-action.is-primary`;
 
 function parseViewport(value, fallback = VIEWPORT) {
   const match = String(value || "").trim().match(/^(\d{2,5})x(\d{2,5})$/i);
@@ -790,7 +792,10 @@ async function readInboxManagementState(page) {
         class_name: String(node.className || "")
       };
     };
+    const appShell = document.querySelector(".app-shell");
+    const feed = document.getElementById("feed");
     const shell = document.querySelector(".light-shell[data-light-route=\"inbox\"]");
+    const overlay = document.getElementById("inboxManageOverlay");
     const wraps = Array.from(shell?.querySelectorAll(".card-wrap") || []);
     const firstManageable = wraps.find(wrap =>
       wrap.querySelector("article.card[data-card-id]")
@@ -803,9 +808,9 @@ async function readInboxManagementState(page) {
     const firstArticle = firstManageable?.querySelector("article.card");
     const normalMenuButton = firstManageable?.querySelector("[data-card-action=\"manage_menu\"]");
     const selectButton = firstManageable?.querySelector("[data-card-action=\"manage_select\"]");
-    const selectedCount = Number(shell?.querySelector(".inbox-manage-bar")?.getAttribute("data-inbox-manage-selected-count") || 0);
+    const manageBar = appShell?.querySelector(".inbox-manage-bar") || shell?.querySelector(".inbox-manage-bar");
+    const selectedCount = Number(manageBar?.getAttribute("data-inbox-manage-selected-count") || 0);
     const selectedButton = shell?.querySelector("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]");
-    const manageBar = shell?.querySelector(".inbox-manage-bar");
     const archiveToggle = shell?.querySelector(".inbox-archive-toggle");
     const openMenu = shell?.querySelector(".inbox-card-menu");
     const viewport = {
@@ -820,13 +825,24 @@ async function readInboxManagementState(page) {
     const firstActionsRect = rect(firstArticle?.querySelector(".card-actions"));
     const firstAudioRect = rect(firstArticle?.querySelector("[data-card-action=\"audio\"]"));
     const firstPageRect = rect(firstArticle?.querySelector("[data-card-action=\"page\"], [data-card-action=\"attachment\"]"));
+    const firstTimestamp = firstArticle?.querySelector(".card-timestamp");
+    const firstTimestampRect = rect(firstTimestamp);
+    const timestampStyle = firstTimestamp instanceof HTMLElement ? getComputedStyle(firstTimestamp) : null;
+    const timestampPaddingRight = timestampStyle ? Number.parseFloat(timestampStyle.paddingRight || "0") || 0 : null;
+    const timestampOverlapsActions = Boolean(firstTimestampRect && firstActionsRect && !(
+      firstTimestampRect.right <= firstActionsRect.x
+        || firstTimestampRect.x >= firstActionsRect.right
+        || firstTimestampRect.bottom <= firstActionsRect.y
+        || firstTimestampRect.y >= firstActionsRect.bottom
+    ));
+    const cardWidthTarget = Math.min(720, Math.max(0, window.innerWidth - 52));
     return {
       manage_button_visible: Boolean(shell?.querySelector(".inbox-manage-toggle")),
       manage_button_label: String(shell?.querySelector(".inbox-manage-toggle")?.getAttribute("aria-label") || shell?.querySelector(".inbox-manage-toggle")?.textContent || "").trim(),
       archive_toggle_visible: Boolean(shell?.querySelector(".inbox-archive-toggle")),
       archive_toggle_pressed: archiveToggle?.getAttribute("aria-pressed") === "true",
       archive_toggle_label: String(archiveToggle?.getAttribute("aria-label") || archiveToggle?.textContent || "").trim(),
-      manage_mode_active: Boolean(shell?.querySelector(".inbox-manage-bar")),
+      manage_mode_active: Boolean(manageBar),
       selected_count: selectedCount,
       selected_button_count: shell?.querySelectorAll("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]").length || 0,
       menu_button_count: shell?.querySelectorAll("[data-card-action=\"manage_menu\"]").length || 0,
@@ -864,13 +880,30 @@ async function readInboxManagementState(page) {
           audio_rect: firstAudioRect,
           page_rect: firstPageRect
         },
+        feed_width: {
+          card_rect: firstArticleRect,
+          card_width_target: Number(cardWidthTarget.toFixed(2)),
+          card_left_gap: firstArticleRect ? Number(firstArticleRect.x.toFixed(2)) : null,
+          card_right_gap: firstArticleRect ? Number((window.innerWidth - firstArticleRect.right).toFixed(2)) : null
+        },
+        timestamp_alignment: {
+          rect: firstTimestampRect,
+          text_align: timestampStyle?.textAlign || "",
+          padding_right_px: timestampPaddingRight,
+          timestamp_right_gap_from_card: firstArticleRect && firstTimestampRect
+            ? Number((firstArticleRect.right - firstTimestampRect.right).toFixed(2))
+            : null,
+          overlaps_actions: timestampOverlapsActions
+        },
         manage_bar: {
           rect: manageBarRect,
           viewport,
           bottom_gap: manageBarRect ? Number((window.innerHeight - manageBarRect.bottom).toFixed(2)) : null,
           expected_width: Number(expectedManageBarWidth.toFixed(2)),
           safe_area_value: getComputedStyle(document.documentElement).getPropertyValue("safe-area-inset-bottom") || "",
-          selected_count: selectedCount
+          selected_count: selectedCount,
+          feed_contains_manage_bar: Boolean(feed && manageBar && feed.contains(manageBar)),
+          overlay_direct_child: Boolean(overlay && overlay.parentElement === appShell)
         },
         selected_control: {
           button_rect: selectRect,
@@ -894,9 +927,21 @@ function assertInboxManagementLayout(state, phase) {
   assert(state.archive_reveal_count === 0, `${phase}: Inbox should not expose swipe-only archive reveal actions`);
   if (phase === "normal") {
     const menu = state.layout?.normal_menu || {};
+    const feedWidth = state.layout?.feed_width || {};
+    const timestamp = state.layout?.timestamp_alignment || {};
     assert(state.menu_button_count > 0, "Normal Inbox should render visible per-tile more buttons");
     assert(menu.button_rect, "Normal Inbox did not expose a measurable tile menu button");
     assert(menu.article_rect, "Normal Inbox did not expose a measurable tile article");
+    assert(feedWidth.card_rect, "Normal Inbox did not expose a measurable feed-width card");
+    assert(Math.abs(Number(feedWidth.card_rect.width || 0) - Number(feedWidth.card_width_target || 0)) <= 2, `Inbox card width ${feedWidth.card_rect.width} should match target ${feedWidth.card_width_target}`);
+    if (Number(state.layout?.viewport?.width || 0) <= 430) {
+      assert(feedWidth.card_left_gap >= 20 && feedWidth.card_left_gap <= 30, `Phone Inbox card left gap should be 20-30px, got ${feedWidth.card_left_gap}`);
+      assert(feedWidth.card_right_gap >= 20 && feedWidth.card_right_gap <= 30, `Phone Inbox card right gap should be 20-30px, got ${feedWidth.card_right_gap}`);
+    }
+    assert(["right", "end"].includes(String(timestamp.text_align || "").trim()), `Inbox timestamp should be right-aligned, got ${timestamp.text_align}`);
+    assert(Number(timestamp.padding_right_px || 0) <= 4, `Inbox timestamp padding-right should be <= 4px, got ${timestamp.padding_right_px}`);
+    assert(Number(timestamp.timestamp_right_gap_from_card || 0) <= 12, `Inbox timestamp right gap from card should be <= 12px, got ${timestamp.timestamp_right_gap_from_card}`);
+    assert(timestamp.overlaps_actions === false, "Inbox timestamp should not overlap mic/paperclip actions");
     assert(Math.abs(Number(menu.center_delta || 0)) <= 2, `Tile menu should be vertically centered, center delta ${menu.center_delta}`);
     assert(menu.button_rect.x >= menu.article_rect.x + 4, `Tile menu left ${menu.button_rect.x} should sit inside the left rail`);
     assert(menu.button_rect.right <= menu.article_rect.x + 48, `Tile menu right ${menu.button_rect.right} should stay inside the left rail`);
@@ -910,7 +955,9 @@ function assertInboxManagementLayout(state, phase) {
     assert(state.visible_menu_button_count === 0, `Manage mode should replace menu buttons with select controls, saw ${state.visible_menu_button_count}`);
     assert(state.select_control_count > 0, "Manage mode should render select controls");
     assert(bar.rect, "Manage mode did not expose a measurable bottom bar");
-    assert(bar.bottom_gap >= 8 && bar.bottom_gap <= 24, `Manage bar bottom gap should be 8-24px, got ${bar.bottom_gap}`);
+    assert(bar.feed_contains_manage_bar === false, "Manage bar should render outside the scrollable feed");
+    assert(bar.overlay_direct_child === true, "Manage bar overlay should be a direct app-shell child");
+    assert(bar.bottom_gap >= 0 && bar.bottom_gap <= 4, `Manage bar bottom gap should be 0-4px, got ${bar.bottom_gap}`);
     assert(Math.abs(Number(bar.rect.width || 0) - Number(bar.expected_width || 0)) <= 2, `Manage bar width ${bar.rect.width} did not match expected ${bar.expected_width}`);
     const selectRect = state.layout?.selected_control?.button_rect;
     const articleRect = state.first_card?.rect;
@@ -930,6 +977,67 @@ function assertInboxManagementLayout(state, phase) {
     assert(!state.layout?.selected_control?.checklist_glyph_present, "Selected control should not use the filled checklist glyph");
     assert(!/rgb\(0,\s*0,\s*0\)|#000/i.test(`${selected.icon_fill} ${selected.icon_stroke}`), "Selected check icon should not render black");
   }
+}
+
+async function setInboxFeedScrollTop(page, scrollTop, timeoutMs) {
+  await page.evaluate(value => {
+    const feed = document.querySelector("section.feed");
+    if (feed instanceof HTMLElement) {
+      feed.scrollTop = Math.max(0, Number(value) || 0);
+    }
+  }, scrollTop);
+  await page.waitForFunction(
+    expected => {
+      const feed = document.querySelector("section.feed");
+      if (!(feed instanceof HTMLElement)) {
+        return false;
+      }
+      return Math.abs(feed.scrollTop - Number(expected || 0)) <= 2;
+    },
+    scrollTop,
+    { timeout: timeoutMs }
+  );
+}
+
+async function assertInboxManageBarScrollStickiness(page, timeoutMs, reportDir) {
+  const top = await readInboxManagementState(page);
+  assertInboxManagementLayout(top, "manage");
+  const topScreenshot = await saveScreenshot(page, reportDir, "02-manage-bottom-top");
+  const scrollTarget = await page.evaluate(() => {
+    const feed = document.querySelector("section.feed");
+    if (!(feed instanceof HTMLElement)) {
+      return 0;
+    }
+    return Math.min(1200, Math.max(0, feed.scrollHeight - feed.clientHeight));
+  });
+  await setInboxFeedScrollTop(page, scrollTarget, timeoutMs);
+  const scrolledDown = await readInboxManagementState(page);
+  assertInboxManagementLayout(scrolledDown, "manage");
+  const downScreenshot = await saveScreenshot(page, reportDir, "03-manage-bottom-scrolled-down");
+  await setInboxFeedScrollTop(page, 0, timeoutMs);
+  const scrolledUp = await readInboxManagementState(page);
+  assertInboxManagementLayout(scrolledUp, "manage");
+  const upScreenshot = await saveScreenshot(page, reportDir, "04-manage-bottom-scrolled-up");
+  const topBar = top.layout?.manage_bar?.rect || {};
+  const downBar = scrolledDown.layout?.manage_bar?.rect || {};
+  const upBar = scrolledUp.layout?.manage_bar?.rect || {};
+  assert(Math.abs(Number(downBar.y || 0) - Number(topBar.y || 0)) <= 2, `Manage bar y should stay fixed after scrolling down, top ${topBar.y}, down ${downBar.y}`);
+  assert(Math.abs(Number(downBar.bottom || 0) - Number(topBar.bottom || 0)) <= 2, `Manage bar bottom should stay fixed after scrolling down, top ${topBar.bottom}, down ${downBar.bottom}`);
+  assert(Math.abs(Number(upBar.y || 0) - Number(topBar.y || 0)) <= 2, `Manage bar y should restore after scrolling up, top ${topBar.y}, up ${upBar.y}`);
+  assert(Math.abs(Number(upBar.bottom || 0) - Number(topBar.bottom || 0)) <= 2, `Manage bar bottom should restore after scrolling up, top ${topBar.bottom}, up ${upBar.bottom}`);
+  assert(scrolledDown.layout?.manage_bar?.bottom_gap >= 0 && scrolledDown.layout?.manage_bar?.bottom_gap <= 4, `Manage bar bottom gap should stay 0-4px after scrolling down, got ${scrolledDown.layout?.manage_bar?.bottom_gap}`);
+  assert(scrolledUp.layout?.manage_bar?.bottom_gap >= 0 && scrolledUp.layout?.manage_bar?.bottom_gap <= 4, `Manage bar bottom gap should stay 0-4px after scrolling up, got ${scrolledUp.layout?.manage_bar?.bottom_gap}`);
+  return {
+    top,
+    scrolled_down: scrolledDown,
+    scrolled_up: scrolledUp,
+    scroll_target: scrollTarget,
+    screenshots: {
+      top: topScreenshot,
+      scrolled_down: downScreenshot,
+      scrolled_up: upScreenshot
+    }
+  };
 }
 
 async function installInboxManagementActionInterceptor(page, actionRequests) {
@@ -1054,7 +1162,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   assert(before.first_card?.card_id || before.first_card?.session_id, "Inbox management proof could not find a manageable card");
   const targetCardId = before.first_card.card_id;
   assert(targetCardId, "Inbox management archive proof requires a card_id");
-  const normalScreenshot = await saveScreenshot(page, reportDir, "01-normal-left-menu");
+  const normalScreenshot = await saveScreenshot(page, reportDir, "01-normal-expanded-feed");
 
   await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Open Inbox tile menu");
   await page.waitForFunction(
@@ -1071,17 +1179,17 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
 
   await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
   await page.waitForFunction(
-    () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar")),
+    () => Boolean(document.querySelector(".app-shell[data-canonical-route=\"inbox\"] .inbox-manage-bar")),
     undefined,
     { timeout: timeoutMs }
   );
   const manageMode = await readInboxManagementState(page);
   assertInboxManagementLayout(manageMode, "manage");
-  const manageScreenshot = await saveScreenshot(page, reportDir, "02-manage-fixed-bottom-bar");
+  const manageBarScroll = await assertInboxManageBarScrollStickiness(page, timeoutMs, reportDir);
   await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_SELECT_SELECTOR).first(), timeoutMs, "Select Inbox tile");
   await page.waitForFunction(
     () => {
-      const bar = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar");
+      const bar = document.querySelector(".app-shell[data-canonical-route=\"inbox\"] .inbox-manage-bar");
       return Number(bar?.getAttribute("data-inbox-manage-selected-count") || 0) === 1;
     },
     undefined,
@@ -1089,12 +1197,12 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   );
   const afterSelect = await readInboxManagementState(page);
   assertInboxManagementLayout(afterSelect, "selected");
-  const selectedScreenshot = await saveScreenshot(page, reportDir, "03-selected-simple-check");
+  const selectedScreenshot = await saveScreenshot(page, reportDir, "05-selected-simple-check");
 
-  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-action.is-primary").first(), timeoutMs, "Archive selected Inbox tile");
+  await clickLocator(page, page.locator(INBOX_MANAGE_PRIMARY_ACTION_SELECTOR).first(), timeoutMs, "Archive selected Inbox tile");
   await page.waitForFunction(
     () => {
-      const bar = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar");
+      const bar = document.querySelector(".app-shell[data-canonical-route=\"inbox\"] .inbox-manage-bar");
       return Number(bar?.getAttribute("data-inbox-manage-selected-count") || 0) === 0;
     },
     undefined,
@@ -1111,12 +1219,12 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   const afterArchive = await readInboxManagementState(page);
   assert(actionRequests.some(item => item.payload?.action === "archive" && item.payload?.card_id === targetCardId), "Inbox Manage archive did not issue the expected feed action payload");
   assert(afterArchive.visible_card_count === Math.max(0, before.visible_card_count - 1), "Archived Inbox tile should disappear from the active Inbox view");
-  const afterArchiveScreenshot = await saveScreenshot(page, reportDir, "04-after-archive-active-feed");
+  const afterArchiveScreenshot = await saveScreenshot(page, reportDir, "06-after-archive-active-feed");
 
   if (afterArchive.manage_mode_active) {
     await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Exit Inbox Manage mode");
     await page.waitForFunction(
-      () => !document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar"),
+      () => !document.querySelector(".app-shell[data-canonical-route=\"inbox\"] .inbox-manage-bar"),
       undefined,
       { timeout: timeoutMs }
     );
@@ -1130,7 +1238,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   );
   const archiveFilter = await readInboxManagementState(page);
   assert(archiveFilter.archive_toggle_pressed, "Archive filter should be active after toggling archived Inbox");
-  const archiveFilterScreenshot = await saveScreenshot(page, reportDir, "05-archive-filter-card-visible");
+  const archiveFilterScreenshot = await saveScreenshot(page, reportDir, "07-archive-filter-card-visible");
 
   await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Open archived Inbox tile menu");
   await page.waitForFunction(
@@ -1141,7 +1249,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   const archivedMenu = await readInboxManagementState(page);
   assert(archivedMenu.menu_actions.includes("unarchive"), "Archived Inbox tile menu should expose Unarchive");
   assert(!archivedMenu.menu_actions.includes("delete"), "Archived Inbox tile menu must not expose Delete");
-  const archivedMenuScreenshot = await saveScreenshot(page, reportDir, "06-archived-menu-unarchive");
+  const archivedMenuScreenshot = await saveScreenshot(page, reportDir, "08-archived-menu-unarchive");
 
   feedEmulation.archivedCardIds.clear();
   await reloadLightInbox(page, timeoutMs);
@@ -1151,7 +1259,10 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   return {
     layout: {
       normal_menu: before.layout?.normal_menu || null,
+      feed_width: before.layout?.feed_width || null,
+      timestamp_alignment: before.layout?.timestamp_alignment || null,
       manage_bar: manageMode.layout?.manage_bar || null,
+      manage_bar_scroll: manageBarScroll,
       selected_control: afterSelect.layout?.selected_control || null,
       archive_filter: archiveFilter.layout?.archive_filter || null
     },
@@ -1181,7 +1292,9 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
     screenshots: {
       normal_menu: normalScreenshot,
       menu: normalScreenshot,
-      manage_bar: manageScreenshot,
+      manage_bar: manageBarScroll.screenshots.top,
+      manage_bar_scrolled_down: manageBarScroll.screenshots.scrolled_down,
+      manage_bar_scrolled_up: manageBarScroll.screenshots.scrolled_up,
       selected: selectedScreenshot,
       after_archive_active_feed: afterArchiveScreenshot,
       archived: afterArchiveScreenshot,
@@ -1269,7 +1382,7 @@ async function enterInboxManageMode(page, timeoutMs) {
   if (!state.manage_mode_active) {
     await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
     await page.waitForFunction(
-      () => Boolean(document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar")),
+      () => Boolean(document.querySelector(".app-shell[data-canonical-route=\"inbox\"] .inbox-manage-bar")),
       undefined,
       { timeout: timeoutMs }
     );
@@ -1281,7 +1394,7 @@ async function exitInboxManageMode(page, timeoutMs) {
   if (state.manage_mode_active) {
     await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Exit Inbox Manage mode");
     await page.waitForFunction(
-      () => !document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-manage-bar"),
+      () => !document.querySelector(".app-shell[data-canonical-route=\"inbox\"] .inbox-manage-bar"),
       undefined,
       { timeout: timeoutMs }
     );
@@ -1299,7 +1412,7 @@ async function archiveVisibleInboxCardWithManage(page, cardId, timeoutMs, label 
     cardId,
     { timeout: timeoutMs }
   );
-  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-action.is-primary").first(), timeoutMs, `${label}: click Archive`);
+  await clickLocator(page, page.locator(INBOX_MANAGE_PRIMARY_ACTION_SELECTOR).first(), timeoutMs, `${label}: click Archive`);
   await waitForInboxCardPresence(page, cardId, false, timeoutMs);
   await exitInboxManageMode(page, timeoutMs);
 }
@@ -1365,13 +1478,13 @@ async function exerciseLiveTempCardArchive(page, config, reportDir, manifestBund
   await ensureInboxArchiveFilter(page, false, config.timeoutMs);
   await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
   const restoredActive = await readInboxManagementState(page);
-  const restoredScreenshot = await saveScreenshot(page, reportDir, "07-after-unarchive-active-feed");
+  const restoredScreenshot = await saveScreenshot(page, reportDir, "09-after-unarchive-active-feed");
 
   await archiveVisibleInboxCardWithManage(page, created.card_id, config.timeoutMs, "Cleanup archive live temp Inbox proof tile");
   await ensureInboxArchiveFilter(page, true, config.timeoutMs);
   await waitForInboxCardPresence(page, created.card_id, true, config.timeoutMs);
   const cleanupArchived = await readInboxManagementState(page);
-  const cleanupScreenshot = await saveScreenshot(page, reportDir, "08-cleanup-archived-final");
+  const cleanupScreenshot = await saveScreenshot(page, reportDir, "10-cleanup-archived-final");
   const noAudio = noAudioGuard ? assertNoUnexpectedAudio(noAudioGuard, "Inbox management live temp-card proof") : null;
 
   assert(actionRequests.some(item => item.payload?.action === "archive" && item.payload?.card_id === created.card_id), "Live temp card archive request was not observed");

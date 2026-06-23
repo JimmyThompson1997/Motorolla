@@ -712,20 +712,33 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "--only-inbox-management" in source
     assert "assertInboxManagementLayout(" in source
     assert "normal_menu" in source
+    assert "feed_width" in source
+    assert "timestamp_alignment" in source
+    assert "manage_bar_scroll" in source
+    assert "assertInboxManageBarScrollStickiness(" in source
+    assert "feed_contains_manage_bar" in source
+    assert "card_width_target" in source
+    assert "timestamp_right_gap_from_card" in source
+    assert "bottom gap should stay 0-4px after scrolling" in source
     assert "selected_control" in source
     assert "manage_bar" in source
     assert "archive_filter" in source
     assert "no_audio" in source
-    assert "01-normal-left-menu" in source
-    assert "02-manage-fixed-bottom-bar" in source
-    assert "03-selected-simple-check" in source
-    assert "05-archive-filter-card-visible" in source
-    assert "06-archived-menu-unarchive" in source
+    assert "01-normal-expanded-feed" in source
+    assert "02-manage-bottom-top" in source
+    assert "03-manage-bottom-scrolled-down" in source
+    assert "04-manage-bottom-scrolled-up" in source
+    assert "05-selected-simple-check" in source
+    assert "07-archive-filter-card-visible" in source
+    assert "08-archived-menu-unarchive" in source
+    assert "09-after-unarchive-active-feed" in source
+    assert "10-cleanup-archived-final" in source
     assert 'proofUrl.searchParams.set("api_token", String(config.apiToken || "").trim());' in source
     assert 'proofUrl.searchParams.set("_pucky_refresh", runId);' in source
     assert "proof-local-inbox-management" in dev_source
     assert "proof-live-inbox-management" in dev_source
     assert "--only-inbox-management" in dev_source
+    assert '"1280x720"' in dev_source
 
 
 def test_workspace_apps_browser_proof_checks_meeting_note_compact_who_contract() -> None:

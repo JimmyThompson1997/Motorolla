@@ -1787,15 +1787,25 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     app = read("app.js")
     icons = read("pucky-icons.js")
     styles = read("styles.css")
+    render = function_block(app, "render")
     inbox_page = function_block(app, "lightInboxPage")
+    overlay = function_block(app, "renderInboxManageOverlay")
     card_view = function_block(app, "cardView")
     select_button = function_block(app, "inboxManageSelectButton")
+    inbox_shell = css_block(styles, '.light-shell[data-light-route="inbox"]')
+    timestamp = css_block(styles, ".card-timestamp")
     menu_button = css_block(styles, ".inbox-card-menu-button")
     manage_bar = css_block(styles, ".inbox-manage-bar")
 
     assert "action: inboxManageHeaderAction()" in inbox_page
+    assert "afterSections: [inboxManageToolbar()].filter(Boolean)" not in inbox_page
     assert "function inboxManageHeaderAction(" in app
     assert "function inboxManageToolbar(" in app
+    assert "function renderInboxManageOverlay(" in app
+    assert render.index("renderFeed();") < render.index("renderInboxManageOverlay();")
+    assert 'const shell = document.querySelector(".app-shell");' in overlay
+    assert 'overlay.id = "inboxManageOverlay";' in overlay
+    assert "shell.append(overlay);" in overlay
     assert "function archiveSelectedInboxCards(" in app
     assert "function cardOverflowMenu(" in app
     assert 'applyCardActionData(select, "manage_select", card, "reply");' in app
@@ -1808,6 +1818,10 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert 'check: {' in icons
     assert 'select.innerHTML = selected ? iconSvg("check", { filled: true }) : "";' in select_button
     assert 'iconSvg("checklist", { filled: selected })' not in select_button
+    assert "--light-shell-column-max: 744px;" in inbox_shell
+    assert "--light-shell-column-padding: 12px;" in inbox_shell
+    assert "text-align: right;" in timestamp
+    assert ".card-wrap.has-inbox-menu .card-timestamp" not in styles
     assert '.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"]' in styles
     assert ".inbox-manage-bar" in styles
     assert ".inbox-manage-select" in styles
@@ -1818,7 +1832,7 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert "right: 7px;" not in menu_button
     assert "transform: translateY(-50%);" in menu_button
     assert "position: fixed;" in manage_bar
-    assert "bottom: max(10px, env(safe-area-inset-bottom, 0px));" in manage_bar
+    assert "bottom: env(safe-area-inset-bottom, 0px);" in manage_bar
     assert "width: min(calc(100vw - 28px), 480px);" in manage_bar
 
 

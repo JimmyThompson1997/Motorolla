@@ -1230,6 +1230,7 @@ button {
   font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.01em;
+  text-align: right;
   pointer-events: none;
 }
 
@@ -6537,10 +6538,6 @@ button {
   box-shadow: 0 10px 24px color-mix(in srgb, var(--accent-primary) 26%, transparent);
 }
 
-.card-wrap.has-inbox-menu .card-timestamp {
-  padding-right: 30px;
-}
-
 .card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"] {
   padding-left: 50px;
 }
@@ -6655,10 +6652,17 @@ button {
   height: 19px;
 }
 
+.inbox-manage-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
 .inbox-manage-bar {
   position: fixed;
   left: 50%;
-  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  bottom: env(safe-area-inset-bottom, 0px);
   z-index: 90;
   min-height: 56px;
   display: flex;
@@ -6673,10 +6677,11 @@ button {
   box-shadow: 0 18px 48px rgba(31, 44, 70, 0.2);
   transform: translateX(-50%);
   box-sizing: border-box;
+  pointer-events: auto;
 }
 
-.light-inbox-page:has(.inbox-manage-bar) .light-inbox-surface {
-  padding-bottom: 86px;
+.app-shell.is-inbox-managing .light-inbox-surface {
+  padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px));
 }
 
 .inbox-manage-count {
@@ -7419,6 +7424,11 @@ button {
 .light-settings-real .settings-nav-chevron .material-icon {
   width: 18px;
   height: 18px;
+}
+
+.light-shell[data-light-route="inbox"] {
+  --light-shell-column-max: 744px;
+  --light-shell-column-padding: 12px;
 }
 
 .light-shell[data-light-route="inbox"] .light-canonical-port-surface {
