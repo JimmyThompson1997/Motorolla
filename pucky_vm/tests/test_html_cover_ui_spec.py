@@ -300,9 +300,16 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "lightRecordChip(entry" not in light_calendar_event_details_section
     assert 'guests.forEach(label => cloud.append(lightGuestAttendeeChip(label)));' not in light_calendar_event_details_section
     assert 'light-calendar-detail-guest-list' not in app
-    assert 'lightCalendarDetailRow("place", "Place", place, { compact: true })' in app
+    assert 'const address = String(event?.metadata?.address || "").trim();' in app
+    assert 'const locationValue = lightCalendarLocationValue(place, address);' in app
+    assert 'card.append(lightCalendarDetailRow("place", "Place", locationValue, {' in app
+    assert 'lightCalendarDetailRow("place", "Place", place, { compact: true })' not in app
     assert 'lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone, { compact: true })' in app
     assert 'function lightCalendarDetailDescription(description) {' in app
+    assert 'function lightCalendarLocationValue(place, address) {' in app
+    assert 'function appendCalendarDescriptionNodes(container, description) {' in app
+    assert 'function lightCalendarDescriptionLink(url) {' in app
+    assert 'command: "browser.open", args: { url: href }' in app
     assert 'function lightCalendarDetailRow(rowKey, label, value, options = {}) {' in app
     assert 'function lightCalendarContactChip(entry, options = {}) {' in app
     assert 'const icon = el("span", "light-calendar-attendee-chip-icon");' in app
@@ -422,6 +429,9 @@ def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None
     assert ".light-calendar-attendee-chip {" in styles
     assert ".light-calendar-attendee-chip .light-calendar-attendee-chip-icon {" in styles
     assert ".light-calendar-attendee-chip .light-calendar-attendee-chip-label {" in styles
+    assert ".light-calendar-detail-location {" in styles
+    assert ".light-calendar-detail-location-address {" in styles
+    assert ".light-calendar-detail-description-link {" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip.is-link" in styles
     assert ".light-attendee-chip-guest" in styles
     assert ".app-shell[data-theme=\"dark\"] .light-attendee-chip-guest" in styles

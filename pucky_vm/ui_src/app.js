@@ -66,6 +66,7 @@
   const AUDIO_TERMINAL_RESET_MS = 1600;
   const BROWSER_AUDIO_RUNTIME = "browser_native";
   const DOT = " \u00b7 ";
+  const CALENDAR_DESCRIPTION_URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
   let calendarTimeZoneOptionsCache = null;
   const iconCatalog = window.PUCKY_UI_ICONS && typeof window.PUCKY_UI_ICONS === "object"
     ? window.PUCKY_UI_ICONS
@@ -5284,8 +5285,13 @@
       }));
     }
     const place = String(event?.metadata?.place || "").trim();
-    if (place) {
-      card.append(lightCalendarDetailRow("place", "Place", place, { compact: true }));
+    const address = String(event?.metadata?.address || "").trim();
+    const locationValue = lightCalendarLocationValue(place, address);
+    if (place || address) {
+      card.append(lightCalendarDetailRow("place", "Place", locationValue, {
+        compact: true,
+        valueClassName: "light-calendar-detail-location-value",
+      }));
     }
     const eventTimeZone = String(event?.metadata?.time_zone || "").trim();
     if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
@@ -5321,11 +5327,138 @@
     return row;
   }
 
+  function lightCalendarLocationValue(place, address) {
+    const primary = String(place || "").trim();
+    const secondary = String(address || "").trim();
+    const block = el("div", "light-calendar-detail-location");
+    if (primary) {
+      block.append(el("span", "light-calendar-detail-location-primary", primary));
+    }
+    if (secondary) {
+      block.append(el("span", "light-calendar-detail-location-address", secondary));
+    }
+    return block;
+  }
+
   function lightCalendarDetailDescription(description) {
     const block = el("div", "light-calendar-detail-description");
     block.dataset.detailRow = "description";
-    block.append(el("p", "light-calendar-detail-description-copy", String(description || "").trim()));
+    const paragraph = el("p", "light-calendar-detail-description-copy");
+    appendCalendarDescriptionNodes(paragraph, description);
+    block.append(paragraph);
     return block;
+  }
+
+  function normalizeCalendarDescriptionUrl(url) {
+    let href = String(url || "").trim();
+    let trailingText = "";
+    while (href && /[.,!?;:]$/.test(href)) {
+      trailingText = `${href.slice(-1)}${trailingText}`;
+      href = href.slice(0, -1);
+    }
+    if (!href) {
+      return { href: "", trailingText };
+    }
+    try {
+      const parsed = new URL(href, window.location && window.location.href ? window.location.href : undefined);
+      if (!/^https?:$/i.test(String(parsed.protocol || ""))) {
+        return { href: "", trailingText: String(url || "") };
+      }
+      return { href: parsed.toString(), trailingText };
+    } catch (_) {
+      return { href: "", trailingText: String(url || "") };
+    }
+  }
+
+  async function openExternalBrowserUrl(url) {
+    const href = String(url || "").trim();
+    if (!href) {
+      return false;
+    }
+    try {
+      const parsed = new URL(href, window.location && window.location.href ? window.location.href : undefined);
+      if (!/^https?:$/i.test(String(parsed.protocol || ""))) {
+        return false;
+      }
+    } catch (_) {
+      return false;
+    }
+    try {
+      if (typeof Pucky !== "undefined" && Pucky && typeof Pucky.request === "function") {
+        const result = await Pucky.request({ command: "browser.open", args: { url: href } });
+        if (result && result.launched) {
+          return true;
+        }
+      }
+    } catch (_) {
+      // Fall back to the browser APIs below when the bridge is unavailable.
+    }
+    try {
+      if (typeof window.open === "function") {
+        const popup = window.open(href, "_blank", "noopener,noreferrer");
+        if (popup) {
+          return true;
+        }
+      }
+    } catch (_) {
+      // Fall through to same-tab navigation as a last resort.
+    }
+    if (window.location && typeof window.location.assign === "function") {
+      window.location.assign(href);
+      return true;
+    }
+    return false;
+  }
+
+  function lightCalendarDescriptionLink(url) {
+    const href = String(url || "").trim();
+    const link = document.createElement("a");
+    link.className = "light-calendar-detail-description-link";
+    link.href = href;
+    link.rel = "noopener noreferrer";
+    link.target = "_blank";
+    link.textContent = href;
+    link.addEventListener("click", event => {
+      event.preventDefault();
+      void openExternalBrowserUrl(href);
+    });
+    return link;
+  }
+
+  function appendCalendarDescriptionNodes(container, description) {
+    const text = String(description || "").trim();
+    container.replaceChildren();
+    if (!text) {
+      return;
+    }
+    CALENDAR_DESCRIPTION_URL_PATTERN.lastIndex = 0;
+    let cursor = 0;
+    let linked = false;
+    for (const match of text.matchAll(CALENDAR_DESCRIPTION_URL_PATTERN)) {
+      const rawMatch = String(match[0] || "");
+      const start = Number(match.index || 0);
+      if (start > cursor) {
+        container.append(document.createTextNode(text.slice(cursor, start)));
+      }
+      const { href, trailingText } = normalizeCalendarDescriptionUrl(rawMatch);
+      if (href) {
+        container.append(lightCalendarDescriptionLink(href));
+        linked = true;
+      } else {
+        container.append(document.createTextNode(rawMatch));
+      }
+      if (trailingText) {
+        container.append(document.createTextNode(trailingText));
+      }
+      cursor = start + rawMatch.length;
+    }
+    if (!linked) {
+      container.textContent = text;
+      return;
+    }
+    if (cursor < text.length) {
+      container.append(document.createTextNode(text.slice(cursor)));
+    }
   }
 
   function lightMeetingDetailConnectedSection(meeting) {

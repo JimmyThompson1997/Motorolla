@@ -1094,9 +1094,12 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
     assert seeded["forster-dinner"]["title"] == "Dinner with the Forsters"
     assert seeded["katy-handoff"]["title"] == "Katy pickup handoff"
     assert seeded["late-night-design-call"]["title"] == "Late-night design QA call"
+    assert seeded["house-walkthrough"]["metadata"]["address"] == "1818 Maple Ave, Oakland, CA 94611"
     assert seeded["clinic-checkin"]["metadata"]["place"] == "Westside Clinic"
+    assert seeded["clinic-checkin"]["metadata"]["address"] == "11714 Wilshire Blvd, Suite 12, Los Angeles, CA 90025"
     assert seeded["freelance-review"]["metadata"]["place"] == "Kitchen table"
     assert seeded["katy-handoff"]["metadata"]["place"] == "North field gate"
+    assert "https://meet.google.com/" in seeded["late-night-design-call"]["summary"]
 
     house_links = {
         (row[0], row[1])
@@ -1144,6 +1147,21 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
     assert ("contact", "clinic-front-desk") in clinic_links
     assert ("note", "clinic-prep-note") in clinic_links
     assert ("reminder", "demo-reminder-health-call") in clinic_links
+
+    late_call_links = {
+        (row[0], row[1])
+        for row in store._conn.execute(
+            """
+            SELECT target_kind, target_id
+            FROM workspace_links
+            WHERE source_kind = 'calendar_event' AND source_id = 'late-night-design-call'
+            """
+        ).fetchall()
+    }
+    assert ("note", "freelance-homepage-note") in late_call_links
+    assert ("task", "demo-task-send-freelance-mockup") in late_call_links
+    assert ("project", "freelance-followup") in late_call_links
+    assert ("reminder", "demo-reminder-freelance-followup") in late_call_links
 
 
 def test_seeded_demo_time_refresh_rebases_existing_seeded_records_and_preserves_graph_timing(tmp_path: Path) -> None:

@@ -2418,7 +2418,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "A practical home window for the porch list, touch-up paint, and the one repair that still needs a decision.",
                     ["Check the porch rail", "Look at the touch-up paint together", "Turn the final decision into one task"],
                 ),
-                "metadata": {"place": "Home", "attendees": ["Maya Chen"], "type": "home"},
+                "metadata": {"place": "Home", "address": "1818 Maple Ave, Oakland, CA 94611", "attendees": ["Maya Chen"], "type": "home"},
             },
             {
                 "id": "clinic-checkin",
@@ -2432,7 +2432,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                     "Keep the appointment block simple and make sure the forms and prep questions are settled before the visit.",
                     ["Confirm the paperwork is in", "Bring the question list", "Turn any follow-up into a note"],
                 ),
-                "metadata": {"place": "Westside Clinic", "attendees": ["Clinic front desk"], "type": "health"},
+                "metadata": {"place": "Westside Clinic", "address": "11714 Wilshire Blvd, Suite 12, Los Angeles, CA 90025", "attendees": ["Clinic front desk"], "type": "health"},
             },
             {
                 "id": "freelance-review",
@@ -2479,7 +2479,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
             {
                 "id": "late-night-design-call",
                 "title": "Late-night design QA call",
-                "summary": "Timezone-edge check before sending the morning follow-up.",
+                "summary": "Timezone-edge check before sending the morning follow-up. https://meet.google.com/qas-dsgn-late",
                 "date": day,
                 "start_at_ms": late_call_start_ms,
                 "end_at_ms": late_call_end_ms,
@@ -2733,6 +2733,10 @@ def default_workspace_graph_links() -> list[dict[str, object]]:
         {"id": "graph-calendar-health-contact", "source_kind": "calendar_event", "source_id": "clinic-checkin", "target_kind": "contact", "target_id": "clinic-front-desk", "label": "Clinic front desk"},
         {"id": "graph-calendar-health-note", "source_kind": "calendar_event", "source_id": "clinic-checkin", "target_kind": "note", "target_id": "clinic-prep-note", "label": "Clinic prep note"},
         {"id": "graph-calendar-health-reminder", "source_kind": "calendar_event", "source_id": "clinic-checkin", "target_kind": "reminder", "target_id": "demo-reminder-health-call", "label": "Call clinic before lunch"},
+        {"id": "graph-calendar-late-note", "source_kind": "calendar_event", "source_id": "late-night-design-call", "target_kind": "note", "target_id": "freelance-homepage-note", "label": "Freelance homepage revision"},
+        {"id": "graph-calendar-late-task", "source_kind": "calendar_event", "source_id": "late-night-design-call", "target_kind": "task", "target_id": "demo-task-send-freelance-mockup", "label": "Send homepage pass to Sam"},
+        {"id": "graph-calendar-late-project", "source_kind": "calendar_event", "source_id": "late-night-design-call", "target_kind": "project", "target_id": "freelance-followup", "label": "Freelance follow-up"},
+        {"id": "graph-calendar-late-reminder", "source_kind": "calendar_event", "source_id": "late-night-design-call", "target_kind": "reminder", "target_id": "demo-reminder-freelance-followup", "label": "Send homepage pass before review"},
         {"id": "graph-meeting-freelance-contact", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "contact", "target_id": "sam-rivera", "label": "Sam Rivera"},
         {"id": "graph-meeting-freelance-calendar", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "calendar_event", "target_id": "freelance-review", "label": "Freelance review call"},
         {"id": "graph-meeting-freelance-note", "source_kind": "meeting_note", "source_id": "demo-meeting-freelance-followup", "target_kind": "note", "target_id": "freelance-homepage-note", "label": "Freelance homepage revision"},

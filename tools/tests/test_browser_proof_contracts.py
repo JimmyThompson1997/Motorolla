@@ -897,6 +897,10 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "who_guest_chip_count" in calendar_source
     assert "who_record_chip_count" in calendar_source
     assert "details_card_overflow_x" in calendar_source
+    assert "place_primary_text" in calendar_source
+    assert "place_address_text" in calendar_source
+    assert "description_link_count" in calendar_source
+    assert "description_link_hrefs" in calendar_source
     assert "agenda_contact_icon_count" in calendar_source
     assert "agenda_record_chip_count" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-default.png" in calendar_source
@@ -905,24 +909,32 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "calendar-desktop-${theme}-event-detail-connected-restored.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-details-card.png" in calendar_source
     assert "calendar-desktop-${theme}-event-detail-who-row.png" in calendar_source
+    assert "calendar-desktop-${theme}-event-detail-description-link.png" in calendar_source
     assert "calendar-desktop-${theme}-agenda-tile.png" in calendar_source
     assert "calendar-desktop-${theme}-clinic-detail.png" in calendar_source
     assert "calendar-desktop-${theme}-clinic-who-row.png" in calendar_source
+    assert "calendar-desktop-${theme}-clinic-place-row.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-default.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-connected-expanded.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-details-collapsed.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-connected-restored.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-details-card.png" in calendar_source
     assert "calendar-mobile-${theme}-detail-who-row.png" in calendar_source
+    assert "calendar-mobile-${theme}-detail-description-link.png" in calendar_source
     assert "calendar-mobile-${theme}-agenda-tile.png" in calendar_source
     assert "calendar-mobile-${theme}-clinic-detail.png" in calendar_source
     assert "calendar-mobile-${theme}-clinic-who-row.png" in calendar_source
+    assert "calendar-mobile-${theme}-clinic-place-row.png" in calendar_source
     assert "Expected event detail to avoid a standalone Description section." in calendar_source
     assert "Expected merged description text inside Details." in calendar_source
+    assert "Expected merged description text to expose a clickable Google Meet URL." in calendar_source
+    assert "Expected merged description link to target meet.google.com." in calendar_source
     assert "Expected Connected to start collapsed on a fresh event open." in calendar_source
     assert "Expected Details to start expanded on a fresh event open." in calendar_source
     assert "Expected compact When to avoid weekday text" in calendar_source
     assert "Expected compact Who row to keep visible chip spacing" in calendar_source
+    assert "Expected clinic detail to render a primary place label." in calendar_source
+    assert "Expected clinic detail to render address text beneath the place label." in calendar_source
     assert "Expected agenda attendee chips to keep a visible contact icon on every chip." in calendar_source
     assert "Expected agenda attendee chips to avoid record-chip styling." in calendar_source
     assert "Expected Calendar Who row to keep a visible contact icon on every attendee chip." in calendar_source
@@ -941,11 +953,19 @@ def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     assert "Expected mobile Who row to keep a visible contact icon on every attendee chip." in calendar_source
     assert "Expected mobile Who row to avoid record-chip styling." in calendar_source
     assert "Expected mobile Who row to avoid guest attendee chips" in calendar_source
+    assert "Expected mobile clinic detail to render a primary place label." in calendar_source
+    assert "Expected mobile clinic detail to render address text beneath the place label." in calendar_source
+    assert "Expected mobile merged description text to expose a clickable Google Meet URL." in calendar_source
+    assert "Expected mobile merged description link to target meet.google.com." in calendar_source
     assert "Expected mobile Who row to include at least one guest chip." not in calendar_source
     assert "Expected mobile Who row to carry contact and guest chips" not in calendar_source
+    assert "Expected Connected rows to stay curated and distinct on desktop detail." in calendar_source
+    assert "Expected Connected rows to stay curated and distinct on mobile detail." in calendar_source
     assert "Expected Back from linked target to restore Connected expanded state." in calendar_source
     assert "Expected reopening the event detail to reset Connected closed." in calendar_source
     assert "Expected reopening the event detail to reset Details open." in calendar_source
+    assert "meet.google.com" in calendar_source
+    assert "address:" in calendar_source
 
 
 def test_calendar_browser_proof_covers_continuous_month_rail_contract() -> None:

@@ -240,7 +240,7 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
   await rememberRecord("calendar-events", {
     id: `${runId}-freelance-review`,
     title: "Proof freelance review call",
-    summary: "Homepage pass, invoice cleanup, and the next edit round.",
+    summary: "Homepage pass, invoice cleanup, and the next edit round. Join via https://meet.google.com/proof-review-room.",
     date: today,
     start_at_ms: dayAt(0, 9, 30),
     end_at_ms: dayAt(0, 10, 15),
@@ -275,7 +275,12 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     start_at_ms: dayAt(1, 11, 0),
     end_at_ms: dayAt(1, 11, 30),
     html: "<!doctype html><h1>Proof clinic paperwork check-in</h1><p>Health proof event.</p>",
-    metadata: { place: "Westside Clinic", type: "health", attendees: ["Clinic front desk"] }
+    metadata: {
+      place: "Westside Clinic",
+      address: "11714 Wilshire Blvd, Suite 12, Los Angeles, CA 90025",
+      type: "health",
+      attendees: ["Clinic front desk"]
+    }
   });
   await rememberRecord("calendar-events", {
     id: `${runId}-late-call`,
@@ -871,9 +876,12 @@ async function readMeetingDetailState(page) {
     const detailRows = Array.from(document.querySelectorAll('.light-meeting-detail-section[data-meeting-detail-section="details"] .light-calendar-detail-row'));
     const connectedRows = Array.from(document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row'));
     const descriptionNode = document.querySelector(".light-calendar-detail-description-copy");
+    const descriptionLinks = Array.from(document.querySelectorAll(".light-calendar-detail-description-copy .light-calendar-detail-description-link"));
     const connectedCountNode = document.querySelector('.light-meeting-detail-section[data-meeting-detail-section="connected"] .light-meeting-detail-section-count');
     const detailsCard = document.querySelector('.light-meeting-detail-section[data-meeting-detail-section="details"] .light-calendar-detail-card');
     const whoCloud = document.querySelector('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip-cloud');
+    const placePrimaryNode = document.querySelector('.light-calendar-detail-row[data-detail-row="place"] .light-calendar-detail-location-primary');
+    const placeAddressNode = document.querySelector('.light-calendar-detail-row[data-detail-row="place"] .light-calendar-detail-location-address');
     const detailRowMetrics = Object.fromEntries(detailRows.map(row => {
       const key = String(row.getAttribute("data-detail-row") || "").trim();
       const labelNode = row.querySelector(".light-calendar-detail-row-label");
@@ -898,7 +906,18 @@ async function readMeetingDetailState(page) {
       visibleConnectedRowCount: connectedRows.filter(visible).length,
       descriptionText: String(descriptionNode?.textContent || "").trim(),
       descriptionVisible: visible(descriptionNode),
+      description_link_count: descriptionLinks.length,
+      description_link_hrefs: descriptionLinks.map(node => String(node.getAttribute("href") || "").trim()).filter(Boolean),
+      description_link_hosts: descriptionLinks.map(node => {
+        try {
+          return String(new URL(String(node.getAttribute("href") || ""), window.location.href).host || "").trim();
+        } catch (_error) {
+          return "";
+        }
+      }).filter(Boolean),
       connectedCount: Number(connectedCountNode?.textContent || 0) || 0,
+      place_primary_text: normalizedText(placePrimaryNode),
+      place_address_text: normalizedText(placeAddressNode),
       whoChipTexts: Array.from(document.querySelectorAll('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip')).map(node => String(node.textContent || "").trim()).filter(Boolean),
       detailRowMetrics,
       detailRowValues: Object.fromEntries(Object.entries(detailRowMetrics).map(([key, value]) => [key, String(value?.value || "").trim()])),
@@ -1220,6 +1239,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(!detailState.connectedExpanded, "Expected Connected to start collapsed on a fresh event open.");
     assert(detailState.descriptionVisible, "Expected merged description text inside Details.");
     assert(detailState.descriptionText.includes("Homepage pass, invoice cleanup"), `Expected merged description text inside Details, got ${detailState.descriptionText}.`);
+    assert(detailState.description_link_count >= 1, "Expected merged description text to expose a clickable Google Meet URL.");
+    assert(detailState.description_link_hrefs.some(value => value.includes("meet.google.com")), `Expected merged description link to target meet.google.com. Got ${JSON.stringify(detailState.description_link_hrefs)}.`);
     assert(detailState.connectedCount === 5, `Expected Connected header count to show five linked records, got ${detailState.connectedCount}.`);
     assert(detailState.visibleConnectedRowCount === 0, `Expected no visible Connected rows while collapsed, got ${detailState.visibleConnectedRowCount}.`);
     assert(!detailState.text.includes("Linked records"), "Expected event detail to keep the section label as Connected.");
@@ -1246,6 +1267,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-default.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-desktop-${theme}-event-detail-details-card.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-event-detail-who-row.png`, summary);
+    await saveLocatorShot(page.locator(".light-calendar-detail-description").first(), reportDir, `calendar-desktop-${theme}-event-detail-description-link.png`, summary);
 
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     detailState = await readMeetingDetailState(page);
@@ -1265,6 +1287,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
       assert(connectedRowTexts.some(value => value.includes(normalizedLabel)), `Expected Connected to include ${label}, got ${connectedRowTexts.join(", ")}.`);
     }
+    assert(new Set(connectedRowTexts.map(value => value.replace(/\s+/g, " ").trim())).size === connectedRowTexts.length, `Expected Connected rows to stay curated and distinct on desktop detail. Got ${connectedRowTexts.join(" | ")}.`);
     assert(!connectedRowTexts.some(value => value.includes("Jimmy T.")), "Expected contact chips to stay in Who, not Connected.");
     assert(!connectedRowTexts.some(value => value.includes("Jeff B.")), "Expected contact chips to stay in Who, not Connected.");
     assert(!connectedRowTexts.some(value => value.includes("Outside counsel")), "Expected attendee contacts to stay in Who, not Connected.");
@@ -1318,8 +1341,11 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(clinicDetailState.who_record_chip_count === 0, `Expected clinic detail Who row to avoid record-chip styling. Saw ${clinicDetailState.who_record_chip_count} record-chip nodes.`);
     assert(clinicDetailState.whoChipTexts.includes("Clinic front desk"), `Expected clinic detail to render the role-style contact as a recognized chip, got ${clinicDetailState.whoChipTexts.join(", ")}.`);
     assert(clinicDetailState.detailRowMetrics.who?.row_top_delta_px !== null && clinicDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected clinic Who row to stay compact, got ${JSON.stringify(clinicDetailState.detailRowMetrics.who)}.`);
+    assert(clinicDetailState.place_primary_text === "Westside Clinic", `Expected clinic detail to render a primary place label. Got ${clinicDetailState.place_primary_text}.`);
+    assert(clinicDetailState.place_address_text.includes("11714 Wilshire Blvd"), `Expected clinic detail to render address text beneath the place label. Got ${clinicDetailState.place_address_text}.`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-clinic-detail.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-clinic-who-row.png`, summary);
+    await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="place"]').first(), reportDir, `calendar-desktop-${theme}-clinic-place-row.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from clinic detail to restore calendar, got ${await currentLightRoute(page)}.`);
@@ -1553,6 +1579,8 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(!mobileDetailState.connectedExpanded, "Expected Connected to start collapsed on a fresh event open.");
     assert(mobileDetailState.descriptionVisible, "Expected merged description text inside Details.");
     assert(mobileDetailState.descriptionText.includes("Homepage pass, invoice cleanup"), `Expected merged description text inside Details, got ${mobileDetailState.descriptionText}.`);
+    assert(mobileDetailState.description_link_count >= 1, "Expected mobile merged description text to expose a clickable Google Meet URL.");
+    assert(mobileDetailState.description_link_hrefs.some(value => value.includes("meet.google.com")), `Expected mobile merged description link to target meet.google.com. Got ${JSON.stringify(mobileDetailState.description_link_hrefs)}.`);
     assert(mobileDetailState.connectedCount === 5, `Expected mobile Connected header count to show five linked records, got ${mobileDetailState.connectedCount}.`);
     assert(mobileDetailState.visibleConnectedRowCount === 0, `Expected mobile Connected rows to stay hidden while collapsed, got ${mobileDetailState.visibleConnectedRowCount}.`);
     assert(!mobileDetailState.text.includes("Linked records"), "Expected mobile event detail to keep the section label as Connected.");
@@ -1579,6 +1607,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-default.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-event-detail-card").first(), reportDir, `calendar-mobile-${theme}-detail-details-card.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-detail-who-row.png`, summary);
+    await saveLocatorShot(page.locator(".light-calendar-detail-description").first(), reportDir, `calendar-mobile-${theme}-detail-description-link.png`, summary);
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
     await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after Who chip tap, got ${await currentLightRoute(page)}.`);
@@ -1607,6 +1636,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
       const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
       assert(mobileConnectedRowTexts.some(value => value.includes(normalizedLabel)), `Expected mobile Connected to include ${label}, got ${mobileConnectedRowTexts.join(", ")}.`);
     }
+    assert(new Set(mobileConnectedRowTexts.map(value => value.replace(/\s+/g, " ").trim())).size === mobileConnectedRowTexts.length, `Expected Connected rows to stay curated and distinct on mobile detail. Got ${mobileConnectedRowTexts.join(" | ")}.`);
     assert(await mobileConnectedRows.count() === 5, `Expected mobile Connected to render five linked rows, got ${await mobileConnectedRows.count()}.`);
     await saveLocatorShot(mobileConnectedSection, reportDir, `calendar-mobile-${theme}-connected.png`, summary);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-connected-expanded.png`, summary);
@@ -1641,8 +1671,11 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileClinicDetailState.whoChipTexts.includes("Clinic front desk"), `Expected clinic detail to render the role-style contact as a recognized chip, got ${mobileClinicDetailState.whoChipTexts.join(", ")}.`);
     assert(mobileClinicDetailState.detailRowMetrics.who?.row_top_delta_px !== null && mobileClinicDetailState.detailRowMetrics.who.row_top_delta_px <= 6, `Expected clinic Who row to stay compact, got ${JSON.stringify(mobileClinicDetailState.detailRowMetrics.who)}.`);
     assert(mobileClinicDetailState.details_card_overflow_x <= 1, `Expected mobile clinic Details card to avoid horizontal overflow, got ${mobileClinicDetailState.details_card_overflow_x}.`);
+    assert(mobileClinicDetailState.place_primary_text === "Westside Clinic", `Expected mobile clinic detail to render a primary place label. Got ${mobileClinicDetailState.place_primary_text}.`);
+    assert(mobileClinicDetailState.place_address_text.includes("11714 Wilshire Blvd"), `Expected mobile clinic detail to render address text beneath the place label. Got ${mobileClinicDetailState.place_address_text}.`);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-clinic-detail.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-clinic-who-row.png`, summary);
+    await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="place"]').first(), reportDir, `calendar-mobile-${theme}-clinic-place-row.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile clinic detail to restore calendar, got ${await currentLightRoute(page)}.`);

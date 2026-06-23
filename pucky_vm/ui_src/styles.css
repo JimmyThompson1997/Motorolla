@@ -5593,6 +5593,23 @@ button {
   overflow-wrap: normal;
 }
 
+.light-calendar-detail-location {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.light-calendar-detail-location-primary {
+  color: inherit;
+}
+
+.light-calendar-detail-location-address {
+  color: color-mix(in srgb, var(--text-muted-strong) 86%, transparent);
+  font-size: 13px;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
 .light-meeting-note-summary {
   margin: 0;
 }
@@ -5650,6 +5667,13 @@ button {
   line-height: 1.48;
 }
 
+.light-calendar-detail-description-link {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
 .app-shell[data-theme="dark"] .light-calendar-detail-row-label,
 .app-shell[data-theme="dark"] .calendar-type-filter-label {
   color: #f5f8ff;
@@ -5658,6 +5682,10 @@ button {
 .app-shell[data-theme="dark"] .light-calendar-detail-row-value,
 .app-shell[data-theme="dark"] .light-calendar-detail-description-copy {
   color: #b6c2d3;
+}
+
+.app-shell[data-theme="dark"] .light-calendar-detail-location-address {
+  color: #9db0c6;
 }
 
 .light-doc-article {
