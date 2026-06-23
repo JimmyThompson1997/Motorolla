@@ -513,6 +513,136 @@ def test_workspace_api_rejects_removed_web_ui_token_for_note_writes(tmp_path: Pa
         server.shutdown()
 
 
+def test_workspace_api_allows_dismiss_patch_for_orphaned_recipient_reminder(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        request_json(
+            base_url,
+            "/api/workspace/contacts",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-contact",
+                "title": "Orphan Contact",
+                "metadata": {
+                    "phone": "+14155550168",
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-reminder",
+                "title": "Orphan reminder",
+                "status": "open",
+                "due_at_ms": 60_000,
+                "metadata": {
+                    "recipients": [
+                        {"id": "self", "kind": "self", "label": "Me"},
+                        {"id": "orphan-contact", "kind": "contact", "contact_id": "orphan-contact", "label": "Orphan Contact"},
+                    ],
+                    "destinations": [
+                        {"channel": "phone_notification", "recipient_ids": ["self"]},
+                        {"channel": "sms", "recipient_ids": ["orphan-contact"]},
+                    ],
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/contacts/orphan-contact",
+            method="DELETE",
+            token="test-token",
+        )
+
+        done = request_json(
+            base_url,
+            "/api/workspace/reminders/orphan-reminder",
+            method="PATCH",
+            token="test-token",
+            body={"status": "done"},
+        )
+        assert done["status"] == "done"
+        assert done["metadata"]["snoozed_until_ms"] == 0
+        assert done["metadata"]["destinations"][1]["channel"] == "sms"
+        assert done["metadata"]["recipients"][1]["id"] == "orphan-contact"
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_allows_snooze_patch_for_orphaned_recipient_reminder(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        request_json(
+            base_url,
+            "/api/workspace/contacts",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-contact",
+                "title": "Orphan Contact",
+                "metadata": {
+                    "phone": "+14155550168",
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-reminder",
+                "title": "Orphan reminder",
+                "status": "open",
+                "due_at_ms": 60_000,
+                "metadata": {
+                    "recipients": [
+                        {"id": "self", "kind": "self", "label": "Me"},
+                        {"id": "orphan-contact", "kind": "contact", "contact_id": "orphan-contact", "label": "Orphan Contact"},
+                    ],
+                    "destinations": [
+                        {"channel": "phone_notification", "recipient_ids": ["self"]},
+                        {"channel": "sms", "recipient_ids": ["orphan-contact"]},
+                    ],
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/contacts/orphan-contact",
+            method="DELETE",
+            token="test-token",
+        )
+
+        snoozed = request_json(
+            base_url,
+            "/api/workspace/reminders/orphan-reminder",
+            method="PATCH",
+            token="test-token",
+            body={
+                "due_at_ms": 120_000,
+                "metadata": {
+                    "delivery_state": "pending",
+                    "last_fired_at_ms": 0,
+                    "last_fired_due_at_ms": 0,
+                    "last_delivery_error": "",
+                    "snoozed_until_ms": 120_000,
+                },
+            },
+        )
+        assert snoozed["due_at_ms"] == 120_000
+        assert snoozed["metadata"]["delivery_state"] == "pending"
+        assert snoozed["metadata"]["snoozed_until_ms"] == 120_000
+        assert snoozed["metadata"]["destinations"][1]["channel"] == "sms"
+        assert snoozed["metadata"]["recipients"][1]["id"] == "orphan-contact"
+    finally:
+        server.shutdown()
+
+
 def test_workspace_api_crud_assets_links_and_task_deadlines(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
