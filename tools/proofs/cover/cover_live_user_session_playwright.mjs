@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   assert,
@@ -465,18 +465,20 @@ async function loadChromium() {
   candidates.push(path.join(ROOT, "tools", "node_modules"));
   candidates.push(path.join(ROOT, "node_modules"));
   for (const candidate of candidates) {
-    try {
-      const resolved = require.resolve("playwright-core", { paths: [candidate] });
-      const mod = await import(pathToFileURL(resolved).href);
-      const chromium = mod?.chromium || mod?.default?.chromium;
-      if (chromium) {
-        return chromium;
+    for (const packageName of ["playwright", "playwright-core"]) {
+      try {
+        const resolved = require.resolve(packageName, { paths: [candidate] });
+        const mod = require(resolved);
+        const chromium = mod?.chromium || mod?.default?.chromium;
+        if (chromium) {
+          return chromium;
+        }
+      } catch (_error) {
+        // Try next candidate or package.
       }
-    } catch (_error) {
-      // Try next candidate.
     }
   }
-  throw new Error("Could not resolve playwright-core from bundled or local node_modules");
+  throw new Error("Could not resolve playwright-core or playwright from bundled or local node_modules");
 }
 
 function buildRouteUrl(config, route, theme = "light") {
@@ -860,32 +862,22 @@ async function readTaskDetailFocusState(page) {
   });
 }
 
-async function readTaskFilterSelectorState(page) {
+async function readTaskListSelectionState(page) {
   return page.evaluate(() => {
-    const task_filter_selector_options = Array.from(document.querySelectorAll(".settings-selector-option")).map(option => {
-      const leading = option.querySelector(".settings-selector-option-leading");
-      return {
-        value: String(option.getAttribute("data-selector-value") || ""),
-        label: String(option.querySelector(".settings-selector-option-label")?.textContent || "").trim(),
-        meta: String(option.querySelector(".settings-selector-option-meta")?.textContent || "").trim(),
-        has_leading_visual: Boolean(
-          leading
-          && (
-            leading.children.length > 0
-            || leading.querySelector("svg, .light-check-circle")
-            || String(leading.textContent || "").trim()
-          )
-        ),
-      };
-    });
+    const toggles = Array.from(document.querySelectorAll(".light-task-section-toggle"));
+    const selected_rows = Array.from(document.querySelectorAll('.light-task-row[data-task-selected="true"]'))
+      .map(node => String(node.getAttribute("data-task-id") || "").trim())
+      .filter(Boolean);
+    const bulk_bar = document.querySelector(".light-task-bulk-bar");
+    const legacy_filter_class = ["light", "task", "filter", "button"].join("-");
     return {
-      theme: String(
-        document.querySelector(".app-shell")?.getAttribute("data-theme")
-        || new URL(window.location.href).searchParams.get("theme")
-        || ""
-      ),
-      selector_option_count: task_filter_selector_options.length,
-      task_filter_selector_options,
+      page_title: String(document.querySelector(".light-page-title")?.textContent || "").trim(),
+      headers: toggles.map(toggle => String(toggle.querySelector(".light-task-section-title")?.textContent || "").trim()).filter(Boolean),
+      has_filter_pill: Array.from(document.querySelectorAll("button")).some(node => node.classList.contains(legacy_filter_class)),
+      select_mode_active: String(document.querySelector(".light-page-title")?.textContent || "").trim() === "Select tasks",
+      selected_rows,
+      bulk_bar_present: Boolean(bulk_bar),
+      bulk_count_label: String(bulk_bar?.querySelector(".light-task-bulk-count")?.textContent || "").trim(),
     };
   });
 }
@@ -907,18 +899,6 @@ function assertNoVisibleTaskFocusRing(state, context) {
   assert(statusHidden, `${context}: task status icon focus ring is still visible`);
   assert(mainHidden, `${context}: task row main-button focus ring is still visible`);
   assert(detailHidden, `${context}: task detail header focus ring is still visible`);
-}
-
-function assertTaskFilterSelectorLeadingVisuals(state, context) {
-  const expectedValues = ["all", "todo", "in_progress", "waiting", "done"];
-  assert(state.selector_option_count === expectedValues.length, `${context}: expected ${expectedValues.length} task filter selector options`);
-  expectedValues.forEach(value => {
-    const option = Array.isArray(state.task_filter_selector_options)
-      ? state.task_filter_selector_options.find(item => String(item?.value || "") === value)
-      : null;
-    assert(option, `${context}: missing task filter selector option ${value}`);
-    assert(option.has_leading_visual, `${context}: task filter selector option ${value} is missing its leading visual`);
-  });
 }
 
 async function ensureTaskSectionExpanded(page, group) {
@@ -945,6 +925,12 @@ async function revealTaskRow(page, taskId) {
       return;
     }
   }
+}
+
+async function waitForTaskAbsent(page, taskId, timeoutMs) {
+  await page.waitForFunction(expectedTaskId => {
+    return !document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`);
+  }, String(taskId || ""), { timeout: timeoutMs });
 }
 
 async function taskGroupForRow(page, taskId) {
@@ -1527,39 +1513,61 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
   }
 
   if (shouldRunRoute(config, "tasks")) {
-    await page.goto(buildRouteUrl(config, "tasks", "dark"), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-    await waitForRoute(page, "tasks", config.timeoutMs);
-    await waitForSeededTask(page, seed, config.timeoutMs);
-    await page.locator(".light-task-filter-button").first().click();
-    await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    const darkTaskFilterSelectorState = await readTaskFilterSelectorState(page);
-    assertTaskFilterSelectorLeadingVisuals(darkTaskFilterSelectorState, `${mode}: dark task filter selector`);
-    await recorder.capture({
-      route: "tasks",
-      action: "Open dark task filter selector",
-      expected: "Opening the task filter sheet in dark mode shows leading visuals for All, To do, In progress, Waiting, and Done.",
-      confirmation: "Task filter selector renders leading visuals for every task category in dark mode.",
-      observed: darkTaskFilterSelectorState,
-    });
-    await page.locator('.settings-selector-option[data-selector-value="all"]').first().click();
-    await waitForSeededTask(page, seed, config.timeoutMs);
-
     await page.goto(buildRouteUrl(config, "tasks", "light"), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForRoute(page, "tasks", config.timeoutMs);
     await waitForSeededTask(page, seed, config.timeoutMs);
-    await page.locator(".light-task-filter-button").first().click();
-    await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    const lightTaskFilterSelectorState = await readTaskFilterSelectorState(page);
-    assertTaskFilterSelectorLeadingVisuals(lightTaskFilterSelectorState, `${mode}: light task filter selector`);
+    const initialTaskListState = await readTaskListSelectionState(page);
+    assert(!initialTaskListState.has_filter_pill, `${mode}: task list should not render the legacy filter pill`);
+    assert(
+      JSON.stringify(initialTaskListState.headers.slice(0, 4)) === JSON.stringify(["Today", "Overdue", "Upcoming", "Done"]),
+      `${mode}: expected Today / Overdue / Upcoming / Done task section order, got ${JSON.stringify(initialTaskListState.headers)}`
+    );
     await recorder.capture({
       route: "tasks",
-      action: "Open light task filter selector",
-      expected: "Opening the task filter sheet in light mode shows leading visuals for All, To do, In progress, Waiting, and Done.",
-      confirmation: "Task filter selector renders leading visuals for every task category in light mode.",
-      observed: lightTaskFilterSelectorState,
+      action: "Inspect Tasks list before cleanup",
+      expected: "Tasks opens without a filter pill and orders sections as Today, Overdue, Upcoming, and Done.",
+      confirmation: "Tasks list starts without a filter pill and with Today first.",
+      observed: initialTaskListState,
     });
-    await page.locator('.settings-selector-option[data-selector-value="all"]').first().click();
-    await waitForSeededTask(page, seed, config.timeoutMs);
+
+    await page.locator(".light-task-select-toggle").first().click();
+    const selectModeState = await readTaskListSelectionState(page);
+    assert(selectModeState.page_title === "Select tasks", `${mode}: Select mode did not change the task page title`);
+    assert(selectModeState.select_mode_active, `${mode}: Select mode did not activate`);
+    assert(selectModeState.bulk_bar_present, `${mode}: Select mode should show the bulk archive bar`);
+    await recorder.capture({
+      route: "tasks",
+      action: "Open task bulk select mode",
+      expected: "Tapping Select enters bulk-select mode and shows the sticky archive bar.",
+      confirmation: "Task bulk select mode opened cleanly.",
+      observed: selectModeState,
+    });
+
+    await page.locator(`.light-task-row[data-task-id="${seed.inProgressTaskId}"] .light-task-row-main`).first().click();
+    await page.locator(`.light-task-row[data-task-id="${seed.waitingTaskId}"] .light-task-row-main`).first().click();
+    const selectedTaskListState = await readTaskListSelectionState(page);
+    assert(
+      JSON.stringify(selectedTaskListState.selected_rows.sort()) === JSON.stringify([seed.inProgressTaskId, seed.waitingTaskId].sort()),
+      `${mode}: bulk-select mode did not keep the selected task ids in sync`
+    );
+    assert(selectedTaskListState.bulk_count_label === "2 selected", `${mode}: bulk-select bar should show 2 selected, got ${selectedTaskListState.bulk_count_label}`);
+    await page.locator(".light-task-bulk-archive").first().click();
+    await waitForTaskAbsent(page, seed.inProgressTaskId, config.timeoutMs);
+    await waitForTaskAbsent(page, seed.waitingTaskId, config.timeoutMs);
+    await page.waitForFunction(() => {
+      const title = String(document.querySelector(".light-page-title")?.textContent || "").trim();
+      return title !== "Select tasks" && !document.querySelector(".light-task-bulk-bar");
+    }, { timeout: config.timeoutMs });
+    const archivedTaskListState = await readTaskListSelectionState(page);
+    assert(!archivedTaskListState.select_mode_active, `${mode}: bulk archive should exit Select mode after success`);
+    assert(!archivedTaskListState.selected_rows.length, `${mode}: bulk archive should clear the selected task ids`);
+    await recorder.capture({
+      route: "tasks",
+      action: "Archive two selected tasks from the Tasks list",
+      expected: "Selecting two tasks and tapping Archive removes both from the active Tasks feed.",
+      confirmation: "Archive two selected tasks from the Tasks list.",
+      observed: archivedTaskListState,
+    });
 
     await goHome(page, config);
     await openRouteFromHome(page, "tasks", config.timeoutMs);
@@ -1614,6 +1622,27 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       confirmation: "Task detail keeps the compact header, checklist-first layout, and chevron-free linked rows.",
       observed: taskState,
     });
+
+    await goToTasksList(page, mode, config.timeoutMs);
+    await waitForRoute(page, "tasks", config.timeoutMs);
+    await revealTaskRow(page, seed.overdueTaskId);
+    await page.locator(`.light-task-row[data-task-id="${seed.overdueTaskId}"] .light-task-row-main`).first().click();
+    await waitForTaskDetail(page, seed.overdueTaskId, config.timeoutMs);
+    await page.locator(".light-task-detail-action-trigger").first().click();
+    await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator('.settings-selector-option[data-selector-value="archive_task"]').first().click();
+    await waitForRoute(page, "tasks", config.timeoutMs);
+    await waitForTaskAbsent(page, seed.overdueTaskId, config.timeoutMs);
+    const detailArchiveState = await readTaskListSelectionState(page);
+    await recorder.capture({
+      route: "tasks",
+      action: "Archive current task from task detail actions",
+      expected: "Choosing Archive task from the task detail actions removes the current task and returns cleanly to the Tasks feed.",
+      confirmation: "Archive task from task detail actions removed the current task and returned to Tasks.",
+      observed: detailArchiveState,
+    });
+    await page.locator(`.light-task-row[data-task-id="${seed.primaryTaskId}"] .light-task-row-main`).first().click();
+    await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
 
     const incompleteChecklistIds = Array.isArray(seed.primaryChecklist)
       ? seed.primaryChecklist.filter(item => item && item.done !== true).map(item => String(item.id || ""))

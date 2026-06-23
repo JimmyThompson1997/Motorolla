@@ -1,7 +1,7 @@
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   logStep,
@@ -130,18 +130,20 @@ async function loadChromium() {
   }
   candidates.push(path.join(ROOT, "node_modules"));
   for (const candidate of candidates) {
-    try {
-      const resolved = require.resolve("playwright-core", { paths: [candidate] });
-      const mod = await import(pathToFileURL(resolved).href);
-      const chromium = mod?.chromium || mod?.default?.chromium;
-      if (chromium) {
-        return chromium;
+    for (const packageName of ["playwright", "playwright-core"]) {
+      try {
+        const resolved = require.resolve(packageName, { paths: [candidate] });
+        const mod = require(resolved);
+        const chromium = mod?.chromium || mod?.default?.chromium;
+        if (chromium) {
+          return chromium;
+        }
+      } catch (_error) {
+        // Try next candidate or package.
       }
-    } catch (_error) {
-      // Try next candidate.
     }
   }
-  throw new Error("Could not resolve playwright-core from bundled or local node_modules");
+  throw new Error("Could not resolve playwright-core or playwright from bundled or local node_modules");
 }
 
 async function main() {

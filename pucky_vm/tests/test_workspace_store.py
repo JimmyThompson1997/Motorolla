@@ -99,6 +99,29 @@ def test_workspace_store_uses_projects_collection_and_drops_tags_alias() -> None
     assert "tags" not in WORKSPACE_COLLECTIONS
 
 
+def test_workspace_store_task_archive_hides_from_default_list_but_survives_include_archived(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
+
+    created = store.upsert_record(
+        "tasks",
+        {
+            "id": "archive-me",
+            "title": "Archive me",
+            "status": "todo",
+        },
+    )
+    archived = store.patch_record("tasks", "archive-me", {"archived": True})
+
+    assert created["id"] == "archive-me"
+    assert archived is not None
+    assert archived["archived"] is True
+    visible_ids = {item["id"] for item in store.list_records("tasks")["items"]}
+    archived_ids = {item["id"] for item in store.list_records("tasks", include_archived=True)["items"]}
+    assert "archive-me" not in visible_ids
+    assert "archive-me" in archived_ids
+
+
 def test_contact_endpoint_migration_backfills_email_phone_and_removes_metadata(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     db_path = tmp_path / "workspace.sqlite3"

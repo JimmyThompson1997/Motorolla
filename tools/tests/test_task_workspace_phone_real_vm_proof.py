@@ -132,55 +132,31 @@ def test_group_for_task_and_visible_task_ids_use_rendered_sections() -> None:
     assert phone_proof.group_for_task(state, "missing") == ""
 
 
-def test_verify_filter_state_checks_active_filter_and_hidden_rows() -> None:
+def test_task_section_labels_preserve_rendered_order() -> None:
     state = {
-        "filters": [
-            {"key": "todo", "label": "To do", "active": True},
-        ],
         "sections": [
-            {"group": "overdue", "rowIds": ["task-a"]},
-            {"group": "do", "rowIds": ["task-b"]},
+            {"group": "do", "label": "Today", "rowIds": ["task-b"]},
+            {"group": "overdue", "label": "Overdue", "rowIds": ["task-a"]},
+            {"group": "soon", "label": "Upcoming", "rowIds": ["task-c"]},
+            {"group": "done", "label": "Done", "rowIds": ["task-d"]},
         ],
     }
 
-    phone_proof.verify_filter_state(state, filter_key="todo", present=["task-a"], absent=["task-z"])
-
-    with pytest.raises(phone_proof.TaskPhoneProofError, match="Expected active task filter done"):
-        phone_proof.verify_filter_state(state, filter_key="done", present=[], absent=[])
+    assert phone_proof.task_section_labels(state) == ["Today", "Overdue", "Upcoming", "Done"]
 
 
-def test_verify_filter_visual_checks_icon_and_dark_contrast() -> None:
-    light_state = {
-        "filterVisual": {
-            "chevronHasRect": False,
-            "chevronPath": "m7 10 5 5 5-5",
-            "buttonColor": "rgb(34, 111, 232)",
-            "chevronColor": "rgb(107, 114, 128)",
-        }
-    }
-    dark_state = {
-        "filterVisual": {
-            "chevronHasRect": False,
-            "chevronPath": "m7 10 5 5 5-5",
-            "buttonColor": "rgb(245, 249, 255)",
-            "chevronColor": "rgb(245, 249, 255)",
-        }
-    }
+def test_verify_task_section_order_requires_today_before_overdue() -> None:
+    phone_proof.verify_task_section_order({"sections": [{"label": "Today"}, {"label": "Overdue"}, {"label": "Upcoming"}, {"label": "Done"}]})
 
-    phone_proof.verify_filter_visual(light_state, theme="light")
-    phone_proof.verify_filter_visual(dark_state, theme="dark")
-
-    with pytest.raises(phone_proof.TaskPhoneProofError, match="fallback icon"):
-        phone_proof.verify_filter_visual({"filterVisual": {**light_state["filterVisual"], "chevronHasRect": True}}, theme="light")
-
-    with pytest.raises(phone_proof.TaskPhoneProofError, match="readable neutral color"):
-        phone_proof.verify_filter_visual({"filterVisual": {**dark_state["filterVisual"], "buttonColor": "rgb(58, 132, 255)"}}, theme="dark")
+    with pytest.raises(phone_proof.TaskPhoneProofError, match="Today / Overdue / Upcoming / Done"):
+        phone_proof.verify_task_section_order({"sections": [{"label": "Overdue"}, {"label": "Today"}, {"label": "Upcoming"}, {"label": "Done"}]})
 
 
-def test_task_filter_label_maps_visible_selector_copy() -> None:
-    assert phone_proof.task_filter_label("all") == "All"
-    assert phone_proof.task_filter_label("in_progress") == "In progress"
-    assert phone_proof.task_filter_label("waiting") == "Waiting"
+def test_task_archive_selectors_map_to_bulk_and_detail_actions() -> None:
+    assert phone_proof.task_bulk_select_button_selector() == ".light-page-header .light-task-select-toggle"
+    assert phone_proof.task_bulk_archive_button_selector() == ".light-task-bulk-archive"
+    assert phone_proof.task_detail_actions_selector() == ".light-task-detail-action-trigger"
+    assert phone_proof.task_detail_archive_selector() == '.settings-selector-option[data-selector-value="archive_task"]'
 
 
 def test_phone_task_proof_source_requires_checklist_autodone_and_reopen() -> None:
@@ -195,6 +171,11 @@ def test_phone_task_proof_source_requires_checklist_autodone_and_reopen() -> Non
     assert '"status_after_reopen": task_after_reopen.get("status")' in source
     assert '"completed_at_ms_after_reopen": task_after_reopen.get("completed_at_ms")' in source
     assert 'assert_or_fail(int(task_record.get("completed_at_ms") or 0) > completed_after_checklist' in source
+    assert "Select tasks" in source
+    assert "Archive task" in source
+    assert "verify_task_section_order" in source
+    assert "task_bulk_archive_button_selector" in source
+    assert "task_detail_archive_selector" in source
 
 
 def test_fetch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,29 +202,11 @@ def test_patch_task_record_accepts_wrapped_or_direct_record_payload(monkeypatch:
 
 def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) -> None:
     seed = load_seed(tmp_path)
-    created_by_person = {
-        "role": "created_by",
-        "route": "contact-detail",
-        "id": "contact-1",
-        "icon_color": "rgb(244, 63, 104)",
-        "icon_background": "rgba(244, 63, 104, 0.14)",
-        "icon_has_svg": True,
-        "uses_small_icon": True,
-    }
-    owner_person = {
-        "role": "owner",
-        "route": "contact-detail",
-        "id": "contact-owner-1",
-        "icon_color": "rgb(244, 63, 104)",
-        "icon_background": "rgba(244, 63, 104, 0.14)",
-        "icon_has_svg": True,
-        "uses_small_icon": True,
-    }
     state = {
         "taskDetailId": "task-1",
         "hasTaskHtmlFrame": False,
         "hasDescriptionSection": True,
-        "hasPeopleSection": True,
+        "hasPeopleSection": False,
         "hasChecklistSection": True,
         "hasNotesSection": False,
         "hasConnectedSection": True,
@@ -253,11 +216,9 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
         "hasTaskConnectedChips": False,
         "statusHeaderPresent": True,
         "statusCirclePresent": True,
+        "detailActionPresent": True,
         "title": "Task Proof Primary",
-        "people": [
-            created_by_person,
-            owner_person,
-        ],
+        "people": [],
         "connected": [
             {"kind": "note", "hasIcon": True, "uses_small_icon": True, "recency_ms": 400},
             {"kind": "calendar_event", "hasIcon": True, "uses_small_icon": True, "recency_ms": 300},
@@ -271,13 +232,10 @@ def test_verify_primary_detail_state_requires_structured_fields(tmp_path: Path) 
     with pytest.raises(phone_proof.TaskPhoneProofError, match="legacy task HTML"):
         phone_proof.verify_primary_detail_state({**state, "hasTaskHtmlFrame": True}, seed)
 
-    with pytest.raises(phone_proof.TaskPhoneProofError, match="Created by icon lost contrast"):
+    with pytest.raises(phone_proof.TaskPhoneProofError, match="task actions control"):
         phone_proof.verify_primary_detail_state({
             **state,
-            "people": [
-                {**created_by_person, "icon_background": "rgb(244, 63, 104)"},
-                owner_person,
-            ],
+            "detailActionPresent": False,
         }, seed)
 
     with pytest.raises(phone_proof.TaskPhoneProofError, match="Connected rows were not sorted by recency descending"):

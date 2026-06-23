@@ -195,21 +195,18 @@ def visible_task_ids(state: dict[str, Any]) -> set[str]:
     return visible
 
 
-def active_filter_key(state: dict[str, Any]) -> str:
-    for item in list(state.get("filters") or []):
-        if isinstance(item, dict) and item.get("active"):
-            return str(item.get("key") or "")
-    return ""
+def task_section_labels(state: dict[str, Any]) -> list[str]:
+    return [
+        str(section.get("label") or "").strip()
+        for section in list(state.get("sections") or [])
+        if isinstance(section, dict) and str(section.get("label") or "").strip()
+    ]
 
 
-def task_filter_label(filter_key: str) -> str:
-    return {
-        "all": "All",
-        "todo": "To do",
-        "in_progress": "In progress",
-        "waiting": "Waiting",
-        "done": "Done",
-    }.get(str(filter_key or ""), "All")
+def verify_task_section_order(state: dict[str, Any]) -> None:
+    labels = task_section_labels(state)
+    expected = ["Today", "Overdue", "Upcoming", "Done"]
+    assert_or_fail(labels[: len(expected)] == expected, "phone_task_detail_render_failed", f"Expected task section order {' / '.join(expected)}, got {labels}")
 
 
 def expected_link_specs(seed: dict[str, Any]) -> list[dict[str, str]]:
@@ -285,6 +282,22 @@ def task_row_selector(task_id: str) -> str:
     return f'.light-task-row[data-task-id="{task_id}"] .light-task-row-main'
 
 
+def task_bulk_select_button_selector() -> str:
+    return ".light-page-header .light-task-select-toggle"
+
+
+def task_bulk_archive_button_selector() -> str:
+    return ".light-task-bulk-archive"
+
+
+def task_detail_actions_selector() -> str:
+    return ".light-task-detail-action-trigger"
+
+
+def task_detail_archive_selector() -> str:
+    return '.settings-selector-option[data-selector-value="archive_task"]'
+
+
 def status_selector(status: str) -> str:
     return f'.settings-selector-option[data-selector-value="{status}"]'
 
@@ -316,57 +329,11 @@ def screenshot_operation(path: Path) -> dict[str, Any]:
 def open_task_ops(task_id: str, screenshot_path: Path) -> list[dict[str, Any]]:
     return [
         {"kind": "goto_tasks", "theme": "light"},
-        {"kind": "click_selector", "selector": ".light-task-filter-button"},
-        {"kind": "click_selector", "selector": status_selector("all")},
         {"kind": "click_selector", "selector": task_row_selector(task_id)},
         {"kind": "wait_for_task_detail", "task_id": task_id},
         {"kind": "task_state"},
         screenshot_operation(screenshot_path),
     ]
-
-
-def verify_filter_state(
-    state: dict[str, Any],
-    *,
-    filter_key: str,
-    present: list[str],
-    absent: list[str],
-) -> None:
-    assert_or_fail(active_filter_key(state) == filter_key, "phone_task_detail_render_failed", f"Expected active task filter {filter_key}")
-    visible = visible_task_ids(state)
-    for task_id in present:
-        assert_or_fail(task_id in visible, "phone_task_detail_render_failed", f"Expected task {task_id} to be visible under {filter_key}")
-    for task_id in absent:
-        assert_or_fail(task_id not in visible, "phone_task_detail_render_failed", f"Expected task {task_id} to be hidden under {filter_key}")
-
-
-def verify_filter_visual(state: dict[str, Any], *, theme: str) -> None:
-    visual = state.get("filterVisual") or {}
-    assert_or_fail(not bool(visual.get("chevronHasRect")), "phone_task_detail_render_failed", f"{theme}: task filter rendered the fallback icon")
-    supported_chevron_paths = {
-        "m7 10 5 5 5-5",
-        "m7 10 5 5 5-5H7Z",
-        "m9 5 7 7-7 7",
-        "M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6-6.6-6.6Z",
-    }
-    assert_or_fail(
-        str(visual.get("chevronPath") or "") in supported_chevron_paths,
-        "phone_task_detail_render_failed",
-        f"{theme}: task filter chevron path was unexpected",
-    )
-    if theme == "dark":
-        assert_or_fail(str(visual.get("buttonColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter text is not using the readable neutral color")
-        assert_or_fail(str(visual.get("chevronColor") or "") == "rgb(245, 249, 255)", "phone_task_detail_render_failed", "dark: task filter chevron is not using the readable neutral color")
-
-
-def verify_filter_selector_options(state: dict[str, Any], *, theme: str) -> None:
-    options = [item for item in list(state.get("filterSelectorOptions") or []) if isinstance(item, dict)]
-    expected_values = ["all", "todo", "in_progress", "waiting", "done"]
-    assert_or_fail(len(options) == len(expected_values), "phone_task_detail_render_failed", f"{theme}: expected {len(expected_values)} task filter selector options")
-    for value in expected_values:
-        option = next((item for item in options if str(item.get("value") or "") == value), None)
-        assert_or_fail(option is not None, "phone_task_detail_render_failed", f"{theme}: missing task filter selector option {value}")
-        assert_or_fail(bool(option.get("hasLeadingVisual")), "phone_task_detail_render_failed", f"{theme}: task filter selector option {value} is missing its leading visual")
 
 
 def verify_people_icon_visual(person: dict[str, Any], *, label: str) -> None:
@@ -390,7 +357,7 @@ def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> 
     assert_or_fail(state.get("taskDetailId") == seed["primaryTaskId"], "phone_task_detail_render_failed", "Primary task detail did not open")
     assert_or_fail(not state.get("hasTaskHtmlFrame"), "phone_task_detail_render_failed", "Primary task still renders legacy task HTML")
     assert_or_fail(bool(state.get("hasDescriptionSection")), "phone_task_detail_render_failed", "Primary task is missing Description")
-    assert_or_fail(bool(state.get("hasPeopleSection")), "phone_task_detail_render_failed", "Primary task is missing People")
+    assert_or_fail(not state.get("hasPeopleSection"), "phone_task_detail_render_failed", "Primary task should not render a People section")
     assert_or_fail(bool(state.get("hasChecklistSection")), "phone_task_detail_render_failed", "Primary task is missing Checklist")
     assert_or_fail(not state.get("hasNotesSection"), "phone_task_detail_render_failed", "Primary task still renders a standalone Notes section")
     assert_or_fail(bool(state.get("hasConnectedSection")), "phone_task_detail_render_failed", "Primary task is missing Connected")
@@ -400,21 +367,14 @@ def verify_primary_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> 
     assert_or_fail(not bool(state.get("hasTaskConnectedChips")), "phone_task_detail_render_failed", "Primary task still renders Connected as task chips")
     assert_or_fail(bool(state.get("statusHeaderPresent")), "phone_task_detail_render_failed", "Primary task is missing the interactive status header card")
     assert_or_fail(bool(state.get("statusCirclePresent")), "phone_task_detail_render_failed", "Primary task is missing the visible status circle")
+    assert_or_fail(bool(state.get("detailActionPresent")), "phone_task_detail_render_failed", "Primary task is missing the task actions control")
     assert_or_fail(str(state.get("title") or "") == str(seed["primaryTaskTitle"]), "phone_task_detail_render_failed", "Primary task title did not render correctly")
-    people = [item for item in list(state.get("people") or []) if isinstance(item, dict)]
     connected = [item for item in list(state.get("connected") or []) if isinstance(item, dict)]
     assert_or_fail(all(bool(item.get("hasIcon")) and bool(item.get("uses_small_icon")) for item in connected), "phone_task_detail_render_failed", "Connected linked rows did not use the standard icons")
     verify_connected_rows_sorted(connected)
     connected_kinds = {str(item.get("kind") or "") for item in connected}
     for kind in ("note", "calendar_event", "contact", "project"):
         assert_or_fail(kind in connected_kinds, "phone_task_detail_render_failed", f"Primary task is missing connected {kind} rows")
-    created_by = next((item for item in people if str(item.get("role") or "") == "created_by"), {})
-    owner = next((item for item in people if str(item.get("role") or "") == "owner"), {})
-    assert_or_fail(str(created_by.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Created by chip is not linked to contact detail")
-    assert_or_fail(str(created_by.get("id") or "") == str(seed["contactId"]), "phone_task_detail_render_failed", "Created by chip did not point at the expected contact")
-    verify_people_icon_visual(created_by, label="Created by")
-    assert_or_fail(str(owner.get("route") or "") == "contact-detail", "phone_task_detail_render_failed", "Owner chip is not linked to contact detail")
-    assert_or_fail(str(owner.get("id") or "") == str(seed["ownerContactId"]), "phone_task_detail_render_failed", "Owner chip did not point at the expected owner contact")
 
 
 def verify_empty_detail_state(state: dict[str, Any], seed: dict[str, Any]) -> None:
@@ -463,7 +423,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     scenario_dir = args.evidence_dir / time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     scenario_dir.mkdir(parents=True, exist_ok=True)
 
-    filter_checks: list[dict[str, Any]] = []
+    list_checks: list[dict[str, Any]] = []
+    archive_checks: list[dict[str, Any]] = []
     navigation_checks: list[dict[str, Any]] = []
     status_checks: list[dict[str, Any]] = []
     checklist_checks: list[dict[str, Any]] = []
@@ -486,108 +447,63 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             operations=[{"kind": "goto_tasks"}, {"kind": "task_state"}, screenshot_operation(scenario_dir / "01-task-list-browser.png")],
         )
         list_state = op_state(list_phase, "task_state")
-        labels = [str(section.get("label") or "") for section in list_state.get("sections") or [] if isinstance(section, dict)]
-        for expected_label in ["Today", "Upcoming", "Overdue", "Done"]:
-            assert_or_fail(expected_label in labels, "phone_task_detail_render_failed", f"Missing task bucket {expected_label}")
-        filter_labels = [str(item.get("label") or "") for item in list_state.get("filters") or [] if isinstance(item, dict)]
-        assert_or_fail(filter_labels == ["All"], "phone_task_detail_render_failed", "Expected a single visible All task filter trigger")
-        verify_filter_visual(list_state, theme="light")
+        verify_task_section_order(list_state)
+        assert_or_fail(not bool(list_state.get("hasFilterButton")), "phone_task_detail_render_failed", "Task list should not render the legacy filter pill")
+        assert_or_fail(not bool(list_state.get("bulkBarPresent")), "phone_task_detail_render_failed", "Bulk archive bar should stay hidden before Select mode starts")
+        list_checks.append({
+            "type": "list_surface",
+            "headers": task_section_labels(list_state),
+            "visible_task_ids": sorted(visible_task_ids(list_state)),
+        })
 
-        light_filter_selector_phase = run_phase(
+        bulk_archive_phase = run_phase(
             args,
             serial=serial,
             cdp_url=cdp["cdp_url"],
             scenario_dir=scenario_dir,
-            name="01b-light-filter-selector",
+            name="01b-bulk-archive",
             operations=[
                 {"kind": "goto_tasks", "theme": "light"},
-                {"kind": "click_selector", "selector": ".light-task-filter-button"},
+                {"kind": "click_selector", "selector": task_bulk_select_button_selector()},
                 {"kind": "task_state"},
-                screenshot_operation(scenario_dir / "01b-light-filter-selector-browser.png"),
+                {"kind": "click_selector", "selector": task_row_selector(str(seed["inProgressTaskId"]))},
+                {"kind": "click_selector", "selector": task_row_selector(str(seed["waitingTaskId"]))},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "01b-bulk-archive-selected-browser.png"),
+                {"kind": "click_selector", "selector": task_bulk_archive_button_selector()},
+                {"kind": "wait_for_task_absent", "task_id": str(seed["inProgressTaskId"])},
+                {"kind": "wait_for_task_absent", "task_id": str(seed["waitingTaskId"])},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "01b-bulk-archive-complete-browser.png"),
             ],
         )
-        light_filter_selector_state = op_state(light_filter_selector_phase, "task_state")
-        verify_filter_selector_options(light_filter_selector_state, theme="light")
-        filter_checks.append({"filter": "light_selector", "options": [str(item.get("value") or "") for item in list(light_filter_selector_state.get("filterSelectorOptions") or []) if isinstance(item, dict)]})
-
-        filter_expectations = [
-            {"key": "all", "present": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["waitingTaskId"], seed["doneTaskId"], seed["emptyTaskId"]], "absent": []},
-            {"key": "todo", "present": [seed["primaryTaskId"], seed["overdueTaskId"], seed["emptyTaskId"]], "absent": [seed["inProgressTaskId"], seed["waitingTaskId"], seed["doneTaskId"]]},
-            {"key": "in_progress", "present": [seed["inProgressTaskId"]], "absent": [seed["primaryTaskId"], seed["overdueTaskId"], seed["waitingTaskId"], seed["doneTaskId"], seed["emptyTaskId"]]},
-            {"key": "waiting", "present": [seed["waitingTaskId"]], "absent": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["doneTaskId"], seed["emptyTaskId"]]},
-            {"key": "done", "present": [seed["doneTaskId"]], "absent": [seed["primaryTaskId"], seed["overdueTaskId"], seed["inProgressTaskId"], seed["waitingTaskId"], seed["emptyTaskId"]]},
+        bulk_states = [
+            item.get("state")
+            for item in list(bulk_archive_phase.get("operations") or [])
+            if isinstance(item, dict) and item.get("kind") == "task_state" and isinstance(item.get("state"), dict)
         ]
-        for index, expectation in enumerate(filter_expectations, start=2):
-            filter_ops: list[dict[str, Any]] = [
-                {"kind": "goto_tasks"},
-                {"kind": "click_selector", "selector": ".light-task-filter-button"},
-                {"kind": "click_selector", "selector": f'.settings-selector-option[data-selector-value="{expectation["key"]}"]'},
-            ]
-            if expectation["key"] in {"all", "done"}:
-                filter_ops.append({"kind": "ensure_task_section_expanded", "group": "done"})
-            filter_ops.extend([
-                {"kind": "task_state"},
-                screenshot_operation(scenario_dir / f"{index:02d}-filter-{expectation['key']}-browser.png"),
-            ])
-            phase = run_phase(
-                args,
-                serial=serial,
-                cdp_url=cdp["cdp_url"],
-                scenario_dir=scenario_dir,
-                name=f"{index:02d}-filter-{expectation['key']}",
-                operations=filter_ops,
-            )
-            state = op_state(phase, "task_state")
-            verify_filter_state(state, filter_key=str(expectation["key"]), present=[str(item) for item in expectation["present"]], absent=[str(item) for item in expectation["absent"]])
-            current_labels = [str(item.get("label") or "") for item in list(state.get("filters") or []) if isinstance(item, dict)]
-            assert_or_fail(current_labels == [task_filter_label(str(expectation["key"]))], "phone_task_detail_render_failed", f"Visible task filter label did not switch to {task_filter_label(str(expectation['key']))}")
-            filter_checks.append({"filter": expectation["key"], "visible": sorted(visible_task_ids(state))})
-
-        dark_filter_phase = run_phase(
-            args,
-            serial=serial,
-            cdp_url=cdp["cdp_url"],
-            scenario_dir=scenario_dir,
-            name="06-dark-filter-visual",
-            operations=[
-                {"kind": "goto_tasks", "theme": "dark"},
-                {"kind": "task_state"},
-                screenshot_operation(scenario_dir / "06-dark-filter-browser.png"),
-            ],
+        assert_or_fail(len(bulk_states) >= 3, "phone_task_detail_render_failed", "Bulk archive proof did not capture enough list state snapshots")
+        enter_select_state = bulk_states[0]
+        selected_state = bulk_states[1]
+        archived_state = bulk_states[2]
+        assert_or_fail(str(enter_select_state.get("pageTitle") or "") == "Select tasks", "phone_task_detail_render_failed", "Select tasks mode did not update the task page title")
+        assert_or_fail(bool(enter_select_state.get("selectModeActive")), "phone_task_detail_render_failed", "Select button did not enter task bulk-select mode")
+        assert_or_fail(bool(selected_state.get("bulkBarPresent")), "phone_task_detail_render_failed", "Select mode should show the sticky bulk archive bar")
+        assert_or_fail(
+            set(selected_state.get("selectedTaskIds") or []) == {str(seed["inProgressTaskId"]), str(seed["waitingTaskId"])},
+            "phone_task_detail_render_failed",
+            "Bulk-select mode did not keep the selected task ids in sync",
         )
-        dark_filter_state = op_state(dark_filter_phase, "task_state")
-        verify_filter_visual(dark_filter_state, theme="dark")
-        filter_checks.append({"filter": "dark_visual", "theme": dark_filter_state.get("filterVisual", {}).get("theme"), "visible": sorted(visible_task_ids(dark_filter_state))})
-
-        dark_filter_selector_phase = run_phase(
-            args,
-            serial=serial,
-            cdp_url=cdp["cdp_url"],
-            scenario_dir=scenario_dir,
-            name="06b-dark-filter-selector",
-            operations=[
-                {"kind": "goto_tasks", "theme": "dark"},
-                {"kind": "click_selector", "selector": ".light-task-filter-button"},
-                {"kind": "task_state"},
-                screenshot_operation(scenario_dir / "06b-dark-filter-selector-browser.png"),
-            ],
-        )
-        dark_filter_selector_state = op_state(dark_filter_selector_phase, "task_state")
-        verify_filter_selector_options(dark_filter_selector_state, theme="dark")
-        filter_checks.append({"filter": "dark_selector", "options": [str(item.get("value") or "") for item in list(dark_filter_selector_state.get("filterSelectorOptions") or []) if isinstance(item, dict)]})
-
-        reset_light_phase = run_phase(
-            args,
-            serial=serial,
-            cdp_url=cdp["cdp_url"],
-            scenario_dir=scenario_dir,
-            name="06c-light-reset",
-            operations=[
-                {"kind": "goto_tasks", "theme": "light"},
-                {"kind": "task_state"},
-            ],
-        )
-        verify_filter_visual(op_state(reset_light_phase, "task_state"), theme="light")
+        assert_or_fail(str(selected_state.get("bulkCountLabel") or "") == "2 selected", "phone_task_detail_render_failed", "Bulk-select bar should show the selected count")
+        archived_visible = visible_task_ids(archived_state)
+        assert_or_fail(not bool(archived_state.get("selectModeActive")), "phone_task_detail_render_failed", "Bulk archive should exit Select mode after success")
+        assert_or_fail(str(seed["inProgressTaskId"]) not in archived_visible, "phone_task_detail_render_failed", "Bulk archive should remove the in-progress task from the active list")
+        assert_or_fail(str(seed["waitingTaskId"]) not in archived_visible, "phone_task_detail_render_failed", "Bulk archive should remove the waiting task from the active list")
+        archive_checks.append({
+            "type": "bulk_archive",
+            "selected_task_ids": list(selected_state.get("selectedTaskIds") or []),
+            "visible_after_archive": sorted(archived_visible),
+        })
 
         if args.filter_only:
             summary = {
@@ -608,7 +524,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "identity_checks": identity_checks,
                 "bundle": bundle,
                 "surface_before": surface_before,
-                "filter_checks": filter_checks,
+                "list_checks": list_checks,
+                "archive_checks": archive_checks,
                 "navigation_checks": navigation_checks,
                 "status_checks": status_checks,
                 "checklist_checks": checklist_checks,
@@ -638,27 +555,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         verify_empty_detail_state(op_state(empty_phase, "task_state"), seed)
 
-        created_by_phase = run_phase(
+        detail_archive_phase = run_phase(
             args,
             serial=serial,
             cdp_url=cdp["cdp_url"],
             scenario_dir=scenario_dir,
-            name="09-created-by",
-            operations=open_task_ops(str(seed["primaryTaskId"]), scenario_dir / "09-created-by-task-browser.png") + [
-                {"kind": "click_selector", "selector": person_chip_selector("created_by")},
-                {"kind": "wait_for_route", "route": "contact-detail"},
-                {"kind": "wait_for_text", "selector": ".light-profile-card h1, .light-record-detail-title, .light-detail-header h1, .light-page-header h1", "text": str(seed["contactTitle"])},
-                screenshot_operation(scenario_dir / "09-created-by-open-browser.png"),
-                {"kind": "back"},
-                {"kind": "wait_for_route", "route": "task-detail"},
-                {"kind": "wait_for_task_detail", "task_id": str(seed["primaryTaskId"])},
+            name="09-detail-archive",
+            operations=open_task_ops(str(seed["emptyTaskId"]), scenario_dir / "09-detail-archive-task-browser.png") + [
+                {"kind": "click_selector", "selector": task_detail_actions_selector()},
                 {"kind": "task_state"},
-                screenshot_operation(scenario_dir / "09-created-by-return-browser.png"),
+                screenshot_operation(scenario_dir / "09-detail-archive-sheet-browser.png"),
+                {"kind": "click_selector", "selector": task_detail_archive_selector()},
+                {"kind": "wait_for_route", "route": "tasks"},
+                {"kind": "wait_for_task_absent", "task_id": str(seed["emptyTaskId"])},
+                {"kind": "task_state"},
+                screenshot_operation(scenario_dir / "09-detail-archive-return-browser.png"),
             ],
         )
-        created_by_return = op_state(created_by_phase, "task_state")
-        assert_or_fail(created_by_return.get("taskDetailId") == seed["primaryTaskId"], "phone_task_origin_backstack_failed", "Created by navigation did not return to the same task")
-        navigation_checks.append({"kind": "created_by", "returned_route": created_by_return.get("route"), "returned_task_id": created_by_return.get("taskDetailId")})
+        detail_archive_state = op_state(detail_archive_phase, "task_state")
+        assert_or_fail(str(detail_archive_state.get("route") or "") == "tasks", "phone_task_detail_render_failed", "Detail archive should return the phone proof to tasks")
+        assert_or_fail(str(seed["emptyTaskId"]) not in visible_task_ids(detail_archive_state), "phone_task_detail_render_failed", "Detail archive should remove the archived task from the active list")
+        assert_or_fail(True, "phone_task_detail_render_failed", "Archive task")
+        archive_checks.append({
+            "type": "detail_archive",
+            "archived_task_id": str(seed["emptyTaskId"]),
+            "route_after_archive": detail_archive_state.get("route"),
+            "visible_after_archive": sorted(visible_task_ids(detail_archive_state)),
+        })
 
         status_trigger_phase = run_phase(
             args,
@@ -711,8 +634,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 ],
             )
             state = op_state(phase, "task_state")
-            attached = {str(item.get("kind") or ""): item for item in list(state.get("attached") or []) if isinstance(item, dict)}
-            linked = attached.get(spec["kind"], {})
+            connected = {str(item.get("kind") or ""): item for item in list(state.get("connected") or []) if isinstance(item, dict)}
+            linked = connected.get(spec["kind"], {})
             assert_or_fail(str(linked.get("route") or "") == spec["route"], "phone_linked_route_mismatch", f"{spec['kind']} chip route mismatch")
             assert_or_fail(str(linked.get("id") or "") == spec["record_id"], "phone_linked_route_mismatch", f"{spec['kind']} chip id mismatch")
             assert_or_fail(bool(linked.get("hasIcon")), "phone_task_detail_render_failed", f"{spec['kind']} chip is missing its icon")
@@ -862,7 +785,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "identity_checks": identity_checks,
         "bundle": bundle,
         "surface_before": surface_before,
-        "filter_checks": filter_checks,
+        "list_checks": list_checks,
+        "archive_checks": archive_checks,
         "navigation_checks": navigation_checks,
         "status_checks": status_checks,
         "checklist_checks": checklist_checks,

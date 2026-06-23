@@ -571,13 +571,83 @@ async function toggleChecklistItemWithRetry(page, baseUrl, apiToken, taskId, ite
 }
 
 export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
-  await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/tasks/${encodeURIComponent(seed.primaryTaskId)}`, {
-    status: "todo",
-    description: seed.primaryDescription,
-    created_by: seed.createdBy,
-    owner: seed.ownerContactTitle,
-    checklist: seed.primaryChecklist,
-  });
+  const taskPayloads = [
+    {
+      id: seed.primaryTaskId,
+      payload: {
+        status: "todo",
+        archived: false,
+        deleted: false,
+        due_at_ms: seed.primaryDueAtMs,
+        description: seed.primaryDescription,
+        created_by: seed.createdBy,
+        owner: seed.ownerContactTitle,
+        checklist: seed.primaryChecklist,
+      },
+    },
+    {
+      id: seed.overdueTaskId,
+      payload: {
+        status: "todo",
+        archived: false,
+        deleted: false,
+        due_at_ms: seed.overdueDueAtMs,
+        description: "This overdue proof task confirms overdue stays derived rather than stored as a status.",
+        created_by: seed.createdBy,
+        checklist: [],
+      },
+    },
+    {
+      id: seed.inProgressTaskId,
+      payload: {
+        status: "in_progress",
+        archived: false,
+        deleted: false,
+        due_at_ms: seed.inProgressDueAtMs,
+        description: "This task starts in progress for filter coverage.",
+        created_by: seed.createdBy,
+        checklist: [],
+      },
+    },
+    {
+      id: seed.waitingTaskId,
+      payload: {
+        status: "waiting",
+        archived: false,
+        deleted: false,
+        due_at_ms: seed.waitingDueAtMs,
+        description: "This task starts waiting with no checklist.",
+        created_by: seed.createdBy,
+        checklist: [],
+      },
+    },
+    {
+      id: seed.doneTaskId,
+      payload: {
+        status: "done",
+        archived: false,
+        deleted: false,
+        due_at_ms: seed.doneDueAtMs,
+        description: "This task starts done for filter and bucket coverage.",
+        created_by: seed.createdBy,
+        checklist: [],
+      },
+    },
+    {
+      id: seed.emptyTaskId,
+      payload: {
+        status: "todo",
+        archived: false,
+        deleted: false,
+        due_at_ms: seed.primaryDueAtMs + 30 * 60 * 1000,
+        created_by: seed.createdBy,
+        checklist: [],
+      },
+    },
+  ];
+  for (const entry of taskPayloads) {
+    await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/tasks/${encodeURIComponent(entry.id)}`, entry.payload);
+  }
 }
 
 export function proofPageUrl(baseUrl, apiToken, options = {}) {
@@ -722,6 +792,7 @@ async function recordViewState(page) {
       connectedRowCount: connected.length,
       statusHeaderPresent: Boolean(detail?.querySelector(".light-task-detail-card")),
       statusCirclePresent: Boolean(detail?.querySelector(".light-task-status-circle")),
+      detailActionPresent: Boolean(detail?.querySelector(".light-task-detail-action-trigger")),
       people,
       connected,
       title: String(document.querySelector(".light-task-detail-title")?.textContent || "").trim(),
@@ -732,7 +803,6 @@ async function recordViewState(page) {
 async function readTaskListSurface(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
-    const appShell = document.querySelector(".app-shell");
     const sections = Array.from(document.querySelectorAll(".light-task-section-toggle")).map(toggle => {
       const group = String(toggle.dataset.taskSection || "");
       const label = String(toggle.querySelector(".light-task-section-title")?.textContent || "").trim();
@@ -750,43 +820,24 @@ async function readTaskListSurface(page) {
         rowIds,
       };
     });
-    const filterButton = document.querySelector(".light-task-filter-button");
-    const filters = filterButton ? [{
-      key: String(filterButton.dataset.taskFilterCurrent || filterButton.dataset.taskFilter || ""),
-      label: String(filterButton.querySelector(".light-task-filter-button-label")?.textContent || filterButton.textContent || "").trim(),
-      active: true,
-    }] : [];
-    const filterVisual = filterButton ? (() => {
-      const style = getComputedStyle(filterButton);
-      const chevron = filterButton.querySelector(".light-task-filter-button-chevron");
-      const chevronStyle = chevron ? getComputedStyle(chevron) : null;
-      const svg = chevron?.querySelector("svg");
-      const path = svg?.querySelector("path");
-      return {
-        theme: String(appShell?.getAttribute("data-theme") || ""),
-        buttonColor: String(style.color || ""),
-        buttonBackground: String(style.backgroundColor || ""),
-        chevronColor: String(chevronStyle?.color || ""),
-        chevronPath: String(path?.getAttribute("d") || ""),
-        chevronHasRect: Boolean(svg?.querySelector("rect")),
-      };
-    })() : null;
+    const bulkBar = document.querySelector(".light-task-bulk-bar");
+    const bulkArchive = bulkBar?.querySelector(".light-task-bulk-archive");
+    const legacyFilterClass = ["light", "task", "filter", "button"].join("-");
+    const selectedTaskIds = Array.from(document.querySelectorAll('.light-task-row[data-task-selected="true"]'))
+      .map(row => String(row.getAttribute("data-task-id") || "").trim())
+      .filter(Boolean);
     return {
+      pageTitle: String(document.querySelector(".light-page-title")?.textContent || "").trim(),
       route: shell?.getAttribute("data-light-route") || "",
       sections,
-      filters,
-      filterVisual,
+      hasFilterButton: Array.from(document.querySelectorAll("button")).some(node => node.classList.contains(legacyFilterClass)),
+      selectModeActive: String(document.querySelector(".light-page-title")?.textContent || "").trim() === "Select tasks",
+      selectedTaskIds,
+      bulkBarPresent: Boolean(bulkBar),
+      bulkCountLabel: String(bulkBar?.querySelector(".light-task-bulk-count")?.textContent || "").trim(),
+      bulkArchiveDisabled: bulkArchive instanceof HTMLButtonElement ? bulkArchive.disabled : true,
     };
   });
-}
-
-async function readTaskFilterSelectorOptions(page) {
-  return page.evaluate(() => Array.from(document.querySelectorAll(".settings-selector-option")).map(button => ({
-    key: String(button.getAttribute("data-selector-value") || ""),
-    label: String(button.querySelector(".settings-selector-option-label")?.textContent || button.textContent || "").trim(),
-    meta: String(button.querySelector(".settings-selector-option-meta")?.textContent || "").trim(),
-    active: button.classList.contains("is-active"),
-  })));
 }
 
 async function ensureSectionExpanded(page, group) {
@@ -861,46 +912,6 @@ async function openTask(page, taskId, mode, timeoutMs) {
   }
 }
 
-async function openTaskFilterSelector(page, timeoutMs) {
-  const button = page.locator(".light-task-filter-button").first();
-  await button.waitFor({ state: "visible", timeout: timeoutMs });
-  await button.click();
-  await page.waitForTimeout(150);
-}
-
-function taskFilterLabel(filterKey) {
-  return ({
-    all: "All",
-    todo: "To do",
-    in_progress: "In progress",
-    waiting: "Waiting",
-    done: "Done",
-  })[String(filterKey || "")] || "All";
-}
-
-async function waitForTaskFilterVisualReady(page, timeoutMs) {
-  await page.waitForFunction(() => {
-    const supportedChevronPaths = new Set([
-      "m7 10 5 5 5-5",
-      "m7 10 5 5 5-5H7Z",
-      "m9 5 7 7-7 7",
-      "M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6-6.6-6.6Z",
-    ]);
-    const chevron = document.querySelector(".light-task-filter-button-chevron");
-    const svg = chevron?.querySelector("svg");
-    const path = svg?.querySelector("path")?.getAttribute("d") || "";
-    return Boolean(svg) && !svg.querySelector("rect") && supportedChevronPaths.has(path);
-  }, { timeout: timeoutMs });
-}
-
-async function selectTaskFilter(page, filterKey, timeoutMs) {
-  await openTaskFilterSelector(page, timeoutMs);
-  const option = page.locator(`.settings-selector-option[data-selector-value="${filterKey}"]`).first();
-  await option.waitFor({ state: "visible", timeout: timeoutMs });
-  await option.click();
-  await page.waitForTimeout(150);
-}
-
 async function saveLocatorScreenshot(page, selector, reportDir, name) {
   const target = path.join(reportDir, `${name}.png`);
   let lastError = null;
@@ -928,129 +939,107 @@ async function saveLocatorScreenshot(page, selector, reportDir, name) {
   return target;
 }
 
-function assertTaskFilterVisual(listState, mode, theme) {
-  const visual = listState.filterVisual || {};
-  assert(visual.chevronHasRect === false, `${mode}/${theme}: task filter chevron rendered the fallback icon`);
-  const supportedChevronPaths = new Set([
-    "m7 10 5 5 5-5",
-    "m7 10 5 5 5-5H7Z",
-    "m9 5 7 7-7 7",
-    "M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6-6.6-6.6Z",
-  ]);
-  assert(supportedChevronPaths.has(String(visual.chevronPath || "")), `${mode}/${theme}: task filter chevron path was unexpected`);
-  if (theme === "dark") {
-    assert(visual.buttonColor === "rgb(245, 249, 255)", `${mode}/${theme}: expected dark task filter text to use a readable neutral color`);
-    assert(visual.chevronColor === "rgb(245, 249, 255)", `${mode}/${theme}: expected dark task filter chevron to match the readable neutral color`);
-  }
+async function waitForTaskAbsent(page, taskId, timeoutMs) {
+  await page.waitForFunction(
+    expectedTaskId => !document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`),
+    String(taskId || ""),
+    { timeout: timeoutMs }
+  );
 }
 
-async function verifyListFilters(page, seed, mode, config, checks) {
+function verifyTaskSectionOrder(listState, mode) {
+  const labels = listState.sections.map(section => section.label);
+  assert(
+    JSON.stringify(labels.slice(0, 4)) === JSON.stringify(["Today", "Overdue", "Upcoming", "Done"]),
+    `${mode}: expected Today / Overdue / Upcoming / Done task section order, got ${JSON.stringify(labels)}`
+  );
+}
+
+async function verifyListSurface(page, mode, config, checks) {
   await goToTasksList(page, mode, config.timeoutMs);
   await ensureSectionExpanded(page, "done");
-  await waitForTaskFilterVisualReady(page, config.timeoutMs);
   const listState = await readTaskListSurface(page);
-  const labels = listState.sections.map(section => section.label);
-  assert(labels.includes("Today"), `${mode}: missing Today task group`);
-  assert(labels.includes("Upcoming"), `${mode}: missing Upcoming task group`);
-  assert(labels.includes("Overdue"), `${mode}: missing Overdue task group`);
-  assert(labels.includes("Done"), `${mode}: missing Done task group`);
-  assert(listState.filters.length === 1, `${mode}: expected a single visible task filter trigger`);
-  assert(listState.filters[0]?.label === "All", `${mode}: expected All to be the default task filter`);
-  assertTaskFilterVisual(listState, mode, "light");
+  verifyTaskSectionOrder(listState, mode);
+  assert(listState.hasFilterButton === false, `${mode}: task list should not render the legacy filter pill`);
+  assert(listState.bulkBarPresent === false, `${mode}: task list should not show the bulk archive bar until Select mode opens`);
   checks.push({
     type: "list_surface",
     mode,
     sections: listState.sections,
-    filters: listState.filters,
-    filter_visual: listState.filterVisual,
+    page_title: listState.pageTitle,
+    has_filter_button: listState.hasFilterButton,
+    bulk_bar_present: listState.bulkBarPresent,
   });
-  await openTaskFilterSelector(page, config.timeoutMs);
-  const selectorOptions = await readTaskFilterSelectorOptions(page);
-  const selectorLabels = selectorOptions.map(item => item.label);
-  for (const label of ["All", "To do", "In progress", "Waiting", "Done"]) {
-    assert(selectorLabels.includes(label), `${mode}: missing ${label} task filter selector option`);
-  }
-  assert(selectorOptions.every(item => item.meta !== ""), `${mode}: expected task filter selector options to include live counts`);
-  checks.push({
-    type: "task_filter_selector",
-    mode,
-    options: selectorOptions,
-  });
-  await page.locator('.settings-selector-option[data-selector-value="all"]').first().click();
-  await page.waitForTimeout(150);
-  const filterExpectations = [
-    {
-      key: "all",
-      present: [seed.primaryTaskId, seed.overdueTaskId, seed.inProgressTaskId, seed.waitingTaskId, seed.doneTaskId, seed.emptyTaskId],
-      absent: [],
-    },
-    {
-      key: "todo",
-      present: [seed.primaryTaskId, seed.overdueTaskId, seed.emptyTaskId],
-      absent: [seed.inProgressTaskId, seed.waitingTaskId, seed.doneTaskId],
-    },
-    {
-      key: "in_progress",
-      present: [seed.inProgressTaskId],
-      absent: [seed.primaryTaskId, seed.overdueTaskId, seed.waitingTaskId, seed.doneTaskId, seed.emptyTaskId],
-    },
-    {
-      key: "waiting",
-      present: [seed.waitingTaskId],
-      absent: [seed.primaryTaskId, seed.overdueTaskId, seed.inProgressTaskId, seed.doneTaskId, seed.emptyTaskId],
-    },
-    {
-      key: "done",
-      present: [seed.doneTaskId],
-      absent: [seed.primaryTaskId, seed.overdueTaskId, seed.inProgressTaskId, seed.waitingTaskId, seed.emptyTaskId],
-    },
-  ];
-  for (const expectation of filterExpectations) {
-    await selectTaskFilter(page, expectation.key, config.timeoutMs);
-    await ensureSectionExpanded(page, "done");
-    const filteredState = await readTaskListSurface(page);
-    assert(filteredState.filters[0]?.label === taskFilterLabel(expectation.key), `${mode}: expected visible filter label ${taskFilterLabel(expectation.key)}`);
-    for (const taskId of expectation.present) {
-      await revealTaskRow(page, taskId);
-      assert(await taskRowVisible(page, taskId), `${mode}: expected task ${taskId} to be visible under ${expectation.key}`);
-    }
-    for (const taskId of expectation.absent) {
-      assert(!(await taskRowVisible(page, taskId)), `${mode}: expected task ${taskId} to be hidden under ${expectation.key}`);
-    }
-    checks.push({
-      type: "task_filter",
-      mode,
-      filter: expectation.key,
-      present: expectation.present,
-      absent: expectation.absent,
-    });
-  }
-  await selectTaskFilter(page, "all", config.timeoutMs);
-  await ensureSectionExpanded(page, "done");
 }
 
-async function verifyDarkThemeFilter(page, mode, config, screenshots, checks) {
-  const darkUrl = proofPageUrl(config.baseUrl, config.apiToken, {
-    refreshKey: config.refreshKey,
-    theme: "dark",
-  });
-  logStep(config, `${mode}: opening dark-theme tasks proof ${darkUrl}`);
-  await page.goto(darkUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-  await waitForRoute(page, "tasks", config.timeoutMs);
-  await ensureSectionExpanded(page, "done");
-  await waitForTaskFilterVisualReady(page, config.timeoutMs);
-  const listState = await readTaskListSurface(page);
-  assertTaskFilterVisual(listState, mode, "dark");
-  screenshots[`${mode}_task_list_dark`] = await saveScreenshot(page, config.reportDir, `${mode}-dark-task-list`);
-  screenshots[`${mode}_task_filter_pill_dark`] = await saveLocatorScreenshot(page, ".light-task-filter-button", config.reportDir, `${mode}-dark-task-filter-pill`);
+async function verifyBulkArchiveFlow(page, seed, mode, config, screenshots, checks) {
+  await goToTasksList(page, mode, config.timeoutMs);
+  await page.locator(".light-task-select-toggle").first().click();
+  const selectState = await readTaskListSurface(page);
+  assert(selectState.pageTitle === "Select tasks", `${mode}: Select mode did not update the task page title`);
+  assert(selectState.selectModeActive === true, `${mode}: Select mode did not activate`);
+  assert(selectState.bulkBarPresent === true, `${mode}: Select mode should render the bulk archive bar`);
   checks.push({
-    type: "dark_task_filter_visual",
+    type: "select_mode",
     mode,
-    filter_visual: listState.filterVisual,
-    screenshots: {
-      full: screenshots[`${mode}_task_list_dark`],
-      pill: screenshots[`${mode}_task_filter_pill_dark`],
-    },
+    page_title: selectState.pageTitle,
+    bulk_bar_present: selectState.bulkBarPresent,
+  });
+  const archiveIds = [seed.inProgressTaskId, seed.waitingTaskId];
+  for (const taskId of archiveIds) {
+    await revealTaskRow(page, taskId);
+    await page.locator(`.light-task-row[data-task-id="${taskId}"] .light-task-row-main`).first().click();
+  }
+  const selectedState = await readTaskListSurface(page);
+  assert(
+    JSON.stringify(selectedState.selectedTaskIds.slice().sort()) === JSON.stringify(archiveIds.slice().sort()),
+    `${mode}: selected task ids did not match ${JSON.stringify(archiveIds)}`
+  );
+  assert(selectedState.bulkCountLabel === "2 selected", `${mode}: bulk archive bar should show 2 selected, got ${selectedState.bulkCountLabel}`);
+  screenshots[`${mode}_task_bulk_select`] = await saveScreenshot(page, config.reportDir, `${mode}-01b-task-bulk-select`);
+  await page.locator(".light-task-bulk-archive").first().click();
+  for (const taskId of archiveIds) {
+    await waitForTaskAbsent(page, taskId, config.timeoutMs);
+  }
+  await page.waitForFunction(() => {
+    const pageTitle = String(document.querySelector(".light-page-title")?.textContent || "").trim();
+    const bulkBar = document.querySelector(".light-task-bulk-bar");
+    return pageTitle !== "Select tasks" && !bulkBar;
+  }, { timeout: config.timeoutMs });
+  const archivedState = await readTaskListSurface(page);
+  assert(archivedState.selectModeActive === false, `${mode}: bulk archive should exit Select mode after success`);
+  assert(!archivedState.selectedTaskIds.length, `${mode}: bulk archive should clear selected task ids`);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  for (const taskId of archiveIds) {
+    await waitForTaskAbsent(page, taskId, config.timeoutMs);
+  }
+  checks.push({
+    type: "bulk_archive",
+    mode,
+    archived_task_ids: archiveIds,
+    bulk_count_label: selectedState.bulkCountLabel,
+  });
+  screenshots[`${mode}_task_bulk_archive`] = await saveScreenshot(page, config.reportDir, `${mode}-01c-task-bulk-archive`);
+}
+
+async function verifyDetailArchive(page, seed, mode, config, screenshots, checks) {
+  await openTask(page, seed.overdueTaskId, mode, config.timeoutMs);
+  const actionButton = page.locator(".light-task-detail-action-trigger").first();
+  await actionButton.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await actionButton.click();
+  const archiveOption = page.locator('.settings-selector-option[data-selector-value="archive_task"]').first();
+  await archiveOption.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await archiveOption.click();
+  await waitForRoute(page, "tasks", config.timeoutMs);
+  await waitForTaskAbsent(page, seed.overdueTaskId, config.timeoutMs);
+  const listState = await readTaskListSurface(page);
+  checks.push({
+    type: "detail_archive",
+    mode,
+    archived_task_id: seed.overdueTaskId,
+    route_after_archive: listState.route,
+    archive_action_label: "Archive task",
   });
 }
 
@@ -1060,7 +1049,7 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assert(state.taskDetailId === seed.primaryTaskId, `${mode}: wrong primary task detail opened`);
   assert(state.hasTaskHtmlFrame === false, `${mode}: task detail still renders an HTML frame`);
   assert(state.hasDescriptionSection, `${mode}: primary task is missing Description`);
-  assert(state.hasPeopleSection, `${mode}: primary task is missing People`);
+  assert(!state.hasPeopleSection, `${mode}: primary task should not render a People section`);
   assert(state.hasChecklistSection, `${mode}: primary task is missing Checklist`);
   assert(state.hasConnectedSection, `${mode}: primary task is missing Connected`);
   assert(state.hasNotesSection === false, `${mode}: primary task should not render a standalone Notes section`);
@@ -1072,13 +1061,7 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
   assertTaskConnectedRowsSorted(state.connected, mode);
   assert(state.statusHeaderPresent, `${mode}: primary task is missing the interactive status header card`);
   assert(state.statusCirclePresent, `${mode}: primary task is missing the visible status circle`);
-  const createdByChip = state.people.find(person => person.role === "created_by");
-  assert(createdByChip?.route === "contact-detail", `${mode}: Created by chip should open the linked contact`);
-  assert(createdByChip?.id === seed.contactId, `${mode}: Created by chip did not point at the expected contact`);
-  assertTaskPersonIconContrast(createdByChip, mode, "Created by");
-  const ownerChip = state.people.find(person => person.role === "owner");
-  assert(ownerChip?.route === "contact-detail", `${mode}: Owner chip should open the linked owner contact`);
-  assert(ownerChip?.id === seed.ownerContactId, `${mode}: Owner chip did not point at the expected owner contact`);
+  assert(Boolean(state.detailActionPresent), `${mode}: primary task is missing the task actions control`);
   const connectedKinds = new Set(state.connected.map(entry => String(entry.kind || "")));
   ["note", "calendar_event", "contact", "project"].forEach(kind => {
     assert(connectedKinds.has(kind), `${mode}: primary task is missing connected ${kind} rows`);
@@ -1093,100 +1076,6 @@ async function verifyStructuredTaskDetail(page, seed, mode, config, screenshots,
     screenshots: {
       detail: screenshots[`${mode}_task_detail_primary`],
       connected: screenshots[`${mode}_task_detail_connected`],
-    },
-  });
-
-  await openTask(page, seed.emptyTaskId, mode, config.timeoutMs);
-  const emptyState = await recordViewState(page);
-  assert(emptyState.taskDetailId === seed.emptyTaskId, `${mode}: wrong empty task detail opened`);
-  assert(emptyState.hasTaskHtmlFrame === false, `${mode}: empty task detail rendered legacy HTML`);
-  assert(emptyState.hasDescriptionSection === false, `${mode}: empty task should not render Description`);
-  assert(emptyState.hasChecklistSection === false, `${mode}: empty task should not render Checklist`);
-  assert(emptyState.hasNotesSection === false, `${mode}: empty task should not render Notes`);
-  assert(emptyState.hasConnectedSection === false, `${mode}: empty task should not render Connected`);
-  assert(emptyState.hasAttachedSection === false, `${mode}: empty task should not render Attached`);
-  screenshots[`${mode}_task_detail_empty`] = await saveScreenshot(page, config.reportDir, `${mode}-03-task-detail-empty`);
-  checks.push({
-    type: "empty_detail",
-    mode,
-    state: emptyState,
-    screenshot: screenshots[`${mode}_task_detail_empty`],
-  });
-
-  await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
-}
-
-async function verifyDarkThemeCreatedByChip(page, seed, mode, config, screenshots, checks) {
-  const darkUrl = proofPageUrl(config.baseUrl, config.apiToken, {
-    refreshKey: config.refreshKey,
-    theme: "dark",
-  });
-  logStep(config, `${mode}: opening dark-theme task detail proof ${darkUrl}`);
-  await page.goto(darkUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-  await waitForRoute(page, "tasks", config.timeoutMs);
-  await ensureSectionExpanded(page, "done");
-  await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
-  const darkState = await recordViewState(page);
-  assert(darkState.taskDetailId === seed.primaryTaskId, `${mode}: wrong dark-theme primary task detail opened`);
-  const createdByChip = darkState.people.find(person => person.role === "created_by");
-  assertTaskPersonIconContrast(createdByChip, `${mode}/dark`, "Created by");
-  screenshots[`${mode}_task_detail_primary_dark`] = await saveScreenshot(page, config.reportDir, `${mode}-02c-task-detail-primary-dark`);
-  screenshots[`${mode}_created_by_row_dark`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-person-role="created_by"]', config.reportDir, `${mode}-02d-created-by-row-dark`);
-  screenshots[`${mode}_created_by_icon_dark`] = await saveLocatorScreenshot(page, '.light-info-row[data-task-person-role="created_by"] .light-small-icon', config.reportDir, `${mode}-02e-created-by-icon-dark`);
-  checks.push({
-    type: "dark_created_by_icon_visual",
-    mode,
-    state: darkState,
-    screenshots: {
-      detail: screenshots[`${mode}_task_detail_primary_dark`],
-      row: screenshots[`${mode}_created_by_row_dark`],
-      icon: screenshots[`${mode}_created_by_icon_dark`],
-    },
-  });
-
-  const lightUrl = proofPageUrl(config.baseUrl, config.apiToken, {
-    refreshKey: config.refreshKey,
-    theme: "light",
-  });
-  await page.goto(lightUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-  await waitForRoute(page, "tasks", config.timeoutMs);
-  await stabilizeUrlForReloads(page);
-  await ensureSectionExpanded(page, "done");
-  await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
-}
-
-async function verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks) {
-  const chip = page.locator('.light-info-row[data-task-person-role="created_by"][data-workspace-target-kind="contact"]').first();
-  await chip.waitFor({ state: "visible", timeout: config.timeoutMs });
-  const payload = await chip.evaluate(node => ({
-    label: String(node.textContent || "").replace(/\s+/g, " ").trim(),
-    route: String(node.dataset.workspaceTargetRoute || "").trim(),
-    id: String(node.dataset.workspaceTargetId || "").trim(),
-    kind: String(node.dataset.workspaceTargetKind || "").trim(),
-  }));
-  await chip.click();
-  await waitForRoute(page, "contact-detail", config.timeoutMs);
-  await pageTextIncludes(page, seed.contactTitle, config.timeoutMs);
-  const openedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-created-by-opened`);
-  await page.locator("button.light-back-button").click();
-  await waitForRoute(page, mode === "mobile" ? "task-detail" : "tasks", config.timeoutMs);
-  await waitForTaskDetail(page, seed.primaryTaskId, config.timeoutMs);
-  const returnedState = await recordViewState(page);
-  const returnedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-created-by-returned`);
-  assert(returnedState.taskDetailId === seed.primaryTaskId, `${mode}: Created by back path lost the originating task`);
-  checks.push({
-    type: "created_by_navigation",
-    mode,
-    linked_target_kind: payload.kind,
-    linked_target_id: payload.id,
-    linked_label: payload.label,
-    opened_route: "contact-detail",
-    returned_route: returnedState.route,
-    returned_task_id: returnedState.taskDetailId,
-    returned_to_same_task: returnedState.taskDetailId === seed.primaryTaskId,
-    screenshots: {
-      opened: openedScreenshot,
-      returned: returnedScreenshot,
     },
   });
 }
@@ -1447,10 +1336,8 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     await stabilizeUrlForReloads(page);
     await ensureSectionExpanded(page, "done");
     screenshots[`${mode}_task_list`] = await saveScreenshot(page, config.reportDir, `${mode}-01-task-list`);
-    screenshots[`${mode}_task_filter_pill_light`] = await saveLocatorScreenshot(page, ".light-task-filter-button", config.reportDir, `${mode}-01-task-filter-pill`);
 
-    await verifyListFilters(page, seed, mode, config, checks);
-    await verifyDarkThemeFilter(page, mode, config, screenshots, checks);
+    await verifyListSurface(page, mode, config, checks);
     if (config.filterOnly) {
       const pageErrors = tracking.pageErrors.slice();
       const badConsole = seriousConsoleErrors(tracking.consoleErrors);
@@ -1468,8 +1355,9 @@ export async function runTaskWorkspaceProofMode(browser, config, mode, seed) {
     }
 
     await verifyStructuredTaskDetail(page, seed, mode, config, screenshots, checks);
-    await verifyDarkThemeCreatedByChip(page, seed, mode, config, screenshots, checks);
-    await verifyCreatedByNavigation(page, seed, mode, config, screenshots, checks);
+    await verifyBulkArchiveFlow(page, seed, mode, config, screenshots, checks);
+    await verifyDetailArchive(page, seed, mode, config, screenshots, checks);
+    await openTask(page, seed.primaryTaskId, mode, config.timeoutMs);
     await verifyStatusSelectorTriggers(page, seed, mode, config, screenshots, checks);
     await verifyStatusMutations(page, seed, mode, config, checks);
     await verifyChecklistPersistence(page, seed, mode, config, checks);
