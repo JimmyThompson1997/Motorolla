@@ -72,6 +72,7 @@ TASK_HELP = {
     "proof-live-calendar": "Run the Calendar continuous-month browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
     "proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle.",
     "proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification.",
+    "proof-live-contacts-search-emulator": "Run the Android-emulator Contacts search stability proof against the hosted VM with IME and trace verification.",
     "proof-local-contacts-edit-browser": "Boot the local workspace proof server and run the Contacts edit browser proof against the current local bundle.",
     "proof-live-contacts-edit-browser": "Run the Contacts edit browser proof against the hosted VM with manifest verification.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
@@ -592,6 +593,24 @@ def run_live_contacts_search_browser_proof(extra_args: list[str]) -> int:
     )
 
 
+def run_live_contacts_search_emulator_proof(extra_args: list[str]) -> int:
+    refresh_seed = current_git_head() or str(int(time.time()))
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/phone/phone_contacts_search_emulator_proof.py",
+            "--base-url",
+            "https://pucky.fly.dev",
+            "--refresh-key",
+            refresh_seed,
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-live-contacts-search-emulator").resolve()),
+            *extra_args,
+        ],
+        env=proof_env(),
+    )
+
+
 def run_live_contacts_edit_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_node_proofs(
@@ -972,6 +991,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_contacts_search_browser_proof(args.extra_args)
     if args.task == "proof-live-contacts-search-browser":
         return run_live_contacts_search_browser_proof(args.extra_args)
+    if args.task == "proof-live-contacts-search-emulator":
+        return run_live_contacts_search_emulator_proof(args.extra_args)
     if args.task == "proof-local-contacts-edit-browser":
         return run_local_contacts_edit_browser_proof(args.extra_args)
     if args.task == "proof-live-contacts-edit-browser":

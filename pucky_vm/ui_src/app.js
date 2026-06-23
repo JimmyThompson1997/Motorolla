@@ -4210,6 +4210,7 @@
 
   function contactsListItems() {
     return workspaceItems("contacts")
+      .filter(contact => contactRecordId(contact) !== "clinic-front-desk")
       .slice()
       .sort((left, right) => {
         const leftSelf = contactIsSelf(left);
@@ -4306,25 +4307,64 @@
     return String(fallbackContact?.title || "").trim() || "Contact";
   }
 
-  function contactDraftAvatar(draft, fallbackContact = null) {
-    const first = String(draft?.firstName || "").trim();
-    const last = String(draft?.lastName || "").trim();
-    if (first && last) {
-      return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
-    }
-    const name = contactDraftDisplayName(draft, fallbackContact);
-    const letters = name
+  function contactInitialsFromText(value, fallback = "CT") {
+    const letters = String(value || "")
       .replace(/[^A-Za-z0-9]+/g, " ")
       .trim()
       .split(/\s+/)
       .filter(Boolean);
     if (letters.length >= 2) {
-      return `${letters[0].charAt(0)}${letters[1].charAt(0)}`.toUpperCase();
+      return `${letters[0].charAt(0)}${letters[letters.length - 1].charAt(0)}`.toUpperCase();
     }
     if (letters.length === 1) {
-      return letters[0].slice(0, 2).toUpperCase();
+      return letters[0].charAt(0).toUpperCase();
     }
-    return String(fallbackContact?.metadata?.avatar || fallbackContact?.title || "CT").slice(0, 2).toUpperCase();
+    return String(fallback || "CT").slice(0, 2).toUpperCase();
+  }
+
+  function contactAvatarText(contact) {
+    if (contactIsSelf(contact)) {
+      return "ME";
+    }
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    const first = String(meta.first_name || "").trim();
+    const last = String(meta.last_name || "").trim();
+    const fullName = [first, last].filter(Boolean).join(" ").trim();
+    if (fullName) {
+      return contactInitialsFromText(fullName, String(meta.avatar || contact?.title || "CT"));
+    }
+    const displayName = String(meta.display_name || contact?.title || "").trim();
+    if (displayName) {
+      return contactInitialsFromText(displayName, String(meta.avatar || displayName || "CT"));
+    }
+    return String(meta.avatar || contact?.title || "CT").slice(0, 2).toUpperCase();
+  }
+
+  function contactDraftAvatar(draft, fallbackContact = null) {
+    if (contactIsSelf(fallbackContact)) {
+      return "ME";
+    }
+    const first = String(draft?.firstName || "").trim();
+    const last = String(draft?.lastName || "").trim();
+    const fullName = [first, last].filter(Boolean).join(" ").trim();
+    if (fullName) {
+      return contactInitialsFromText(fullName, String(fallbackContact?.metadata?.avatar || fallbackContact?.title || "CT"));
+    }
+    const fallbackName = String(fallbackContact?.title || fallbackContact?.metadata?.display_name || "").trim();
+    if (fallbackName) {
+      return contactInitialsFromText(fallbackName, String(fallbackContact?.metadata?.avatar || fallbackName || "CT"));
+    }
+    const email = String(draft?.email || "").trim();
+    if (email) {
+      return String(fallbackContact?.metadata?.avatar || email || "CT").slice(0, 2).toUpperCase();
+    }
+    const phone = String(draft?.phone || "").trim();
+    if (phone) {
+      return String(fallbackContact?.metadata?.avatar || phone || "CT").slice(0, 2).toUpperCase();
+    }
+    return contactInitialsFromText(contactDraftDisplayName(draft, fallbackContact), String(fallbackContact?.metadata?.avatar || fallbackContact?.title || "CT"));
   }
 
   function buildContactEditDraft(contact) {
@@ -4577,26 +4617,56 @@
     openOverlay("settingsSelectorOverlay", sheet, closeContactEditDiscardDialog);
   }
 
-  function queueContactsSearchFieldFocus(selectionStart = null, selectionEnd = null) {
-    const restore = () => {
-      const search = document.getElementById("contactsSearch");
-      if (!(search instanceof HTMLInputElement)) {
-        return;
-      }
-      search.focus({ preventScroll: true });
-      if (Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
-        try {
-          search.setSelectionRange(selectionStart, selectionEnd);
-        } catch (_error) {
-          // Ignore selection restore failures on search inputs that reject manual ranges.
-        }
-      }
-    };
-    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(restore);
+  let contactsPageNode = null;
+  let contactsPageRefs = null;
+
+  function syncContactsSearchInput(refs) {
+    if (document.activeElement !== refs.search && refs.search.value !== state.contacts.search) {
+      refs.search.value = String(state.contacts.search || "");
+    }
+  }
+
+  function syncContactsPage() {
+    if (!contactsPageRefs) {
       return;
     }
-    restore();
+    const refs = contactsPageRefs;
+    const emptyMessage = "No contacts match your search.";
+    const emptyHint = "Clear the search field to see every contact again.";
+    const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
+    refs.status.replaceChildren();
+    refs.status.hidden = !status;
+    refs.searchWrap.hidden = Boolean(status);
+    if (status) {
+      refs.status.append(status);
+      refs.empty.hidden = true;
+      refs.list.hidden = true;
+      refs.list.replaceChildren();
+      return;
+    }
+    syncContactsSearchInput(refs);
+    const contacts = filteredContactsListItems();
+    refs.empty.dataset.emptyMessage = emptyMessage;
+    refs.empty.dataset.emptyHint = emptyHint;
+    refs.empty.hidden = contacts.length > 0;
+    refs.list.hidden = contacts.length === 0;
+    if (!contacts.length) {
+      refs.list.replaceChildren();
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    contacts.forEach(contact => {
+      const row = el("button", "light-contact-row light-feed-row is-flat-feed");
+      row.type = "button";
+      row.dataset.contactId = contact.id;
+      row.addEventListener("click", () => {
+        state.selectedContactId = contact.id;
+        lightNavigate("contact-detail", { from: "contacts" });
+      });
+      row.append(lightAvatar(contact), lightContactCopy(contact));
+      fragment.append(row);
+    });
+    refs.list.replaceChildren(fragment);
   }
 
   function lightContactsSearchField() {
@@ -4615,12 +4685,9 @@
       if (String(state.contacts.search || "") === nextValue) {
         return;
       }
-      const selectionStart = search.selectionStart;
-      const selectionEnd = search.selectionEnd;
       state.contacts.search = nextValue;
       resetLightRouteScroll();
-      render();
-      queueContactsSearchFieldFocus(selectionStart, selectionEnd);
+      syncContactsPage();
     };
     search.addEventListener("input", onSearchInput);
     search.addEventListener("search", onSearchInput);
@@ -4629,34 +4696,29 @@
   }
 
   function lightContactsPage() {
-    const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
-    page.classList.add("light-contacts-page");
-    const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
-    if (status) {
-      page.append(status);
-      return page;
+    if (!contactsPageNode) {
+      const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
+      page.classList.add("light-contacts-page");
+      const status = el("div", "light-contacts-status");
+      status.hidden = true;
+      const searchWrap = lightContactsSearchField();
+      const empty = lightEmptyState("search", "No contacts match your search.", "Clear the search field to see every contact again.");
+      empty.hidden = true;
+      const list = el("div", "light-contact-list");
+      page.append(status, searchWrap, empty, list);
+      const search = searchWrap.querySelector(".light-contacts-search");
+      contactsPageRefs = {
+        page,
+        status,
+        searchWrap,
+        search,
+        empty,
+        list,
+      };
+      contactsPageNode = page;
     }
-    const searchWrap = lightContactsSearchField();
-    const contacts = filteredContactsListItems();
-    page.append(searchWrap);
-    if (!contacts.length) {
-      page.append(lightEmptyState("search", "No contacts match your search.", "Clear the search field to see every contact again."));
-      return page;
-    }
-    const list = el("div", "light-contact-list");
-    list.append(...contacts.map(contact => {
-      const row = el("button", "light-contact-row light-feed-row is-flat-feed");
-      row.type = "button";
-      row.dataset.contactId = contact.id;
-      row.addEventListener("click", () => {
-        state.selectedContactId = contact.id;
-        lightNavigate("contact-detail", { from: "contacts" });
-      });
-      row.append(lightAvatar(contact), lightContactCopy(contact));
-      return row;
-    }));
-    page.append(list);
-    return page;
+    syncContactsPage();
+    return contactsPageNode;
   }
 
   function lightContactDetailPage() {
@@ -9288,7 +9350,7 @@
   function lightAvatar(contact, size = "") {
     const meta = contact.metadata || {};
     const photo = String(meta.photo || "");
-    const initials = String(meta.avatar || contact.title || "?").slice(0, 2).toUpperCase();
+    const initials = contactAvatarText(contact);
     const hasPhoto = Boolean(photo);
     const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : initials);
     avatar.setAttribute("aria-label", contact.title);

@@ -389,22 +389,31 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "readContactsSearchState" in source
     assert "setContactsSearchQuery" in source
     assert "expectContactsSearchRows" in source
+    assert "installContactsSearchTrace" in source
+    assert "traceContactsSearchTyping" in source
     assert 'const emailQuery = "one@example";' in source
     assert 'const phoneQuery = "0101000";' in source
     assert 'const phraseQuery = "Linked to Alpha";' in source
     assert 'const reminderQuery = "reminder";' in source
     assert 'const noMatchQuery = "zzzz-no-match";' in source
+    assert 'const stabilityQuery = "dav";' in source
     assert "No contacts match your search." in source
     assert "Expected active Contacts search query to survive contact-detail Back" in source
     assert "Expected Contacts search to reset after leaving the Contacts surface" in source
+    assert "Expected Contacts search typing to avoid blur/focusout while filtering" in source
+    assert "Expected Contacts search typing to keep the same mounted input" in source
     assert "contacts-search-filtered-email" in source
     assert "contacts-search-filtered-phone" in source
     assert "contacts-search-filtered-phrase" in source
     assert "contacts-search-empty" in source
     assert "contacts-search-cleared" in source
     assert "contacts-search-detail-from-filter" in source
+    assert "contacts-search-initials" in source
+    assert "contacts-search-stability" in source
     assert 'phone: "+1 (415) 555-0188"' in shared
     assert 'activity: ["Linked to live alpha"]' in shared
+    assert 'title: "David"' in shared
+    assert 'title: "Daniel"' in shared
 
 
 def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
@@ -795,6 +804,44 @@ def test_contacts_search_browser_proof_task_runner_and_docs_are_first_class() ->
     assert "python -m tools.dev proof-live-contacts-search-browser" in readme
     assert "Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`" in docs_readme
     assert "Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`" in docs_readme
+
+
+def test_contacts_search_emulator_proof_task_runner_and_docs_are_first_class() -> None:
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+    assert '"proof-live-contacts-search-emulator": "Run the Android-emulator Contacts search stability proof against the hosted VM with IME and trace verification."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contacts-search-emulator").resolve())' in dev_source
+    assert 'return run_live_contacts_search_emulator_proof(args.extra_args)' in dev_source
+    assert "python -m tools.dev proof-live-contacts-search-emulator" in readme
+    assert "python -m tools.dev proof-live-contacts-search-emulator" in docs_readme
+    assert "Contacts search emulator proof (live): `python -m tools.dev proof-live-contacts-search-emulator`" in docs_readme
+
+
+def test_contacts_search_emulator_proof_tracks_ime_and_trace_contract() -> None:
+    source = read_source("phone_contacts_search_emulator_proof.py")
+    browser = read_source("phone_contacts_search_browser.js")
+
+    assert 'CHROME_PACKAGE = "com.android.chrome"' in source
+    assert "discover_chrome_cdp_url" in source
+    assert "mInputShown=true" in source
+    assert "visible=true" in source
+    assert '"contacts-keyboard-before.png"' in source
+    assert '"contacts-keyboard-after-d.png"' in source
+    assert '"contacts-keyboard-after-da.png"' in source
+    assert '"contacts-keyboard-after-dav.png"' in source
+    assert '"install_contacts_trace"' in source
+    assert '"read_contacts_state"' in source
+    assert '"read_contacts_trace"' in source
+    assert '"search_input_center"' in source
+    assert '"dav"' in source
+    assert "trace_event_counts" in source
+    assert "ime_visible" in source
+    assert "installContactsTrace" in browser
+    assert "readContactsState" in browser
+    assert "searchInputCenter" in browser
+    assert "readContactsTrace" in browser
 
 
 def test_contacts_edit_browser_proof_task_runner_and_docs_are_first_class() -> None:

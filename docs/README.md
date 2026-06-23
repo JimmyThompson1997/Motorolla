@@ -18,6 +18,7 @@ This folder is the retained documentation set. Treat this file as the top-level 
 - Notes flash browser proof (live): `python -m tools.dev proof-live-notes-flash-browser`
 - Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`
 - Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`
+- Contacts search emulator proof (live): `python -m tools.dev proof-live-contacts-search-emulator`
 - Contacts edit browser proof (local): `python -m tools.dev proof-local-contacts-edit-browser`
 - Contacts edit browser proof (live): `python -m tools.dev proof-live-contacts-edit-browser`
 - Local proof: `python -m tools.dev proof-local-web`

@@ -336,7 +336,7 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
         `${runId}-calendar-change`
       ],
       projects: [`${runId}-alpha-project`, `${runId}-beta-project`],
-      contacts: [`${runId}-contact-one`, `${runId}-contact-two`],
+      contacts: [`${runId}-contact-one`, `${runId}-contact-two`, `${runId}-david-contact`, `${runId}-daniel-contact`],
       "meeting-notes": [`${runId}-graph-meeting`],
       reminders: [`${runId}-graph-reminder`, `${runId}-due-reminder`]
     }
@@ -580,6 +580,24 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         email: "proof.two@example.com",
         phone: "+1 (555) 010-2000",
         activity: ["Created by proof", "Linked to Beta"]
+      }
+    });
+    await apiRequest(config, "POST", "/api/workspace/contacts", {
+      id: `${runId}-david-contact`,
+      title: "David",
+      summary: "Contact",
+      metadata: {
+        first_name: "David",
+        activity: ["Single-name proof contact"]
+      }
+    });
+    await apiRequest(config, "POST", "/api/workspace/contacts", {
+      id: `${runId}-daniel-contact`,
+      title: "Daniel",
+      summary: "Contact",
+      metadata: {
+        first_name: "Daniel",
+        activity: ["Single-name proof contact"]
       }
     });
     await apiRequest(config, "POST", "/api/workspace/meeting-notes", {
@@ -1740,7 +1758,7 @@ async function assertContactPhotoThumbnails(page, label, timeoutMs) {
         rows: Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]")).map(row => {
           const avatar = row.querySelector(".light-avatar");
           const img = row.querySelector(".light-avatar.has-photo img");
-          const titleNode = row.querySelector(".light-text-stack span");
+          const titleNode = row.querySelector(".light-text-stack strong") || row.querySelector(".light-text-stack span");
           return {
             id: String(row.getAttribute("data-contact-id") || ""),
             title: String(titleNode?.textContent || "").trim(),
@@ -1763,8 +1781,14 @@ async function assertContactPhotoThumbnails(page, label, timeoutMs) {
       const me = rows.rows.find(row => row.id === "contact-me");
       assert(me, `${label} should render contact-me`);
       assert(!me.hasPhotoClass && me.imageCount === 0, "contact-me should remain initials-only");
-      const contacts = rows.rows.filter(row => row.id !== "contact-me");
-      assert(contacts.length > 0, `${label} should render at least one non-self contact`);
+      const singleInitialContacts = rows.rows.filter(row => row.title === "David" || row.title === "Daniel");
+      assert(singleInitialContacts.length === 2, `${label} should render the seeded single-name contacts`);
+      for (const contact of singleInitialContacts) {
+        assert(!contact.hasPhotoClass && contact.imageCount === 0, `${contact.title || contact.id} should stay initials-only`);
+        assert(contact.initials === "D", `${contact.title || contact.id} should render a single D initial, got ${contact.initials}`);
+      }
+      const contacts = rows.rows.filter(row => row.id !== "contact-me" && row.title !== "David" && row.title !== "Daniel");
+      assert(contacts.length > 0, `${label} should render at least one photo contact`);
       for (const contact of contacts) {
         assert(contact.hasPhotoClass, `${contact.title || contact.id} should use the photo avatar class`);
         assert(contact.imageCount === 1, `${contact.title || contact.id} should render exactly one thumbnail image`);
@@ -1816,17 +1840,123 @@ async function readContactsSearchState(page) {
     const search = document.querySelector(".light-contacts-search");
     const rows = Array.from(document.querySelectorAll(".light-contact-row"));
     const empty = document.querySelector(".light-empty-state");
+    const rowData = rows.map(node => ({
+      id: String(node.getAttribute("data-contact-id") || "").trim(),
+      title: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+      avatarText: String(node.querySelector(".light-avatar")?.textContent || "").trim(),
+    }));
     return {
       route: shell?.getAttribute("data-light-route") || "",
       searchVisible: Boolean(search),
       query: search instanceof HTMLInputElement ? search.value : "",
-      rowIds: rows.map(node => String(node.getAttribute("data-contact-id") || "").trim()).filter(Boolean),
-      rowTitles: rows
-        .map(node => String(node.querySelector(".light-text-stack strong")?.textContent || "").trim())
-        .filter(Boolean),
+      rowIds: rowData.map(row => row.id).filter(Boolean),
+      rowTitles: rowData.map(row => row.title).filter(Boolean),
+      rowAvatarTexts: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.avatarText])),
       emptyText: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
     };
   });
+}
+
+async function installContactsSearchTrace(page) {
+  await page.evaluate(() => {
+    if (!window.__contactsSearchTraceStore) {
+      const store = {
+        currentNode: null,
+        currentToken: 0,
+        events: [],
+        initialToken: 0,
+        initialValue: "",
+      };
+      const bindSearchNode = () => {
+        const next = document.getElementById("contactsSearch");
+        if (next !== store.currentNode) {
+          store.currentNode = next instanceof HTMLInputElement ? next : null;
+          store.currentToken += 1;
+          if (store.currentNode) {
+            store.currentNode.dataset.traceToken = String(store.currentToken);
+          }
+          return true;
+        }
+        return false;
+      };
+      const readValue = () => store.currentNode instanceof HTMLInputElement ? store.currentNode.value : "";
+      const record = (type, event = null) => {
+        const target = event?.target instanceof HTMLElement ? event.target : null;
+        const shouldRecord = !target || target.id === "contactsSearch" || target === store.currentNode;
+        if (!shouldRecord) {
+          return;
+        }
+        store.events.push({
+          type,
+          nodeToken: store.currentToken,
+          activeId: document.activeElement?.id || "",
+          targetId: target?.id || "",
+          value: readValue(),
+          key: event?.key || "",
+          data: event?.data || "",
+          inputType: event?.inputType || "",
+        });
+      };
+      bindSearchNode();
+      ["focusin", "focusout", "blur", "beforeinput", "input", "keydown", "keyup"].forEach(type => {
+        document.addEventListener(type, event => {
+          if (bindSearchNode()) {
+            record("search-node-changed", null);
+          }
+          record(type, event);
+        }, true);
+      });
+      new MutationObserver(() => {
+        if (bindSearchNode()) {
+          record("search-node-changed", null);
+        }
+      }).observe(document.documentElement, { childList: true, subtree: true });
+      window.__contactsSearchTraceStore = store;
+    }
+    const store = window.__contactsSearchTraceStore;
+    const current = document.getElementById("contactsSearch");
+    store.currentNode = current instanceof HTMLInputElement ? current : null;
+    if (store.currentNode && !store.currentToken) {
+      store.currentToken = 1;
+      store.currentNode.dataset.traceToken = String(store.currentToken);
+    }
+    store.events = [];
+    store.initialToken = store.currentToken;
+    store.initialValue = store.currentNode instanceof HTMLInputElement ? store.currentNode.value : "";
+  });
+}
+
+async function traceContactsSearchTyping(page, query, timeoutMs) {
+  await setContactsSearchQuery(page, "", timeoutMs);
+  const search = page.locator(".light-contacts-search").first();
+  await search.click();
+  await installContactsSearchTrace(page);
+  await search.type(query, { delay: 40 });
+  await page.waitForFunction(expectedQuery => {
+    const input = document.querySelector(".light-contacts-search");
+    return input instanceof HTMLInputElement && input.value === expectedQuery;
+  }, query, { timeout: timeoutMs });
+  const trace = await page.evaluate(() => {
+    const store = window.__contactsSearchTraceStore || {};
+    const current = document.getElementById("contactsSearch");
+    return {
+      initialToken: Number(store.initialToken || 0),
+      initialValue: String(store.initialValue || ""),
+      finalToken: Number(store.currentToken || 0),
+      finalValue: current instanceof HTMLInputElement ? current.value : "",
+      events: Array.isArray(store.events) ? store.events.slice() : [],
+    };
+  });
+  const eventCounts = trace.events.reduce((counts, event) => {
+    const key = String(event?.type || "");
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    ...trace,
+    eventCounts,
+    searchState: await readContactsSearchState(page),
+  };
 }
 
 async function readContactEditState(page) {
@@ -1894,6 +2024,9 @@ async function saveContactEditAndWaitForDetail(page, timeoutMs) {
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
+  const proofContactId = `${seed.runId}-contact-one`;
+  const davidContactId = `${seed.runId}-david-contact`;
+  const danielContactId = `${seed.runId}-daniel-contact`;
   const firstContact = page.locator("button[data-contact-id]").first();
   await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
   const firstContactId = String(await firstContact.getAttribute("data-contact-id") || "");
@@ -1905,6 +2038,9 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   assert(baselineSearchState.searchVisible, "Contacts search should be visible once contacts have loaded");
   assert(baselineSearchState.query === "", `Expected Contacts search to start empty, got ${baselineSearchState.query}`);
   assert(baselineRowIds[0] === "contact-me", `Expected Contacts baseline list to keep Me first, got ${baselineRowIds[0] || "none"}`);
+  assert(baselineSearchState.rowAvatarTexts["contact-me"] === "ME", `Expected contact-me avatar to stay ME, got ${baselineSearchState.rowAvatarTexts["contact-me"] || "<missing>"}`);
+  assert(baselineSearchState.rowAvatarTexts[davidContactId] === "D", `Expected David avatar to render a single D initial, got ${baselineSearchState.rowAvatarTexts[davidContactId] || "<missing>"}`);
+  assert(baselineSearchState.rowAvatarTexts[danielContactId] === "D", `Expected Daniel avatar to render a single D initial, got ${baselineSearchState.rowAvatarTexts[danielContactId] || "<missing>"}`);
   assert(contactsListFlatness.rowClassList.includes("is-flat-feed"), `Contacts list should render flat-feed rows (${contactsListFlatness.rowClassList.join(" ")})`);
   assert(isTransparentColor(contactsListFlatness.rowBackground), `Contacts list should stay visually flat (${contactsListFlatness.rowBackground})`);
   assert(isNoShadow(contactsListFlatness.rowBoxShadow), `Contacts list should stay visually flat (${contactsListFlatness.rowBoxShadow})`);
@@ -1924,6 +2060,29 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     );
   }
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-baseline`);
+  const initialsSearchState = await expectContactsSearchRows(page, "single-name proof", [danielContactId, davidContactId], config.timeoutMs);
+  assert(initialsSearchState.rowAvatarTexts[davidContactId] === "D", `Expected David initials search result to render D, got ${initialsSearchState.rowAvatarTexts[davidContactId] || "<missing>"}`);
+  assert(initialsSearchState.rowAvatarTexts[danielContactId] === "D", `Expected Daniel initials search result to render D, got ${initialsSearchState.rowAvatarTexts[danielContactId] || "<missing>"}`);
+  screenshots[`${theme}_contacts_search_initials`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-initials`);
+  const stabilityQuery = "dav";
+  const stabilityTrace = await traceContactsSearchTyping(page, stabilityQuery, config.timeoutMs);
+  assert((stabilityTrace.eventCounts.blur || 0) === 0, `Expected Contacts search typing to avoid blur/focusout while filtering; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
+  assert((stabilityTrace.eventCounts.focusout || 0) === 0, `Expected Contacts search typing to avoid blur/focusout while filtering; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
+  assert((stabilityTrace.eventCounts["search-node-changed"] || 0) === 0, `Expected Contacts search typing to keep the same mounted input; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
+  assert(stabilityTrace.initialToken === stabilityTrace.finalToken, `Expected Contacts search typing to keep the same mounted input (token ${stabilityTrace.initialToken} -> ${stabilityTrace.finalToken})`);
+  assert(stabilityTrace.finalValue === stabilityQuery, `Expected Contacts search typing to finish with ${stabilityQuery}, got ${stabilityTrace.finalValue}`);
+  assert(
+    JSON.stringify(stabilityTrace.searchState.rowIds) === JSON.stringify([davidContactId]),
+    `Expected ${stabilityQuery} to filter down to David, got ${stabilityTrace.searchState.rowIds.join(", ")}`
+  );
+  screenshots[`${theme}_contacts_search_stability`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-stability`);
+  summary.contactSearchStability = summary.contactSearchStability || [];
+  summary.contactSearchStability.push({
+    theme,
+    query: stabilityQuery,
+    trace: stabilityTrace,
+  });
+  await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Me", config.timeoutMs);
@@ -1955,7 +2114,6 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
   summary.contactPhotoThumbnails.push({ theme, ...photoState });
   if (seed.writeEnabled) {
-    const proofContactId = `${seed.runId}-contact-one`;
     const emailQuery = "one@example";
     const phoneQuery = "0101000";
     const phraseQuery = "Linked to Alpha";

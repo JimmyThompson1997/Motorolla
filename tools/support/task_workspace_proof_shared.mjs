@@ -72,6 +72,8 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     noteId: `${prefix}-note`,
     contactId: `${prefix}-contact`,
     ownerContactId: `${prefix}-owner-contact`,
+    davidContactId: `${prefix}-david-contact`,
+    danielContactId: `${prefix}-daniel-contact`,
     projectId: `${prefix}-project`,
     calendarEventId: `${prefix}-event`,
     meetingNoteId: `${prefix}-meeting-note`,
@@ -102,6 +104,8 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     noteTitle: `Task Proof Note ${runLabel}`,
     contactTitle: `Task Proof Contact ${runLabel}`,
     ownerContactTitle: `Task Proof Owner ${runLabel}`,
+    davidContactTitle: "David",
+    danielContactTitle: "Daniel",
     projectTitle: `Task Proof Project ${runLabel}`,
     calendarEventTitle: `Task Proof Event ${runLabel}`,
     meetingNoteTitle: `Task Proof Meeting Note ${runLabel}`,
@@ -137,7 +141,7 @@ export function buildTaskProofSeed(runId = `task-proof-${Date.now()}`) {
     seed.emptyTaskId,
   ];
   seed.record_ids.notes = [seed.noteId];
-  seed.record_ids.contacts = [seed.contactId, seed.ownerContactId];
+  seed.record_ids.contacts = [seed.contactId, seed.ownerContactId, seed.davidContactId, seed.danielContactId];
   seed.record_ids.projects = [seed.projectId];
   seed.record_ids["calendar-events"] = [seed.calendarEventId];
   seed.record_ids["meeting-notes"] = [seed.meetingNoteId];
@@ -223,6 +227,24 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
       email: `${seed.prefix}-owner@example.com`,
       phone: "+1 (415) 555-0179",
       activity: ["Owner handoff"],
+    },
+  });
+  await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/contacts", {
+    id: seed.davidContactId,
+    title: "David",
+    summary: "Contact",
+    metadata: {
+      first_name: "David",
+      activity: ["Single-name proof contact"],
+    },
+  });
+  await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/contacts", {
+    id: seed.danielContactId,
+    title: "Daniel",
+    summary: "Contact",
+    metadata: {
+      first_name: "Daniel",
+      activity: ["Single-name proof contact"],
     },
   });
   await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/projects", {
