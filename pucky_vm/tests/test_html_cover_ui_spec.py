@@ -1774,7 +1774,6 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     meeting_descriptor = function_block(app, "universalCanonicalMeetingFeedTileDescriptor")
     inbox_page = function_block(app, "lightInboxPage")
     meetings_page = function_block(app, "lightMeetingsPage")
-    meetings_toolbar = function_block(app, "meetingsEmbeddedToolbar")
     render_universal_tile = function_block(app, "renderUniversalFeedTile")
     card_view = function_block(app, "cardView")
 
@@ -1800,13 +1799,9 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'surfaceClassName: "light-canonical-port-surface light-meetings-surface",' in meetings_page
     assert 'contentClassName: "meetings-page is-embedded-light",' in meetings_page
     assert "const beforeSections = [];" in meetings_page
-    assert "beforeSections.push(meetingsEmbeddedToolbar());" in meetings_page
     assert "sections: [lightMeetingsSection()]" in meetings_page
-    assert "function meetingsEmbeddedToolbar()" in app
-    assert 'const toolbar = el("div", "meetings-embedded-toolbar");' in meetings_toolbar
-    assert 'const refresh = el("button", "meetings-refresh", "Refresh");' in meetings_toolbar
-    assert "refresh.type = \"button\";" in meetings_toolbar
-    assert 'refresh.addEventListener("click", () => loadMeetings({ render: true }));' in meetings_toolbar
+    assert "function meetingsEmbeddedToolbar()" not in app
+    assert "meetingsEmbeddedToolbar" not in meetings_page
     assert 'renderMode: "flat",' in reply_descriptor
     assert 'renderMode: "flat",' in meeting_descriptor
     assert "const displayCards = feedDisplayCards();" in inbox_section
@@ -1827,8 +1822,8 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert 'const cardEl = el("article", flatFeed ? `${cardClassName} is-flat-feed` : cardClassName);' in card_view
     assert 'setDataAttribute(wrapper, "data-card-surface", surface);' in card_view
     assert 'setDataAttribute(cardEl, "data-card-surface", surface);' in card_view
-    assert ".meetings-embedded-toolbar {" in styles
-    assert ".meetings-refresh {" in styles
+    assert ".meetings-embedded-toolbar {" not in styles
+    assert ".meetings-refresh {" not in styles
     assert 'body.classList.add("is-flat-feed");' in card_view
     assert 'const copy = el("div", "card-meeting-copy");' in card_view
     assert 'const meta = el("div", "card-meeting-meta");' in card_view

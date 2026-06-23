@@ -9574,18 +9574,8 @@
     });
   }
 
-  function meetingsEmbeddedToolbar() {
-    const toolbar = el("div", "meetings-embedded-toolbar");
-    const refresh = el("button", "meetings-refresh", "Refresh");
-    refresh.type = "button";
-    refresh.addEventListener("click", () => loadMeetings({ render: true }));
-    toolbar.append(refresh);
-    return toolbar;
-  }
-
   function lightMeetingsPage() {
     const beforeSections = [];
-    beforeSections.push(meetingsEmbeddedToolbar());
     if (state.meetings.loading && state.meetings.records.length) {
       beforeSections.push(el("div", "meetings-refreshing", "Refreshing..."));
     }
