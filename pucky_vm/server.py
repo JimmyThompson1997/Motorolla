@@ -752,10 +752,15 @@ class PuckyVoiceService:
         existing = self.workspace.get_record(clean_collection, record_id, include_deleted=True)
         if existing is None:
             return None
+        action_only_patch = self._is_reminder_action_only_patch(payload)
         return self.workspace.patch_record(
             clean_collection,
             record_id,
-            self._prepare_reminder_write_payload(payload, existing=existing),
+            self._prepare_reminder_write_payload(
+                payload,
+                existing=existing,
+                validate_delivery_targets=not action_only_patch,
+            ),
         )
 
     def _prepare_reminder_write_payload(
@@ -763,6 +768,7 @@ class PuckyVoiceService:
         payload: dict[str, object],
         *,
         existing: dict[str, object] | None,
+        validate_delivery_targets: bool = True,
     ) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise ValueError("workspace_payload_must_be_object")
@@ -779,9 +785,33 @@ class PuckyVoiceService:
             or "open"
         ).strip().lower() or "open"
         normalized = _normalize_reminder_metadata(merged_metadata, status=status)
-        self._validate_reminder_metadata(normalized)
+        if validate_delivery_targets:
+            self._validate_reminder_metadata(normalized)
         reminder["metadata"] = normalized
         return reminder
+
+    def _is_reminder_action_only_patch(self, payload: dict[str, object] | None) -> bool:
+        if not isinstance(payload, dict) or not payload:
+            return False
+        allowed_keys = {"status", "due_at_ms", "metadata"}
+        if any(str(key or "").strip() not in allowed_keys for key in payload):
+            return False
+        if "status" in payload and str(payload.get("status") or "").strip().lower() != "done":
+            return False
+        incoming_metadata = payload.get("metadata")
+        if incoming_metadata is not None and not isinstance(incoming_metadata, dict):
+            return False
+        if isinstance(incoming_metadata, dict):
+            allowed_metadata_keys = {
+                "delivery_state",
+                "last_fired_at_ms",
+                "last_fired_due_at_ms",
+                "last_delivery_error",
+                "snoozed_until_ms",
+            }
+            if any(str(key or "").strip() not in allowed_metadata_keys for key in incoming_metadata):
+                return False
+        return "status" in payload or "due_at_ms" in payload
 
     def _validate_reminder_metadata(self, metadata: dict[str, object]) -> None:
         recipients = self._reminder_recipients_from_metadata(metadata)
