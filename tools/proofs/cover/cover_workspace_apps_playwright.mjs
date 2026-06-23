@@ -15,6 +15,16 @@ import {
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
 const PROOF_RUN_ID = "proof-workspace";
+const CLEANUP_RECORD_COLLECTION_ORDER = [
+  "reminders",
+  "meeting-notes",
+  "projects",
+  "feed-items",
+  "calendar-events",
+  "tasks",
+  "notes",
+  "contacts"
+];
 const require = createRequire(import.meta.url);
 
 function loadPlaywrightCore() {
@@ -355,6 +365,20 @@ async function deleteWorkspaceLink(config, linkId) {
   }
 }
 
+async function sweepSeedRecordsByPrefix(config, runId = PROOF_RUN_ID) {
+  const prefix = `${String(runId || PROOF_RUN_ID).trim()}-`;
+  for (const collection of CLEANUP_RECORD_COLLECTION_ORDER) {
+    const payload = await readCollection(config, collection);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const matchingIds = items
+      .map(item => String(item?.record_id || item?.id || "").trim())
+      .filter(recordId => recordId.startsWith(prefix));
+    for (const recordId of matchingIds) {
+      await deleteWorkspaceRecord(config, collection, recordId);
+    }
+  }
+}
+
 async function cleanupWorkspaceSeed(config, seed) {
   if (!seed?.writeEnabled) {
     return false;
@@ -363,11 +387,13 @@ async function cleanupWorkspaceSeed(config, seed) {
   for (const linkId of manifest.linkIds) {
     await deleteWorkspaceLink(config, linkId);
   }
-  for (const [collection, ids] of Object.entries(manifest.recordIds)) {
+  for (const collection of CLEANUP_RECORD_COLLECTION_ORDER) {
+    const ids = Array.isArray(manifest.recordIds?.[collection]) ? manifest.recordIds[collection] : [];
     for (const recordId of ids) {
       await deleteWorkspaceRecord(config, collection, recordId);
     }
   }
+  await sweepSeedRecordsByPrefix(config, seed.runId || PROOF_RUN_ID);
   return true;
 }
 
