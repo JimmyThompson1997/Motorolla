@@ -147,7 +147,10 @@ async function fetchJsonStrict(url, init = {}) {
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`Request failed for ${url} (${response.status}): ${text.slice(0, 300)}`);
+    const error = new Error(`Request failed for ${url} (${response.status}): ${text.slice(0, 300)}`);
+    error.status = response.status;
+    error.body = text;
+    throw error;
   }
   try {
     return JSON.parse(text);
@@ -1535,8 +1538,13 @@ async function waitForFeedItem(baseUrl, token, matcher, timeoutMs) {
   throw new Error(`Timed out waiting for live proof feed item; saw ${lastItems.length} archived-inclusive items`);
 }
 
+function isRetriableLiveTempCardCreateError(error) {
+  return [429, 502, 503, 504].includes(Number(error?.status || 0));
+}
+
 async function createLiveTempInboxCard(baseUrl, token, runId) {
-  const result = await fetchJsonStrict(new URL("/api/turn/text", `${String(baseUrl || "").replace(/\/+$/, "")}/`).toString(), {
+  const url = new URL("/api/turn/text", `${String(baseUrl || "").replace(/\/+$/, "")}/`).toString();
+  const init = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1549,7 +1557,19 @@ async function createLiveTempInboxCard(baseUrl, token, runId) {
       thread_mode: "new",
       proof_reply_delay_ms: 0
     })
-  });
+  };
+  let result = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      result = await fetchJsonStrict(url, init);
+      break;
+    } catch (error) {
+      if (attempt >= 3 || !isRetriableLiveTempCardCreateError(error)) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 750 * attempt));
+    }
+  }
   const responseCardId = String(result?.card_id || "").trim();
   if (responseCardId) {
     return {
