@@ -1017,12 +1017,16 @@ async function selectAgendaChip(page, seed, label) {
 }
 
 async function selectCalendarEvent(page, seed) {
-  await page.locator(`${proofEventSelector(seed)} .light-event-main`).click();
+  const eventMain = page.locator(`${proofEventSelector(seed)} .light-event-main`).first();
+  await eventMain.scrollIntoViewIfNeeded();
+  await eventMain.click();
   await waitForHeaderText(page, "Proof freelance review call");
 }
 
 async function selectCalendarEventById(page, seed, eventSuffix, expectedTitle) {
-  await page.locator(`.light-event-block[data-event-id="${seed.runId}-${eventSuffix}"] .light-event-main`).click();
+  const eventMain = page.locator(`.light-event-block[data-event-id="${seed.runId}-${eventSuffix}"] .light-event-main`).first();
+  await eventMain.scrollIntoViewIfNeeded();
+  await eventMain.click();
   await waitForHeaderText(page, expectedTitle);
 }
 
