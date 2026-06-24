@@ -763,6 +763,11 @@ def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
     assert 'if (command === "ui.debug.audio_probe.get") {' in app
     assert 'bridge_connected: hasNativeAudioBridge()' in app
     assert "...state.uiSurface," in describe_ui_surface
+    assert 'const currentUrl = String(window.location && window.location.href || "");' in describe_ui_surface
+    assert 'const bridgeConnected = hasNativeAudioBridge();' in describe_ui_surface
+    assert 'requested_url: bridgeConnected ? state.uiSurface.requested_url : currentUrl,' in describe_ui_surface
+    assert 'active_url: bridgeConnected ? state.uiSurface.active_url : currentUrl,' in describe_ui_surface
+    assert 'entrypoint_url: bridgeConnected ? state.uiSurface.entrypoint_url : currentUrl,' in describe_ui_surface
     assert 'audio_runtime_mode: audioRuntimeMode()' in describe_ui_surface
     assert "bridge_connected: hasNativeAudioBridge()," in describe_audio_probe
     assert 'runtime_mode: audioRuntimeMode()' in describe_audio_probe
@@ -770,6 +775,15 @@ def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
     assert 'current_tile_audio_phase: state.audioProbe.current_tile_audio_phase || "idle"' in describe_audio_probe
     assert "recent_events: Array.isArray(state.audioProbe.recent_events)" in describe_audio_probe
     assert 'last_error_toast: String(state.audioProbe.last_error_toast || state.lastToast.message || "")' in describe_audio_probe
+
+
+def test_settings_surface_reload_is_native_only() -> None:
+    app = read("app.js")
+    ensure_surface_current = function_block(app, "ensureSettingsSurfaceCurrent")
+
+    assert 'const bridgeConnected = Boolean(state.uiSurface.bridge_connected);' in ensure_surface_current
+    assert 'if (!bridgeConnected || sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {' in ensure_surface_current
+    assert 'window.location.replace(entrypointUrl);' in ensure_surface_current
 
 
 def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default() -> None:

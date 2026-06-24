@@ -3764,9 +3764,11 @@
     if (state.route !== "settings") {
       return false;
     }
+    const bridgeConnected = Boolean(state.uiSurface.bridge_connected);
     const sourceKind = String(state.uiSurface.source_kind || "");
     const entrypointUrl = String(state.uiSurface.entrypoint_url || "");
-    if (sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
+    // Hosted browser sessions have no native bundle to swap into, so Settings should stay in-place.
+    if (!bridgeConnected || sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
       try {
         sessionStorage.removeItem(SETTINGS_SURFACE_RELOAD_KEY);
       } catch (_) {
@@ -4144,6 +4146,8 @@
     const feedStyle = feed ? window.getComputedStyle(feed) : null;
     const focusedSessionId = String(state.openCardMenuSessionId || "");
     const focusedCard = findFocusedCard();
+    const currentUrl = String(window.location && window.location.href || "");
+    const bridgeConnected = hasNativeAudioBridge();
     const cards = Array.from(document.querySelectorAll("article[data-card-id], article[data-card-session-id]")).map(node => ({
       kind: node.getAttribute("data-card-kind") || "",
       card_id: node.getAttribute("data-card-id") || "",
@@ -4160,6 +4164,9 @@
     }));
     return {
       ...state.uiSurface,
+      requested_url: bridgeConnected ? state.uiSurface.requested_url : currentUrl,
+      active_url: bridgeConnected ? state.uiSurface.active_url : currentUrl,
+      entrypoint_url: bridgeConnected ? state.uiSurface.entrypoint_url : currentUrl,
       audio_runtime_mode: audioRuntimeMode(),
       route: shell?.getAttribute("data-view") || "",
       detail: {
