@@ -110,11 +110,11 @@ const CALENDAR_CONNECTED_SURFACES = [
     surface: "Reminders",
     route: "reminders",
     readySelector: ".light-reminder-row",
-    openerSelector: '[data-record-id="demo-reminder-health-call"]',
+    openerSelector: '[data-record-id="demo-reminder-paint-samples"]',
     detailSelector: '.light-shell[data-light-route="reminder-detail"]',
-    expectedCalendarTitle: "Clinic paperwork check-in",
+    expectedCalendarTitle: "Front porch repair window",
     blockedSummaries: [
-      "Short appointment block to confirm forms, timing, and the follow-up questions.",
+      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
     ],
   },
   {
@@ -206,6 +206,23 @@ function buildRouteUrl(config, routeConfig, theme) {
   return url.toString();
 }
 
+async function gotoRouteWithRetry(page, url, options, maxAttempts = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await page.goto(url, options);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts) {
+        break;
+      }
+      await page.waitForTimeout(1000 * attempt);
+    }
+  }
+  throw lastError;
+}
+
 async function fetchManifest(config) {
   const url = new URL("/ui/pucky/latest/manifest.json", `${String(config.baseUrl || "").replace(/\/+$/, "")}/`);
   if (String(config.refreshKey || "").trim()) {
@@ -289,7 +306,14 @@ async function waitForSurfaceReady(page, routeConfig, apiToken, timeoutMs) {
     ({ primarySelector, emptySelector }) => {
       const primary = document.querySelector(primarySelector);
       const empty = emptySelector ? document.querySelector(emptySelector) : null;
-      return Boolean(primary || empty);
+      if (primary) {
+        return true;
+      }
+      if (!empty) {
+        return false;
+      }
+      const emptyText = String(empty.textContent || "").replace(/\s+/g, " ").trim();
+      return !/\bLoading\b|Pulling workspace records|Loading inbox|Loading meetings/i.test(emptyText);
     },
     { primarySelector: routeConfig.primarySelector, emptySelector: routeConfig.emptySelector },
     { timeout: timeoutMs }
@@ -364,12 +388,13 @@ async function collectRouteMetrics(page, routeConfig) {
       .filter(Boolean);
     const matchingRows = [...document.querySelectorAll(config.primarySelector)];
     const firstRow = matchingRows[0] || null;
+    const firstContentRow = matchingRows.find(node => node.querySelector(".card-body, .light-text-stack")) || firstRow;
     const firstRowStyle = firstRow ? window.getComputedStyle(firstRow) : null;
-    const firstIdentity = firstRow?.querySelector(".identity, .light-small-icon, .light-app-icon") || null;
-    const firstBody = firstRow?.querySelector(".card-body, .light-text-stack") || null;
-    const firstActions = firstRow?.querySelector(".card-actions") || null;
-    const firstTitle = firstRow?.querySelector(".card-title-trigger, .title, .light-event-title, strong") || null;
-    const firstSummary = firstRow?.querySelector(".card-summary-trigger .preview, .card-summary-trigger, .light-note-row-context, .light-project-summary, .light-event-summary") || null;
+    const firstIdentity = firstContentRow?.querySelector(".identity, .light-small-icon, .light-app-icon") || null;
+    const firstBody = firstContentRow?.querySelector(".card-body, .light-text-stack") || null;
+    const firstActions = firstContentRow?.querySelector(".card-actions") || null;
+    const firstTitle = firstContentRow?.querySelector(".card-title-trigger, .title, .light-event-title, strong") || null;
+    const firstSummary = firstContentRow?.querySelector(".card-summary-trigger .preview, .card-summary-trigger, .light-note-row-context, .light-project-summary, .light-event-summary") || null;
     const firstBodyStyle = firstBody ? window.getComputedStyle(firstBody) : null;
     const firstActionsStyle = firstActions ? window.getComputedStyle(firstActions) : null;
     const dividerNode = matchingRows.slice(1).find(node => hasVisibleDivider(node)) || null;
@@ -871,7 +896,7 @@ async function captureRoute(browser, config, routeConfig, theme, viewportName, v
   let summary = null;
   try {
     const pageUrl = buildRouteUrl(config, routeConfig, theme);
-    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: timeoutMsFor(routeConfig, config) });
+    await gotoRouteWithRetry(page, pageUrl, { waitUntil: "domcontentloaded", timeout: timeoutMsFor(routeConfig, config) });
     await waitForSurfaceReady(page, routeConfig, config.apiToken, config.timeoutMs);
     const routeTop = await saveScreenshot(page, path.join(routeDir, `${prefix}-route-top.png`));
     const metrics = await collectRouteMetrics(page, routeConfig);
@@ -967,7 +992,7 @@ async function captureCalendarConnectedSurface(browser, config, surfaceConfig, t
 
   try {
     const pageUrl = buildRouteUrl(config, surfaceConfig, theme);
-    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await gotoRouteWithRetry(page, pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForRoute(page, surfaceConfig.route, config.timeoutMs);
     await page.locator(surfaceConfig.readySelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     const opener = page.locator(surfaceConfig.openerSelector).first();
