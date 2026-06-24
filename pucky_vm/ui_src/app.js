@@ -5357,8 +5357,16 @@
     const draft = ensureContactEditDraft(contact);
     const preview = contactEditPreviewRecord(contact, draft);
     const refs = contactDetailPageRefs;
-    refs.page.dataset.contactId = contactRecordId(contact);
-    refs.avatar.replaceChildren(lightAvatar(preview, "large"));
+    const contactId = contactRecordId(contact);
+    const avatarKey = JSON.stringify({
+      photo: String(preview?.metadata?.photo || ""),
+      initials: contactAvatarText(preview),
+    });
+    refs.page.dataset.contactId = contactId;
+    if (refs.avatar.dataset.avatarKey !== avatarKey) {
+      refs.avatar.dataset.avatarKey = avatarKey;
+      refs.avatar.replaceChildren(lightAvatar(preview, "large"));
+    }
     refs.title.textContent = contactDisplayTitle(preview);
     refs.detail.textContent = contactIsSelf(contact)
       ? "Edit your description, email, phone, and photo. Connected stays read-only."
@@ -5375,14 +5383,17 @@
     syncContactActivityRows(refs, draft);
     refs.changePhoto.textContent = draft.photo ? "Change photo" : "Add photo";
     refs.removePhoto.hidden = !draft.photo;
-    refs.connected.replaceChildren(lightLinkedRecordSection(contact, {
-      title: "Connected",
-      showWhenEmpty: true,
-      showChips: false,
-      showChevron: false,
-      variant: "flat",
-      fromRoute: "contact-detail"
-    }));
+    if (refs.connected.dataset.contactId !== contactId) {
+      refs.connected.dataset.contactId = contactId;
+      refs.connected.replaceChildren(lightLinkedRecordSection(contact, {
+        title: "Connected",
+        showWhenEmpty: true,
+        showChips: false,
+        showChevron: false,
+        variant: "flat",
+        fromRoute: "contact-detail"
+      }));
+    }
   }
 
   let contactsPageNode = null;
