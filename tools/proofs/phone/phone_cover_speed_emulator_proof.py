@@ -432,17 +432,21 @@ def main(argv: list[str] | None = None) -> int:
 
         chrome = auth_proof.discover_chrome_cdp_url(args)
         chrome_forward_port = str(chrome.get("forward_port") or "")
-        auth_proof.wait_for_rendered_auth_snapshot(args, str(chrome["cdp_url"]))
+        rendered_auth_snapshot = auth_proof.wait_for_rendered_auth_snapshot(args, str(chrome["cdp_url"]))
+        rendered_auth_title = str(rendered_auth_snapshot.get("title") or "").strip()
         chrome_browser = auth_proof.run_browser_helper(
             args,
             cdp_url=str(chrome["cdp_url"]),
             surface="chrome_auth",
+            page_title=rendered_auth_title,
             page_url_not_contains="/ui/pucky/latest",
             operations=[
                 {"kind": "page_info"},
                 {"kind": "screenshot", "path": str(args.report_dir / "connect-auth-chrome.png")},
             ],
         )
+        auth_proof.resolve_browser_surface(args, timeout_seconds=5)
+        auth_proof.dismiss_permission_dialogs(args, timeout_seconds=5)
         auth_proof.capture_screenshot(args, args.report_dir / "connect-auth-device.png", "cover-speed-connect-auth-device.png")
         summary["screenshots"]["connect_auth_device"] = str(args.report_dir / "connect-auth-device.png")
         summary["screenshots"]["connect_auth_cdp"] = str(args.report_dir / "connect-auth-chrome.png")

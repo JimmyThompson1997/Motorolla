@@ -54,6 +54,7 @@ def test_browser_speed_loop_proof_captures_route_matrix_perf_debug_and_connect_a
     assert 'perf_run_id: config.perfRunId,' in source
     assert 'envKeys: ["PUCKY_API_TOKEN", "PUCKY_SPEED_LOOP_TOKEN", "PUCKY_LIVE_USER_SESSION_TOKEN"]' in source
     assert 'sharedKeys: ["PUCKY_API_TOKEN"]' in source
+    assert 'throw new Error("Live speed loop proof requires --api-token or PUCKY_API_TOKEN/PUCKY_SPEED_LOOP_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN.");' in source
     assert 'async function fetchServerTelemetry(config)' in source
     assert "/api/ui/route-perf-events?run_id=" in source
     assert 'summary.console_log_path = consoleLogPath;' in source

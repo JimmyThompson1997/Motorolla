@@ -13,7 +13,6 @@ import {
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
 import {
-  loadFlyEnvironment,
   loadProofRuntimeEnv,
   resolveWriteToken,
 } from "../../support/proof_runtime_env.mjs";
@@ -138,7 +137,6 @@ function resolveApiToken(config) {
     rootDir: repoRoot,
     envKeys: ["PUCKY_API_TOKEN", "PUCKY_SPEED_LOOP_TOKEN", "PUCKY_LIVE_USER_SESSION_TOKEN"],
     sharedKeys: ["PUCKY_API_TOKEN"],
-    remoteEnvLoader: () => loadFlyEnvironment({ rootDir: repoRoot, app: "pucky" }),
   });
 }
 
@@ -243,6 +241,76 @@ async function clickSelectorViaDom(page, selector) {
   }
 }
 
+async function clickFirstVisibleSelectorViaDom(page, selector) {
+  const clicked = await page.evaluate(targetSelector => {
+    const isVisibleElement = node => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const style = window.getComputedStyle(node);
+      if (!style || style.display === "none" || style.visibility === "hidden") {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const node = Array.from(document.querySelectorAll(targetSelector)).find(isVisibleElement);
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    node.click();
+    return true;
+  }, selector);
+  if (!clicked) {
+    throw new Error(`Could not find a visible selector ${selector}.`);
+  }
+}
+
+async function waitForVisibleDomSelector(page, selector, timeoutMs) {
+  await page.waitForFunction(
+    targetSelector => {
+      const isVisibleElement = node => {
+        if (!(node instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(node);
+        if (!style || style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      return Array.from(document.querySelectorAll(targetSelector)).some(isVisibleElement);
+    },
+    selector,
+    { timeout: timeoutMs }
+  );
+}
+
+async function clickCalendarDayWithEvents(page) {
+  return page.evaluate(() => {
+    const chips = Array.from(document.querySelectorAll(".light-calendar-day-chip"));
+    const selectable = chips.find(node => {
+      if (!(node instanceof HTMLButtonElement)) {
+        return false;
+      }
+      if (node.getAttribute("aria-pressed") === "true") {
+        return false;
+      }
+      return Boolean(node.querySelector(".light-calendar-day-dot"));
+    });
+    const fallback = chips.find(node => {
+      return node instanceof HTMLButtonElement && Boolean(node.querySelector(".light-calendar-day-dot"));
+    });
+    const target = selectable || fallback;
+    if (!(target instanceof HTMLButtonElement)) {
+      return "";
+    }
+    target.click();
+    return String(target.dataset.day || "").trim();
+  });
+}
+
 async function openRouteFromHome(page, route, timeoutMs) {
   const selector = `.light-app-tile[data-light-app-route="${route}"]`;
   await page.locator(selector).first().waitFor({ state: "visible", timeout: timeoutMs });
@@ -277,7 +345,7 @@ async function readDetailState(page) {
 
 async function openFirstTaskDetail(page, timeoutMs) {
   await page.locator(".light-task-row-main").first().waitFor({ state: "visible", timeout: timeoutMs });
-  await clickSelectorViaDom(page, ".light-task-row-main");
+  await clickFirstVisibleSelectorViaDom(page, ".light-task-row-main");
   await page.waitForFunction(() => Boolean(document.querySelector(".light-task-detail-surface")), undefined, { timeout: timeoutMs });
   return {
     perf: await perfMetrics(page),
@@ -287,7 +355,7 @@ async function openFirstTaskDetail(page, timeoutMs) {
 
 async function openFirstContactDetail(page, timeoutMs) {
   await page.locator(".light-contact-row").first().waitFor({ state: "visible", timeout: timeoutMs });
-  await clickSelectorViaDom(page, ".light-contact-row");
+  await clickFirstVisibleSelectorViaDom(page, ".light-contact-row");
   await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-detail-page")), undefined, { timeout: timeoutMs });
   return {
     perf: await perfMetrics(page),
@@ -296,8 +364,40 @@ async function openFirstContactDetail(page, timeoutMs) {
 }
 
 async function openFirstCalendarDetail(page, timeoutMs) {
-  await page.locator(".light-event-block").first().waitFor({ state: "visible", timeout: timeoutMs });
-  await clickSelectorViaDom(page, ".light-event-block");
+  await page.waitForFunction(
+    () => {
+      const metrics = window.PuckyUiDebug?.perfMetrics?.();
+      return Boolean(document.querySelector(".light-calendar-page"))
+        && Number(metrics?.render_count || 0) > 0;
+    },
+    undefined,
+    { timeout: timeoutMs }
+  ).catch(() => {});
+  await waitForVisibleDomSelector(page, ".light-calendar-day-chip", timeoutMs);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(250, deadline - Date.now());
+    try {
+      await waitForVisibleDomSelector(page, ".light-event-block", Math.min(remainingMs, 2500));
+      break;
+    } catch (_) {
+      const switchedDay = await clickCalendarDayWithEvents(page);
+      if (switchedDay) {
+        await page.waitForFunction(
+          targetDay => {
+            const node = document.querySelector(`.light-calendar-day-chip[data-day="${targetDay}"]`);
+            return node instanceof HTMLElement && node.getAttribute("aria-pressed") === "true";
+          },
+          switchedDay,
+          { timeout: Math.min(remainingMs, 1000) }
+        ).catch(() => {});
+      } else {
+        await page.waitForTimeout(Math.min(remainingMs, 250));
+      }
+    }
+  }
+  await waitForVisibleDomSelector(page, ".light-event-block", Math.max(250, deadline - Date.now()));
+  await clickFirstVisibleSelectorViaDom(page, ".light-event-block");
   await page.waitForFunction(() => Boolean(document.querySelector(".light-event-detail-page, .light-event-document")), undefined, { timeout: timeoutMs });
   return {
     perf: await perfMetrics(page),
@@ -496,6 +596,9 @@ async function fetchServerTelemetry(config) {
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   config.apiToken = resolveApiToken(config);
+  if (!config.apiToken) {
+    throw new Error("Live speed loop proof requires --api-token or PUCKY_API_TOKEN/PUCKY_SPEED_LOOP_TOKEN/PUCKY_LIVE_USER_SESSION_TOKEN.");
+  }
   config.refreshKey = config.refreshKey || (process.env.PUCKY_SPEED_LOOP_REFRESH || String(Date.now()));
   config.perfRunId = config.perfRunId || `speed-loop-${config.viewport}-${Date.now()}`;
   ensureDir(config.reportDir);
@@ -597,8 +700,11 @@ async function main() {
       await openRouteFromHome(page, "contacts", config.timeoutMs);
       contactDetailSamples.push(await measureScenario(async () => openFirstContactDetail(page, config.timeoutMs)));
 
-      await goHome(page, config);
-      await openRouteFromHome(page, "calendar", config.timeoutMs);
+      await page.goto(buildRouteUrl(config, "calendar"), {
+        waitUntil: "domcontentloaded",
+        timeout: config.timeoutMs,
+      });
+      await waitForPerfRouteReady(page, "calendar", config.timeoutMs);
       calendarDetailSamples.push(await measureScenario(async () => openFirstCalendarDetail(page, config.timeoutMs)));
     }
     summary.detail_opens.task = summarizeSamples(taskDetailSamples);
