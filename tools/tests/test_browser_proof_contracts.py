@@ -65,7 +65,7 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_supports_contac
 
     assert "route=apps" not in source
     assert "route=feed" not in source
-    assert 'shouldRunRoute(config, "contacts-edit")' in source
+    assert 'shouldRunRoute(config, "contact-edit")' in source
     assert 'url.searchParams.set("api_token"' not in source
     assert LEGACY_BROWSER_TOKEN_KEY not in source
     assert "fetchConnectMyApps(" in source
@@ -361,14 +361,12 @@ def test_workspace_apps_browser_proof_captures_contacts_flat_list_contract() -> 
 def test_workspace_apps_browser_proof_checks_flat_contact_header_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
-    assert "assertFlatContactProfileCard" in source
-    assert '".light-contact-detail-page .light-profile-card"' in source
-    assert 'cardState.backgroundColor === "rgba(0, 0, 0, 0)"' in source
-    assert 'cardState.boxShadow === "none"' in source
-    assert 'cardState.borderRadius === "0px"' in source
-    assert "profile card should not have a visible border" in source
-    assert "should render the Contact section" in source
-    assert "should render the Activity section" in source
+    assert "readContactEditState" in source
+    assert "hasRedundantHero" in source
+    assert "Expected contact detail editor to remove the redundant hero" in source
+    assert "Expected self contact detail to stay name-locked as Me" in source
+    assert "Expected normal contact detail to expose editable first and last name fields" in source
+    assert "Expected contact detail editor to keep Connected visible" in source
 
 
 def test_workspace_apps_browser_proof_checks_contact_photo_thumbnail_contract() -> None:
@@ -429,16 +427,21 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
     assert "readContactEditState" in source
-    assert "saveContactEditAndWaitForDetail" in source
-    assert "contacts-edit-open" in source
-    assert "contacts-edit-name" in source
-    assert "contacts-edit-photo" in source
-    assert "contacts-edit-back-to-list" in source
+    assert "traceContactEditTyping" in source
+    assert "contact-edit-baseline" in source
+    assert "contact-edit-name" in source
+    assert "contact-edit-activity" in source
+    assert "contact-edit-photo-added" in source
+    assert "contact-edit-photo-removed" in source
+    assert "contact-edit-updated-list" in source
     assert "Updated Proof Contact" in source
     assert "Updated from local proof edit flow" in source
     assert "updated.proof.one@example.com" in source
     assert "Expected contact edit to persist the updated title" in source
-    assert "Expected contact edit to persist the uploaded photo asset" in source
+    assert "Expected contact edit typing to keep the same mounted input" in source
+    assert "Expected contact edit to persist the uploaded photo" in source
+    assert "Expected contact edit to remove the uploaded photo" in source
+    assert "Expected photo removal to restore derived initials" in source
     assert 'input[type="file"][data-contact-photo-input="true"]' in source
 
 
@@ -570,8 +573,8 @@ def test_live_user_session_contacts_edit_proof_handles_teardown_and_mode_specifi
     source = read_source("cover_live_user_session_playwright.mjs")
 
     assert "function buildContactsEditProofValues(mode) {" in source
-    assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "mobile" ? "Mobile" : "Proof";' in source
-    assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "mobile" ? "0199" : "0189";' in source
+    assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "iphone" ? "iPhone" : modeKey === "android" ? "Android" : "Proof";' in source
+    assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "iphone" ? "0199" : modeKey === "android" ? "0209" : "0189";' in source
     assert "Updated from ${modeKey} live proof edit flow" in source
     assert 'await route.abort("failed").catch(() => {});' in source
 
@@ -914,17 +917,17 @@ def test_contacts_edit_browser_proof_task_runner_and_docs_are_first_class() -> N
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 
-    assert '"proof-local-contacts-edit-browser": "Boot the local workspace proof server and run the Contacts edit browser proof against the current local bundle."' in dev_source
-    assert '"proof-live-contacts-edit-browser": "Run the Contacts edit browser proof against the hosted VM with manifest verification."' in dev_source
-    assert 'str((ROOT / ".tmp" / "proof-local-contacts-edit-browser").resolve())' in dev_source
-    assert 'str((ROOT / ".tmp" / "proof-live-contacts-edit-browser").resolve())' in dev_source
-    assert '"contacts-edit",' in dev_source
-    assert 'return run_local_contacts_edit_browser_proof(args.extra_args)' in dev_source
-    assert 'return run_live_contacts_edit_browser_proof(args.extra_args)' in dev_source
-    assert "python -m tools.dev proof-local-contacts-edit-browser" in readme
-    assert "python -m tools.dev proof-live-contacts-edit-browser" in readme
-    assert "Contacts edit browser proof (local): `python -m tools.dev proof-local-contacts-edit-browser`" in docs_readme
-    assert "Contacts edit browser proof (live): `python -m tools.dev proof-live-contacts-edit-browser`" in docs_readme
+    assert '"proof-local-contact-edit-browser": "Boot the local workspace proof server and run the Contacts detail editor browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-contact-edit-browser": "Run the Contacts detail editor browser proof against the hosted VM with manifest verification."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-contact-edit-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contact-edit-browser").resolve())' in dev_source
+    assert '"contact-edit",' in dev_source
+    assert 'return run_local_contact_edit_browser_proof(args.extra_args)' in dev_source
+    assert 'return run_live_contact_edit_browser_proof(args.extra_args)' in dev_source
+    assert "python -m tools.dev proof-local-contact-edit-browser" in readme
+    assert "python -m tools.dev proof-live-contact-edit-browser" in readme
+    assert "Contact detail editor browser proof (local): `python -m tools.dev proof-local-contact-edit-browser`" in docs_readme
+    assert "Contact detail editor browser proof (live): `python -m tools.dev proof-live-contact-edit-browser`" in docs_readme
 def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     source = read_source("cover_universal_feed_tiles_playwright.mjs")
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
