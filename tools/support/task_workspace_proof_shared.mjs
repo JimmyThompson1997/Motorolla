@@ -213,7 +213,7 @@ async function createTaskProofRecords(baseUrl, apiToken, seed) {
       photo: "fixtures/contact_photos/proof-contact.webp",
       email: `${seed.prefix}@example.com`,
       phone: "+1 (415) 555-0188",
-      activity: ["Linked to live alpha"],
+      activity: ["Created by proof", "Linked to live alpha"],
     },
   });
   await apiRequest(baseUrl, apiToken, "POST", "/api/workspace/contacts", {
