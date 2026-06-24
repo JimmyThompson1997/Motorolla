@@ -1169,16 +1169,13 @@ def test_inbox_manage_select_keeps_visible_dark_mode_chrome() -> None:
     styles = read("styles.css")
     inbox_manage_select = css_block(styles, ".inbox-manage-select")
     inbox_manage_select_icon = css_block(styles, ".inbox-manage-select .material-icon")
-    inbox_card_menu = css_block(styles, ".inbox-card-menu-button")
 
     assert "border: 1px solid" in inbox_manage_select
     assert "color: var(--home-shell-text-muted);" in inbox_manage_select
     assert "background: color-mix(in srgb, var(--surface-card-elevated)" in inbox_manage_select
     assert "fill: currentColor;" in inbox_manage_select_icon
     assert "stroke: none;" in inbox_manage_select_icon
-    assert "border: 1px solid" in inbox_card_menu
-    assert "color: var(--home-shell-text-muted);" in inbox_card_menu
-    assert "background: color-mix(in srgb, var(--surface-card-elevated)" in inbox_card_menu
+    assert ".inbox-card-menu-button" not in styles
 
 
 def test_completed_meeting_detail_refresh_does_not_reopen_after_dismiss() -> None:
@@ -2152,35 +2149,31 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert "shell.append(overlay);" in overlay
     assert "function archiveSelectedInboxCards(" in app
     assert 'applyCardActionData(select, "manage_select", card, "reply");' in app
-    assert 'applyCardActionData(menuButton, "manage_menu", card, "reply");' in app
+    assert 'applyCardActionData(menuButton, "manage_menu", card, "reply");' not in app
     assert 'const action = state.showArchivedFeed ? "unarchive" : "archive";' in function_block(app, "archiveSelectedInboxCards")
     assert "postFeedAction(card, action);" in function_block(app, "archiveSelectedInboxCards")
     assert 'const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);' in card_view
-    assert "function shouldShowInboxCardEscapeMenu(" in app
-    assert "function cardOverflowMenu(" in app
-    assert "function inboxCardMenuButton(" in app
-    assert "function openInboxCardMenu(" in app
-    assert "function isInboxCardMenuOpen(" in app
-    assert 'if (state.showArchivedFeed || Boolean(card?.archived)) {' in function_block(app, "shouldShowInboxCardEscapeMenu")
-    assert 'isMeetingProcessingCard(card) || isFailedPendingOutboundCard(card)' in function_block(app, "shouldShowInboxCardEscapeMenu")
-    assert 'addItem("Archive", "archive_folder", "archive"' in function_block(app, "cardOverflowMenu")
-    assert '"Delete"' not in function_block(app, "cardOverflowMenu")
-    assert 'const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);' in card_view
-    assert 'if (inboxEscapeMenu && !inboxManageMode) {' in card_view
-    assert 'wrapper.classList.add("has-inbox-menu");' in card_view
+    assert "function shouldShowInboxCardEscapeMenu(" not in app
+    assert "function cardOverflowMenu(" not in app
+    assert "function inboxCardMenuButton(" not in app
+    assert "function openInboxCardMenu(" not in app
+    assert "function isInboxCardMenuOpen(" not in app
+    assert 'const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);' not in card_view
+    assert 'if (inboxEscapeMenu && !inboxManageMode) {' not in card_view
+    assert 'wrapper.classList.add("has-inbox-menu");' not in card_view
     assert 'const manageableInboxCard = inboxSurface && canManageInboxCard(card);' in meeting_processing_view
     assert 'wrapper.append(inboxManageSelectButton(card));' in meeting_processing_view
-    assert 'const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);' in meeting_processing_view
-    assert 'wrapper.append(inboxCardMenuButton(card));' in meeting_processing_view
-    assert 'wrapper.append(cardOverflowMenu(card));' in meeting_processing_view
-    assert 'wrapper.classList.add("has-inbox-menu");' in meeting_processing_view
+    assert 'const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);' not in meeting_processing_view
+    assert 'wrapper.append(inboxCardMenuButton(card));' not in meeting_processing_view
+    assert 'wrapper.append(cardOverflowMenu(card));' not in meeting_processing_view
+    assert 'wrapper.classList.add("has-inbox-menu");' not in meeting_processing_view
     assert 'check: {' in icons
     assert 'select.innerHTML = selected ? iconSvg("check", { filled: true }) : "";' in select_button
     assert 'iconSvg("checklist", { filled: selected })' not in select_button
     assert "--light-shell-column-max: 744px;" in inbox_shell
     assert "--light-shell-column-padding: 12px;" in inbox_shell
     assert "text-align: right;" in timestamp
-    assert ".card-wrap.has-inbox-menu" in styles
+    assert ".card-wrap.has-inbox-menu" not in styles
     assert '.card-wrap.is-inbox-manage-mode .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"],' in styles
     assert '.card-wrap.is-inbox-manage-mode .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="meeting_processing"]' in styles
     assert ".inbox-manage-bar" in styles
@@ -2194,7 +2187,7 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert "Loading active replies..." in app
     assert "role\", \"status\"" in app
     assert "width: min(calc(100vw - 52px), 720px);" in loading_notice
-    assert ".inbox-card-menu" in styles
+    assert ".inbox-card-menu" not in styles
     assert "position: fixed;" in manage_bar
     assert "bottom: env(safe-area-inset-bottom, 0px);" in manage_bar
     assert "width: min(calc(100vw - 28px), 480px);" in manage_bar

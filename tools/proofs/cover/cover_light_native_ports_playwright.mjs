@@ -1144,6 +1144,8 @@ function assertInboxManagementLayout(state, phase) {
     assert(state.manage_button_is_circle === false, "Manage control should be a labeled pill, not an icon-only circle");
     assert(["Active", "Archived"].includes(state.archive_toggle_label), `Archive filter should show a visible Active/Archived label, got ${state.archive_toggle_label}`);
     assert(["Manage", "Done"].includes(state.manage_button_label), `Manage control should show a visible Manage/Done label, got ${state.manage_button_label}`);
+    assert(state.menu_button_count === 0, `Normal Inbox should render zero row-level menu buttons, saw ${state.menu_button_count}`);
+    assert(state.visible_menu_button_count === 0, `Normal Inbox should expose zero visible row-level menu buttons, saw ${state.visible_menu_button_count}`);
     assert(healthyNoMenu.card_id && healthyNoMenu.has_menu_button === false, "Normal healthy Inbox cards should not render per-tile dots");
     assert(menu.button_rect === null || menu.button_rect === undefined, "First healthy Inbox tile should not expose a menu button");
     assert(menu.article_rect, "Normal Inbox did not expose a measurable tile article");
@@ -1160,8 +1162,8 @@ function assertInboxManagementLayout(state, phase) {
     assert(!state.archive_toggle_busy, "Archive filter should not start busy in the normal state");
     assert(state.processing_card_count > 0, "Inbox proof should include a processing row to verify the shared left rail");
     for (const processing of state.processing_cards || []) {
-      assert(processing.has_menu_button, `Processing meeting card ${processing.card_id} should expose a left-rail escape menu button in normal mode`);
-      assert(processing.menu_visible, `Processing meeting card ${processing.card_id} should expose visible menu chrome in normal mode`);
+      assert(!processing.has_menu_button, `Processing meeting card ${processing.card_id} should not expose a left-rail menu button in normal mode`);
+      assert(!processing.menu_visible, `Processing meeting card ${processing.card_id} should keep the left rail free of visible menu chrome in normal mode`);
       assert(!processing.has_select_control, `Processing meeting card ${processing.card_id} should not expose a Manage select control outside Manage mode`);
     }
   }
@@ -1416,7 +1418,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   assert(processingCardId, "Inbox management proof requires a processing row for the shared left-rail contract");
   const normalScreenshot = await saveScreenshot(page, reportDir, "01-normal-expanded-feed");
   await inboxCardWrap(page, processingCardId).scrollIntoViewIfNeeded();
-  const processingRowScreenshot = await saveScreenshot(page, reportDir, "01b-processing-escape-menu");
+  const processingRowScreenshot = await saveScreenshot(page, reportDir, "01b-processing-row-no-menu");
 
   await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
   await page.waitForFunction(
@@ -2371,7 +2373,13 @@ async function runInboxManagementOnly(config) {
       });
     });
     pageEntries.push({ name, page, video });
-    return page;
+  return page;
+};
+
+  const unrouteManagedPages = async () => {
+    await Promise.all(pageEntries.map(async ({ page }) => {
+      await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+    }));
   };
 
   try {
@@ -2429,6 +2437,7 @@ async function runInboxManagementOnly(config) {
     writeJsonFile(consoleJsonPath, consoleEvents);
     writeJsonFile(networkJsonPath, networkEvents);
     writeJsonFile(actionsJsonPath, actions);
+    await unrouteManagedPages();
     await context.close().catch(() => {});
     for (const entry of pageEntries) {
       videos[entry.name] = entry.video ? await entry.video.path().catch(() => "") : "";
@@ -2476,6 +2485,7 @@ async function runInboxManagementOnly(config) {
         .then((html) => fs.writeFileSync(finalDomPaths[entry.name] || path.join(config.reportDir, `${entry.name}-final-dom.html`), html, "utf8"))
         .catch(() => {});
     }
+    await unrouteManagedPages();
     writeAutomationError(config.reportDir, error);
     throw error;
   } finally {

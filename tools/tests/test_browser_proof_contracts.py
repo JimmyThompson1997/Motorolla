@@ -785,6 +785,7 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "selected_count" in source
     assert "visible_menu_button_count" in source
     assert "visible_menu_button_count === 0" in source
+    assert "menu_button_count === 0" in source
     assert "readMeetingRowLayout(" in source
     assert "titleLeftInset" in source
     assert "dark-meetings-430" in source
@@ -799,8 +800,8 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "timestamp_alignment" in source
     assert "processing_cards" in source
     assert "proof_card_meeting_processing_escape_hatch" in source
-    assert "should expose a left-rail escape menu button" in source
-    assert "01b-processing-escape-menu" in source
+    assert "should not expose a left-rail menu button" in source
+    assert "01b-processing-row-no-menu" in source
     assert "should expose a Manage select control" in source
     assert "manage_bar_scroll" in source
     assert "assertInboxManageBarScrollStickiness(" in source
