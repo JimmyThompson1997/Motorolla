@@ -650,6 +650,11 @@ async function collectRouteMetrics(page, surface) {
       linkedRecordsVisible: visibleSectionTitles.includes("LINKED RECORDS") || visibleSectionTitles.includes("RELATED"),
       htmlBodyCount: document.querySelectorAll(".light-detail-html-body").length,
       sectionTitles: visibleSectionTitles,
+      inboxVisibleMenuButtonCount: routeSurface.route === "inbox"
+        ? Array.from(document.querySelectorAll('[data-card-action="manage_menu"]'))
+          .filter(node => node instanceof HTMLElement && getComputedStyle(node).display !== "none" && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)
+          .length
+        : 0,
     };
   }, surface);
 }
@@ -873,6 +878,22 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
               class: "visual",
               expected: "Route should fit within the viewport without horizontal scrolling.",
               actual: "The page layout overflowed horizontally.",
+              repro_steps: [`Open ${openResult.pageUrl}`],
+              screenshot_paths: [screenshot],
+              automation_candidate: "yes",
+            });
+          }
+          if (surface.route === "inbox" && metrics.inboxVisibleMenuButtonCount > 0) {
+            pushFinding(findings, {
+              id: `inbox-left-menu-${matrixEntry.label}`,
+              surface: surface.surface,
+              route: surface.route,
+              theme: matrixEntry.theme,
+              viewport: matrixEntry.viewportName,
+              severity: "P1",
+              class: "visual",
+              expected: "Normal-mode Inbox rows should not expose left-side row menu buttons.",
+              actual: `Inbox rendered ${metrics.inboxVisibleMenuButtonCount} visible row-level menu button(s) in normal mode.`,
               repro_steps: [`Open ${openResult.pageUrl}`],
               screenshot_paths: [screenshot],
               automation_candidate: "yes",

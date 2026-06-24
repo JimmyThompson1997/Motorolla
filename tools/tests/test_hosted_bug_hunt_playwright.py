@@ -56,6 +56,9 @@ def test_hosted_bug_hunt_runner_reuses_existing_proofs_and_classification_labels
     assert '"navigation"' in source
     assert '"state-truthfulness"' in source
     assert '"performance-feel"' in source
+    assert "inboxVisibleMenuButtonCount" in source
+    assert "Normal-mode Inbox rows should not expose left-side row menu buttons." in source
+    assert 'Inbox rendered ${metrics.inboxVisibleMenuButtonCount} visible row-level menu button(s) in normal mode.' in source
 
 
 def test_tools_package_and_dev_runner_expose_hosted_bug_hunt_entrypoint() -> None:

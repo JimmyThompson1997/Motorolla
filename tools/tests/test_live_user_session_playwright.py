@@ -324,3 +324,5 @@ def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_
     assert "calendar-desktop-${theme}-adjacent-month-selected.png" in calendar_source
     assert "calendar-mobile-${theme}-adjacent-month-selected.png" in calendar_source
     assert 'openerSelector: ".light-event-block"' in hosted_source
+    assert "inboxVisibleMenuButtonCount" in hosted_source
+    assert "Normal-mode Inbox rows should not expose left-side row menu buttons." in hosted_source

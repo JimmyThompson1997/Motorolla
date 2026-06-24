@@ -744,11 +744,11 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "exerciseInboxManagement(" in source
     assert "inbox_management" in source
     assert 'data-card-action="manage_select"' in source
-    assert 'data-card-action="manage_menu"' in source
     assert "archive_reveal_count" in source
     assert "manage_mode_active" in source
     assert "selected_count" in source
-    assert "menu_open" in source
+    assert "visible_menu_button_count" in source
+    assert "menu_button_count === 0" in source
     assert "readMeetingRowLayout(" in source
     assert "titleLeftInset" in source
     assert "dark-meetings-430" in source
@@ -761,10 +761,10 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "normal_menu" in source
     assert "feed_width" in source
     assert "timestamp_alignment" in source
-    assert "processing_escape_hatch" in source
+    assert "processing_cards" in source
     assert "proof_card_meeting_processing_escape_hatch" in source
-    assert "Processing meeting card" in source
-    assert "function openInboxTileMenu(" in source
+    assert "should not expose a left-rail menu button" in source
+    assert "should expose a Manage select control" in source
     assert "manage_bar_scroll" in source
     assert "assertInboxManageBarScrollStickiness(" in source
     assert "feed_contains_manage_bar" in source
@@ -782,7 +782,7 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "04-manage-bottom-scrolled-up" in source
     assert "05-selected-simple-check" in source
     assert "07-archive-filter-card-visible" in source
-    assert "08-archived-menu-unarchive" in source
+    assert "08-archived-manage-unarchive" in source
     assert "09-after-unarchive-active-feed" in source
     assert "10-cleanup-archived-final" in source
     assert "10a-dark-inbox-audio-detail" in source
