@@ -14310,6 +14310,122 @@
     return select;
   }
 
+  function isInboxCardMenuOpen(card) {
+    const sessionId = cardSessionId(card);
+    const threadId = cardThreadId(card);
+    return Boolean(
+      (sessionId && state.openCardMenuSessionId === sessionId)
+      || (!sessionId && threadId && state.openCardMenuThreadId === threadId)
+    );
+  }
+
+  function openInboxCardMenu(card) {
+    state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
+    state.openCardMenuSessionId = cardSessionId(card);
+    state.openCardMenuThreadId = cardThreadId(card);
+    renderFeed();
+    void syncVoiceThreadScope({ reason: "inbox_card_menu_open", render: true, force: true });
+  }
+
+  function inboxCardMenuButton(card) {
+    const open = isInboxCardMenuOpen(card);
+    const menuButton = el("button", open ? "inbox-card-menu-button is-open" : "inbox-card-menu-button");
+    menuButton.type = "button";
+    applyCardActionData(menuButton, "manage_menu", card, "reply");
+    menuButton.setAttribute("aria-label", `More actions for ${card?.title || "Inbox tile"}`);
+    menuButton.setAttribute("aria-expanded", open ? "true" : "false");
+    menuButton.innerHTML = iconSvg("more_vert", { filled: true });
+    menuButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (isInboxCardMenuOpen(card)) {
+        dismissOpenCardMenu(false);
+        return;
+      }
+      openInboxCardMenu(card);
+    });
+    return menuButton;
+  }
+
+  function shouldShowInboxCardEscapeMenu(card) {
+    if (!canManageInboxCard(card)) {
+      return false;
+    }
+    if (state.showArchivedFeed || Boolean(card?.archived)) {
+      return true;
+    }
+    if (isMeetingProcessingCard(card) || isFailedPendingOutboundCard(card)) {
+      return true;
+    }
+    const origin = card?.origin && typeof card.origin === "object" ? card.origin : {};
+    const text = [
+      card?.card_kind,
+      card?.meeting_state,
+      card?.status,
+      card?.state,
+      card?.workflow_state,
+      card?.processing_state,
+      card?.error_code,
+      card?.error,
+      card?.failure_reason,
+      card?.transcript_error,
+      card?.title,
+      card?.summary,
+      origin.card_kind,
+      origin.meeting_state,
+      origin.status,
+      origin.state,
+      origin.error_code,
+      origin.failure_reason,
+      origin.transcript_error
+    ].map(value => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+    return /\b(failed|failure|error|errored|stalled|blocked|upload_blocked|needs review|needs_review|processing)\b/.test(text);
+  }
+
+  function cardOverflowMenu(card) {
+    const menu = el("div", "card-longpress-menu inbox-card-menu");
+    menu.setAttribute("role", "menu");
+    const addItem = (label, icon, actionName, handler) => {
+      const item = el("button", "inbox-card-menu-item");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.dataset.cardMenuAction = actionName;
+      item.innerHTML = `${iconSvg(icon, { filled: true })}<span>${label}</span>`;
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        handler();
+      });
+      menu.append(item);
+    };
+    addItem("Open transcript", "chat", "open_transcript", () => {
+      dismissOpenCardMenu(false);
+      showTranscript(card);
+    });
+    if (isCardRead(card)) {
+      addItem("Mark unread", "checklist", "mark_unread", () => {
+        dismissOpenCardMenu(false);
+        setCardReadOverride(card, false);
+        render();
+      });
+    } else {
+      addItem("Mark read", "checklist", "mark_read", () => {
+        dismissOpenCardMenu(false);
+        markCardRead(card);
+      });
+    }
+    if (state.showArchivedFeed) {
+      addItem("Unarchive", "archive_folder", "unarchive", () => {
+        dismissOpenCardMenu(false);
+        void requestFeedAction(card, "unarchive", { silent: false });
+      });
+    } else {
+      addItem("Archive", "archive_folder", "archive", () => {
+        dismissOpenCardMenu(false);
+        void requestFeedAction(card, "archive", { silent: false });
+      });
+    }
+    return menu;
+  }
+
   function cardView(card, options = {}) {
     const flatFeed = Boolean(options.flatFeed);
     const surface = String(options.surface || "").trim().toLowerCase();
@@ -14326,8 +14442,12 @@
     const inboxSurface = surface === "inbox" && !isMeetingList;
     const manageableInboxCard = inboxSurface && canManageInboxCard(card);
     const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
+    const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);
     if (inboxSurface) {
       wrapper.classList.add("is-inbox-card");
+    }
+    if (inboxManageMode || inboxEscapeMenu) {
+      wrapper.classList.add("has-inbox-menu");
     }
     if (inboxManageMode) {
       wrapper.classList.add("is-inbox-manage-mode");
@@ -14519,6 +14639,12 @@
       });
     }
     wrapper.append(cardEl);
+    if (inboxEscapeMenu && !inboxManageMode) {
+      wrapper.append(inboxCardMenuButton(card));
+      if (isInboxCardMenuOpen(card)) {
+        wrapper.append(cardOverflowMenu(card));
+      }
+    }
     if (revealArchiveEnabled) {
       installArchiveReveal(wrapper, card, {
         canReveal: canRevealHomeArchive,
@@ -14560,8 +14686,12 @@
     const inboxSurface = surface === "inbox";
     const manageableInboxCard = inboxSurface && canManageInboxCard(card);
     const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
+    const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);
     if (inboxSurface) {
       wrapper.classList.add("is-inbox-card");
+    }
+    if (inboxManageMode || inboxEscapeMenu) {
+      wrapper.classList.add("has-inbox-menu");
     }
     if (inboxManageMode) {
       wrapper.classList.add("is-inbox-manage-mode");
@@ -14588,6 +14718,12 @@
       wrapper.append(inboxManageSelectButton(card));
     }
     wrapper.append(cardEl);
+    if (inboxEscapeMenu && !inboxManageMode) {
+      wrapper.append(inboxCardMenuButton(card));
+      if (isInboxCardMenuOpen(card)) {
+        wrapper.append(cardOverflowMenu(card));
+      }
+    }
     return wrapper;
   }
 
