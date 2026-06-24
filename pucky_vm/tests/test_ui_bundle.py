@@ -138,10 +138,13 @@ def test_ui_bundle_can_embed_explicit_source_provenance(tmp_path, monkeypatch: p
     assert manifest["source_dirty"] is False
     with zipfile.ZipFile(result["bundle_path"]) as archive:
         config_script = archive.read("pucky-config.js").decode("utf-8")
+        index_html = archive.read("index.html").decode("utf-8")
     assert '"source_commit_full":"abc123def456"' in config_script
     assert '"source_commit_short":"abc123d"' in config_script
     assert '"source_branch":"master"' in config_script
     assert '"source_dirty":false' in config_script
+    assert 'const BOOTSTRAP_COMMIT = "abc123def456";' in index_html
+    assert 'const BOOTSTRAP_COMMIT = "__PUCKY_BOOTSTRAP_COMMIT__";' not in index_html
 
 
 def test_default_version_can_read_archive_revision_file(monkeypatch, tmp_path):

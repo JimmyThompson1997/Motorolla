@@ -55,6 +55,11 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
     assert 'id="detail"' in html
     assert "window.__PUCKY_BOOTSTRAP_STATUS__" in html
     assert 'const ESSENTIAL_ASSETS = [' in html
+    assert 'const BOOTSTRAP_COMMIT = "__PUCKY_BOOTSTRAP_COMMIT__";' in html
+    assert "const PAGE_REFRESH_SEED = (() => {" in html
+    assert "const ASSET_REFRESH_SEED = COMMIT_SEED || PAGE_REFRESH_SEED;" in html
+    assert "function assetUrl(rawUrl)" in html
+    assert 'url.searchParams.set("_pucky_asset", ASSET_REFRESH_SEED);' in html
     assert '"pucky-config.js"' in html
     assert '"pucky-links-catalog.js"' in html
     assert '"pucky-icons.js"' in html
@@ -64,6 +69,8 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
     assert 'BOOT_TIMEOUT_MS = 7000' in html
     assert 'autoReloadOnce()' in html
     assert 'asset_delivery_failures' in html
+    assert "target.href = assetUrl(asset.url);" in html
+    assert "target.src = assetUrl(asset.url);" in html
     assert html.index('"pucky-icons.js"') < html.index('"app.js"')
     assert html.index('"pucky-routes.js"') < html.index('"app.js"')
     assert 'id="pageTabs"' not in html

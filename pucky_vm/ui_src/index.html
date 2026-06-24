@@ -112,6 +112,14 @@
         const COMMIT_SEED = BOOTSTRAP_COMMIT && !/^__PUCKY_BOOTSTRAP_COMMIT__$/i.test(BOOTSTRAP_COMMIT)
           ? BOOTSTRAP_COMMIT
           : "";
+        const PAGE_REFRESH_SEED = (() => {
+          try {
+            return String(new URLSearchParams(window.location.search || "").get("_pucky_refresh") || "").trim();
+          } catch (_) {
+            return "";
+          }
+        })();
+        const ASSET_REFRESH_SEED = COMMIT_SEED || PAGE_REFRESH_SEED;
         const BOOT_TIMEOUT_MS = 7000;
         const ESSENTIAL_ASSETS = [
           { type: "style", url: "./styles.css", label: "styles.css" },
@@ -197,6 +205,20 @@
           updateTiming();
         }
 
+        function assetUrl(rawUrl) {
+          if (!ASSET_REFRESH_SEED) {
+            return rawUrl;
+          }
+          try {
+            const url = new URL(rawUrl, window.location.href);
+            url.searchParams.set("_pucky_asset", ASSET_REFRESH_SEED);
+            return url.toString();
+          } catch (_) {
+            const joiner = String(rawUrl || "").includes("?") ? "&" : "?";
+            return String(rawUrl || "") + joiner + "_pucky_asset=" + encodeURIComponent(ASSET_REFRESH_SEED);
+          }
+        }
+
         function autoReloadOnce() {
           const attempts = safeSessionNumber(BOOTSTRAP_RELOAD_KEY);
           if (attempts >= 1 || !window.location || typeof window.location.replace !== "function") {
@@ -264,9 +286,9 @@
             target.addEventListener("error", finish(() => reject(new Error("asset_error"))));
             if (asset.type === "style") {
               target.rel = "stylesheet";
-              target.href = asset.url;
+              target.href = assetUrl(asset.url);
             } else {
-              target.src = asset.url;
+              target.src = assetUrl(asset.url);
               target.async = false;
             }
             (document.head || document.documentElement).append(target);

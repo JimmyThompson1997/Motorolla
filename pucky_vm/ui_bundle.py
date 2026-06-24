@@ -115,6 +115,7 @@ def build_ui_bundle(
             staging / "fixtures" / "reply_cards.json",
         )
         write_bundle_config(staging, ui_version=ui_version, created_at=created_at, source=source)
+        write_bootstrap_commit(staging, ui_version=ui_version, source=source)
         write_links_catalog_script(staging)
         manifest = manifest_for(
             staging,
@@ -175,6 +176,26 @@ def write_bundle_config(
 ) -> None:
     text = bundle_config_script(ui_version=ui_version, created_at=created_at, source=source)
     with (root / "pucky-config.js").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def write_bootstrap_commit(
+    root: Path,
+    *,
+    ui_version: str,
+    source: dict[str, object] | None = None,
+) -> None:
+    source = source or source_provenance()
+    seed = str(
+        source.get("source_commit_full")
+        or source.get("source_commit_short")
+        or ui_version
+        or ""
+    ).strip()
+    index_path = root / "index.html"
+    text = index_path.read_text(encoding="utf-8")
+    text = text.replace('"__PUCKY_BOOTSTRAP_COMMIT__"', json.dumps(seed))
+    with index_path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
 
 
