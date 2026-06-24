@@ -1058,8 +1058,11 @@ def test_light_native_ports_proof_guards_route_fetch_during_context_shutdown() -
 
     assert "const message = String(error && error.message ? error.message : error || \"\");" in source
     assert "/target page, context or browser has been closed/i.test(message)" in source
+    assert "/request context disposed/i.test(message)" in source
     assert "/(?:fetch|apiResponse)(?:\\.\\w+)?:?\\s*Response has been disposed/i.test(message)" in source
     assert 'await route.abort("failed").catch(() => {});' in source
+    assert "async function unrouteManagedPages(" in source
+    assert 'entry.page.unrouteAll({ behavior: "ignoreErrors" })' in source
 
 
 def test_live_inbox_management_temp_card_create_recovers_after_fetch_timeout() -> None:

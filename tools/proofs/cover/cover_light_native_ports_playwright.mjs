@@ -109,6 +109,7 @@ function assert(condition, message) {
 function isDisposableRouteFetchError(error) {
   const message = String(error && error.message ? error.message : error || "");
   return /target page, context or browser has been closed/i.test(message)
+    || /request context disposed/i.test(message)
     || /fetch response has been disposed/i.test(message)
     || /(?:fetch|apiResponse)(?:\.\w+)?:?\s*Response has been disposed/i.test(message);
 }
@@ -159,6 +160,14 @@ async function abortRouteIfDisposed(route, error) {
   }
   await route.abort("failed").catch(() => {});
   return true;
+}
+
+async function unrouteManagedPages(pageEntries) {
+  for (const entry of pageEntries || []) {
+    if (entry?.page && typeof entry.page.unrouteAll === "function") {
+      await entry.page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+    }
+  }
 }
 
 function authHeaders(token) {
@@ -2415,6 +2424,7 @@ async function runInboxManagementOnly(config) {
     assert(combinedNoAudio.clicked_audio_count === 0, "Inbox management proof clicked audio");
     assert(combinedNoAudio.media_request_count === 0, "Inbox management proof observed media requests");
 
+    await unrouteManagedPages(pageEntries);
     await context.tracing.stop({ path: tracePath });
     writeJsonFile(consoleJsonPath, consoleEvents);
     writeJsonFile(networkJsonPath, networkEvents);
@@ -2456,6 +2466,7 @@ async function runInboxManagementOnly(config) {
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     console.log(JSON.stringify(summary, null, 2));
   } catch (error) {
+    await unrouteManagedPages(pageEntries);
     await context.tracing.stop({ path: tracePath }).catch(() => {});
     writeJsonFile(consoleJsonPath, consoleEvents);
     writeJsonFile(networkJsonPath, networkEvents);
