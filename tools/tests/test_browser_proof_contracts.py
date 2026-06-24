@@ -409,7 +409,7 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "contacts-search-initials" in source
     assert "contacts-search-stability" in source
     assert 'phone: "+1 (415) 555-0188"' in shared
-    assert 'activity: ["Linked to live alpha"]' in shared
+    assert 'activity: ["Created by proof", "Linked to live alpha"]' in shared
     assert 'title: "David"' in shared
     assert 'title: "Daniel"' in shared
 
