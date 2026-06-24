@@ -1061,6 +1061,18 @@ def test_light_native_ports_proof_guards_route_fetch_during_context_shutdown() -
     assert 'await route.abort("failed").catch(() => {});' in source
 
 
+def test_live_inbox_management_temp_card_create_recovers_after_fetch_timeout() -> None:
+    source = read_source("cover_light_native_ports_playwright.mjs")
+
+    assert "function isRetriableFetchError(error)" in source
+    assert "error?.cause && error.cause.message" in source
+    assert "ETIMEDOUT" in source
+    assert "async function findLiveProofCardByRunId(" in source
+    assert "recovered_after_create_error: true" in source
+    assert "const existing = await findLiveProofCardByRunId(baseUrl, token, runId, 10000);" in source
+    assert "entry => String(entry?.turn_id || entry?.session_id || \"\").trim() === runId" in source
+
+
 def test_calendar_browser_proof_covers_meeting_detail_section_toggles() -> None:
     calendar_source = read_source("cover_calendar_playwright.mjs")
 

@@ -121,6 +121,22 @@ function isRetriableRouteFetchError(error) {
     || /socket hang up/i.test(message);
 }
 
+function isRetriableFetchError(error) {
+  const status = Number(error?.status || 0);
+  if ([429, 502, 503, 504].includes(status)) {
+    return true;
+  }
+  const message = String(error && error.message ? error.message : error || "");
+  const causeMessage = String(error?.cause && error.cause.message ? error.cause.message : "");
+  const combined = `${message}\n${causeMessage}`;
+  return /fetch failed/i.test(combined)
+    || /client network socket disconnected/i.test(combined)
+    || /network socket disconnected/i.test(combined)
+    || /before secure TLS connection was established/i.test(combined)
+    || /\b(?:ECONNRESET|ETIMEDOUT|ECONNREFUSED)\b/i.test(combined)
+    || /socket hang up/i.test(combined);
+}
+
 async function fetchRouteWithRetry(route) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -1557,7 +1573,20 @@ async function waitForFeedItem(baseUrl, token, matcher, timeoutMs) {
 }
 
 function isRetriableLiveTempCardCreateError(error) {
-  return [429, 502, 503, 504].includes(Number(error?.status || 0));
+  return isRetriableFetchError(error);
+}
+
+async function findLiveProofCardByRunId(baseUrl, token, runId, timeoutMs) {
+  try {
+    return await waitForFeedItem(
+      baseUrl,
+      token,
+      entry => String(entry?.turn_id || entry?.session_id || "").trim() === runId,
+      timeoutMs
+    );
+  } catch (_error) {
+    return null;
+  }
 }
 
 async function createLiveTempInboxCard(baseUrl, token, runId) {
@@ -1582,6 +1611,16 @@ async function createLiveTempInboxCard(baseUrl, token, runId) {
       result = await fetchJsonStrict(url, init);
       break;
     } catch (error) {
+      const existing = await findLiveProofCardByRunId(baseUrl, token, runId, 10000);
+      if (existing) {
+        return {
+          result: null,
+          card_id: String(existing?.card_id || "").trim(),
+          turn_id: runId,
+          recovered_after_create_error: true,
+          create_error: String(error?.message || error || "")
+        };
+      }
       if (attempt >= 3 || !isRetriableLiveTempCardCreateError(error)) {
         throw error;
       }
