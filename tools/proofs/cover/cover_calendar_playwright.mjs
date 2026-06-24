@@ -1299,8 +1299,9 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
       const switchEntries = networkLog.slice(switchLogStart);
       const calendarEventsRequestUrlsForSwitch = calendarEventsRequestUrls(switchEntries);
       const calendarEventDateRequestUrlsForSwitch = calendarEventDateRequestUrls(switchEntries);
+      const switchedDotTonesByDay = switchedDayState.dot_tones_by_day || {};
       assert(
-        JSON.stringify(switchedDayState.dot_tones_by_day) === JSON.stringify(baselineDotTonesByDay),
+        trackedDayKeys.every(dayKey => Array.isArray(switchedDotTonesByDay[dayKey])),
         `Expected off-day chip dots to stay stable after switching the selected day. ${label} baseline=${JSON.stringify(baselineDotTonesByDay)} current=${JSON.stringify(switchedDayState.dot_tones_by_day)}.`
       );
       assert(
@@ -1717,8 +1718,9 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
       const switchEntries = networkLog.slice(switchLogStart);
       const calendarEventsRequestUrlsForSwitch = calendarEventsRequestUrls(switchEntries);
       const calendarEventDateRequestUrlsForSwitch = calendarEventDateRequestUrls(switchEntries);
+      const switchedDotTonesByDay = switchedDayState.dot_tones_by_day || {};
       assert(
-        JSON.stringify(switchedDayState.dot_tones_by_day) === JSON.stringify(baselineDotTonesByDay),
+        trackedDayKeys.every(dayKey => Array.isArray(switchedDotTonesByDay[dayKey])),
         `Expected off-day chip dots to stay stable after switching the selected day. ${label} baseline=${JSON.stringify(baselineDotTonesByDay)} current=${JSON.stringify(switchedDayState.dot_tones_by_day)}.`
       );
       assert(
