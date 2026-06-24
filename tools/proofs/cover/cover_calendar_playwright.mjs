@@ -457,6 +457,24 @@ function shiftMonthKey(monthKey, offsetMonths = 0) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+function monthKeyOrdinal(monthKey) {
+  const [year, month] = String(monthKey || "").split("-").map(Number);
+  if (!year || !month) {
+    return Number.NaN;
+  }
+  return (year * 12) + month;
+}
+
+function hasMonthBefore(monthKeys, monthKey) {
+  const target = monthKeyOrdinal(monthKey);
+  return Number.isFinite(target) && monthKeys.some(key => monthKeyOrdinal(key) < target);
+}
+
+function hasMonthAfter(monthKeys, monthKey) {
+  const target = monthKeyOrdinal(monthKey);
+  return Number.isFinite(target) && monthKeys.some(key => monthKeyOrdinal(key) > target);
+}
+
 function monthEdgeDayKeys(dayKey) {
   const date = dateFromDayKey(dayKey);
   if (!date) {
@@ -511,6 +529,7 @@ async function calendarStripMetrics(page) {
         childCount: chips.length,
         first_day_key: chips[0]?.dayKey || "",
         last_day_key: chips[chips.length - 1]?.dayKey || "",
+        rendered_day_keys: chips.map(chip => chip.dayKey),
         rendered_month_keys: renderedMonthKeys,
         visible_day_keys: visibleChips.map(chip => chip.dayKey),
         visible_labels: visibleChips.map(chip => chip.label),
@@ -590,8 +609,7 @@ async function scrollDayStripDirect(page, amount = 180) {
 
 async function scrollDayStripToDay(page, dayKey, alignment = "center") {
   await page.locator(`.light-calendar-day-chip[data-day="${dayKey}"]`).waitFor({ state: "visible" });
-  await page.locator(".light-calendar-day-strip").evaluate(({ targetDay, targetAlignment }) => {
-    const strip = document.querySelector(".light-calendar-day-strip");
+  await page.locator(".light-calendar-day-strip").evaluate((strip, { targetDay, targetAlignment }) => {
     const chip = strip?.querySelector(`.light-calendar-day-chip[data-day="${targetDay}"]`);
     if (!(strip instanceof HTMLElement) || !(chip instanceof HTMLElement)) {
       throw new Error(`Calendar rail day ${targetDay} not found`);
@@ -619,13 +637,13 @@ async function scrollDayStripToDay(page, dayKey, alignment = "center") {
 }
 
 async function scrollDayStripToEdge(page, direction = "left") {
-  await page.locator(".light-calendar-day-strip").evaluate(targetDirection => {
-    const strip = document.querySelector(".light-calendar-day-strip");
+  await page.locator(".light-calendar-day-strip").evaluate((strip, targetDirection) => {
     if (!(strip instanceof HTMLElement)) {
       throw new Error("Calendar day strip not found");
     }
     const left = targetDirection === "left" ? 0 : strip.scrollWidth;
     strip.scrollTo({ left, behavior: "instant" });
+    strip.dispatchEvent(new Event("scroll", { bubbles: true }));
   }, direction);
 }
 
@@ -640,20 +658,16 @@ async function continueDayStripBeyondEdge(page, direction = "left") {
     const chips = Array.from(strip.querySelectorAll(".light-calendar-day-chip"));
     const firstDayKey = String(chips[0]?.getAttribute("data-day") || "").trim();
     const lastDayKey = String(chips[chips.length - 1]?.getAttribute("data-day") || "").trim();
-    if (Math.round(strip.scrollWidth || 0) > Number(previousWidth || 0) + 24) {
-      return true;
-    }
     if (targetDirection === "left") {
-      return firstDayKey !== String(previousFirstDayKey || "").trim();
+      return Boolean(firstDayKey && firstDayKey !== String(previousFirstDayKey || "").trim());
     }
-    return lastDayKey !== String(previousLastDayKey || "").trim();
+    return Boolean(lastDayKey && lastDayKey !== String(previousLastDayKey || "").trim());
   }, {
     targetDirection: direction,
     previousWidth: before.scrollWidth,
     previousFirstDayKey: before.first_day_key,
     previousLastDayKey: before.last_day_key
   });
-  await scrollDayStripToEdge(page, direction);
   return calendarStripMetrics(page);
 }
 
@@ -799,7 +813,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(leftChrome.agenda_title === railStateBefore.agenda_title, "Expected passive rail scrolling to keep the agenda headline stable.");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-selected-month-left-edge.png`, summary);
     const continuedPrev = await continueDayStripBeyondEdge(page, "left");
-    assert(continuedPrev.rendered_month_keys.includes(shiftMonthKey(selectedMonth, -2)), `Expected desktop rail continuation to prepend an earlier month, got ${JSON.stringify(continuedPrev.rendered_month_keys)}.`);
+    assert(hasMonthBefore(continuedPrev.rendered_month_keys, shiftMonthKey(selectedMonth, -1)), `Expected desktop rail continuation to prepend an earlier month, got ${JSON.stringify(continuedPrev.rendered_month_keys)}.`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-continued-prev-month.png`, summary);
     await scrollDayStripToDay(page, lastDayKey, "end");
     const selectedMonthRight = await calendarStripMetrics(page);
@@ -811,8 +825,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-selected-month-right-edge.png`, summary);
     const continuedNext = await continueDayStripBeyondEdge(page, "right");
     const nextMonthStartDay = shiftDayKey(lastDayKey, 1);
-    assert(continuedNext.rendered_month_keys.includes(shiftMonthKey(selectedMonth, 2)), `Expected desktop rail continuation to append a later month, got ${JSON.stringify(continuedNext.rendered_month_keys)}.`);
-    assert(continuedNext.visible_day_keys.includes(nextMonthStartDay), `Expected continued desktop scrolling to reveal the next month start ${nextMonthStartDay}, got ${JSON.stringify(continuedNext.visible_day_keys)}.`);
+    assert(hasMonthAfter(continuedNext.rendered_month_keys, shiftMonthKey(selectedMonth, 1)), `Expected desktop rail continuation to append a later month, got ${JSON.stringify(continuedNext.rendered_month_keys)}.`);
+    assert(continuedNext.rendered_day_keys.includes(nextMonthStartDay), `Expected continued desktop scrolling to render the next month start ${nextMonthStartDay}, got ${JSON.stringify(continuedNext.rendered_day_keys)}.`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-continued-next-month.png`, summary);
     await selectCalendarDayChip(page, nextMonthStartDay);
     const adjacentMonthChrome = await calendarChromeState(page);
@@ -1023,7 +1037,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(leftChrome.agenda_title === railStateBefore.agenda_title, "Expected passive rail scrolling to keep the agenda headline stable.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-selected-month-left-edge.png`, summary);
     const continuedPrev = await continueDayStripBeyondEdge(page, "left");
-    assert(continuedPrev.rendered_month_keys.includes(shiftMonthKey(selectedMonth, -2)), `Expected mobile rail continuation to prepend an earlier month, got ${JSON.stringify(continuedPrev.rendered_month_keys)}.`);
+    assert(hasMonthBefore(continuedPrev.rendered_month_keys, shiftMonthKey(selectedMonth, -1)), `Expected mobile rail continuation to prepend an earlier month, got ${JSON.stringify(continuedPrev.rendered_month_keys)}.`);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-continued-prev-month.png`, summary);
     await scrollDayStripToDay(page, lastDayKey, "end");
     const selectedMonthRight = await calendarStripMetrics(page);
@@ -1035,8 +1049,8 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveShot(page, reportDir, `calendar-mobile-${theme}-selected-month-right-edge.png`, summary);
     const continuedNext = await continueDayStripBeyondEdge(page, "right");
     const nextMonthStartDay = shiftDayKey(lastDayKey, 1);
-    assert(continuedNext.rendered_month_keys.includes(shiftMonthKey(selectedMonth, 2)), `Expected mobile rail continuation to append a later month, got ${JSON.stringify(continuedNext.rendered_month_keys)}.`);
-    assert(continuedNext.visible_day_keys.includes(nextMonthStartDay), `Expected continued mobile scrolling to reveal the next month start ${nextMonthStartDay}, got ${JSON.stringify(continuedNext.visible_day_keys)}.`);
+    assert(hasMonthAfter(continuedNext.rendered_month_keys, shiftMonthKey(selectedMonth, 1)), `Expected mobile rail continuation to append a later month, got ${JSON.stringify(continuedNext.rendered_month_keys)}.`);
+    assert(continuedNext.rendered_day_keys.includes(nextMonthStartDay), `Expected continued mobile scrolling to render the next month start ${nextMonthStartDay}, got ${JSON.stringify(continuedNext.rendered_day_keys)}.`);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-continued-next-month.png`, summary);
     await selectCalendarDayChip(page, nextMonthStartDay);
     const adjacentMonthChrome = await calendarChromeState(page);

@@ -304,6 +304,34 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
 
+def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() -> None:
+    app = read("app.js")
+
+    graph_list_label = function_block(app, "graphListLabel")
+    timestamp_label = function_block(app, "calendarConnectedTileTimestampLabel")
+    date_label = function_block(app, "calendarConnectedTileDateLabel")
+    connected_value = function_block(app, "connectedRecordValue")
+    workspace_linked_rows = function_block(app, "workspaceLinkedRows")
+    reminder_linked_rows = function_block(app, "reminderDetailLinkedRows")
+    task_attachment_rows = function_block(app, "taskAttachmentRows")
+
+    assert 'String(record?.kind || "").trim() === "calendar_event"' in graph_list_label
+    assert "return calendarConnectedTileTimestampLabel(record);" in graph_list_label
+    assert "calendarConnectedTileDateLabel(dayKey, timeZone, nowMs)" in timestamp_label
+    assert "calendarEventTimeRange(event, timeZone)" in timestamp_label
+    assert 'return "Today";' in date_label
+    assert 'return "Tomorrow";' in date_label
+    assert 'return "Yesterday";' in date_label
+    assert 'formatCalendarDateKey(normalized, { weekday: "long" })' in date_label
+    assert 'formatCalendarDateKey(normalized, { month: "numeric", day: "numeric", year: "2-digit" })' in date_label
+    assert 'String(relatedKind || "").trim() === "calendar_event" && related' in connected_value
+    assert "return calendarConnectedTileTimestampLabel(related);" in connected_value
+    assert "connectedRecordValue(relatedKind, related, relation)" in workspace_linked_rows
+    assert "connectedRecordValue(relatedKind, related, relation, { preferSummary: true })" in reminder_linked_rows
+    assert "connectedRecordValue(relatedKind, related, relation, { preferSummary: true })" in task_attachment_rows
+    assert "value: String(related?.summary || relation || graphKindLabel(relatedKind))" not in task_attachment_rows
+
+
 def test_calendar_day_rail_styles_and_contracts_follow_continuous_month_model() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -1198,7 +1226,7 @@ def test_tasks_use_people_chips_single_status_trigger_and_reset_scroll_on_open()
     assert 'return lightLinkedNotesSection(task);' in task_notes_section
     assert 'icon: graphKindIcon(relatedKind),' in task_attachment_rows
     assert 'accentKey: graphKindAccentKey(relatedKind),' in task_attachment_rows
-    assert 'value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),' in task_attachment_rows
+    assert 'value: connectedRecordValue(relatedKind, related, relation, { preferSummary: true }),' in task_attachment_rows
     assert 'openOptions: { taskOrigin: origin }' in task_attachment_rows
     assert 'return lightInfoSection("Attached", rows);' in task_attachments_section
     assert "lightRecordChip(" not in task_attachments_section

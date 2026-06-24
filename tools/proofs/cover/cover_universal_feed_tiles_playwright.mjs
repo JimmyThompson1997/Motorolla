@@ -90,6 +90,46 @@ const ROUTES = [
     },
   },
 ];
+const CALENDAR_CONNECTED_SURFACES = [
+  {
+    key: "meeting-notes",
+    surface: "Meeting Notes",
+    route: "meeting-notes",
+    readySelector: ".light-graph-row",
+    openerSelector: '[data-record-id="demo-meeting-home-refresh"]',
+    detailSelector: '.light-shell[data-light-route="meeting-note-detail"]',
+    expectedCalendarTitle: "Front porch repair window",
+    blockedSummaries: [
+      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
+    ],
+  },
+  {
+    key: "reminders",
+    surface: "Reminders",
+    route: "reminders",
+    readySelector: ".light-reminder-row",
+    openerSelector: '[data-record-id="demo-reminder-health-call"]',
+    detailSelector: '.light-shell[data-light-route="reminder-detail"]',
+    expectedCalendarTitle: "Clinic paperwork check-in",
+    blockedSummaries: [
+      "Short appointment block to confirm forms, timing, and the follow-up questions.",
+    ],
+  },
+  {
+    key: "tasks",
+    surface: "Tasks",
+    route: "tasks",
+    readySelector: ".light-task-row, .light-task-detail-surface",
+    openerSelector: '[data-task-id="demo-task-do-paint-samples"] .light-task-row-main',
+    detailSelector: '.light-task-detail-surface[data-task-detail-id="demo-task-do-paint-samples"], .light-shell[data-light-route="task-detail"]',
+    expectedCalendarTitle: "Front porch repair window",
+    blockedSummaries: [
+      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
+    ],
+  },
+];
+const CALENDAR_CONNECTED_TIME_WINDOW_RE = /\b\d{1,2}:\d{2}\s?(?:AM|PM)\s*-\s*\d{1,2}:\d{2}\s?(?:AM|PM)\b/i;
+const CALENDAR_CONNECTED_DATE_PREFIX_RE = /^(?:Today|Tomorrow|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|\d{1,2}\/\d{1,2}\/\d{2})\s*[·•]\s*/;
 
 function resolveApiToken() {
   const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
@@ -423,6 +463,18 @@ async function collectRouteMetrics(page, routeConfig) {
 
 async function collectDetailMetrics(page) {
   return page.evaluate(({ detailSelector }) => {
+    function calendarConnectedRows() {
+      return [...document.querySelectorAll('[data-workspace-target-kind="calendar_event"]')].map(node => {
+        const stack = node.querySelector(".light-text-stack");
+        const title = String(stack?.querySelector("strong")?.textContent || "").trim();
+        const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+        return {
+          title,
+          detail,
+          text: String(node.textContent || "").trim().replace(/\s+/g, " "),
+        };
+      }).filter(row => row.title || row.detail || row.text);
+    }
     const detail = document.querySelector(detailSelector);
     return {
       currentRoute: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
@@ -435,10 +487,45 @@ async function collectDetailMetrics(page) {
       reminderActionRows: document.querySelectorAll('[data-reminder-action-row="true"]').length,
       reminderDetailChevrons: document.querySelectorAll(".light-reminder-detail-feed .light-chevron").length,
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
+      calendarConnectedRows: calendarConnectedRows(),
       detailShells: document.querySelectorAll(".detail-shell").length,
       detailPanels: document.querySelectorAll(`${detailSelector}.is-open, ${detailSelector}[aria-hidden="false"]`).length,
     };
   }, { detailSelector: DETAIL_SELECTOR });
+}
+
+async function collectCalendarConnectedRows(page) {
+  return page.evaluate(() => {
+    return [...document.querySelectorAll('[data-workspace-target-kind="calendar_event"]')].map(node => {
+      const stack = node.querySelector(".light-text-stack");
+      const title = String(stack?.querySelector("strong")?.textContent || "").trim();
+      const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+      return {
+        title,
+        detail,
+        text: String(node.textContent || "").trim().replace(/\s+/g, " "),
+      };
+    }).filter(row => row.title || row.detail || row.text);
+  });
+}
+
+function assertCalendarConnectedRow(surfaceConfig, rows) {
+  const matchingRows = rows.filter(row => !surfaceConfig.expectedCalendarTitle || row.title === surfaceConfig.expectedCalendarTitle);
+  assert(matchingRows.length > 0, `${surfaceConfig.surface}: expected linked Calendar row for ${surfaceConfig.expectedCalendarTitle}`);
+  const row = matchingRows[0];
+  assert(
+    CALENDAR_CONNECTED_DATE_PREFIX_RE.test(row.detail),
+    `${surfaceConfig.surface}: Calendar row should start with relative date, saw "${row.detail}"`
+  );
+  assert(
+    CALENDAR_CONNECTED_TIME_WINDOW_RE.test(row.detail),
+    `${surfaceConfig.surface}: Calendar row should show a start-end time window, saw "${row.detail}"`
+  );
+  for (const blocked of surfaceConfig.blockedSummaries || []) {
+    assert(!row.detail.includes(blocked), `${surfaceConfig.surface}: Calendar row leaked old summary text "${blocked}"`);
+    assert(!row.text.includes(blocked), `${surfaceConfig.surface}: Calendar row container leaked old summary text "${blocked}"`);
+  }
+  return row;
 }
 
 function assertCommonRouteState(routeConfig, metrics) {
@@ -794,6 +881,81 @@ async function captureRoute(browser, config, routeConfig, theme, viewportName, v
   return summary;
 }
 
+async function captureCalendarConnectedSurface(browser, config, surfaceConfig, theme, viewportName, viewport, consoleEvents, networkEvents) {
+  const routeDir = path.join(config.reportDir, "calendar-connected", surfaceConfig.key, theme, viewportName);
+  ensureDir(routeDir);
+  const context = await browser.newContext({
+    viewport,
+    screen: viewport,
+    hasTouch: viewportName === "mobile",
+    isMobile: viewportName === "mobile",
+  });
+  const page = await context.newPage();
+  page.on("console", message => {
+    consoleEvents.push({
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      type: message.type(),
+      text: message.text(),
+    });
+  });
+  page.on("pageerror", error => {
+    consoleEvents.push({
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      type: "pageerror",
+      text: error.message || String(error),
+    });
+  });
+  page.on("response", response => {
+    networkEvents.push({
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      url: response.url(),
+      status: response.status(),
+      ok: response.ok(),
+    });
+  });
+
+  try {
+    const pageUrl = buildRouteUrl(config, surfaceConfig, theme);
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await waitForRoute(page, surfaceConfig.route, config.timeoutMs);
+    await unlockPreviewIfNeeded(page, config.apiToken, config.timeoutMs);
+    await waitForRoute(page, surfaceConfig.route, config.timeoutMs);
+    await page.locator(surfaceConfig.readySelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const opener = page.locator(surfaceConfig.openerSelector).first();
+    if (await opener.count()) {
+      await opener.scrollIntoViewIfNeeded();
+      await opener.click();
+    }
+    await page.locator(surfaceConfig.detailSelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.waitForFunction(() => document.querySelectorAll('[data-workspace-target-kind="calendar_event"] .light-text-stack span').length > 0, undefined, {
+      timeout: config.timeoutMs,
+    });
+    const rows = await collectCalendarConnectedRows(page);
+    const matchedRow = assertCalendarConnectedRow(surfaceConfig, rows);
+    const screenshot = await saveScreenshot(page, path.join(routeDir, "calendar-connected-row.png"));
+    const summary = {
+      surface: surfaceConfig.surface,
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      page_url: pageUrl,
+      matched_row: matchedRow,
+      rows,
+      screenshot,
+    };
+    writeJsonFile(path.join(routeDir, "summary.json"), summary);
+    return summary;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -826,6 +988,26 @@ async function main() {
         }
       }
     }
+    const calendarConnectedSummaries = {};
+    for (const surfaceConfig of CALENDAR_CONNECTED_SURFACES) {
+      calendarConnectedSummaries[surfaceConfig.key] = {};
+      for (const theme of ["light", "dark"]) {
+        calendarConnectedSummaries[surfaceConfig.key][theme] = {};
+        for (const viewportName of ["mobile", "desktop"]) {
+          const viewport = viewportName === "desktop" ? DESKTOP_VIEWPORT : MOBILE_VIEWPORT;
+          calendarConnectedSummaries[surfaceConfig.key][theme][viewportName] = await captureCalendarConnectedSurface(
+            browser,
+            config,
+            surfaceConfig,
+            theme,
+            viewportName,
+            viewport,
+            consoleEvents,
+            networkEvents,
+          );
+        }
+      }
+    }
     const summary = {
       schema: RESULT_SCHEMA,
       ok: true,
@@ -835,6 +1017,7 @@ async function main() {
       manifest_url: manifestResult.manifestUrl,
       remote_manifest: manifestResult.manifest,
       routes: routeSummaries,
+      calendar_connected_surfaces: calendarConnectedSummaries,
     };
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     writeJsonFile(path.join(config.reportDir, "console.json"), consoleEvents);

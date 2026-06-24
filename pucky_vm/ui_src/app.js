@@ -5188,8 +5188,57 @@
   }
 
   function graphListLabel(record) {
+    if (String(record?.kind || "").trim() === "calendar_event") {
+      return calendarConnectedTileTimestampLabel(record);
+    }
     const timestamp = workspaceTimestamp(record.event_at_ms || record.start_at_ms || record.due_at_ms || record.updated_at_ms, "Updated");
     return `${timestamp}${DOT}${record.summary || graphKindLabel(record.kind)}`;
+  }
+
+  function calendarConnectedTileTimestampLabel(event, timeZone = calendarEffectiveTimeZone(), nowMs = Date.now()) {
+    const dayKey = calendarEventDateKey(event, timeZone);
+    return `${calendarConnectedTileDateLabel(dayKey, timeZone, nowMs)}${DOT}${calendarEventTimeRange(event, timeZone)}`;
+  }
+
+  function calendarConnectedTileDateLabel(dayKey, timeZone = calendarEffectiveTimeZone(), nowMs = Date.now()) {
+    const normalized = normalizeCalendarDateKey(dayKey) || calendarTodayDateKey(timeZone);
+    const today = calendarDateKeyFromTimestamp(nowMs, timeZone) || calendarTodayDateKey(timeZone);
+    if (normalized === today) {
+      return "Today";
+    }
+    if (normalized === shiftCalendarDateKey(today, 1)) {
+      return "Tomorrow";
+    }
+    if (normalized === shiftCalendarDateKey(today, -1)) {
+      return "Yesterday";
+    }
+    const delta = calendarDateKeyDistance(normalized, today);
+    if (Number.isFinite(delta) && Math.abs(delta) < 7) {
+      return formatCalendarDateKey(normalized, { weekday: "long" });
+    }
+    return formatCalendarDateKey(normalized, { month: "numeric", day: "numeric", year: "2-digit" });
+  }
+
+  function calendarDateKeyDistance(dayKey, baseDayKey) {
+    const day = calendarDateFromKey(dayKey);
+    const base = calendarDateFromKey(baseDayKey);
+    if (!day || !base) {
+      return Number.NaN;
+    }
+    return Math.round((day.getTime() - base.getTime()) / (24 * 60 * 60 * 1000));
+  }
+
+  function connectedRecordValue(relatedKind, related, fallback = "", options = {}) {
+    if (String(relatedKind || "").trim() === "calendar_event" && related) {
+      return calendarConnectedTileTimestampLabel(related);
+    }
+    if (options.preferSummary === true) {
+      const summary = String(related?.summary || "").trim();
+      if (summary) {
+        return summary;
+      }
+    }
+    return String(fallback || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
   }
 
   function calendarEventDetailRows(event, attendees = calendarEventPeople(event)) {
@@ -5399,7 +5448,7 @@
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
       const value = typeof options.valueResolver === "function"
         ? options.valueResolver({ link, related, relatedKind: normalizedKind, relatedId, label, relation })
-        : String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
+        : connectedRecordValue(relatedKind, related, relation, { preferSummary: true });
       rows.push({
         icon: graphKindIcon(relatedKind),
         accentKey: graphKindAccentKey(relatedKind),
@@ -5994,7 +6043,7 @@
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
       const resolvedValue = typeof options.valueResolver === "function"
         ? options.valueResolver({ link, related, relatedKind: normalizedKind, relatedId, label, relation })
-        : relation;
+        : connectedRecordValue(relatedKind, related, relation);
       rows.push({
         icon: graphKindIcon(relatedKind),
         accentKey: graphKindAccentKey(relatedKind),
@@ -7136,7 +7185,7 @@
         icon: graphKindIcon(relatedKind),
         accentKey: graphKindAccentKey(relatedKind),
         label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
-        value: String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        value: connectedRecordValue(relatedKind, related, relation, { preferSummary: true }),
         target,
         kind: relatedKind,
         fromRoute: origin.route,
