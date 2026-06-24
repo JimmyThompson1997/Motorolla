@@ -571,6 +571,60 @@ async function toggleChecklistItemWithRetry(page, baseUrl, apiToken, taskId, ite
 }
 
 export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
+  const contactPayloads = [
+    {
+      id: seed.contactId,
+      payload: {
+        title: seed.contactTitle,
+        summary: "Proof contact linked from the primary task.",
+        metadata: {
+          first_name: "Proof",
+          last_name: runDisplayToken(seed),
+          photo: "fixtures/contact_photos/proof-contact.webp",
+          email: `${seed.prefix}@example.com`,
+          phone: "+1 (415) 555-0188",
+          activity: ["Created by proof", "Linked to live alpha"],
+        },
+      },
+    },
+    {
+      id: seed.ownerContactId,
+      payload: {
+        title: seed.ownerContactTitle,
+        summary: "Proof owner contact for the primary task.",
+        metadata: {
+          first_name: "Owner",
+          last_name: runDisplayToken(seed),
+          photo: "fixtures/contact_photos/eric.webp",
+          email: `${seed.prefix}-owner@example.com`,
+          phone: "+1 (415) 555-0179",
+          activity: ["Owner handoff"],
+        },
+      },
+    },
+    {
+      id: seed.davidContactId,
+      payload: {
+        title: "David",
+        summary: "Contact",
+        metadata: {
+          first_name: "David",
+          activity: ["Single-name proof contact"],
+        },
+      },
+    },
+    {
+      id: seed.danielContactId,
+      payload: {
+        title: "Daniel",
+        summary: "Contact",
+        metadata: {
+          first_name: "Daniel",
+          activity: ["Single-name proof contact"],
+        },
+      },
+    },
+  ];
   const taskPayloads = [
     {
       id: seed.primaryTaskId,
@@ -645,6 +699,9 @@ export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {
       },
     },
   ];
+  for (const entry of contactPayloads) {
+    await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/contacts/${encodeURIComponent(entry.id)}`, entry.payload);
+  }
   for (const entry of taskPayloads) {
     await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/tasks/${encodeURIComponent(entry.id)}`, entry.payload);
   }

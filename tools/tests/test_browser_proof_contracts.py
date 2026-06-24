@@ -414,6 +414,15 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert 'title: "Daniel"' in shared
 
 
+def test_task_workspace_seed_restore_resets_contact_records_for_multi_lane_proofs() -> None:
+    shared = read_source("task_workspace_proof_shared.mjs")
+
+    assert "export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {" in shared
+    assert "const contactPayloads = [" in shared
+    assert 'await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/contacts/${encodeURIComponent(entry.id)}`, entry.payload);' in shared
+    assert 'activity: ["Created by proof", "Linked to live alpha"]' in shared
+
+
 def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
