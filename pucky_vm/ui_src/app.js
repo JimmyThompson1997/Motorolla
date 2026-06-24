@@ -1318,10 +1318,6 @@
   }
 
   function workspaceRouteQueryKey(route = state.route, options = {}) {
-    const currentRoute = String(route || "").trim();
-    if (currentRoute === "calendar") {
-      return normalizeCalendarDateKey(options.date || options.queryKey || selectedCalendarDateKey()) || "";
-    }
     return "";
   }
 
@@ -2105,9 +2101,6 @@
   }
 
   function workspaceQueryKey(collection, options = {}) {
-    if (String(collection || "").trim() === "calendar-events") {
-      return normalizeCalendarDateKey(options.date || options.queryKey || selectedCalendarDateKey()) || "";
-    }
     return "";
   }
 
@@ -2267,7 +2260,7 @@
     let changed = !bucket.loaded || hadError;
     try {
       await ensureLinksApiConfig();
-      const date = String(options.date || queryKey || "");
+      const date = String(options.date || "");
       recordPerfRouteDataStart(`workspace:${collection}`);
       const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }), {
         metricKey: `workspace:${collection}`
@@ -2301,27 +2294,6 @@
         bucket.loading = false;
       }
     }
-    if (String(collection || "") === "calendar-events" && options.preload !== true) {
-      const dayKey = normalizeCalendarDateKey(queryKey || selectedCalendarDateKey());
-      if (dayKey) {
-        queueDeferredPerfTask(`calendar-preload:${dayKey}:prev`, () => loadWorkspaceCollection("calendar-events", {
-          render: false,
-          preload: true,
-          allowCachedRender: true,
-          date: shiftCalendarDateKey(dayKey, -1),
-          queryKey: shiftCalendarDateKey(dayKey, -1),
-          reason: "calendar_preload_prev"
-        }), { delayMs: PERF_CALENDAR_PRELOAD_DELAY_MS });
-        queueDeferredPerfTask(`calendar-preload:${dayKey}:next`, () => loadWorkspaceCollection("calendar-events", {
-          render: false,
-          preload: true,
-          allowCachedRender: true,
-          date: shiftCalendarDateKey(dayKey, 1),
-          queryKey: shiftCalendarDateKey(dayKey, 1),
-          reason: "calendar_preload_next"
-        }), { delayMs: PERF_CALENDAR_PRELOAD_DELAY_MS });
-      }
-    }
     if (options.render && (changed || options.renderWhenUnchanged === true)) {
       requestRender(`workspace:${collection}:${String(options.reason || "refresh")}`);
     }
@@ -2343,8 +2315,7 @@
     }
     return loadWorkspaceCollection(collection, {
       ...options,
-      queryKey,
-      date: queryKey || options.date || ""
+      queryKey
     });
   }
 
@@ -6499,11 +6470,6 @@
     input.addEventListener("change", () => {
       state.selectedCalendarDate = normalizeCalendarDateKey(input.value) || calendarTodayDateKey();
       render();
-      void loadWorkspaceForRoute("calendar", {
-        render: true,
-        allowCachedRender: true,
-        reason: "calendar_day_change"
-      });
     });
     field.append(input);
     controls.append(field);
@@ -6667,11 +6633,6 @@
     chip.addEventListener("click", () => {
       state.selectedCalendarDate = dayKey;
       render();
-      void loadWorkspaceForRoute("calendar", {
-        render: true,
-        allowCachedRender: true,
-        reason: "calendar_day_click"
-      });
     });
     const dots = el("span", "light-calendar-day-dots");
     calendarDayMarkers(dayKey).forEach(tone => dots.append(el("span", `light-calendar-day-dot ${tone}`, "")));

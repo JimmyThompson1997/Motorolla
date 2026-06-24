@@ -655,6 +655,30 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert "box-shadow: none;" in calendar_settings_button
 
 
+def test_calendar_uses_one_full_collection_for_day_rail_and_selected_day() -> None:
+    app = read("app.js")
+    workspace_route_query_key = function_block(app, "workspaceRouteQueryKey")
+    workspace_query_key = function_block(app, "workspaceQueryKey")
+    load_workspace = function_block(app, "loadWorkspaceCollection")
+    load_workspace_for_route = function_block(app, "loadWorkspaceForRoute")
+    light_date_picker = function_block(app, "lightDatePicker")
+    light_calendar_day_chip = function_block(app, "lightCalendarDayChip")
+
+    assert 'if (currentRoute === "calendar") {' not in workspace_route_query_key
+    assert 'if (String(collection || "").trim() === "calendar-events") {' not in workspace_query_key
+    assert 'const date = String(options.date || "");' in load_workspace
+    assert 'const date = String(options.date || queryKey || "");' not in load_workspace
+    assert 'reason: "calendar_preload_prev"' not in load_workspace
+    assert 'reason: "calendar_preload_next"' not in load_workspace
+    assert 'date: queryKey || options.date || ""' not in load_workspace_for_route
+    assert 'void loadWorkspaceForRoute("calendar", {' not in light_date_picker
+    assert 'reason: "calendar_day_change"' not in light_date_picker
+    assert 'void loadWorkspaceForRoute("calendar", {' not in light_calendar_day_chip
+    assert 'reason: "calendar_day_click"' not in light_calendar_day_chip
+    assert 'state.selectedCalendarDate = dayKey;' in light_calendar_day_chip
+    assert 'render();' in light_calendar_day_chip
+
+
 def test_perf_debug_contract_exposes_route_ready_render_bridge_and_poll_metrics() -> None:
     app = read("app.js")
     perf_metrics = function_block(app, "perfDebugMetrics")
@@ -736,9 +760,9 @@ def test_shared_bridge_cache_and_calendar_day_cache_support_android_shell_tax_re
     assert 'queryKey: "",' in app
     assert "queryCache: {}" in app
     assert 'recordPerfCacheHit(`workspace:${collection}`);' in load_workspace
-    assert 'allowCachedRender: true,' in load_workspace
     assert 'rememberWorkspaceCache(bucket, queryKey, nextItems, nextFingerprint, refreshedAt);' in load_workspace
-    assert 'shiftCalendarDateKey(dayKey, -1)' in load_workspace
+    assert 'allowCachedRender: true,' not in load_workspace
+    assert 'shiftCalendarDateKey(dayKey, -1)' not in load_workspace
     assert 'const queryKey = workspaceRouteQueryKey(route, options);' in load_workspace_for_route
     assert 'const cached = !options.force ? readBridgeCache("pucky.config.get", {}, PERF_BRIDGE_CACHE_TTL_MS) : null;' in request_native_config
 

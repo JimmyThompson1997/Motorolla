@@ -206,6 +206,33 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "continueDayStripBeyondEdge(page, \"right\")" in source
 
 
+def test_calendar_browser_proof_covers_dot_stability_without_date_scoped_reloads() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert "tracked_day_keys" in source
+    assert "tracked_day_labels" in source
+    assert "dot_tones_by_day" in source
+    assert "agenda_tones_for_selected_day" in source
+    assert "calendar_events_request_urls" in source
+    assert "calendar_events_date_request_urls" in source
+    assert "Expected tracked calendar chips for yesterday/today/tomorrow" in source
+    assert "Expected off-day chip dots to stay stable after switching the selected day." in source
+    assert "Expected selected day agenda tones to match that chip's visible dots." in source
+    assert "Expected calendar day switches to avoid date-scoped calendar-events reloads." in source
+    assert 'calendar-desktop-${theme}-yesterday-selected.png' in source
+    assert 'calendar-desktop-${theme}-today-selected.png' in source
+    assert 'calendar-desktop-${theme}-tomorrow-selected.png' in source
+    assert 'calendar-desktop-${theme}-yesterday-rail.png' in source
+    assert 'calendar-desktop-${theme}-today-rail.png' in source
+    assert 'calendar-desktop-${theme}-tomorrow-rail.png' in source
+    assert 'calendar-mobile-${theme}-yesterday-selected.png' in source
+    assert 'calendar-mobile-${theme}-today-selected.png' in source
+    assert 'calendar-mobile-${theme}-tomorrow-selected.png' in source
+    assert 'calendar-mobile-${theme}-yesterday-rail.png' in source
+    assert 'calendar-mobile-${theme}-today-rail.png' in source
+    assert 'calendar-mobile-${theme}-tomorrow-rail.png' in source
+
+
 def test_calendar_browser_proof_retries_manifest_fetch_and_reacquires_event_container() -> None:
     source = read_source("cover_calendar_playwright.mjs")
 

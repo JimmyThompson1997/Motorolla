@@ -20,6 +20,7 @@ const MANIFEST_FETCH_ATTEMPTS = 4;
 const MANIFEST_FETCH_RETRY_MS = 750;
 const CALENDAR_EVENT_CONTAINER_ATTEMPTS = 4;
 const CALENDAR_EVENT_CONTAINER_RETRY_MS = 250;
+const CALENDAR_TONES = Object.freeze(["red", "blue", "green", "amber", "purple", "slate"]);
 
 function resolveApiToken() {
   const proofToken = String(process.env.PUCKY_CALENDAR_PROOF_TOKEN || "").trim();
@@ -152,6 +153,7 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
   if (!config.apiToken) {
     throw new Error("Calendar proof needs an API token to seed real workspace records.");
   }
+  const yesterday = dateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
   const today = dateKey(new Date());
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   const dayAfter = dateKey(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
@@ -163,6 +165,7 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     writeEnabled: true,
     records: [],
     linkIds: [],
+    yesterday,
     today,
     tomorrow,
     dayAfter,
@@ -266,6 +269,16 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     due_at_ms: dayAt(0, 8, 30),
     html: "<!doctype html><h1>Send proof review notes</h1><p>Reminder linked back to the proof review event and task.</p>",
     metadata: { source_kind: "calendar_event", source_id: `${runId}-freelance-review`, snooze_state: "ready" }
+  });
+  await rememberRecord("calendar-events", {
+    id: `${runId}-yesterday-walk`,
+    title: "Proof porch material pickup",
+    summary: "A seeded yesterday event to stabilize day-rail dot proofing.",
+    date: yesterday,
+    start_at_ms: dayAt(-1, 15, 0),
+    end_at_ms: dayAt(-1, 15, 30),
+    html: "<!doctype html><h1>Proof porch material pickup</h1><p>Yesterday proof event for stable day-rail dots.</p>",
+    metadata: { place: "Harbor Lumber", type: "personal" }
   });
   await rememberRecord("calendar-events", {
     id: `${runId}-freelance-review`,
@@ -720,6 +733,48 @@ async function calendarChromeState(page) {
   }));
 }
 
+async function readCalendarDaySwitchState(page, dayKeys) {
+  return page.evaluate(({ trackedDayKeys, tones }) => {
+    const visible = node => Boolean(node instanceof HTMLElement && node.getClientRects().length);
+    const toneListForNode = node => Array.from(tones).filter(tone => Boolean(node instanceof Element && node.classList.contains(tone)));
+    const dotTonesByDay = Object.fromEntries(Array.from(trackedDayKeys).map(dayKey => {
+      const chip = document.querySelector(`.light-calendar-day-chip[data-day="${dayKey}"]`);
+      const tonesForChip = chip
+        ? Array.from(chip.querySelectorAll(".light-calendar-day-dot"))
+          .map(dot => Array.from(tones).find(tone => dot.classList.contains(tone)) || "")
+          .filter(Boolean)
+        : null;
+      return [dayKey, tonesForChip];
+    }));
+    const visibleEventBlocks = Array.from(document.querySelectorAll(".light-event-block")).filter(visible);
+    return {
+      tracked_day_keys: Array.from(trackedDayKeys),
+      selected_day_key: String(document.querySelector(".light-calendar-day-chip.is-selected")?.getAttribute("data-day") || document.querySelector(".light-date-input")?.value || "").trim(),
+      dot_tones_by_day: dotTonesByDay,
+      agenda_tones_for_selected_day: visibleEventBlocks.map(node => toneListForNode(node)[0] || "").filter(Boolean),
+      agenda_titles_for_selected_day: visibleEventBlocks.map(node => String(node.querySelector(".light-event-title")?.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean)
+    };
+  }, { trackedDayKeys: dayKeys, tones: CALENDAR_TONES });
+}
+
+function calendarEventsRequestUrls(entries = []) {
+  return entries
+    .filter(entry => String(entry?.type || "").trim() === "request")
+    .map(entry => String(entry?.url || "").trim())
+    .filter(url => url.includes("/api/workspace/calendar-events"));
+}
+
+function calendarEventDateRequestUrls(entries = []) {
+  return calendarEventsRequestUrls(entries).filter(url => {
+    try {
+      const parsed = new URL(url);
+      return String(parsed.searchParams.get("date") || "").trim().length > 0;
+    } catch (_error) {
+      return /[?&]date=/.test(url);
+    }
+  });
+}
+
 async function settingsPanelMetrics(page) {
   return page.locator(".calendar-settings-panel").evaluate(node => {
     const rect = node.getBoundingClientRect();
@@ -889,7 +944,8 @@ async function selectCalendarDayChip(page, dayKey) {
   await page.locator(`.light-calendar-day-chip[data-day="${dayKey}"]`).click();
   await page.waitForFunction(targetDay => {
     const input = document.querySelector(".light-date-input");
-    return Boolean(input instanceof HTMLInputElement && input.value === String(targetDay || ""));
+    const selectedChip = document.querySelector(`.light-calendar-day-chip.is-selected[data-day="${targetDay}"]`);
+    return Boolean(input instanceof HTMLInputElement && input.value === String(targetDay || "") && selectedChip);
   }, dayKey);
 }
 
@@ -1205,6 +1261,68 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(todayTitles.includes("Proof Katy pickup handoff"), "Expected clustered family logistics on today.");
     assert(await calendarLaneWidth(page) >= 820, `Expected a widened desktop calendar lane, got ${await calendarLaneWidth(page)}px.`);
     const eventSelector = proofEventSelector(seed);
+    const trackedDayLabels = {
+      yesterday: seed.yesterday || shiftDayKey(seed.today, -1),
+      today: seed.today,
+      tomorrow: seed.tomorrow
+    };
+    const trackedDayKeys = Object.values(trackedDayLabels);
+    const daySwitchShotNames = {
+      yesterday: `calendar-desktop-${theme}-yesterday-selected.png`,
+      today: `calendar-desktop-${theme}-today-selected.png`,
+      tomorrow: `calendar-desktop-${theme}-tomorrow-selected.png`,
+    };
+    const daySwitchRailNames = {
+      yesterday: `calendar-desktop-${theme}-yesterday-rail.png`,
+      today: `calendar-desktop-${theme}-today-rail.png`,
+      tomorrow: `calendar-desktop-${theme}-tomorrow-rail.png`,
+    };
+    const baselineDaySwitchState = await readCalendarDaySwitchState(page, trackedDayKeys);
+    assert(
+      trackedDayKeys.every(dayKey => Array.isArray(baselineDaySwitchState.dot_tones_by_day?.[dayKey])),
+      `Expected tracked calendar chips for yesterday/today/tomorrow, got ${JSON.stringify(baselineDaySwitchState)}.`
+    );
+    const baselineDotTonesByDay = baselineDaySwitchState.dot_tones_by_day;
+    const desktopDaySwitchSummary = {
+      tracked_day_keys: trackedDayKeys,
+      tracked_day_labels: trackedDayLabels,
+      baseline_dot_tones_by_day: baselineDotTonesByDay,
+      switches: {}
+    };
+    for (const [label, dayKey] of Object.entries(trackedDayLabels)) {
+      const switchLogStart = networkLog.length;
+      await selectCalendarDayChip(page, dayKey);
+      await delay(250);
+      const switchedDayState = await readCalendarDaySwitchState(page, trackedDayKeys);
+      const selectedDotTones = Array.isArray(switchedDayState.dot_tones_by_day?.[dayKey]) ? switchedDayState.dot_tones_by_day[dayKey] : [];
+      const selectedAgendaTonePrefix = switchedDayState.agenda_tones_for_selected_day.slice(0, selectedDotTones.length);
+      const switchEntries = networkLog.slice(switchLogStart);
+      const calendarEventsRequestUrlsForSwitch = calendarEventsRequestUrls(switchEntries);
+      const calendarEventDateRequestUrlsForSwitch = calendarEventDateRequestUrls(switchEntries);
+      assert(
+        JSON.stringify(switchedDayState.dot_tones_by_day) === JSON.stringify(baselineDotTonesByDay),
+        `Expected off-day chip dots to stay stable after switching the selected day. ${label} baseline=${JSON.stringify(baselineDotTonesByDay)} current=${JSON.stringify(switchedDayState.dot_tones_by_day)}.`
+      );
+      assert(
+        JSON.stringify(selectedAgendaTonePrefix) === JSON.stringify(selectedDotTones),
+        `Expected selected day agenda tones to match that chip's visible dots. ${label} dots=${JSON.stringify(selectedDotTones)} agenda=${JSON.stringify(switchedDayState.agenda_tones_for_selected_day)}.`
+      );
+      assert(
+        calendarEventDateRequestUrlsForSwitch.length === 0,
+        `Expected calendar day switches to avoid date-scoped calendar-events reloads. ${label} saw ${calendarEventDateRequestUrlsForSwitch.join(", ") || "(none)"} from ${JSON.stringify(calendarEventsRequestUrlsForSwitch)}.`
+      );
+      desktopDaySwitchSummary.switches[label] = {
+        ...switchedDayState,
+        calendar_events_request_urls: calendarEventsRequestUrlsForSwitch,
+        calendar_events_date_request_urls: calendarEventDateRequestUrlsForSwitch
+      };
+      await saveShot(page, reportDir, daySwitchShotNames[label], summary);
+      await saveLocatorShot(page.locator(".light-calendar-day-strip"), reportDir, daySwitchRailNames[label], summary);
+    }
+    summary.calendar_day_switches = summary.calendar_day_switches || {};
+    summary.calendar_day_switches[`desktop_${theme}`] = desktopDaySwitchSummary;
+    await selectCalendarDayChip(page, seed.today);
+    await waitForCalendarTitle(page, "Proof freelance review call");
     await setCalendarDate(page, seed.tomorrow);
     assert(await page.locator(".light-date-input").inputValue() === seed.tomorrow, `Expected desktop off-today selection to land on ${seed.tomorrow}, got ${await page.locator(".light-date-input").inputValue()}.`);
     assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected off-today calendar header to stay free of Today CTA.");
@@ -1561,6 +1679,68 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected Today chip to stay hidden on the already-selected mobile today view.");
     assert(await page.locator(".light-event-badge").count() === 0, "Expected mobile agenda cards to hide the legacy type badge.");
     const eventSelector = proofEventSelector(seed);
+    const trackedDayLabels = {
+      yesterday: seed.yesterday || shiftDayKey(seed.today, -1),
+      today: seed.today,
+      tomorrow: seed.tomorrow
+    };
+    const trackedDayKeys = Object.values(trackedDayLabels);
+    const daySwitchShotNames = {
+      yesterday: `calendar-mobile-${theme}-yesterday-selected.png`,
+      today: `calendar-mobile-${theme}-today-selected.png`,
+      tomorrow: `calendar-mobile-${theme}-tomorrow-selected.png`,
+    };
+    const daySwitchRailNames = {
+      yesterday: `calendar-mobile-${theme}-yesterday-rail.png`,
+      today: `calendar-mobile-${theme}-today-rail.png`,
+      tomorrow: `calendar-mobile-${theme}-tomorrow-rail.png`,
+    };
+    const baselineDaySwitchState = await readCalendarDaySwitchState(page, trackedDayKeys);
+    assert(
+      trackedDayKeys.every(dayKey => Array.isArray(baselineDaySwitchState.dot_tones_by_day?.[dayKey])),
+      `Expected tracked calendar chips for yesterday/today/tomorrow, got ${JSON.stringify(baselineDaySwitchState)}.`
+    );
+    const baselineDotTonesByDay = baselineDaySwitchState.dot_tones_by_day;
+    const mobileDaySwitchSummary = {
+      tracked_day_keys: trackedDayKeys,
+      tracked_day_labels: trackedDayLabels,
+      baseline_dot_tones_by_day: baselineDotTonesByDay,
+      switches: {}
+    };
+    for (const [label, dayKey] of Object.entries(trackedDayLabels)) {
+      const switchLogStart = networkLog.length;
+      await selectCalendarDayChip(page, dayKey);
+      await delay(250);
+      const switchedDayState = await readCalendarDaySwitchState(page, trackedDayKeys);
+      const selectedDotTones = Array.isArray(switchedDayState.dot_tones_by_day?.[dayKey]) ? switchedDayState.dot_tones_by_day[dayKey] : [];
+      const selectedAgendaTonePrefix = switchedDayState.agenda_tones_for_selected_day.slice(0, selectedDotTones.length);
+      const switchEntries = networkLog.slice(switchLogStart);
+      const calendarEventsRequestUrlsForSwitch = calendarEventsRequestUrls(switchEntries);
+      const calendarEventDateRequestUrlsForSwitch = calendarEventDateRequestUrls(switchEntries);
+      assert(
+        JSON.stringify(switchedDayState.dot_tones_by_day) === JSON.stringify(baselineDotTonesByDay),
+        `Expected off-day chip dots to stay stable after switching the selected day. ${label} baseline=${JSON.stringify(baselineDotTonesByDay)} current=${JSON.stringify(switchedDayState.dot_tones_by_day)}.`
+      );
+      assert(
+        JSON.stringify(selectedAgendaTonePrefix) === JSON.stringify(selectedDotTones),
+        `Expected selected day agenda tones to match that chip's visible dots. ${label} dots=${JSON.stringify(selectedDotTones)} agenda=${JSON.stringify(switchedDayState.agenda_tones_for_selected_day)}.`
+      );
+      assert(
+        calendarEventDateRequestUrlsForSwitch.length === 0,
+        `Expected calendar day switches to avoid date-scoped calendar-events reloads. ${label} saw ${calendarEventDateRequestUrlsForSwitch.join(", ") || "(none)"} from ${JSON.stringify(calendarEventsRequestUrlsForSwitch)}.`
+      );
+      mobileDaySwitchSummary.switches[label] = {
+        ...switchedDayState,
+        calendar_events_request_urls: calendarEventsRequestUrlsForSwitch,
+        calendar_events_date_request_urls: calendarEventDateRequestUrlsForSwitch
+      };
+      await saveShot(page, reportDir, daySwitchShotNames[label], summary);
+      await saveLocatorShot(page.locator(".light-calendar-day-strip"), reportDir, daySwitchRailNames[label], summary);
+    }
+    summary.calendar_day_switches = summary.calendar_day_switches || {};
+    summary.calendar_day_switches[`mobile_${theme}`] = mobileDaySwitchSummary;
+    await selectCalendarDayChip(page, seed.today);
+    await waitForCalendarTitle(page, "Proof freelance review call");
     await setCalendarDate(page, seed.tomorrow);
     assert(await page.locator(".light-date-input").inputValue() === seed.tomorrow, `Expected mobile off-today selection to land on ${seed.tomorrow}, got ${await page.locator(".light-date-input").inputValue()}.`);
     assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected mobile off-today calendar header to stay free of Today CTA.");
