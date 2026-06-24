@@ -1724,7 +1724,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     reminder_is_live = function_block(app, "reminderIsLive")
     reminder_is_now = function_block(app, "reminderIsNow")
     reminder_row = function_block(app, "lightReminderRow")
-    reminder_bell_icon = function_block(app, "lightReminderBellIcon")
     reminder_row_end = function_block(app, "lightReminderRowEnd")
     reminder_countdown = function_block(app, "reminderSnoozeCountdown")
     reminder_remaining = function_block(app, "reminderRemainingCompactLabel")
@@ -1746,7 +1745,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "const REMINDER_LIVE_UI_TICK_MS = 1000;" in app
-    assert "const REMINDER_BELL_ANIMATION_MS = 5600;" in app
     assert "const active = reminders.filter(reminder => reminderIsActive(reminder));" in reminders_page
     assert "const live = active.filter(reminder => reminderIsLive(reminder));" in reminders_page
     assert "const upcoming = active.filter(reminder => !reminderIsLive(reminder));" in reminders_page
@@ -1770,19 +1768,13 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "return reminderIsLive(reminder);" in reminder_is_now
     assert 'return lightReminderRow(descriptor.meta?.reminder || null);' in render_universal_tile
     assert 'flatFeed: descriptor.renderMode === "flat",' in render_universal_tile
-    assert "lightReminderBellIcon(reminder)" in reminder_row
+    assert 'lightSmallIcon("bell", "reminders")' in reminder_row
     assert "const flatFeed = options.flatFeed === true;" in reminder_row
     assert "const secondaryCopy = reminderListSecondaryCopy(reminder);" in reminder_row
     assert 'copy.append(el("span", "light-reminder-row-summary", secondaryCopy));' in reminder_row
     assert 'const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");' in reminder_row
     assert 'row.dataset.reminderState = reminderState;' in reminder_row
     assert "lightReminderRowEnd(reminder)" in reminder_row
-    assert 'const wrap = lightSmallIcon("bell", "reminders");' in reminder_bell_icon
-    assert 'wrap.classList.add("light-reminder-bell-icon");' in reminder_bell_icon
-    assert 'wrap.dataset.reminderBell = "true";' in reminder_bell_icon
-    assert 'wrap.dataset.reminderState = reminderState;' in reminder_bell_icon
-    assert 'wrap.classList.add("is-live");' in reminder_bell_icon
-    assert 'wrap.style.setProperty("--reminder-bell-delay-ms", `-${Date.now() % REMINDER_BELL_ANIMATION_MS}ms`);' in reminder_bell_icon
     assert 'wrap.dataset.reminderCountdown = "true";' in reminder_row_end
     assert 'wrap.dataset.reminderProgress = countdown.progress.toFixed(3);' in reminder_row_end
     assert 'el("span", "light-reminder-countdown-ring")' in reminder_row_end
@@ -1867,11 +1859,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert ".light-reminder-countdown" in styles
     assert ".light-reminder-countdown-ring" in styles
     assert ".light-reminder-countdown-label" in styles
-    assert ".light-reminder-bell-icon {" in styles
-    assert ".light-reminder-bell-icon.is-live {" in styles
-    assert "animation-delay: var(--reminder-bell-delay-ms, 0ms);" in styles
-    assert "@keyframes reminderBellShake {" in styles
-    assert "@media (prefers-reduced-motion: reduce) {" in styles
     assert ".light-reminder-row-summary" in styles
     assert ".light-reminder-detail-feed .light-info-row" in styles
     assert ".light-reminder-channels-section" not in styles

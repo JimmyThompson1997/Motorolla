@@ -119,18 +119,14 @@ def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:
     assert 'JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"])' in workspace_source
     assert 'for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "CONNECTED"]) {' in workspace_source
     assert 'for (const text of ["When", "Me", "Proof Contact One", "Proof Future Task", "Proof Graph Meeting", "CONNECTED"]) {' not in workspace_source
-    assert "async function saveAnimatedScreenshot(page, reportDir, name) {" in reminder_source
-    assert 'animations: "allow"' in reminder_source
-    assert "async function sampleReminderBellTimeline(page, reportDir, reminderIds, options = {}) {" in reminder_source
+    assert "async function sampleReminderIconTimeline(page, reportDir, reminderIds, options = {}) {" in reminder_source
     assert "async function sampleReminderCountdownTimeline(page, reportDir, reminderId, options = {}) {" in reminder_source
-    assert "Expected live reminder bell to report at least two distinct non-identity transforms" in reminder_source
-    assert "Expected upcoming comparison reminder bell to stay still" in reminder_source
+    assert "Expected live reminder list icon to stay visually static with no animation" in reminder_source
+    assert "Expected upcoming comparison reminder list icon to stay visually static with no animation" in reminder_source
     assert "Expected at least six distinct countdown progress values in twelve seconds" in reminder_source
-    assert "Expected reduced-motion lane to disable the live bell animation" in reminder_source
-    assert "Expected reduced-motion countdown to keep updating" in reminder_source
-    assert "summary.motion.live_bell" in reminder_source
+    assert "summary.motion.list_icon_stability" in reminder_source
     assert "summary.motion.snooze_countdown" in reminder_source
-    assert "summary.motion.reduced_motion" in reminder_source
+    assert "Reminder list icons stay visually static for live and upcoming rows on the hosted list." in reminder_source
     assert "writeReminderProofSummary(config.reportDir, summary);" in reminder_source
 
 
@@ -1020,7 +1016,7 @@ def test_light_native_ports_proof_guards_route_fetch_during_context_shutdown() -
 
     assert "const message = String(error && error.message ? error.message : error || \"\");" in source
     assert "/target page, context or browser has been closed/i.test(message)" in source
-    assert "/fetch response has been disposed/i.test(message)" in source
+    assert "/(?:fetch|apiResponse)(?:\\.\\w+)?:?\\s*Response has been disposed/i.test(message)" in source
     assert 'await route.abort("failed").catch(() => {});' in source
 
 
