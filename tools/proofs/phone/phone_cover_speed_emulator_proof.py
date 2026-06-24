@@ -81,14 +81,63 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def summarize(samples: list[dict[str, Any]]) -> dict[str, Any]:
     elapsed = sorted(float(sample.get("elapsed_ms") or 0) for sample in samples if float(sample.get("elapsed_ms") or 0) >= 0)
+    route_ready = sorted(
+        float(((sample.get("state") or {}).get("metrics") or {}).get("route_ready_elapsed_ms") or 0)
+        for sample in samples
+        if float(((sample.get("state") or {}).get("metrics") or {}).get("route_ready_elapsed_ms") or 0) >= 0
+    )
+    bridge_total = sorted(
+        float(((sample.get("state") or {}).get("metrics") or {}).get("bridge_total_ms") or 0)
+        for sample in samples
+        if float(((sample.get("state") or {}).get("metrics") or {}).get("bridge_total_ms") or 0) >= 0
+    )
+    shell_launch = sorted(
+        float(((sample.get("state") or {}).get("metrics") or {}).get("shell_launch_elapsed_ms") or 0)
+        for sample in samples
+        if float(((sample.get("state") or {}).get("metrics") or {}).get("shell_launch_elapsed_ms") or 0) >= 0
+    )
+    webview_load = sorted(
+        float(((sample.get("state") or {}).get("metrics") or {}).get("webview_load_elapsed_ms") or 0)
+        for sample in samples
+        if float(((sample.get("state") or {}).get("metrics") or {}).get("webview_load_elapsed_ms") or 0) >= 0
+    )
+    asset_failures = [
+        float(((sample.get("state") or {}).get("metrics") or {}).get("asset_delivery_failures") or 0)
+        for sample in samples
+    ]
+    reload_attempts = [
+        float(((sample.get("state") or {}).get("metrics") or {}).get("hosted_reload_attempts") or 0)
+        for sample in samples
+    ]
     if not elapsed:
-        return {"samples": [], "median_ms": 0.0, "p95_ms": 0.0}
+        return {
+            "samples": [],
+            "median_ms": 0.0,
+            "p95_ms": 0.0,
+            "route_ready_median_ms": 0.0,
+            "bridge_total_median_ms": 0.0,
+            "shell_launch_median_ms": 0.0,
+            "webview_load_median_ms": 0.0,
+            "asset_delivery_failures_max": 0.0,
+            "hosted_reload_attempts_max": 0.0,
+            "bootstrap_snapshot_used": False,
+        }
     median_index = max(0, (len(elapsed) - 1) // 2)
     p95_index = max(0, min(len(elapsed) - 1, int(len(elapsed) * 0.95) - 1))
     return {
         "samples": samples,
         "median_ms": round(elapsed[median_index], 1),
         "p95_ms": round(elapsed[p95_index], 1),
+        "route_ready_median_ms": round(route_ready[min(len(route_ready) - 1, median_index)] if route_ready else 0.0, 1),
+        "bridge_total_median_ms": round(bridge_total[min(len(bridge_total) - 1, median_index)] if bridge_total else 0.0, 1),
+        "shell_launch_median_ms": round(shell_launch[min(len(shell_launch) - 1, median_index)] if shell_launch else 0.0, 1),
+        "webview_load_median_ms": round(webview_load[min(len(webview_load) - 1, median_index)] if webview_load else 0.0, 1),
+        "asset_delivery_failures_max": round(max(asset_failures) if asset_failures else 0.0, 1),
+        "hosted_reload_attempts_max": round(max(reload_attempts) if reload_attempts else 0.0, 1),
+        "bootstrap_snapshot_used": any(
+            bool((((sample.get("state") or {}).get("metrics") or {}).get("bootstrap_snapshot_used")))
+            for sample in samples
+        ),
     }
 
 
@@ -271,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
                 "state": home_browser.get("final_state") or {},
             }
         ])
+        if (
+            float(summary["fresh_loads"]["home"].get("asset_delivery_failures_max") or 0) > 0
+            or float(summary["fresh_loads"]["home"].get("hosted_reload_attempts_max") or 0) > 0
+        ):
+            raise EmulatorSpeedProofError("Hosted asset bootstrap failed inside the Android WebView.")
         auth_proof.capture_screenshot(args, args.report_dir / "01-home-device.png", "cover-speed-home-device.png")
         summary["screenshots"]["home_device"] = str(args.report_dir / "01-home-device.png")
         summary["screenshots"]["home_cdp"] = str(args.report_dir / "01-home-cdp.png")

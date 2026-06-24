@@ -100,7 +100,7 @@ public final class PuckyWebResourceClient extends WebViewClient {
         return HOSTED_UI_RELOAD_DELAY_MS * Math.max(1, attempt);
     }
 
-    static boolean isHostedUiUrl(String url) {
+    public static boolean isHostedUiUrl(String url) {
         String raw = url == null ? "" : url.trim();
         if (raw.isEmpty()) {
             return false;
@@ -125,12 +125,18 @@ public final class PuckyWebResourceClient extends WebViewClient {
             return;
         }
         String failingUrl = request.getUrl().toString();
+        if (uiSurface != null) {
+            uiSurface.recordHostedAssetFailure(failingUrl, reason);
+        }
         int attempt = hostedUiReloadAttempts.getOrDefault(failingUrl, 0);
         if (!shouldRetryHostedUiUrl(failingUrl, attempt) || scheduledHostedUiReloads.contains(failingUrl)) {
             return;
         }
         int nextAttempt = attempt + 1;
         hostedUiReloadAttempts.put(failingUrl, nextAttempt);
+        if (uiSurface != null) {
+            uiSurface.recordHostedReloadAttempt(failingUrl, nextAttempt);
+        }
         scheduledHostedUiReloads.add(failingUrl);
         long delayMs = hostedUiReloadDelayMs(nextAttempt);
         Log.w(TAG, "Retrying hosted UI after " + reason + " attempt=" + nextAttempt + " url=" + failingUrl);

@@ -4,10 +4,87 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Pucky Cover</title>
-    <link rel="stylesheet" href="./styles.css">
+    <style>
+      :root {
+        color-scheme: light;
+        --boot-bg: #f3f0e8;
+        --boot-panel: rgba(255, 255, 255, 0.88);
+        --boot-copy: #15303a;
+        --boot-muted: #5f7880;
+        --boot-error: #8f2d2d;
+        --boot-border: rgba(21, 48, 58, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top right, rgba(255, 188, 117, 0.22), transparent 34%),
+          linear-gradient(180deg, #f8f6f0 0%, var(--boot-bg) 100%);
+        color: var(--boot-copy);
+        font-family: "SF Pro Text", "Segoe UI", sans-serif;
+      }
+
+      body {
+        min-height: 100vh;
+      }
+
+      #bootStatus {
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        padding: 24px;
+      }
+
+      .boot-card {
+        width: min(460px, 100%);
+        padding: 24px;
+        border-radius: 24px;
+        background: var(--boot-panel);
+        border: 1px solid var(--boot-border);
+        box-shadow: 0 18px 48px rgba(27, 53, 64, 0.08);
+        backdrop-filter: blur(12px);
+      }
+
+      .boot-card h1 {
+        margin: 0 0 8px;
+        font-size: 1.2rem;
+      }
+
+      .boot-card p {
+        margin: 0;
+        line-height: 1.5;
+        color: var(--boot-muted);
+      }
+
+      .boot-card.is-error p {
+        color: var(--boot-error);
+      }
+
+      .boot-retry {
+        margin-top: 16px;
+        padding: 10px 14px;
+        border: 0;
+        border-radius: 999px;
+        background: #15303a;
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
   </head>
   <body>
-    <main class="app-shell" data-view="home">
+    <div id="bootStatus" aria-live="polite">
+      <section class="boot-card">
+        <h1>Loading Pucky</h1>
+        <p id="bootStatusCopy">Starting the hosted UI shell.</p>
+      </section>
+    </div>
+    <main id="appShellRoot" class="app-shell" data-view="home" hidden>
       <div id="threadScopeStatus" class="thread-scope-status" aria-live="polite" aria-hidden="true" hidden></div>
       <button
         id="voiceStatus"
@@ -27,12 +104,210 @@
       <section id="settingsSelectorOverlay" class="settings-selector-overlay" aria-hidden="true"></section>
       <section id="speedOverlay" class="speed-overlay" aria-hidden="true"></section>
     </main>
+    <script>
+      (function () {
+        const BOOTSTRAP_RELOAD_KEY = "pucky.ui.bootstrap.reload_attempts.v1";
+        const BOOTSTRAP_FAILURE_KEY = "pucky.ui.bootstrap.asset_failures.v1";
+        const BOOTSTRAP_COMMIT = "__PUCKY_BOOTSTRAP_COMMIT__";
+        const COMMIT_SEED = BOOTSTRAP_COMMIT && !/^__PUCKY_BOOTSTRAP_COMMIT__$/i.test(BOOTSTRAP_COMMIT)
+          ? BOOTSTRAP_COMMIT
+          : "";
+        const BOOT_TIMEOUT_MS = 7000;
+        const ESSENTIAL_ASSETS = [
+          { type: "style", url: "./styles.css", label: "styles.css" },
+          { type: "script", url: "./pucky-config.js", label: "pucky-config.js" },
+          { type: "script", url: "./pucky-links-catalog.js", label: "pucky-links-catalog.js" },
+          { type: "script", url: "./pucky-icons.js", label: "pucky-icons.js" },
+          { type: "script", url: "./pucky-routes.js", label: "pucky-routes.js" },
+          { type: "script", url: "./pucky-ui-state.js", label: "pucky-ui-state.js" },
+          { type: "script", url: "./app.js", label: "app.js" }
+        ];
+        const bootStartedAt = Date.now();
+        const bootRoot = document.getElementById("bootStatus");
+        const bootCard = bootRoot ? bootRoot.querySelector(".boot-card") : null;
+        const bootCopy = document.getElementById("bootStatusCopy");
+        const appRoot = document.getElementById("appShellRoot");
 
-    <script src="./pucky-config.js"></script>
-    <script src="./pucky-links-catalog.js"></script>
-    <script src="./pucky-icons.js"></script>
-    <script src="./pucky-routes.js"></script>
-    <script src="./pucky-ui-state.js"></script>
-    <script src="./app.js"></script>
+        function safeSessionNumber(key) {
+          try {
+            return Math.max(0, Number(sessionStorage.getItem(key) || "0") || 0);
+          } catch (_) {
+            return 0;
+          }
+        }
+
+        function setSessionNumber(key, value) {
+          try {
+            sessionStorage.setItem(key, String(Math.max(0, Number(value) || 0)));
+          } catch (_) {
+            // Ignore private-mode and storage-denied sessions.
+          }
+        }
+
+        const bootstrapState = window.__PUCKY_BOOTSTRAP_STATUS__ = window.__PUCKY_BOOTSTRAP_STATUS__ || {
+          schema: "pucky.asset_bootstrap.v1",
+          boot_state: "booting",
+          boot_started_at_ms: bootStartedAt,
+          shell_launch_elapsed_ms: 0,
+          webview_load_elapsed_ms: 0,
+          asset_delivery_failures: safeSessionNumber(BOOTSTRAP_FAILURE_KEY),
+          asset_failure_details: [],
+          hosted_reload_attempts: safeSessionNumber(BOOTSTRAP_RELOAD_KEY),
+          commit: COMMIT_SEED
+        };
+
+        if (bootstrapState.hosted_reload_attempts === 0) {
+          bootstrapState.asset_delivery_failures = 0;
+          setSessionNumber(BOOTSTRAP_FAILURE_KEY, 0);
+        }
+
+        function updateTiming() {
+          const elapsed = Math.max(0, Date.now() - bootStartedAt);
+          bootstrapState.shell_launch_elapsed_ms = elapsed;
+          bootstrapState.webview_load_elapsed_ms = elapsed;
+          bootstrapState.hosted_reload_attempts = safeSessionNumber(BOOTSTRAP_RELOAD_KEY);
+        }
+
+        function setStatus(copy) {
+          updateTiming();
+          if (bootCopy) {
+            bootCopy.textContent = copy;
+          }
+        }
+
+        function recordFailure(asset, error, attempt) {
+          const failures = Array.isArray(bootstrapState.asset_failure_details)
+            ? bootstrapState.asset_failure_details
+            : [];
+          failures.push({
+            asset: asset.label,
+            type: asset.type,
+            url: asset.url,
+            attempt: attempt,
+            error: String(error && error.message || error || "asset_load_failed"),
+            at_ms: Date.now()
+          });
+          bootstrapState.asset_failure_details = failures;
+          const nextCount = Math.max(
+            safeSessionNumber(BOOTSTRAP_FAILURE_KEY),
+            Number(bootstrapState.asset_delivery_failures || 0) || 0
+          ) + 1;
+          bootstrapState.asset_delivery_failures = nextCount;
+          setSessionNumber(BOOTSTRAP_FAILURE_KEY, nextCount);
+          updateTiming();
+        }
+
+        function autoReloadOnce() {
+          const attempts = safeSessionNumber(BOOTSTRAP_RELOAD_KEY);
+          if (attempts >= 1 || !window.location || typeof window.location.replace !== "function") {
+            return false;
+          }
+          setSessionNumber(BOOTSTRAP_RELOAD_KEY, attempts + 1);
+          updateTiming();
+          const next = new URL(window.location.href);
+          next.searchParams.set("_pucky_refresh", COMMIT_SEED || String(Date.now()));
+          window.location.replace(next.toString());
+          return true;
+        }
+
+        function showFatalError(asset, error) {
+          updateTiming();
+          bootstrapState.boot_state = "failed";
+          if (bootCard) {
+            bootCard.classList.add("is-error");
+          }
+          if (bootCopy) {
+            bootCopy.textContent = "A hosted UI asset failed to load. Pucky could not finish booting this page.";
+          }
+          if (autoReloadOnce()) {
+            if (bootCopy) {
+              bootCopy.textContent = "A hosted UI asset failed to load. Retrying this page once.";
+            }
+            return;
+          }
+          if (bootCopy) {
+            bootCopy.textContent = "A hosted UI asset still failed after retry. Use Reload to try again.";
+          }
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "boot-retry";
+          button.textContent = "Reload";
+          button.addEventListener("click", function () {
+            window.location.reload();
+          });
+          bootCard && bootCard.append(button);
+        }
+
+        function loadAsset(asset, attempt) {
+          return new Promise((resolve, reject) => {
+            const target = asset.type === "style"
+              ? document.createElement("link")
+              : document.createElement("script");
+            let settled = false;
+            const timeoutId = window.setTimeout(() => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              target.remove();
+              reject(new Error("asset_timeout"));
+            }, BOOT_TIMEOUT_MS);
+            const finish = (callback) => (event) => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              clearTimeout(timeoutId);
+              callback(event);
+            };
+            target.addEventListener("load", finish(() => resolve()));
+            target.addEventListener("error", finish(() => reject(new Error("asset_error"))));
+            if (asset.type === "style") {
+              target.rel = "stylesheet";
+              target.href = asset.url;
+            } else {
+              target.src = asset.url;
+              target.async = false;
+            }
+            (document.head || document.documentElement).append(target);
+          }).catch(error => {
+            recordFailure(asset, error, attempt);
+            throw error;
+          });
+        }
+
+        function loadWithRetry(asset) {
+          return loadAsset(asset, 1).catch(firstError => {
+            setStatus("Retrying a required UI asset.");
+            return loadAsset(asset, 2).catch(secondError => {
+              throw secondError || firstError;
+            });
+          });
+        }
+
+        async function boot() {
+          setStatus("Loading the hosted UI assets.");
+          for (const asset of ESSENTIAL_ASSETS) {
+            setStatus("Loading " + asset.label);
+            await loadWithRetry(asset).catch(error => {
+              showFatalError(asset, error);
+              throw error;
+            });
+          }
+          bootstrapState.boot_state = "ready";
+          updateTiming();
+          if (appRoot) {
+            appRoot.hidden = false;
+          }
+          if (bootRoot) {
+            bootRoot.hidden = true;
+          }
+        }
+
+        boot().catch(function () {
+          updateTiming();
+        });
+      })();
+    </script>
   </body>
 </html>

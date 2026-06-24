@@ -103,7 +103,9 @@ public class MainActivity extends Activity {
         settingsStore.setUiShellMode("web_hosted");
         uiBundleController = new UiBundleController(this);
         uiSurfaceController = new UiSurfaceController(this);
+        uiSurfaceController.recordActivityCreated();
         buttonController = new ButtonController(this);
+        prewarmWebViewProvider();
         configureApplianceWindow();
         setContentView(buildWebShellView());
         applySystemUiForMode();
@@ -351,18 +353,26 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(BACKGROUND);
 
         webShell = new WebView(this);
+        uiSurfaceController.recordWebViewCreated();
         webShell.setBackgroundColor(BACKGROUND);
         webShell.setOverScrollMode(View.OVER_SCROLL_NEVER);
         configureWebShellSettings(webShell);
         webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController));
-        webBridge = new PuckyWebBridge(this, webShell, uiBundleController, settingsStore);
+        webBridge = new PuckyWebBridge(this, webShell, uiBundleController, uiSurfaceController, settingsStore);
         webShell.addJavascriptInterface(webBridge, "PuckyAndroid");
         com.pucky.device.ui.UiAutomationController.attach(webShell);
         root.addView(webShell, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        loadWebShell();
         return root;
+    }
+
+    private void prewarmWebViewProvider() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WebView.startSafeBrowsing(this, value -> {
+            });
+        }
+        android.webkit.CookieManager.getInstance();
     }
 
     private void configureWebShellSettings(WebView webView) {
@@ -405,9 +415,41 @@ public class MainActivity extends Activity {
         if (webShell == null) {
             setContentView(buildWebShellView());
         }
-        loadWebShell(resetNavigation);
+        if (!navigateHomeInExistingHostedShell(resetNavigation)) {
+            loadWebShell(resetNavigation);
+        }
         emitWebPlayerState();
         emitWebTurnStatus();
+    }
+
+    private boolean navigateHomeInExistingHostedShell(boolean resetNavigation) {
+        if (webShell == null || uiSurfaceController == null || uiBundleController == null) {
+            return false;
+        }
+        String currentUrl = webShell.getUrl();
+        if (!PuckyWebResourceClient.isHostedUiUrl(currentUrl)) {
+            return false;
+        }
+        uiSurfaceController.recordRequested(hostedUiUrl(), uiBundleController);
+        String script = "(function(){try{"
+                + "if(!window.PuckyUiDebug||typeof window.PuckyUiDebug.dispatch!=='function'){return false;}"
+                + "window.PuckyUiDebug.dispatch('goto_home',{reset_nav:" + (resetNavigation ? "true" : "false") + "});"
+                + "if(window.history&&typeof window.history.replaceState==='function'&&typeof URL==='function'){"
+                + "var url=new URL(window.location.href);"
+                + "url.searchParams.set('route','home');"
+                + (resetNavigation
+                ? "url.searchParams.set('reset_nav','1');"
+                : "url.searchParams.delete('reset_nav');")
+                + "window.history.replaceState({},'',url.toString());"
+                + "}"
+                + "return true;"
+                + "}catch(e){return false;}})();";
+        webShell.evaluateJavascript(script, handled -> {
+            if (!"true".equals(handled)) {
+                loadWebShell(resetNavigation);
+            }
+        });
+        return true;
     }
 
     private String hostedUiUrl() {
@@ -427,12 +469,9 @@ public class MainActivity extends Activity {
     }
 
     private void handleLaunchIntent(Intent intent) {
-        if (intent == null) {
-            return;
-        }
         boolean uiSurfaceChanged = false;
-        boolean showHomeRequested = intent.getBooleanExtra("show_home", false);
-        if (intent.hasExtra("ui_bundle_path")) {
+        boolean showHomeRequested = intent != null && intent.getBooleanExtra("show_home", false);
+        if (intent != null && intent.hasExtra("ui_bundle_path")) {
             String bundlePath = intent.getStringExtra("ui_bundle_path");
             try {
                 JSONObject args = new JSONObject();
@@ -446,7 +485,7 @@ public class MainActivity extends Activity {
                 PuckyState.get().setLastError("Unable to install UI bundle: " + exc.getMessage());
             }
         }
-        if (intent.hasExtra("ui_shell_mode")) {
+        if (intent != null && intent.hasExtra("ui_shell_mode")) {
             settingsStore.setUiShellMode(intent.getStringExtra("ui_shell_mode"));
             Log.i(TAG, "Set UI shell mode from launch extra: " + settingsStore.getUiShellMode());
         }
@@ -463,7 +502,7 @@ public class MainActivity extends Activity {
                 PuckyState.get().setLastError("Invalid provisioning JSON: " + e.getMessage());
             }
         }
-        if (intent.hasExtra("broker_url")) {
+        if (intent != null && intent.hasExtra("broker_url")) {
             String brokerUrl = intent.getStringExtra("broker_url");
             String deviceId = intent.getStringExtra("device_id");
             String token = intent.getStringExtra("token");
@@ -476,13 +515,15 @@ public class MainActivity extends Activity {
                     token == null ? settingsStore.getToken() : token);
             syncProvisioningState();
         }
-        if (intent.getBooleanExtra("connect", false)) {
+        if (intent != null && intent.getBooleanExtra("connect", false)) {
             PuckyForegroundService.start(this, true);
         }
         if (shouldStartAssistantSetup(intent)) {
             startAssistantSetupFlow();
         }
-        if (uiSurfaceChanged || showHomeRequested) {
+        boolean shellNeedsInitialLoad = webShell != null
+                && (webShell.getUrl() == null || webShell.getUrl().trim().isEmpty());
+        if (uiSurfaceChanged || showHomeRequested || shellNeedsInitialLoad) {
             showHomeScreen(showHomeRequested);
         }
     }
@@ -537,6 +578,9 @@ public class MainActivity extends Activity {
     private void syncProvisioningState() {
         PuckyState.get().setDeviceId(settingsStore.getDeviceId());
         PuckyState.get().setBrokerUrl(settingsStore.getBrokerUrl());
+        if (webBridge != null) {
+            webBridge.invalidateSessionSnapshots();
+        }
         emitWebPlayerState();
         emitWebTurnStatus();
     }

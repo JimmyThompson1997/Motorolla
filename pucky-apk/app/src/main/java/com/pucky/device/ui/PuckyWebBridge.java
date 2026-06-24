@@ -30,13 +30,17 @@ public final class PuckyWebBridge {
     private final WeakReference<WebView> webView;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final UiBundleController uiBundles;
+    private final UiSurfaceController uiSurface;
     private final SettingsStore settings;
+    private JSONObject cachedPuckyConfig;
+    private String cachedConfigFingerprint = "";
 
     public PuckyWebBridge(Context context, WebView webView,
-            UiBundleController uiBundles, SettingsStore settings) {
+            UiBundleController uiBundles, UiSurfaceController uiSurface, SettingsStore settings) {
         this.context = context.getApplicationContext();
         this.webView = new WeakReference<>(webView);
         this.uiBundles = uiBundles;
+        this.uiSurface = uiSurface;
         this.settings = settings;
     }
 
@@ -179,8 +183,10 @@ public final class PuckyWebBridge {
                 return uiBundles.installDownloaded(args);
             case "ui.bundle.refresh":
                 return uiBundles.refresh(args);
+            case "ui.bootstrap.get":
+                return uiBootstrap();
             case "ui.surface.get":
-                return new UiSurfaceController(context).status(uiBundles);
+                return uiSurface.status(uiBundles);
             case "ui.shell.mode.get":
                 return shellMode();
             case "ui.shell.mode.set":
@@ -201,14 +207,63 @@ public final class PuckyWebBridge {
     }
 
     private JSONObject puckyConfig() {
-        String turnUrl = settings.getPuckyTurnUrl();
-        String apiToken = settings.getConfiguredPuckyApiToken();
+        synchronized (this) {
+            String fingerprint = settings.getPuckyTurnUrl() + "\u001f" + settings.getConfiguredPuckyApiToken();
+            if (cachedPuckyConfig != null && fingerprint.equals(cachedConfigFingerprint)) {
+                return cloneJson(cachedPuckyConfig);
+            }
+            String turnUrl = settings.getPuckyTurnUrl();
+            String apiToken = settings.getConfiguredPuckyApiToken();
+            JSONObject out = new JSONObject();
+            Json.put(out, "schema", "pucky.web_config.v1");
+            Json.put(out, "api_base_url", apiBaseUrl(turnUrl));
+            Json.put(out, "api_token", apiToken);
+            Json.put(out, "has_api_token", !apiToken.trim().isEmpty());
+            cachedPuckyConfig = cloneJson(out);
+            cachedConfigFingerprint = fingerprint;
+            return out;
+        }
+    }
+
+    public synchronized void invalidateSessionSnapshots() {
+        cachedPuckyConfig = null;
+        cachedConfigFingerprint = "";
+    }
+
+    private JSONObject uiBootstrap() {
         JSONObject out = new JSONObject();
-        Json.put(out, "schema", "pucky.web_config.v1");
-        Json.put(out, "api_base_url", apiBaseUrl(turnUrl));
-        Json.put(out, "api_token", apiToken);
-        Json.put(out, "has_api_token", !apiToken.trim().isEmpty());
+        Json.put(out, "schema", "pucky.ui_bootstrap.v1");
+        Json.put(out, "ui_surface", uiSurface.status(uiBundles));
+        Json.put(out, "config", puckyConfig());
+        Json.put(out, "provisioning", provisioningSummary());
+        Json.put(out, "turn_status", PuckyTurnController.shared(context).status());
+        Json.put(out, "turn_settings", PuckyTurnController.shared(context).settingsGet());
+        Json.put(out, "wake_status", WakeWordController.shared(context).status());
+        Json.put(out, "phone_role", PhoneRoleController.status(context));
+        Json.put(out, "default_audio_speed", defaultAudioSpeed());
         return out;
+    }
+
+    private JSONObject provisioningSummary() {
+        JSONObject out = new JSONObject();
+        Json.put(out, "schema", "pucky.device_provisioning_summary.v1");
+        Json.put(out, "device_id", settings.getDeviceId());
+        Json.put(out, "broker_url", settings.getBrokerUrl());
+        Json.put(out, "ui_shell_mode", settings.getUiShellMode());
+        Json.put(out, "api_token_present", !settings.getConfiguredPuckyApiToken().trim().isEmpty());
+        Json.put(out, "device_token_present", !settings.getToken().trim().isEmpty());
+        return out;
+    }
+
+    private static JSONObject cloneJson(JSONObject input) {
+        if (input == null) {
+            return new JSONObject();
+        }
+        try {
+            return new JSONObject(input.toString());
+        } catch (Exception exc) {
+            return new JSONObject();
+        }
     }
 
     private JSONObject puckyAuthorization() {

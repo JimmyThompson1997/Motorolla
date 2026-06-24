@@ -18,6 +18,9 @@ public final class MainActivityWebViewShellTest {
                 source.contains("EXTRA_WAKE_SCREEN"));
         assertTrue("MainActivity should build exactly one WebView shell",
                 source.contains("private View buildWebShellView()")
+                        && source.contains("uiSurfaceController.recordActivityCreated();")
+                        && source.contains("prewarmWebViewProvider();")
+                        && source.contains("uiSurfaceController.recordWebViewCreated();")
                         && source.contains("webShell.addJavascriptInterface(webBridge, \"PuckyAndroid\")")
                         && source.contains("webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController))")
                         && count(source, "new WebView") == 1);
@@ -102,6 +105,7 @@ public final class MainActivityWebViewShellTest {
                         && bridge.contains("case \"media.cache.ensure\"")
                         && bridge.contains("case \"meeting.recording.resolve_audio_link\"")
                         && bridge.contains("case \"ui.bundle.status\"")
+                        && bridge.contains("case \"ui.bootstrap.get\"")
                         && bridge.contains("case \"ui.surface.get\"")
                         && bridge.contains("Command is not exposed to HTML UI"));
         assertFalse("HTML bridge should not expose local feed/reply-card UI commands",
@@ -304,15 +308,17 @@ public final class MainActivityWebViewShellTest {
         assertFalse("onNewIntent should preserve the current WebView screen for wake-only intents",
                 source.contains("handleLaunchIntent(intent);\n        showHomeScreen();"));
         assertTrue("Explicit show_home should remain the intentional reset path",
-                source.contains("boolean showHomeRequested = intent.getBooleanExtra(\"show_home\", false);")
-                        && source.contains("if (uiSurfaceChanged || showHomeRequested)")
+                source.contains("boolean showHomeRequested = intent != null && intent.getBooleanExtra(\"show_home\", false);")
+                        && source.contains("boolean shellNeedsInitialLoad = webShell != null")
+                        && source.contains("if (uiSurfaceChanged || showHomeRequested || shellNeedsInitialLoad)")
                         && source.contains("showHomeScreen(showHomeRequested)")
+                        && source.contains("navigateHomeInExistingHostedShell")
                         && source.contains("loadWebShell(boolean resetNavigation)")
                         && source.contains("reset_nav=1"));
         assertFalse("ui_shell_mode is collapsed to hosted web and should not reload the UI by itself",
                 source.contains("Set UI shell mode from launch extra: \" + settingsStore.getUiShellMode());\n            uiSurfaceChanged = true;"));
         assertTrue("UI bundle installs should still refresh the WebView surface",
-                source.contains("if (intent.hasExtra(\"ui_bundle_path\"))")
+                source.contains("if (intent != null && intent.hasExtra(\"ui_bundle_path\"))")
                         && source.contains("uiSurfaceChanged = true;"));
     }
 

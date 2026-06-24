@@ -409,13 +409,37 @@ async function triggerConnectAuth(page, config) {
   };
 }
 
+function metricsValue(sample, key) {
+  return Number(sample?.perf?.[key] || 0);
+}
+
 function summarizeSamples(samples) {
   const values = Array.isArray(samples) ? samples.map(item => Number(item.elapsed_ms || 0)).filter(value => Number.isFinite(value) && value >= 0) : [];
+  const routeReadyValues = Array.isArray(samples) ? samples.map(item => metricsValue(item, "route_ready_elapsed_ms")).filter(value => Number.isFinite(value) && value >= 0) : [];
+  const bridgeValues = Array.isArray(samples) ? samples.map(item => metricsValue(item, "bridge_total_ms")).filter(value => Number.isFinite(value) && value >= 0) : [];
+  const shellValues = Array.isArray(samples) ? samples.map(item => metricsValue(item, "shell_launch_elapsed_ms")).filter(value => Number.isFinite(value) && value >= 0) : [];
+  const webviewValues = Array.isArray(samples) ? samples.map(item => metricsValue(item, "webview_load_elapsed_ms")).filter(value => Number.isFinite(value) && value >= 0) : [];
+  const assetFailures = Array.isArray(samples) ? samples.map(item => metricsValue(item, "asset_delivery_failures")) : [];
+  const reloadAttempts = Array.isArray(samples) ? samples.map(item => metricsValue(item, "hosted_reload_attempts")) : [];
   return {
     samples,
     median_ms: median(values),
     p95_ms: percentile(values, 0.95),
+    route_ready_median_ms: median(routeReadyValues),
+    bridge_total_median_ms: median(bridgeValues),
+    shell_launch_median_ms: median(shellValues),
+    webview_load_median_ms: median(webviewValues),
+    asset_delivery_failures_max: assetFailures.length ? Math.max(...assetFailures) : 0,
+    hosted_reload_attempts_max: reloadAttempts.length ? Math.max(...reloadAttempts) : 0,
+    bootstrap_snapshot_used: Array.isArray(samples)
+      ? samples.some(item => Boolean(item?.perf?.bootstrap_snapshot_used))
+      : false,
   };
+}
+
+function summaryHasAssetBootstrapFailure(summary) {
+  return Object.values(summary.fresh_loads || {}).some(entry => Number(entry?.asset_delivery_failures_max || 0) > 0)
+    || Object.values(summary.fresh_loads || {}).some(entry => Number(entry?.hosted_reload_attempts_max || 0) > 0);
 }
 
 function buildDiff(summary, baselinePath) {
@@ -542,6 +566,9 @@ async function main() {
     }
     summary.fresh_loads.home = summarizeSamples(homeFreshSamples);
     summary.fresh_loads.connect = summarizeSamples(connectFreshSamples);
+    if (summaryHasAssetBootstrapFailure(summary)) {
+      throw new Error("Hosted asset bootstrap failed while loading /ui/pucky/latest/.");
+    }
 
     for (const routeConfig of HOME_ROUTE_MATRIX) {
       const samples = [];

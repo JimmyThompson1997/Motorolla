@@ -414,10 +414,14 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._handle_workspace_get(parsed)
                 return
             if path == "/ui/pucky/latest/manifest.json":
-                self._json(HTTPStatus.OK, latest_ui_manifest())
+                self._json(HTTPStatus.OK, latest_ui_manifest(), headers=self._ui_asset_headers("manifest.json"))
                 return
             if path == "/ui/pucky/latest/bundle.zip":
-                self._file(latest_ui_bundle_path(), "application/zip")
+                self._file(
+                    latest_ui_bundle_path(),
+                    "application/zip",
+                    headers=self._ui_asset_headers("bundle.zip"),
+                )
                 return
             if path == "/ui/pucky/fixtures/reply_cards.json":
                 self._text(
@@ -427,10 +431,15 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path == "/ui/pucky/latest" or path == "/ui/pucky/latest/":
-                self._file(UI_SRC / "index.html", "text/html; charset=utf-8")
+                self._html(HTTPStatus.OK, self._ui_index_html(), headers=self._ui_asset_headers("index.html"))
                 return
             if path == "/ui/pucky/latest/pucky-config.js":
-                self._text(HTTPStatus.OK, bundle_config_script(), "application/javascript; charset=utf-8")
+                self._text(
+                    HTTPStatus.OK,
+                    bundle_config_script(),
+                    "application/javascript; charset=utf-8",
+                    headers=self._ui_asset_headers("pucky-config.js"),
+                )
                 return
             if path.startswith("/ui/pucky/latest/"):
                 relative = unquote(path.removeprefix("/ui/pucky/latest/")).lstrip("/")
@@ -1045,6 +1054,16 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             self.end_headers()
             self.wfile.write(body)
 
+        def _ui_index_html(self) -> str:
+            commit = str(latest_ui_manifest().get("source_commit_short") or "").strip()
+            return (UI_SRC / "index.html").read_text(encoding="utf-8").replace("__PUCKY_BOOTSTRAP_COMMIT__", commit)
+
+        def _ui_asset_headers(self, relative: str) -> dict[str, str]:
+            name = Path(relative).name
+            if name in {"index.html", "manifest.json"}:
+                return {"Cache-Control": "no-cache"}
+            return {"Cache-Control": "public, max-age=300, stale-while-revalidate=30"}
+
         def _safe_ui_file(self, relative: str) -> None:
             try:
                 root = UI_SRC.resolve()
@@ -1055,11 +1074,17 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 if not target.is_file():
                     self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                     return
-                self._file(target)
+                self._file(target, headers=self._ui_asset_headers(relative))
             except Exception as exc:
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "ui_file_failed", "detail": str(exc)})
 
-        def _file(self, path: Path, content_type: str | None = None) -> None:
+        def _file(
+            self,
+            path: Path,
+            content_type: str | None = None,
+            *,
+            headers: dict[str, str] | None = None,
+        ) -> None:
             if not path.exists() or not path.is_file():
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
@@ -1068,6 +1093,9 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             self.send_response(int(HTTPStatus.OK))
             self._cors_headers()
             self.send_header("Content-Type", guessed)
+            for key, value in (headers or {}).items():
+                if value:
+                    self.send_header(key, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

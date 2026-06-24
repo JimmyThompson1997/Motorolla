@@ -732,6 +732,11 @@
       render_count: 0,
       last_render_ms: 0,
       bridge_total_ms: 0,
+      shell_launch_elapsed_ms: 0,
+      webview_load_elapsed_ms: 0,
+      asset_delivery_failures: 0,
+      hosted_reload_attempts: 0,
+      bootstrap_snapshot_used: false,
       bridge_calls_by_command: {},
       fetches_by_key: {},
       poll_ticks_by_lane: {},
@@ -796,6 +801,11 @@
     perfDebugState.render_count = next.render_count;
     perfDebugState.last_render_ms = next.last_render_ms;
     perfDebugState.bridge_total_ms = next.bridge_total_ms;
+    perfDebugState.shell_launch_elapsed_ms = next.shell_launch_elapsed_ms;
+    perfDebugState.webview_load_elapsed_ms = next.webview_load_elapsed_ms;
+    perfDebugState.asset_delivery_failures = next.asset_delivery_failures;
+    perfDebugState.hosted_reload_attempts = next.hosted_reload_attempts;
+    perfDebugState.bootstrap_snapshot_used = next.bootstrap_snapshot_used;
     perfDebugState.bridge_calls_by_command = {};
     perfDebugState.fetches_by_key = {};
     perfDebugState.poll_ticks_by_lane = {};
@@ -1070,10 +1080,58 @@
     }
   }
 
+  function bootstrapDebugState() {
+    const raw = window.__PUCKY_BOOTSTRAP_STATUS__ && typeof window.__PUCKY_BOOTSTRAP_STATUS__ === "object"
+      ? window.__PUCKY_BOOTSTRAP_STATUS__
+      : {};
+    return {
+      shell_launch_elapsed_ms: safeNumber(raw.shell_launch_elapsed_ms),
+      webview_load_elapsed_ms: safeNumber(raw.webview_load_elapsed_ms),
+      asset_delivery_failures: Array.isArray(raw.asset_delivery_failures)
+        ? raw.asset_delivery_failures.length
+        : safeNumber(raw.asset_delivery_failures),
+      hosted_reload_attempts: safeNumber(raw.hosted_reload_attempts || raw.reload_attempts)
+    };
+  }
+
+  function syncPerfDebugRuntimeBudgets() {
+    const bootstrap = bootstrapDebugState();
+    if (safeNumber(bootstrap.shell_launch_elapsed_ms) > 0) {
+      perfDebugState.shell_launch_elapsed_ms = safeNumber(bootstrap.shell_launch_elapsed_ms);
+    }
+    if (safeNumber(bootstrap.webview_load_elapsed_ms) > 0) {
+      perfDebugState.webview_load_elapsed_ms = safeNumber(bootstrap.webview_load_elapsed_ms);
+    }
+    perfDebugState.asset_delivery_failures = Math.max(
+      safeNumber(perfDebugState.asset_delivery_failures),
+      safeNumber(bootstrap.asset_delivery_failures)
+    );
+    perfDebugState.hosted_reload_attempts = Math.max(
+      safeNumber(perfDebugState.hosted_reload_attempts),
+      safeNumber(bootstrap.hosted_reload_attempts)
+    );
+    const surface = state.uiSurface && typeof state.uiSurface === "object" ? state.uiSurface : {};
+    if (safeNumber(surface.shell_launch_elapsed_ms) > 0) {
+      perfDebugState.shell_launch_elapsed_ms = safeNumber(surface.shell_launch_elapsed_ms);
+    }
+    if (safeNumber(surface.webview_load_elapsed_ms) > 0) {
+      perfDebugState.webview_load_elapsed_ms = safeNumber(surface.webview_load_elapsed_ms);
+    }
+    perfDebugState.asset_delivery_failures = Math.max(
+      safeNumber(perfDebugState.asset_delivery_failures),
+      safeNumber(surface.asset_delivery_failures)
+    );
+    perfDebugState.hosted_reload_attempts = Math.max(
+      safeNumber(perfDebugState.hosted_reload_attempts),
+      safeNumber(surface.hosted_reload_attempts)
+    );
+  }
+
   function syncPerfDebugState(reason = "") {
     if (!perfDebugState.enabled) {
       return;
     }
+    syncPerfDebugRuntimeBudgets();
     const route = String(state.route || "home").trim() || "home";
     if (perfDebugState.route !== route) {
       if (perfDebugState.route_ready && !perfDebugState.route_perf_sent) {
@@ -1124,6 +1182,7 @@
 
   function perfDebugMetrics() {
     syncPerfDebugState("metrics_read");
+    syncPerfDebugRuntimeBudgets();
     return {
       schema: "pucky.perf_debug_metrics.v1",
       enabled: Boolean(perfDebugState.enabled),
@@ -1141,6 +1200,11 @@
         : 0,
       wall_elapsed_ms: Math.max(0, Date.now() - safeNumber(perfDebugState.route_enter_at_ms)),
       bridge_total_ms: safeNumber(perfDebugState.bridge_total_ms),
+      shell_launch_elapsed_ms: safeNumber(perfDebugState.shell_launch_elapsed_ms),
+      webview_load_elapsed_ms: safeNumber(perfDebugState.webview_load_elapsed_ms),
+      asset_delivery_failures: safeNumber(perfDebugState.asset_delivery_failures),
+      hosted_reload_attempts: safeNumber(perfDebugState.hosted_reload_attempts),
+      bootstrap_snapshot_used: Boolean(perfDebugState.bootstrap_snapshot_used),
       render_count: safeNumber(perfDebugState.render_count),
       last_render_ms: safeNumber(perfDebugState.last_render_ms),
       boot_phase: String(perfDebugState.boot_phase || ""),
@@ -2437,6 +2501,7 @@
     try {
       const snapshot = await cachedBridgeRead("ui.surface.get", {}, options);
       state.uiSurface = normalizeUiSurfaceStatus(snapshot);
+      syncPerfDebugRuntimeBudgets();
       if (options.render) {
         render();
       }
@@ -2514,7 +2579,108 @@
     });
   }
 
+  let nativeBootstrapPromise = null;
+
+  function hasNativeBootstrapBridge() {
+    return Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
+  }
+
+  function applyNativeBootstrapSnapshot(snapshot) {
+    const raw = snapshot && typeof snapshot === "object" ? snapshot : {};
+    const config = raw.config && typeof raw.config === "object" ? raw.config : {};
+    const provisioning = raw.provisioning && typeof raw.provisioning === "object" ? raw.provisioning : {};
+    if (raw.ui_surface && typeof raw.ui_surface === "object") {
+      state.uiSurface = normalizeUiSurfaceStatus(raw.ui_surface);
+      writeBridgeCache("ui.surface.get", {}, raw.ui_surface);
+    }
+    if (raw.turn_status && typeof raw.turn_status === "object") {
+      applyTurnStatus(raw.turn_status);
+      writeBridgeCache("pucky.turn.status", {}, raw.turn_status);
+    }
+    if (raw.turn_settings && typeof raw.turn_settings === "object") {
+      state.turnSettings = normalizeTurnSettings(raw.turn_settings);
+      writeBridgeCache("pucky.turn.settings.get", {}, raw.turn_settings);
+    }
+    if (raw.wake_status && typeof raw.wake_status === "object") {
+      state.wakeStatus = normalizeWakeStatus(raw.wake_status);
+      writeBridgeCache("wake.status", {}, raw.wake_status);
+    }
+    if (raw.phone_role && typeof raw.phone_role === "object") {
+      state.phoneRole = normalizePhoneRoleStatus(raw.phone_role);
+      writeBridgeCache("phone.role.status", {}, raw.phone_role);
+    }
+    if (raw.default_audio_speed && typeof raw.default_audio_speed === "object") {
+      state.defaultAudioSpeed = clampSpeed(raw.default_audio_speed && raw.default_audio_speed.speed);
+      state.defaultAudioSpeedAvailable = true;
+      writeBridgeCache("ui.default_audio_speed.get", {}, raw.default_audio_speed);
+    }
+    if (config && typeof config === "object") {
+      state.links.apiBaseUrl = String(config.api_base_url || "").trim().replace(/\/$/, "");
+      state.links.apiToken = String(config.api_token || "").trim();
+      writeBridgeCache("pucky.config.get", {}, config);
+    }
+    if (String(provisioning.device_id || "").trim()) {
+      state.links.deviceId = String(provisioning.device_id || "").trim();
+    }
+    perfDebugState.bootstrap_snapshot_used = true;
+    syncPerfDebugRuntimeBudgets();
+    return raw;
+  }
+
+  async function loadNativeBootstrapSnapshot(options = {}) {
+    if (!hasNativeBootstrapBridge()) {
+      return null;
+    }
+    if (!options.force && nativeBootstrapPromise) {
+      return nativeBootstrapPromise;
+    }
+    nativeBootstrapPromise = (async () => {
+      const snapshot = await cachedBridgeRead("ui.bootstrap.get", {}, {
+        force: Boolean(options.force),
+        ttlMs: Math.max(1000, safeNumber(options.ttlMs, PERF_BRIDGE_CACHE_TTL_MS))
+      });
+      return applyNativeBootstrapSnapshot(snapshot);
+    })();
+    try {
+      const snapshot = await nativeBootstrapPromise;
+      if (options.render) {
+        requestRender("native_bootstrap");
+      }
+      return snapshot;
+    } finally {
+      nativeBootstrapPromise = null;
+    }
+  }
+
   async function loadSettingsState(options = {}) {
+    if (hasNativeBootstrapBridge()) {
+      try {
+        await loadNativeBootstrapSnapshot({ render: false, force: Boolean(options.force) });
+      } catch (_) {
+        // Fall through to explicit bridge reads when bootstrap is unavailable.
+      }
+      if (options.ensureSurface !== false && ensureSettingsSurfaceCurrent()) {
+        return;
+      }
+      if (options.render) {
+        render();
+      }
+      void Promise.all([
+        loadPhoneRoleStatus({ render: false, force: true }),
+        loadDefaultAudioSpeed({ render: false, force: true }),
+        loadTurnSettings({ render: false, force: true }),
+        loadWakeStatus({ render: false, force: true }),
+        loadUiSurfaceStatus({ render: false, force: true })
+      ]).then(() => {
+        if (options.ensureSurface !== false && ensureSettingsSurfaceCurrent()) {
+          return;
+        }
+        if (options.render) {
+          requestRender("settings_quiet_refresh");
+        }
+      });
+      return;
+    }
     await Promise.all([
       loadPhoneRoleStatus({ render: false }),
       loadDefaultAudioSpeed({ render: false }),
@@ -3536,6 +3702,14 @@
       return;
     }
     try {
+      await loadNativeBootstrapSnapshot({ render: false });
+      if (state.links.apiBaseUrl && state.links.apiToken) {
+        return;
+      }
+    } catch (_) {
+      // Fall back to the bounded native-config read below.
+    }
+    try {
       const config = await requestNativeLinksConfig({ requireApiToken: true });
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
       state.links.apiToken = String(config && config.api_token || "");
@@ -3625,6 +3799,11 @@
       wall_elapsed_ms: safeNumber(metrics.wall_elapsed_ms),
       route_ready_elapsed_ms: safeNumber(metrics.route_ready_elapsed_ms),
       bridge_total_ms: safeNumber(metrics.bridge_total_ms),
+      shell_launch_elapsed_ms: safeNumber(metrics.shell_launch_elapsed_ms),
+      webview_load_elapsed_ms: safeNumber(metrics.webview_load_elapsed_ms),
+      asset_delivery_failures: safeNumber(metrics.asset_delivery_failures),
+      hosted_reload_attempts: safeNumber(metrics.hosted_reload_attempts),
+      bootstrap_snapshot_used: Boolean(metrics.bootstrap_snapshot_used),
       bridge_calls_by_command: { ...(metrics.bridge_calls_by_command || {}) },
       fetches_by_key: { ...(metrics.fetches_by_key || {}) },
       poll_ticks_by_lane: { ...(metrics.poll_ticks_by_lane || {}) },
@@ -4043,6 +4222,7 @@
 
   function initialUiSurfaceStatus() {
     const config = bundleConfig();
+    const bootstrap = bootstrapDebugState();
     return {
       schema: "pucky.ui_surface.v1",
       requested_url: window.location.href,
@@ -4055,7 +4235,11 @@
       source_dirty: Boolean(config.source_dirty),
       source_kind: initialSurfaceKind(),
       bridge_connected: hasNativeAudioBridge(),
-      audio_runtime_mode: audioRuntimeMode()
+      audio_runtime_mode: audioRuntimeMode(),
+      shell_launch_elapsed_ms: safeNumber(bootstrap.shell_launch_elapsed_ms),
+      webview_load_elapsed_ms: safeNumber(bootstrap.webview_load_elapsed_ms),
+      hosted_reload_attempts: safeNumber(bootstrap.hosted_reload_attempts),
+      asset_delivery_failures: safeNumber(bootstrap.asset_delivery_failures)
     };
   }
 
@@ -4731,6 +4915,7 @@
 
   function normalizeUiSurfaceStatus(input) {
     const raw = input && typeof input === "object" ? input : {};
+    const bootstrap = bootstrapDebugState();
     return {
       schema: raw.schema || "pucky.ui_surface.v1",
       requested_url: String(raw.requested_url || window.location.href || ""),
@@ -4743,7 +4928,11 @@
       source_dirty: Boolean(raw.source_dirty ?? bundleConfig().source_dirty),
       source_kind: String(raw.source_kind || "legacy_placeholder"),
       bridge_connected: truthy(raw.bridge_connected ?? !!window.PuckyAndroid),
-      audio_runtime_mode: String(raw.audio_runtime_mode || audioRuntimeMode())
+      audio_runtime_mode: String(raw.audio_runtime_mode || audioRuntimeMode()),
+      shell_launch_elapsed_ms: safeNumber(raw.shell_launch_elapsed_ms || bootstrap.shell_launch_elapsed_ms),
+      webview_load_elapsed_ms: safeNumber(raw.webview_load_elapsed_ms || bootstrap.webview_load_elapsed_ms),
+      hosted_reload_attempts: safeNumber(raw.hosted_reload_attempts || bootstrap.hosted_reload_attempts),
+      asset_delivery_failures: safeNumber(raw.asset_delivery_failures || bootstrap.asset_delivery_failures)
     };
   }
 
@@ -20678,12 +20867,16 @@
 
   function runBootRouteSideEffects() {
     const route = String(state.route || "home").trim() || "home";
+    const hasNativeBootstrap = hasNativeBootstrapBridge();
+    const bootstrapTask = hasNativeBootstrap
+      ? loadNativeBootstrapSnapshot({ render: route === "settings" }).catch(() => null)
+      : Promise.resolve(null);
     setPerfBootPhase("boot_critical_dispatch");
     void syncVoiceThreadScope({ reason: "boot", render: true });
     if (route === "connect") {
       linksDebugStartSession("route", { reason: "boot_route" });
       linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
-      loadLinksPortal({ render: true });
+      void bootstrapTask.then(() => loadLinksPortal({ render: true }));
     } else if (route === "meetings") {
       loadTurnStatus({ render: false });
       refreshMeetingRecordingStatus({ render: true });
@@ -20707,22 +20900,24 @@
         await loadTurnStatus({ render: false });
       }
     }, { delayMs: PERF_DEFERRED_TASK_DELAY_MS });
-    queueDeferredPerfTask("boot:ambient:ui_surface", () => loadUiSurfaceStatus({ render: false }), {
-      delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
-    });
-    queueDeferredPerfTask("boot:ambient:turn_settings", () => loadTurnSettings({ render: false }), {
-      delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
-    });
-    queueDeferredPerfTask("boot:ambient:default_audio_speed", () => loadDefaultAudioSpeed({ render: false }), {
-      delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
-    });
-    if (route !== "settings") {
-      queueDeferredPerfTask("boot:ambient:phone_role", () => loadPhoneRoleStatus({ render: false }), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
+    if (!hasNativeBootstrap) {
+      queueDeferredPerfTask("boot:ambient:ui_surface", () => loadUiSurfaceStatus({ render: false }), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
       });
-      queueDeferredPerfTask("boot:ambient:wake_status", () => loadWakeStatus({ render: false }), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
+      queueDeferredPerfTask("boot:ambient:turn_settings", () => loadTurnSettings({ render: false }), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
       });
+      queueDeferredPerfTask("boot:ambient:default_audio_speed", () => loadDefaultAudioSpeed({ render: false }), {
+        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
+      });
+      if (route !== "settings") {
+        queueDeferredPerfTask("boot:ambient:phone_role", () => loadPhoneRoleStatus({ render: false }), {
+          delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
+        });
+        queueDeferredPerfTask("boot:ambient:wake_status", () => loadWakeStatus({ render: false }), {
+          delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
+        });
+      }
     }
     if (route !== "inbox") {
       queueDeferredPerfTask("boot:idle:feed", () => loadCards(), {

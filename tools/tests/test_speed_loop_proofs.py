@@ -40,6 +40,14 @@ def test_browser_speed_loop_proof_captures_route_matrix_perf_debug_and_connect_a
     assert 'summary.connect_auth = authResult;' in source
     assert 'summary.fresh_loads.home = summarizeSamples(homeFreshSamples);' in source
     assert 'summary.fresh_loads.connect = summarizeSamples(connectFreshSamples);' in source
+    assert 'route_ready_median_ms: median(routeReadyValues),' in source
+    assert 'bridge_total_median_ms: median(bridgeValues),' in source
+    assert 'shell_launch_median_ms: median(shellValues),' in source
+    assert 'webview_load_median_ms: median(webviewValues),' in source
+    assert 'asset_delivery_failures_max:' in source
+    assert 'hosted_reload_attempts_max:' in source
+    assert 'bootstrap_snapshot_used:' in source
+    assert 'throw new Error("Hosted asset bootstrap failed while loading /ui/pucky/latest/.");' in source
     assert 'summary.route_opens[routeConfig.key] = summarizeSamples(samples);' in source
     assert 'summary.detail_opens.task = summarizeSamples(taskDetailSamples);' in source
     assert 'url.searchParams.set("perf_run_id", config.perfRunId);' in source
@@ -70,6 +78,14 @@ def test_emulator_speed_loop_proof_reuses_live_auth_handoff_and_reports_route_me
     assert 'auth_proof.discover_chrome_cdp_url(args)' in source
     assert 'auth_proof.wait_for_rendered_auth_snapshot(args, str(chrome["cdp_url"]))' in source
     assert 'summary["connect_auth"] = {' in source
+    assert '"route_ready_median_ms":' in source
+    assert '"bridge_total_median_ms":' in source
+    assert '"shell_launch_median_ms":' in source
+    assert '"webview_load_median_ms":' in source
+    assert '"asset_delivery_failures_max":' in source
+    assert '"hosted_reload_attempts_max":' in source
+    assert '"bootstrap_snapshot_used":' in source
+    assert 'raise EmulatorSpeedProofError("Hosted asset bootstrap failed inside the Android WebView.")' in source
     assert 'summary["route_opens"][route] = summarize(samples)' in source
     assert 'summary["detail_opens"]["calendar"] = summarize(calendar_samples)' in source
     assert 'clear_logcat(args)' in source

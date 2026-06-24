@@ -2,6 +2,7 @@ package com.pucky.device.ui;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 
 import com.pucky.device.util.Json;
 
@@ -16,6 +17,12 @@ public final class UiSurfaceController {
     private static final String ACTIVE_URL = "active_url";
     private static final String REQUESTED_AT = "requested_at";
     private static final String LOADED_AT = "loaded_at";
+    private static final String ACTIVITY_CREATED_AT_ELAPSED_MS = "activity_created_at_elapsed_ms";
+    private static final String WEBVIEW_CREATED_AT_ELAPSED_MS = "webview_created_at_elapsed_ms";
+    private static final String REQUESTED_AT_ELAPSED_MS = "requested_at_elapsed_ms";
+    private static final String LOADED_AT_ELAPSED_MS = "loaded_at_elapsed_ms";
+    private static final String HOSTED_RELOAD_ATTEMPTS = "hosted_reload_attempts";
+    private static final String HOSTED_ASSET_FAILURES = "hosted_asset_failures";
 
     private final SharedPreferences prefs;
 
@@ -23,10 +30,27 @@ public final class UiSurfaceController {
         this.prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    public void recordActivityCreated() {
+        prefs.edit()
+                .clear()
+                .putLong(ACTIVITY_CREATED_AT_ELAPSED_MS, SystemClock.elapsedRealtime())
+                .apply();
+    }
+
+    public void recordWebViewCreated() {
+        if (prefs.getLong(WEBVIEW_CREATED_AT_ELAPSED_MS, 0L) > 0L) {
+            return;
+        }
+        prefs.edit()
+                .putLong(WEBVIEW_CREATED_AT_ELAPSED_MS, SystemClock.elapsedRealtime())
+                .apply();
+    }
+
     public void recordRequested(String requestedUrl, UiBundleController bundles) {
         prefs.edit()
                 .putString(REQUESTED_URL, safe(requestedUrl))
                 .putString(REQUESTED_AT, Instant.now().toString())
+                .putLong(REQUESTED_AT_ELAPSED_MS, SystemClock.elapsedRealtime())
                 .apply();
     }
 
@@ -34,6 +58,19 @@ public final class UiSurfaceController {
         prefs.edit()
                 .putString(ACTIVE_URL, safe(activeUrl))
                 .putString(LOADED_AT, Instant.now().toString())
+                .putLong(LOADED_AT_ELAPSED_MS, SystemClock.elapsedRealtime())
+                .apply();
+    }
+
+    public void recordHostedReloadAttempt(String activeUrl, int attempt) {
+        prefs.edit()
+                .putInt(HOSTED_RELOAD_ATTEMPTS, Math.max(0, prefs.getInt(HOSTED_RELOAD_ATTEMPTS, 0)) + 1)
+                .apply();
+    }
+
+    public void recordHostedAssetFailure(String activeUrl, String reason) {
+        prefs.edit()
+                .putInt(HOSTED_ASSET_FAILURES, Math.max(0, prefs.getInt(HOSTED_ASSET_FAILURES, 0)) + 1)
                 .apply();
     }
 
@@ -44,6 +81,10 @@ public final class UiSurfaceController {
         String activeUrl = prefs.getString(ACTIVE_URL, "");
         String entrypointUrl = bundle.optString("entrypoint_url", "");
         String fallbackAssetUrl = bundle.optString("fallback_asset_url", "");
+        long nowElapsedMs = SystemClock.elapsedRealtime();
+        long activityCreatedAtElapsedMs = prefs.getLong(ACTIVITY_CREATED_AT_ELAPSED_MS, 0L);
+        long requestedAtElapsedMs = prefs.getLong(REQUESTED_AT_ELAPSED_MS, 0L);
+        long loadedAtElapsedMs = prefs.getLong(LOADED_AT_ELAPSED_MS, 0L);
         JSONObject out = new JSONObject();
         Json.put(out, "schema", "pucky.ui_surface.v1");
         Json.put(out, "requested_url", requestedUrl);
@@ -56,6 +97,14 @@ public final class UiSurfaceController {
         Json.put(out, "source_kind", sourceKind(activeUrl, requestedUrl, entrypointUrl, fallbackAssetUrl));
         Json.put(out, "requested_at", prefs.getString(REQUESTED_AT, ""));
         Json.put(out, "loaded_at", prefs.getString(LOADED_AT, ""));
+        Json.put(out, "shell_launch_elapsed_ms", activityCreatedAtElapsedMs > 0L
+                ? Math.max(0L, nowElapsedMs - activityCreatedAtElapsedMs)
+                : 0L);
+        Json.put(out, "webview_load_elapsed_ms", requestedAtElapsedMs > 0L
+                ? Math.max(0L, (loadedAtElapsedMs > 0L ? loadedAtElapsedMs : nowElapsedMs) - requestedAtElapsedMs)
+                : 0L);
+        Json.put(out, "hosted_reload_attempts", prefs.getInt(HOSTED_RELOAD_ATTEMPTS, 0));
+        Json.put(out, "asset_delivery_failures", prefs.getInt(HOSTED_ASSET_FAILURES, 0));
         Json.put(out, "bridge_connected", true);
         Json.put(out, "route", live.optString("route", ""));
         Json.put(out, "detail", live.optJSONObject("detail") == null ? new JSONObject() : live.optJSONObject("detail"));

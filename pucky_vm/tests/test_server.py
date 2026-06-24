@@ -1305,6 +1305,13 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
             html = response.read().decode("utf-8")
             self.assertIn("Pucky Cover", html)
+            self.assertIn("window.__PUCKY_BOOTSTRAP_STATUS__", html)
+            self.assertIn("const ESSENTIAL_ASSETS = [", html)
+            self.assertIn('"pucky-ui-state.js"', html)
+            self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
+
+        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/manifest.json", timeout=10) as response:
+            self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
 
         fixture = self.get_json("/ui/pucky/fixtures/reply_cards.json")
         self.assertEqual(fixture["schema"], "pucky.reply_cards.v1")
@@ -1337,6 +1344,14 @@ class ServerTests(unittest.TestCase):
             self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
             self.assertNotIn('"links_url"', config_script)
             self.assertNotIn("api_token", config_script)
+            self.assertEqual(response.headers.get("Cache-Control"), "public, max-age=300, stale-while-revalidate=30")
+
+        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/styles.css", timeout=10) as response:
+            self.assertEqual(response.headers.get("Cache-Control"), "public, max-age=300, stale-while-revalidate=30")
+
+        for _ in range(3):
+            with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
+                self.assertEqual(response.status, 200)
 
     def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
         request = urllib.request.Request(self.base_url + "/favicon.ico")

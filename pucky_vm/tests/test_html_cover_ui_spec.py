@@ -44,6 +44,8 @@ def test_material_icon_registry_remains_bundled() -> None:
 def test_index_uses_modern_home_shell_mounts_only() -> None:
     html = read("index.html")
 
+    assert 'id="bootStatus"' in html
+    assert 'id="appShellRoot"' in html
     assert 'data-view="home"' in html
     assert 'id="threadScopeStatus"' in html
     assert 'id="voiceStatus"' in html
@@ -51,10 +53,19 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
     assert 'aria-label="Turn state: idle"' in html
     assert 'id="feed"' in html
     assert 'id="detail"' in html
-    assert '<script src="./pucky-icons.js"></script>' in html
-    assert '<script src="./pucky-routes.js"></script>' in html
-    assert html.index('<script src="./pucky-icons.js"></script>') < html.index('<script src="./app.js"></script>')
-    assert html.index('<script src="./pucky-routes.js"></script>') < html.index('<script src="./app.js"></script>')
+    assert "window.__PUCKY_BOOTSTRAP_STATUS__" in html
+    assert 'const ESSENTIAL_ASSETS = [' in html
+    assert '"pucky-config.js"' in html
+    assert '"pucky-links-catalog.js"' in html
+    assert '"pucky-icons.js"' in html
+    assert '"pucky-routes.js"' in html
+    assert '"pucky-ui-state.js"' in html
+    assert '"app.js"' in html
+    assert 'BOOT_TIMEOUT_MS = 7000' in html
+    assert 'autoReloadOnce()' in html
+    assert 'asset_delivery_failures' in html
+    assert html.index('"pucky-icons.js"') < html.index('"app.js"')
+    assert html.index('"pucky-routes.js"') < html.index('"app.js"')
     assert 'id="pageTabs"' not in html
     assert 'id="routeTray"' not in html
 
@@ -613,6 +624,11 @@ def test_perf_debug_contract_exposes_route_ready_render_bridge_and_poll_metrics(
     assert 'route_data_end_at_ms: safeNumber(perfDebugState.route_data_end_at_ms),' in perf_metrics
     assert 'wall_elapsed_ms: Math.max(0, Date.now() - safeNumber(perfDebugState.route_enter_at_ms)),' in perf_metrics
     assert 'bridge_total_ms: safeNumber(perfDebugState.bridge_total_ms),' in perf_metrics
+    assert 'shell_launch_elapsed_ms: safeNumber(perfDebugState.shell_launch_elapsed_ms),' in perf_metrics
+    assert 'webview_load_elapsed_ms: safeNumber(perfDebugState.webview_load_elapsed_ms),' in perf_metrics
+    assert 'asset_delivery_failures: safeNumber(perfDebugState.asset_delivery_failures),' in perf_metrics
+    assert 'hosted_reload_attempts: safeNumber(perfDebugState.hosted_reload_attempts),' in perf_metrics
+    assert 'bootstrap_snapshot_used: Boolean(perfDebugState.bootstrap_snapshot_used),' in perf_metrics
     assert 'render_count: safeNumber(perfDebugState.render_count),' in perf_metrics
     assert 'bridge_calls_by_command: { ...perfDebugState.bridge_calls_by_command },' in perf_metrics
     assert 'fetches_by_key: { ...perfDebugState.fetches_by_key },' in perf_metrics
@@ -648,6 +664,11 @@ def test_perf_telemetry_sampling_and_flush_posts_route_events_to_dedicated_endpo
     assert "/api/ui/route-perf-events" in flush_route_perf
     assert 'app_version: "",' in route_perf_payload
     assert 'ui_version: String(state.uiSurface?.ui_version || bundleUiVersion() || ""),' in route_perf_payload
+    assert 'shell_launch_elapsed_ms: safeNumber(metrics.shell_launch_elapsed_ms),' in route_perf_payload
+    assert 'webview_load_elapsed_ms: safeNumber(metrics.webview_load_elapsed_ms),' in route_perf_payload
+    assert 'asset_delivery_failures: safeNumber(metrics.asset_delivery_failures),' in route_perf_payload
+    assert 'hosted_reload_attempts: safeNumber(metrics.hosted_reload_attempts),' in route_perf_payload
+    assert 'bootstrap_snapshot_used: Boolean(metrics.bootstrap_snapshot_used),' in route_perf_payload
 
 
 def test_shared_bridge_cache_and_calendar_day_cache_support_android_shell_tax_reduction() -> None:
@@ -669,6 +690,30 @@ def test_shared_bridge_cache_and_calendar_day_cache_support_android_shell_tax_re
     assert 'shiftCalendarDateKey(dayKey, -1)' in load_workspace
     assert 'const queryKey = workspaceRouteQueryKey(route, options);' in load_workspace_for_route
     assert 'const cached = !options.force ? readBridgeCache("pucky.config.get", {}, PERF_BRIDGE_CACHE_TTL_MS) : null;' in request_native_config
+
+
+def test_android_bootstrap_snapshot_primes_first_paint_state_before_individual_reads() -> None:
+    app = read("app.js")
+    load_native_bootstrap = function_block(app, "loadNativeBootstrapSnapshot")
+    apply_native_bootstrap = function_block(app, "applyNativeBootstrapSnapshot")
+    load_settings = function_block(app, "loadSettingsState")
+    ensure_links = function_block(app, "ensureLinksApiConfig")
+    boot_side_effects = function_block(app, "runBootRouteSideEffects")
+
+    assert 'let nativeBootstrapPromise = null;' in app
+    assert 'function applyNativeBootstrapSnapshot(snapshot) {' in app
+    assert 'writeBridgeCache("ui.surface.get", {}, raw.ui_surface);' in apply_native_bootstrap
+    assert 'writeBridgeCache("pucky.config.get", {}, config);' in apply_native_bootstrap
+    assert 'writeBridgeCache("pucky.turn.settings.get", {}, raw.turn_settings);' in apply_native_bootstrap
+    assert 'writeBridgeCache("wake.status", {}, raw.wake_status);' in apply_native_bootstrap
+    assert 'writeBridgeCache("phone.role.status", {}, raw.phone_role);' in apply_native_bootstrap
+    assert 'writeBridgeCache("ui.default_audio_speed.get", {}, raw.default_audio_speed);' in apply_native_bootstrap
+    assert 'perfDebugState.bootstrap_snapshot_used = true;' in apply_native_bootstrap
+    assert 'await cachedBridgeRead("ui.bootstrap.get", {}, {' in load_native_bootstrap
+    assert 'await loadNativeBootstrapSnapshot({ render: false, force: Boolean(options.force) });' in load_settings
+    assert 'await loadNativeBootstrapSnapshot({ render: false });' in ensure_links
+    assert 'const bootstrapTask = hasNativeBootstrap' in boot_side_effects
+    assert 'void bootstrapTask.then(() => loadLinksPortal({ render: true }));' in boot_side_effects
 
 
 def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
