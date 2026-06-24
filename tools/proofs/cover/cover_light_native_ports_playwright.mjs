@@ -272,10 +272,59 @@ async function ensureInboxArchiveFilter(page, showArchived, timeoutMs) {
     await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle").first(), timeoutMs, desired ? "Show archived Inbox" : "Show active Inbox");
   }
   await page.waitForFunction(
-    expected => document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle")?.getAttribute("aria-pressed") === String(expected),
+    expected => {
+      const toggle = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle");
+      return toggle?.getAttribute("aria-pressed") === String(expected)
+        && toggle?.getAttribute("aria-busy") !== "true"
+        && !document.querySelector(".app-shell.is-inbox-archive-filter-loading");
+    },
     desired,
     { timeout: timeoutMs }
   );
+}
+
+async function exerciseInboxArchiveFilterLoading(page, feedEmulation, showArchived, timeoutMs, reportDir) {
+  const desired = Boolean(showArchived);
+  const before = await readInboxManagementState(page);
+  assert(before.archive_toggle_pressed !== desired, "Archive filter loading proof requires a state transition");
+  feedEmulation.delayNextFeedMs = 700;
+  await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle").first(), timeoutMs, desired ? "Show archived Inbox with loading proof" : "Show active Inbox with loading proof");
+  await page.waitForFunction(
+    expected => {
+      const toggle = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle");
+      const notice = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-archive-loading-notice");
+      return toggle?.getAttribute("aria-busy") === "true"
+        && toggle?.hasAttribute("disabled")
+        && toggle?.getAttribute("data-pending-target") === String(expected)
+        && Boolean(document.querySelector(".app-shell.is-inbox-archive-filter-loading"))
+        && /Loading (archived|active) replies/.test(String(notice?.textContent || ""));
+    },
+    desired,
+    { timeout: Math.min(1200, timeoutMs) }
+  );
+  const loading = await readInboxManagementState(page);
+  const loadingScreenshot = await saveScreenshot(page, reportDir, desired ? "07a-archive-filter-loading-archived" : "07a-archive-filter-loading-active");
+  assert(loading.archive_toggle_busy, "Archive filter should expose aria-busy while loading");
+  assert(loading.archive_toggle_disabled, "Archive filter should be disabled while loading");
+  assert(loading.archive_loading_shell_active, "App shell should expose archive-filter loading state");
+  assert(new RegExp(desired ? "Loading archived replies" : "Loading active replies").test(loading.archive_loading_notice_text), `Archive loading notice had unexpected text: ${loading.archive_loading_notice_text}`);
+  await page.waitForFunction(
+    expected => {
+      const toggle = document.querySelector(".light-shell[data-light-route=\"inbox\"] .inbox-archive-toggle");
+      return toggle?.getAttribute("aria-pressed") === String(expected)
+        && toggle?.getAttribute("aria-busy") !== "true"
+        && !document.querySelector(".app-shell.is-inbox-archive-filter-loading");
+    },
+    desired,
+    { timeout: timeoutMs }
+  );
+  const loaded = await readInboxManagementState(page);
+  return {
+    before,
+    loading,
+    loaded,
+    screenshot: loadingScreenshot
+  };
 }
 
 let playwrightBrowsersPromise = null;
@@ -844,14 +893,13 @@ async function readInboxManagementState(page) {
     const shell = document.querySelector(".light-shell[data-light-route=\"inbox\"]");
     const overlay = document.getElementById("inboxManageOverlay");
     const wraps = Array.from(shell?.querySelectorAll(".card-wrap") || []);
-    const firstManageable = wraps.find(wrap =>
+    const healthyNoMenuWrap = wraps.find(wrap =>
       wrap.querySelector("article.card[data-card-id]")
-        && (
-          wrap.classList.contains("has-inbox-menu")
-          || wrap.querySelector("[data-card-action=\"manage_menu\"]")
-          || wrap.querySelector("[data-card-action=\"manage_select\"]")
-        )
+        && !wrap.classList.contains("has-inbox-menu")
+        && !wrap.querySelector("[data-card-action=\"manage_menu\"]")
+        && !wrap.querySelector("article.card-meeting-processing")
     );
+    const firstManageable = healthyNoMenuWrap || wraps.find(wrap => wrap.querySelector("article.card[data-card-id]"));
     const firstArticle = firstManageable?.querySelector("article.card");
     const normalMenuButton = firstManageable?.querySelector("[data-card-action=\"manage_menu\"]");
     const selectButton = firstManageable?.querySelector("[data-card-action=\"manage_select\"]");
@@ -859,6 +907,8 @@ async function readInboxManagementState(page) {
     const selectedCount = Number(manageBar?.getAttribute("data-inbox-manage-selected-count") || 0);
     const selectedButton = shell?.querySelector("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]");
     const archiveToggle = shell?.querySelector(".inbox-archive-toggle");
+    const manageToggle = shell?.querySelector(".inbox-manage-toggle");
+    const loadingNotice = shell?.querySelector(".inbox-archive-loading-notice");
     const openMenu = shell?.querySelector(".inbox-card-menu");
     const processingCards = wraps
       .map(wrap => {
@@ -890,6 +940,7 @@ async function readInboxManagementState(page) {
     const firstArticleRect = rect(firstArticle);
     const selectRect = rect(selectButton);
     const manageBarRect = rect(manageBar);
+    const healthyNoMenuArticle = healthyNoMenuWrap?.querySelector("article.card");
     const expectedManageBarWidth = Math.min(window.innerWidth - 28, 480);
     const firstActionsRect = rect(firstArticle?.querySelector(".card-actions"));
     const firstAudioRect = rect(firstArticle?.querySelector("[data-card-action=\"audio\"]"));
@@ -906,11 +957,20 @@ async function readInboxManagementState(page) {
     ));
     const cardWidthTarget = Math.min(720, Math.max(0, window.innerWidth - 52));
     return {
-      manage_button_visible: Boolean(shell?.querySelector(".inbox-manage-toggle")),
-      manage_button_label: String(shell?.querySelector(".inbox-manage-toggle")?.getAttribute("aria-label") || shell?.querySelector(".inbox-manage-toggle")?.textContent || "").trim(),
-      archive_toggle_visible: Boolean(shell?.querySelector(".inbox-archive-toggle")),
+      manage_button_visible: Boolean(manageToggle),
+      manage_button_label: String(manageToggle?.textContent || manageToggle?.getAttribute("aria-label") || "").trim(),
+      manage_button_aria_label: String(manageToggle?.getAttribute("aria-label") || "").trim(),
+      manage_button_is_circle: Boolean(manageToggle?.classList.contains("light-circle-button")),
+      archive_toggle_visible: Boolean(archiveToggle),
       archive_toggle_pressed: archiveToggle?.getAttribute("aria-pressed") === "true",
-      archive_toggle_label: String(archiveToggle?.getAttribute("aria-label") || archiveToggle?.textContent || "").trim(),
+      archive_toggle_label: String(archiveToggle?.textContent || archiveToggle?.getAttribute("aria-label") || "").trim(),
+      archive_toggle_aria_label: String(archiveToggle?.getAttribute("aria-label") || "").trim(),
+      archive_toggle_busy: archiveToggle?.getAttribute("aria-busy") === "true",
+      archive_toggle_disabled: Boolean(archiveToggle?.disabled),
+      archive_toggle_pending_target: String(archiveToggle?.getAttribute("data-pending-target") || ""),
+      archive_toggle_is_circle: Boolean(archiveToggle?.classList.contains("light-circle-button")),
+      archive_loading_notice_text: String(loadingNotice?.textContent || "").trim(),
+      archive_loading_shell_active: Boolean(appShell?.classList.contains("is-inbox-archive-filter-loading")),
       manage_mode_active: Boolean(manageBar),
       selected_count: selectedCount,
       selected_button_count: shell?.querySelectorAll("[data-card-action=\"manage_select\"][aria-pressed=\"true\"]").length || 0,
@@ -929,6 +989,15 @@ async function readInboxManagementState(page) {
       selected_card_ids: Array.from(shell?.querySelectorAll(".card-wrap.is-inbox-manage-selected article.card[data-card-id]") || [])
         .map(card => String(card.getAttribute("data-card-id") || "").trim())
         .filter(Boolean),
+      healthy_no_menu_card: healthyNoMenuArticle ? {
+        card_id: String(healthyNoMenuArticle.getAttribute("data-card-id") || "").trim(),
+        session_id: String(healthyNoMenuArticle.getAttribute("data-card-session-id") || "").trim(),
+        title: String(healthyNoMenuArticle.querySelector(".title")?.textContent || "").trim(),
+        rect: rect(healthyNoMenuArticle),
+        has_menu_button: Boolean(healthyNoMenuWrap.querySelector("[data-card-action=\"manage_menu\"]")),
+        has_select_control: Boolean(healthyNoMenuWrap.querySelector("[data-card-action=\"manage_select\"]")),
+        wrap_class: String(healthyNoMenuWrap.className || "")
+      } : null,
       first_card: firstArticle ? {
         card_id: String(firstArticle.getAttribute("data-card-id") || "").trim(),
         session_id: String(firstArticle.getAttribute("data-card-session-id") || "").trim(),
@@ -985,9 +1054,22 @@ async function readInboxManagementState(page) {
         },
         archive_filter: {
           pressed: archiveToggle?.getAttribute("aria-pressed") === "true",
-          label: String(archiveToggle?.getAttribute("aria-label") || archiveToggle?.textContent || "").trim(),
+          label: String(archiveToggle?.textContent || archiveToggle?.getAttribute("aria-label") || "").trim(),
+          aria_label: String(archiveToggle?.getAttribute("aria-label") || "").trim(),
+          busy: archiveToggle?.getAttribute("aria-busy") === "true",
+          disabled: Boolean(archiveToggle?.disabled),
+          pending_target: String(archiveToggle?.getAttribute("data-pending-target") || ""),
+          loading_notice_text: String(loadingNotice?.textContent || "").trim(),
+          shell_loading: Boolean(appShell?.classList.contains("is-inbox-archive-filter-loading")),
           visible_card_count: shell?.querySelectorAll(".card-wrap article.card").length || 0
         },
+        healthy_no_menu: healthyNoMenuArticle ? {
+          card_id: String(healthyNoMenuArticle.getAttribute("data-card-id") || "").trim(),
+          title: String(healthyNoMenuArticle.querySelector(".title")?.textContent || "").trim(),
+          rect: rect(healthyNoMenuArticle),
+          has_menu_button: Boolean(healthyNoMenuWrap.querySelector("[data-card-action=\"manage_menu\"]")),
+          wrap_class: String(healthyNoMenuWrap.className || "")
+        } : null,
         processing_escape_hatch: {
           count: processingCards.length,
           cards: processingCards
@@ -1002,10 +1084,17 @@ function assertInboxManagementLayout(state, phase) {
   assert(state.archive_reveal_count === 0, `${phase}: Inbox should not expose swipe-only archive reveal actions`);
   if (phase === "normal") {
     const menu = state.layout?.normal_menu || {};
+    const healthyNoMenu = state.layout?.healthy_no_menu || {};
     const feedWidth = state.layout?.feed_width || {};
     const timestamp = state.layout?.timestamp_alignment || {};
-    assert(state.menu_button_count > 0, "Normal Inbox should render visible per-tile more buttons");
-    assert(menu.button_rect, "Normal Inbox did not expose a measurable tile menu button");
+    assert(state.archive_toggle_visible, "Normal Inbox should render an archive filter control");
+    assert(state.manage_button_visible, "Normal Inbox should render a Manage control");
+    assert(state.archive_toggle_is_circle === false, "Archive filter should be a labeled pill, not an icon-only circle");
+    assert(state.manage_button_is_circle === false, "Manage control should be a labeled pill, not an icon-only circle");
+    assert(["Active", "Archived"].includes(state.archive_toggle_label), `Archive filter should show a visible Active/Archived label, got ${state.archive_toggle_label}`);
+    assert(["Manage", "Done"].includes(state.manage_button_label), `Manage control should show a visible Manage/Done label, got ${state.manage_button_label}`);
+    assert(healthyNoMenu.card_id && healthyNoMenu.has_menu_button === false, "Normal healthy Inbox cards should not render per-tile dots");
+    assert(menu.button_rect === null || menu.button_rect === undefined, "First healthy Inbox tile should not expose a menu button");
     assert(menu.article_rect, "Normal Inbox did not expose a measurable tile article");
     assert(feedWidth.card_rect, "Normal Inbox did not expose a measurable feed-width card");
     assert(Math.abs(Number(feedWidth.card_rect.width || 0) - Number(feedWidth.card_width_target || 0)) <= 2, `Inbox card width ${feedWidth.card_rect.width} should match target ${feedWidth.card_width_target}`);
@@ -1017,12 +1106,8 @@ function assertInboxManagementLayout(state, phase) {
     assert(Number(timestamp.padding_right_px || 0) <= 4, `Inbox timestamp padding-right should be <= 4px, got ${timestamp.padding_right_px}`);
     assert(Number(timestamp.timestamp_right_gap_from_card || 0) <= 12, `Inbox timestamp right gap from card should be <= 12px, got ${timestamp.timestamp_right_gap_from_card}`);
     assert(timestamp.overlaps_actions === false, "Inbox timestamp should not overlap mic/paperclip actions");
-    assert(Math.abs(Number(menu.center_delta || 0)) <= 2, `Tile menu should be vertically centered, center delta ${menu.center_delta}`);
-    assert(menu.button_rect.x >= menu.article_rect.x + 4, `Tile menu left ${menu.button_rect.x} should sit inside the left rail`);
-    assert(menu.button_rect.right <= menu.article_rect.x + 48, `Tile menu right ${menu.button_rect.right} should stay inside the left rail`);
-    if (menu.action_column_rect) {
-      assert(menu.button_rect.right < menu.action_column_rect.x, "Tile menu should not overlap the right mic/paperclip action column");
-    }
+    assert(!state.archive_toggle_busy, "Archive filter should not start busy in the normal state");
+    assert(state.processing_card_count > 0, "Inbox proof should include a processing/exception card with an escape menu");
     for (const processing of state.processing_cards || []) {
       assert(processing.has_menu_button, `Processing meeting card ${processing.card_id} should expose a left-rail menu button`);
       assert(processing.menu_visible, `Processing meeting card ${processing.card_id} left-rail menu button should be visible`);
@@ -1141,12 +1226,22 @@ async function assertInboxManageBarScrollStickiness(page, timeoutMs, reportDir) 
 async function installInboxManagementActionInterceptor(page, actionRequests) {
   const archivedCardIds = new Set();
   const feedRequests = [];
+  const feedEmulation = {
+    archivedCardIds,
+    feedRequests,
+    delayNextFeedMs: 0
+  };
   await page.route(/\/api\/feed(?:\?.*)?$/, async route => {
     try {
       const request = route.request();
       if (request.method() !== "GET") {
         await route.continue();
         return;
+      }
+      const delayMs = Math.max(0, Number(feedEmulation.delayNextFeedMs || 0) || 0);
+      if (delayMs) {
+        feedEmulation.delayNextFeedMs = 0;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
       }
       const response = await route.fetch();
       const headers = await response.headers();
@@ -1175,14 +1270,14 @@ async function installInboxManagementActionInterceptor(page, actionRequests) {
       const nextItems = proofItems
         .map(item => {
           const cardId = String(item?.card_id || "").trim();
-          if (cardId && archivedCardIds.has(cardId)) {
+          if (cardId && feedEmulation.archivedCardIds.has(cardId)) {
             return { ...item, archived: true };
           }
           return item;
         })
         .filter(item => {
           const cardId = String(item?.card_id || "").trim();
-          return includeArchived || !cardId || !archivedCardIds.has(cardId);
+          return includeArchived || !cardId || !feedEmulation.archivedCardIds.has(cardId);
         });
       const responseHeaders = {
         ...headers,
@@ -1222,9 +1317,9 @@ async function installInboxManagementActionInterceptor(page, actionRequests) {
       const cardId = String(payload?.card_id || "").trim();
       const action = String(payload?.action || "").trim();
       if (cardId && action === "archive") {
-        archivedCardIds.add(cardId);
+        feedEmulation.archivedCardIds.add(cardId);
       } else if (cardId && action === "unarchive") {
-        archivedCardIds.delete(cardId);
+        feedEmulation.archivedCardIds.delete(cardId);
       }
       await route.fulfill({
         status: 200,
@@ -1247,10 +1342,7 @@ async function installInboxManagementActionInterceptor(page, actionRequests) {
       throw error;
     }
   });
-  return {
-    archivedCardIds,
-    feedRequests
-  };
+  return feedEmulation;
 }
 
 async function reloadLightInbox(page, timeoutMs) {
@@ -1271,20 +1363,23 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
   const before = await readInboxManagementState(page);
   assert(before.manage_button_visible, "Light Inbox should render a visible Manage control");
   assert(before.archive_toggle_visible, "Light Inbox should render a visible archived-feed toggle");
-  assert(before.menu_button_count > 0, "Light Inbox should render visible per-tile more buttons");
   assertInboxManagementLayout(before, "normal");
   assert(before.first_card?.card_id || before.first_card?.session_id, "Inbox management proof could not find a manageable card");
   const targetCardId = before.first_card.card_id;
   assert(targetCardId, "Inbox management archive proof requires a card_id");
+  assert(before.healthy_no_menu_card?.card_id === targetCardId, "Inbox management proof should target a normal healthy no-menu card for Manage archive");
+  const processingCardId = String(before.processing_cards?.[0]?.card_id || "").trim();
+  assert(processingCardId, "Inbox management proof requires a processing/exception card escape hatch");
   const normalScreenshot = await saveScreenshot(page, reportDir, "01-normal-expanded-feed");
 
-  await openInboxTileMenu(page, targetCardId, timeoutMs, "Open Inbox tile menu");
+  await openInboxTileMenu(page, processingCardId, timeoutMs, "Open processing Inbox tile escape menu");
   const menuOpen = await readInboxManagementState(page);
-  assert(menuOpen.menu_open, "Inbox tile menu did not open");
-  assert(menuOpen.menu_actions.includes("archive"), "Inbox tile menu did not expose Archive");
-  assert(menuOpen.menu_actions.includes("open_transcript"), "Inbox tile menu did not expose Open transcript");
-  assert(!menuOpen.menu_actions.includes("delete"), "Inbox tile menu must not expose Delete");
-  await clickLocator(page, inboxCardWrap(page, targetCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Close Inbox tile menu");
+  assert(menuOpen.menu_open, "Inbox processing escape menu did not open");
+  assert(menuOpen.menu_actions.includes("archive"), "Inbox processing escape menu did not expose Archive");
+  assert(menuOpen.menu_actions.includes("open_transcript"), "Inbox processing escape menu did not expose Open transcript");
+  assert(!menuOpen.menu_actions.includes("delete"), "Inbox processing escape menu must not expose Delete");
+  const processingMenuScreenshot = await saveScreenshot(page, reportDir, "01b-processing-escape-menu");
+  await clickLocator(page, inboxCardWrap(page, processingCardId).locator(INBOX_MANAGE_MENU_SELECTOR).first(), timeoutMs, "Close processing Inbox tile escape menu");
 
   await clickLocator(page, page.locator(".light-shell[data-light-route=\"inbox\"] .inbox-manage-toggle").first(), timeoutMs, "Enter Inbox Manage mode");
   await page.waitForFunction(
@@ -1338,15 +1433,16 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
       { timeout: timeoutMs }
     );
   }
-  await ensureInboxArchiveFilter(page, true, timeoutMs);
+  const archivedLoading = await exerciseInboxArchiveFilterLoading(page, feedEmulation, true, timeoutMs, reportDir);
   await page.waitForFunction(
     expectedCardId => Array.from(document.querySelectorAll(".light-shell[data-light-route=\"inbox\"] article.card"))
       .some(card => String(card.getAttribute("data-card-id") || "").trim() === expectedCardId),
     targetCardId,
     { timeout: timeoutMs }
   );
-  const archiveFilter = await readInboxManagementState(page);
+  const archiveFilter = archivedLoading.loaded;
   assert(archiveFilter.archive_toggle_pressed, "Archive filter should be active after toggling archived Inbox");
+  assert(!archiveFilter.archive_toggle_busy, "Archive filter should clear busy state after archived Inbox loads");
   const archiveFilterScreenshot = await saveScreenshot(page, reportDir, "07-archive-filter-card-visible");
 
   await openInboxTileMenu(page, targetCardId, timeoutMs, "Open archived Inbox tile menu");
@@ -1366,10 +1462,12 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
       feed_width: before.layout?.feed_width || null,
       timestamp_alignment: before.layout?.timestamp_alignment || null,
       processing_escape_hatch: before.layout?.processing_escape_hatch || null,
+      healthy_no_menu: before.layout?.healthy_no_menu || null,
       manage_bar: manageMode.layout?.manage_bar || null,
       manage_bar_scroll: manageBarScroll,
       selected_control: afterSelect.layout?.selected_control || null,
-      archive_filter: archiveFilter.layout?.archive_filter || null
+      archive_filter: archiveFilter.layout?.archive_filter || null,
+      archive_filter_loading: archivedLoading.loading?.layout?.archive_filter || null
     },
     before,
     menu_open: menuOpen,
@@ -1377,6 +1475,7 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
     after_select: afterSelect,
     after_archive: afterArchive,
     archive_filter: archiveFilter,
+    archive_filter_loading: archivedLoading,
     archived_menu: archivedMenu,
     restored,
     archive: {
@@ -1397,11 +1496,13 @@ async function exerciseInboxManagement(page, timeoutMs, reportDir, options = {})
     screenshots: {
       normal_menu: normalScreenshot,
       menu: normalScreenshot,
+      processing_escape_menu: processingMenuScreenshot,
       manage_bar: manageBarScroll.screenshots.top,
       manage_bar_scrolled_down: manageBarScroll.screenshots.scrolled_down,
       manage_bar_scrolled_up: manageBarScroll.screenshots.scrolled_up,
       selected: selectedScreenshot,
       after_archive_active_feed: afterArchiveScreenshot,
+      archive_filter_loading: archivedLoading.screenshot,
       archived: afterArchiveScreenshot,
       archive_filter_card_visible: archiveFilterScreenshot,
       archived_menu_unarchive: archivedMenuScreenshot

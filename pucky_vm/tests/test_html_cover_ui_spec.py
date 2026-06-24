@@ -1995,18 +1995,37 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     styles = read("styles.css")
     render = function_block(app, "render")
     inbox_page = function_block(app, "lightInboxPage")
+    header_action = function_block(app, "inboxManageHeaderAction")
+    header_pill = function_block(app, "inboxHeaderPillButton")
+    toggle_archive = function_block(app, "toggleInboxArchivedFeed")
     overlay = function_block(app, "renderInboxManageOverlay")
     card_view = function_block(app, "cardView")
     meeting_processing_view = function_block(app, "meetingProcessingCardView")
     select_button = function_block(app, "inboxManageSelectButton")
+    escape_menu = function_block(app, "shouldShowInboxCardEscapeMenu")
     inbox_shell = css_block(styles, '.light-shell[data-light-route="inbox"]')
     timestamp = css_block(styles, ".card-timestamp")
+    header_pill_css = css_block(styles, ".inbox-header-pill")
+    spinner_css = css_block(styles, ".inbox-header-spinner")
+    loading_notice = css_block(styles, ".inbox-archive-loading-notice")
     menu_button = css_block(styles, ".inbox-card-menu-button")
     manage_bar = css_block(styles, ".inbox-manage-bar")
 
     assert "action: inboxManageHeaderAction()" in inbox_page
     assert "afterSections: [inboxManageToolbar()].filter(Boolean)" not in inbox_page
     assert "function inboxManageHeaderAction(" in app
+    assert "function inboxHeaderPillButton(" in app
+    assert "lightCircleButton(" not in header_action
+    assert 'label: inboxArchiveFilterLabel(displayArchived)' in header_action
+    assert 'label: state.inboxManageMode ? "Done" : "Manage"' in header_action
+    assert 'button.setAttribute("aria-busy", "true");' in header_pill
+    assert 'button.disabled = Boolean(config.disabled);' in header_pill
+    assert "state.inboxArchiveFilterPendingTarget" in app
+    assert "function inboxArchiveFilterLoadingNotice(" in app
+    assert "beforeSections: [inboxArchiveFilterLoadingNotice()].filter(Boolean)" in inbox_page
+    assert 'state.inboxArchiveFilterPendingTarget = targetArchived;' in toggle_archive
+    assert 'state.showArchivedFeed = targetArchived;' in toggle_archive
+    assert toggle_archive.index('await syncFeedCards({') < toggle_archive.index('state.showArchivedFeed = targetArchived;')
     assert "function inboxManageToolbar(" in app
     assert "function renderInboxManageOverlay(" in app
     assert render.index("renderFeed();") < render.index("renderInboxManageOverlay();")
@@ -2021,10 +2040,17 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert 'requestFeedAction(card, "unarchive"' in app
     assert '"delete"' not in function_block(app, "cardOverflowMenu")
     assert 'const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);' in card_view
-    assert 'if (manageableInboxCard && !inboxManageMode) {' in card_view
+    assert "function shouldShowInboxCardEscapeMenu(" in app
+    assert 'state.showArchivedFeed || Boolean(card?.archived)' in escape_menu
+    assert 'isMeetingProcessingCard(card) || isFailedPendingOutboundCard(card)' in escape_menu
+    assert "needs review" in escape_menu
+    assert 'const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);' in card_view
+    assert 'if (inboxEscapeMenu && !inboxManageMode) {' in card_view
+    assert 'if (manageableInboxCard && !inboxManageMode) {' not in card_view
     assert 'const manageableInboxCard = inboxSurface && canManageInboxCard(card);' in meeting_processing_view
     assert 'wrapper.classList.add("has-inbox-menu");' in meeting_processing_view
     assert 'wrapper.append(inboxManageSelectButton(card));' in meeting_processing_view
+    assert 'const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);' in meeting_processing_view
     assert 'wrapper.append(inboxCardMenuButton(card));' in meeting_processing_view
     assert 'wrapper.append(cardOverflowMenu(card));' in meeting_processing_view
     assert 'check: {' in icons
@@ -2038,6 +2064,15 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert '.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="meeting_processing"]' in styles
     assert ".inbox-manage-bar" in styles
     assert ".inbox-manage-select" in styles
+    assert ".inbox-header-pill" in styles
+    assert "display: inline-flex;" in header_pill_css
+    assert ".inbox-header-spinner" in styles
+    assert "animation: inbox-spin 0.72s linear infinite;" in spinner_css
+    assert ".inbox-archive-loading-notice" in styles
+    assert "Loading archived replies..." in app
+    assert "Loading active replies..." in app
+    assert "role\", \"status\"" in app
+    assert "width: min(calc(100vw - 52px), 720px);" in loading_notice
     assert ".inbox-card-menu" in styles
     assert ".inbox-card-menu-item" in styles
     assert "left: 7px;" in menu_button

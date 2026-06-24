@@ -245,6 +245,7 @@
     vmFeedSnapshotPromise: null,
     showArchivedFeed: false,
     inboxManageMode: false,
+    inboxArchiveFilterPendingTarget: null,
     selectedInboxCardKeys: new Set(),
     lastInboxManageResult: {
       action: "",
@@ -4231,6 +4232,10 @@
         direct_card_count: feed ? Array.from(feed.children).filter(node => node?.classList?.contains("card-wrap")).length : 0,
         visible_card_count: cards.length,
         inbox_manage_mode: Boolean(state.inboxManageMode),
+        inbox_archive_filter_pending: inboxArchiveFilterPending(),
+        inbox_archive_filter_pending_target: inboxArchiveFilterPending()
+          ? Boolean(state.inboxArchiveFilterPendingTarget)
+          : null,
         inbox_manage_selected_count: state.selectedInboxCardKeys instanceof Set ? state.selectedInboxCardKeys.size : 0,
         inbox_manage_selected_ids: state.selectedInboxCardKeys instanceof Set ? Array.from(state.selectedInboxCardKeys) : [],
         open_card_menu_session_id: String(state.openCardMenuSessionId || ""),
@@ -5047,6 +5052,12 @@
     shell?.setAttribute("data-embedded-app", embeddedLightApp());
     shell?.setAttribute("data-chrome-mode", chromeMode());
     shell?.classList.toggle("is-inbox-managing", route === "inbox" && Boolean(state.inboxManageMode));
+    shell?.classList.toggle("is-inbox-archive-filter-loading", route === "inbox" && inboxArchiveFilterPending());
+    if (route === "inbox" && inboxArchiveFilterPending()) {
+      shell?.setAttribute("data-inbox-archive-filter-pending-target", String(Boolean(state.inboxArchiveFilterPendingTarget)));
+    } else {
+      shell?.removeAttribute("data-inbox-archive-filter-pending-target");
+    }
     feed.classList.toggle("is-links-route", route === "connect");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     syncRouteQueryParam(route);
@@ -10118,8 +10129,24 @@
       },
       surfaceTag: "section",
       surfaceClassName: "light-canonical-port-surface light-inbox-surface",
+      beforeSections: [inboxArchiveFilterLoadingNotice()].filter(Boolean),
       sections: [lightInboxSection()]
     });
+  }
+
+  function inboxArchiveFilterLoadingNotice() {
+    if (!inboxArchiveFilterPending()) {
+      return null;
+    }
+    const target = Boolean(state.inboxArchiveFilterPendingTarget);
+    const notice = el("div", "inbox-archive-loading-notice");
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    notice.append(
+      el("span", "inbox-header-spinner"),
+      el("span", "", target ? "Loading archived replies..." : "Loading active replies...")
+    );
+    return notice;
   }
 
   function lightMeetingsPage() {
@@ -11964,40 +11991,105 @@
     render();
   }
 
+  function inboxArchiveFilterPending() {
+    return state.inboxArchiveFilterPendingTarget !== null && state.inboxArchiveFilterPendingTarget !== undefined;
+  }
+
+  function inboxArchiveFilterLabel(archived) {
+    return archived ? "Archived" : "Active";
+  }
+
+  function inboxHeaderPillButton(config = {}) {
+    const active = Boolean(config.active);
+    const busy = Boolean(config.busy);
+    const button = el("button", `light-pill inbox-header-pill ${config.className || ""}${active ? " is-active" : ""}${busy ? " is-loading" : ""}`.trim());
+    button.type = "button";
+    button.disabled = Boolean(config.disabled);
+    if (config.ariaLabel) {
+      button.setAttribute("aria-label", config.ariaLabel);
+    }
+    if (busy) {
+      button.setAttribute("aria-busy", "true");
+    }
+    if (config.pressed !== undefined) {
+      button.setAttribute("aria-pressed", config.pressed ? "true" : "false");
+    }
+    if (config.pendingTarget !== undefined) {
+      button.dataset.pendingTarget = String(config.pendingTarget);
+    }
+    const icon = el("span", "inbox-header-pill-icon");
+    icon.innerHTML = busy ? "" : iconSvg(config.icon || "archive_folder", { filled: true });
+    if (busy) {
+      icon.append(el("span", "inbox-header-spinner"));
+    }
+    button.append(icon, el("span", "inbox-header-pill-label", String(config.label || "")));
+    if (typeof config.onClick === "function") {
+      button.addEventListener("click", config.onClick);
+    }
+    return button;
+  }
+
   function inboxManageHeaderAction() {
     const wrap = el("div", "inbox-header-actions");
-    const archive = lightCircleButton(
-      "archive_folder",
-      state.showArchivedFeed ? "Show active Inbox" : "Show archived replies",
-      () => {
+    const filterPending = inboxArchiveFilterPending();
+    const pendingTarget = filterPending ? Boolean(state.inboxArchiveFilterPendingTarget) : undefined;
+    const displayArchived = filterPending ? pendingTarget : Boolean(state.showArchivedFeed);
+    const archive = inboxHeaderPillButton({
+      className: "inbox-archive-toggle",
+      icon: displayArchived ? "archive_folder" : "mail",
+      label: inboxArchiveFilterLabel(displayArchived),
+      ariaLabel: filterPending
+        ? `Loading ${displayArchived ? "archived replies" : "active replies"}`
+        : `Inbox filter: ${displayArchived ? "Archived replies" : "Active replies"}`,
+      active: displayArchived,
+      busy: filterPending,
+      disabled: filterPending,
+      pressed: Boolean(state.showArchivedFeed),
+      pendingTarget,
+      onClick: () => {
         void toggleInboxArchivedFeed();
-      },
-      state.showArchivedFeed ? "inbox-archive-toggle is-active" : "inbox-archive-toggle"
-    );
-    archive.setAttribute("aria-pressed", state.showArchivedFeed ? "true" : "false");
-    const manage = lightCircleButton(
-      "checklist",
-      state.inboxManageMode ? "Done managing Inbox" : "Manage Inbox",
-      () => setInboxManageMode(!state.inboxManageMode),
-      state.inboxManageMode ? "inbox-manage-toggle is-active" : "inbox-manage-toggle"
-    );
-    manage.setAttribute("aria-pressed", state.inboxManageMode ? "true" : "false");
+      }
+    });
+    const manage = inboxHeaderPillButton({
+      className: "inbox-manage-toggle",
+      icon: "checklist",
+      label: state.inboxManageMode ? "Done" : "Manage",
+      ariaLabel: state.inboxManageMode ? "Done managing Inbox" : "Manage Inbox",
+      active: Boolean(state.inboxManageMode),
+      disabled: filterPending,
+      pressed: Boolean(state.inboxManageMode),
+      onClick: () => setInboxManageMode(!state.inboxManageMode)
+    });
     wrap.append(archive, manage);
     return wrap;
   }
 
   async function toggleInboxArchivedFeed() {
-    state.showArchivedFeed = !state.showArchivedFeed;
+    if (inboxArchiveFilterPending()) {
+      return;
+    }
+    const targetArchived = !state.showArchivedFeed;
+    state.inboxArchiveFilterPendingTarget = targetArchived;
     state.inboxManageMode = false;
     inboxManageSelection().clear();
     dismissOpenCardMenu(false);
     render();
-    await syncFeedCards({
-      reason: state.showArchivedFeed ? "show_archived_inbox" : "show_active_inbox",
-      includeArchived: state.showArchivedFeed,
-      silent: true,
-      render: true
-    });
+    try {
+      await syncFeedCards({
+        reason: targetArchived ? "show_archived_inbox" : "show_active_inbox",
+        includeArchived: targetArchived,
+        silent: false,
+        render: false
+      });
+      state.showArchivedFeed = targetArchived;
+      state.inboxArchiveFilterPendingTarget = null;
+      reconcileInboxManageSelection();
+      render();
+    } catch (error) {
+      state.inboxArchiveFilterPendingTarget = null;
+      render();
+      showToast(error instanceof Error ? error.message : String(error || "Feed unavailable"));
+    }
   }
 
   function inboxManageToolbar() {
@@ -13549,6 +13641,41 @@
     return menuButton;
   }
 
+  function shouldShowInboxCardEscapeMenu(card) {
+    if (!canManageInboxCard(card)) {
+      return false;
+    }
+    if (state.showArchivedFeed || Boolean(card?.archived)) {
+      return true;
+    }
+    if (isMeetingProcessingCard(card) || isFailedPendingOutboundCard(card)) {
+      return true;
+    }
+    const origin = card?.origin && typeof card.origin === "object" ? card.origin : {};
+    const text = [
+      card?.card_kind,
+      card?.meeting_state,
+      card?.status,
+      card?.state,
+      card?.workflow_state,
+      card?.processing_state,
+      card?.error_code,
+      card?.error,
+      card?.failure_reason,
+      card?.transcript_error,
+      card?.title,
+      card?.summary,
+      origin.card_kind,
+      origin.meeting_state,
+      origin.status,
+      origin.state,
+      origin.error_code,
+      origin.failure_reason,
+      origin.transcript_error
+    ].map(value => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+    return /\b(failed|failure|error|errored|stalled|blocked|upload_blocked|needs review|needs_review|processing)\b/.test(text);
+  }
+
   function cardOverflowMenu(card) {
     const menu = el("div", "card-longpress-menu inbox-card-menu");
     menu.setAttribute("role", "menu");
@@ -13610,10 +13737,11 @@
     const inboxSurface = surface === "inbox" && !isMeetingList;
     const manageableInboxCard = inboxSurface && canManageInboxCard(card);
     const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
+    const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);
     if (inboxSurface) {
       wrapper.classList.add("is-inbox-card");
     }
-    if (manageableInboxCard) {
+    if (inboxManageMode || inboxEscapeMenu) {
       wrapper.classList.add("has-inbox-menu");
     }
     if (inboxManageMode) {
@@ -13840,7 +13968,7 @@
       });
     }
     wrapper.append(cardEl);
-    if (manageableInboxCard && !inboxManageMode) {
+    if (inboxEscapeMenu && !inboxManageMode) {
       wrapper.append(inboxCardMenuButton(card));
       if (isInboxCardMenuOpen(card)) {
         wrapper.append(cardOverflowMenu(card));
@@ -13887,10 +14015,11 @@
     const inboxSurface = surface === "inbox";
     const manageableInboxCard = inboxSurface && canManageInboxCard(card);
     const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
+    const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);
     if (inboxSurface) {
       wrapper.classList.add("is-inbox-card");
     }
-    if (manageableInboxCard) {
+    if (inboxManageMode || inboxEscapeMenu) {
       wrapper.classList.add("has-inbox-menu");
     }
     if (inboxManageMode) {
@@ -13918,7 +14047,7 @@
       wrapper.append(inboxManageSelectButton(card));
     }
     wrapper.append(cardEl);
-    if (manageableInboxCard && !inboxManageMode) {
+    if (inboxEscapeMenu && !inboxManageMode) {
       wrapper.append(inboxCardMenuButton(card));
       if (isInboxCardMenuOpen(card)) {
         wrapper.append(cardOverflowMenu(card));

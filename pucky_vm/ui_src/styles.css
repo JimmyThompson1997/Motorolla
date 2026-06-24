@@ -6521,15 +6521,97 @@ button {
   justify-self: end;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  min-width: 0;
 }
 
-.inbox-archive-toggle.is-active,
-.inbox-manage-toggle.is-active {
+.inbox-header-pill {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 820;
+  white-space: nowrap;
+}
+
+.inbox-header-pill-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  flex: 0 0 auto;
+}
+
+.inbox-header-pill-icon .material-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.inbox-header-pill.is-active {
   color: #ffffff;
   background: var(--accent-primary);
   border-color: color-mix(in srgb, var(--accent-primary) 72%, #101624);
   box-shadow: 0 10px 24px color-mix(in srgb, var(--accent-primary) 26%, transparent);
+}
+
+.inbox-header-pill.is-active .inbox-header-pill-icon {
+  color: var(--accent-primary);
+  background: #ffffff;
+}
+
+.inbox-header-pill:disabled {
+  opacity: 0.82;
+  cursor: wait;
+}
+
+.inbox-header-spinner {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  animation: inbox-spin 0.72s linear infinite;
+}
+
+@keyframes inbox-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.inbox-archive-loading-notice {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: min(calc(100vw - 52px), 720px);
+  margin: 0 auto 8px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, var(--home-shell-border));
+  border-radius: 999px;
+  color: var(--home-shell-text);
+  background: color-mix(in srgb, var(--accent-primary) 9%, var(--surface-card-elevated));
+  box-sizing: border-box;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.app-shell.is-inbox-archive-filter-loading .light-inbox-surface .light-feed-section {
+  opacity: 0.56;
+  transition: opacity 120ms ease;
 }
 
 .card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"],
