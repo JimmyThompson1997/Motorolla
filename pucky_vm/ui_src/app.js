@@ -5326,7 +5326,15 @@
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     syncRouteQueryParam(route);
     if (isHomeShellMockRoute()) {
-      feed.replaceChildren(lightView());
+      const page = lightMockRoutePage(route) || lightHomePage();
+      const currentView = feed.firstElementChild;
+      if (!(currentView instanceof HTMLElement)
+          || currentView.dataset.homeShellKind !== "mock"
+          || currentView.dataset.lightRoute !== (route || "home")
+          || currentView.firstElementChild !== page
+          || feed.childElementCount !== 1) {
+        feed.replaceChildren(homeShellMockView(route, page));
+      }
       return;
     }
     if (route === "settings") {
@@ -5366,6 +5374,14 @@
     return view;
   }
 
+  function homeShellMockView(route, page) {
+    const view = el("section", "light-shell");
+    view.dataset.lightRoute = route || "home";
+    view.dataset.homeShellKind = "mock";
+    view.append(page);
+    return view;
+  }
+
   function homeFeedContentNodes() {
     const displayCards = feedDisplayCards();
     if (state.feedLoadError && !displayCards.length) {
@@ -5388,67 +5404,55 @@
     return cards.map(cardView);
   }
 
-  function lightView() {
-    const view = el("section", "light-shell");
-    view.dataset.lightRoute = state.route || "home";
-    view.dataset.homeShellKind = "mock";
-    switch (state.route) {
+  function lightMockRoutePage(route = state.route) {
+    switch (route) {
       case "inbox-detail":
-        view.append(lightFeedDetailPage());
-        break;
+        return lightFeedDetailPage();
       case "contacts":
-        view.append(lightContactsPage());
-        break;
+        return lightContactsPage();
       case "contact-detail":
-        view.append(lightContactDetailPage());
-        break;
+        return lightContactDetailPage();
       case "contact-edit":
-        view.append(lightContactEditPage());
-        break;
+        return lightContactEditPage();
       case "calendar":
-        view.append(lightCalendarPage());
-        break;
+        return lightCalendarPage();
       case "meeting-detail":
-        view.append(lightMeetingDetailPage());
-        break;
+        return lightMeetingDetailPage();
       case "meeting-notes":
-        view.append(lightMeetingNotesPage());
-        break;
+        return lightMeetingNotesPage();
       case "meeting-note-detail":
-        view.append(lightMeetingNoteDetailPage());
-        break;
+        return lightMeetingNoteDetailPage();
       case "reminders":
-        view.append(lightRemindersPage());
-        break;
+        return lightRemindersPage();
       case "reminder-detail":
-        view.append(lightReminderDetailPage());
-        break;
+        return lightReminderDetailPage();
       case "notes":
-        view.append(lightNotesPage());
-        break;
+        return lightNotesPage();
       case "note-detail":
-        view.append(lightNoteDetailPage());
-        break;
+        return lightNoteDetailPage();
       case "tasks":
-        view.append(lightTasksPage());
-        break;
+        return lightTasksPage();
       case "task-detail":
-        view.append(lightTaskDetailPage());
-        break;
+        return lightTaskDetailPage();
       case "projects":
-        view.append(lightProjectsPage());
-        break;
+        return lightProjectsPage();
       case "project-detail":
-        view.append(lightProjectDetailPage());
-        break;
+        return lightProjectDetailPage();
       case "home":
       default:
-        state.route = "home";
-        view.append(lightHomePage());
-        break;
+        return null;
     }
-    view.dataset.lightRoute = state.route || "home";
-    return view;
+  }
+
+  function lightView() {
+    const route = state.route || "home";
+    const mockPage = lightMockRoutePage(route);
+    const page = mockPage || lightHomePage();
+    if (!mockPage && route !== "home") {
+      state.route = "home";
+      return homeShellMockView("home", page);
+    }
+    return homeShellMockView(route, page);
   }
 
   function lightHomePage() {

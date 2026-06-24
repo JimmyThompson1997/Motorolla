@@ -150,6 +150,8 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
 def test_render_feed_only_uses_modern_home_shell_paths() -> None:
     app = read("app.js")
     render_feed = function_block(app, "renderFeed")
+    light_mock_route_page = function_block(app, "lightMockRoutePage")
+    home_shell_mock_view = function_block(app, "homeShellMockView")
     chrome_mode = function_block(app, "chromeMode")
     ui_debug_home = function_block(app, "uiDebugGotoHome")
 
@@ -157,12 +159,20 @@ def test_render_feed_only_uses_modern_home_shell_paths() -> None:
     assert 'shell?.setAttribute("data-canonical-route", route || "home");' in render_feed
     assert 'feed.classList.toggle("is-links-route", route === "connect");' in render_feed
     assert 'syncRouteQueryParam(route);' in render_feed
+    assert 'const page = lightMockRoutePage(route) || lightHomePage();' in render_feed
+    assert 'currentView.dataset.homeShellKind !== "mock"' in render_feed
+    assert 'currentView.firstElementChild !== page' in render_feed
+    assert 'feed.replaceChildren(homeShellMockView(route, page));' in render_feed
     assert 'feed.replaceChildren(homeShellCanonicalView(route, lightSettingsSurface()));' in render_feed
     assert 'const page = homeShellCanonicalView(route, lightAppsPage());' in render_feed
     assert 'feed.replaceChildren(homeShellCanonicalView(route, lightMeetingsPage()));' in render_feed
     assert 'feed.replaceChildren(homeShellCanonicalView(route, lightInboxPage()));' in render_feed
     assert 'state.route = "home";' in render_feed
     assert 'syncRouteQueryParam("home");' in render_feed
+    assert 'view.dataset.homeShellKind = "mock";' in home_shell_mock_view
+    assert 'view.append(page);' in home_shell_mock_view
+    assert 'return lightContactDetailPage();' in light_mock_route_page
+    assert 'return lightContactEditPage();' in light_mock_route_page
     assert "settingsPageView()" not in render_feed
     assert "linksPageView()" not in render_feed
     assert "meetingsPageView()" not in render_feed
@@ -2195,6 +2205,8 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     run_after_contact_detail_flush = function_block(app, "runAfterContactDetailFlush")
     flush_contact_detail_autosave = function_block(app, "flushContactDetailAutosave")
     sync_contact_detail_editor = function_block(app, "syncContactDetailEditor")
+    light_view = function_block(app, "lightView")
+    light_mock_route_page = function_block(app, "lightMockRoutePage")
     prepare_contact_photo_draft = function_block(app, "prepareContactPhotoDraft")
     light_avatar = function_block(app, "lightAvatar")
     contact_detail = function_block(app, "lightContactDetailPage")
@@ -2221,6 +2233,7 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert "function syncContactsPage()" in app
     assert "function syncContactsSearchInput(refs)" in app
     assert "function syncContactDetailEditor() {" in app
+    assert "function lightMockRoutePage(route = state.route) {" in app
     assert "function scheduleContactDetailAutosave() {" in app
     assert "async function flushContactDetailAutosave(options = {}) {" in app
     assert 'function contactInitialsFromText(value, fallback = "CT") {' in app
@@ -2310,6 +2323,11 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert 'refs.status.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";' in sync_contact_detail_editor
     assert 'changePhoto.textContent = draft.photo ? "Change photo" : "Add photo";' in sync_contact_detail_editor
     assert 'removePhoto.hidden = !draft.photo;' in sync_contact_detail_editor
+    assert 'const mockPage = lightMockRoutePage(route);' in light_view
+    assert 'return homeShellMockView(route, page);' in light_view
+    assert 'return lightContactsPage();' in light_mock_route_page
+    assert 'return lightContactDetailPage();' in light_mock_route_page
+    assert 'return lightContactEditPage();' in light_mock_route_page
     assert "function lightContactEditPage()" in app
     assert "return lightContactDetailPage();" in contact_edit
     assert "saveButton" not in contact_edit
