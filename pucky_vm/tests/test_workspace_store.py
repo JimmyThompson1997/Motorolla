@@ -240,10 +240,18 @@ def test_contact_writes_strip_html_document_fields(tmp_path: Path) -> None:
     assert "html_asset_id" not in patched["metadata"]
 
 
-def test_contact_cleanup_removes_clinic_and_assigns_fixture_photos(tmp_path: Path) -> None:
+def test_contact_cleanup_removes_clinic_and_preserves_self_photo(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     db_path = tmp_path / "workspace.sqlite3"
     store = WorkspaceStore(str(db_path), clock_ms=clock)
+    me = store.get_record("contacts", SELF_CONTACT_ID)
+    assert me is not None
+    me_metadata = dict(me["metadata"])
+    me_metadata["photo"] = "data:image/jpeg;base64,self-proof-photo"
+    store._conn.execute(
+        "UPDATE workspace_records SET metadata_json = ? WHERE kind = 'contact' AND record_id = ?",
+        (json.dumps(me_metadata), SELF_CONTACT_ID),
+    )
     store.upsert_record(
         "contacts",
         {
@@ -294,7 +302,7 @@ def test_contact_cleanup_removes_clinic_and_assigns_fixture_photos(tmp_path: Pat
     ).fetchall()
     assert clinic_links == []
 
-    assert visible_contacts[SELF_CONTACT_ID]["metadata"].get("photo", "") == ""
+    assert visible_contacts[SELF_CONTACT_ID]["metadata"].get("photo", "") == "data:image/jpeg;base64,self-proof-photo"
     for contact_id, contact in visible_contacts.items():
         if contact_id == SELF_CONTACT_ID:
             continue
@@ -1399,6 +1407,7 @@ def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> Non
                 "email": "me@example.com",
                 "phone": "+14155550123",
                 "notification_device_id": "phone-1",
+                "photo": "data:image/jpeg;base64,me-photo-proof",
             }
         },
     )
@@ -1406,14 +1415,21 @@ def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> Non
     assert updated["metadata"]["email"] == "me@example.com"
     assert updated["metadata"]["phone"] == "+14155550123"
     assert updated["metadata"]["notification_device_id"] == "phone-1"
+    assert updated["metadata"]["photo"] == "data:image/jpeg;base64,me-photo-proof"
 
-    deleted = store.delete_record("contacts", SELF_CONTACT_ID)
+    store.close()
+    reopened = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+    reopened_me = reopened.get_record("contacts", SELF_CONTACT_ID)
+    assert reopened_me is not None
+    assert reopened_me["metadata"]["photo"] == "data:image/jpeg;base64,me-photo-proof"
+
+    deleted = reopened.delete_record("contacts", SELF_CONTACT_ID)
     assert deleted is not None
     assert deleted["id"] == SELF_CONTACT_ID
     assert deleted["archived"] is False
     assert deleted["deleted"] is False
 
-    preserved = store.patch_record("contacts", SELF_CONTACT_ID, {"archived": True, "deleted": True})
+    preserved = reopened.patch_record("contacts", SELF_CONTACT_ID, {"archived": True, "deleted": True})
     assert preserved is not None
     assert preserved["id"] == SELF_CONTACT_ID
     assert preserved["archived"] is False

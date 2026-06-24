@@ -73,8 +73,10 @@ TASK_HELP = {
     "proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle.",
     "proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification.",
     "proof-live-contacts-search-emulator": "Run the Android-emulator Contacts search stability proof against the hosted VM with IME and trace verification.",
-    "proof-local-contacts-edit-browser": "Boot the local workspace proof server and run the Contacts edit browser proof against the current local bundle.",
-    "proof-live-contacts-edit-browser": "Run the Contacts edit browser proof against the hosted VM with manifest verification.",
+    "proof-local-contact-edit-browser": "Boot the local workspace proof server and run the Contacts detail editor browser proof against the current local bundle.",
+    "proof-live-contact-edit-browser": "Run the Contacts detail editor browser proof against the hosted VM with manifest verification.",
+    "proof-local-contacts-edit-browser": "Alias for proof-local-contact-edit-browser.",
+    "proof-live-contacts-edit-browser": "Alias for proof-live-contact-edit-browser.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
     "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
     "proof-local-inbox-management": "Boot the local inbox/media proof server and run the no-audio Inbox management browser proof.",
@@ -493,7 +495,7 @@ def run_local_contacts_search_browser_proof(extra_args: list[str]) -> int:
     )
 
 
-def run_local_contacts_edit_browser_proof(extra_args: list[str]) -> int:
+def run_local_contact_edit_browser_proof(extra_args: list[str]) -> int:
     port = find_free_localhost_port()
     base_url = f"http://127.0.0.1:{port}"
     return run_local_workspace_proof(
@@ -504,14 +506,14 @@ def run_local_contacts_edit_browser_proof(extra_args: list[str]) -> int:
             "--api-token",
             "proof-token",
             "--sections",
-            "contacts-edit",
+            "contact-edit",
             "--report-dir",
-            str((ROOT / ".tmp" / "proof-local-contacts-edit-browser").resolve()),
+            str((ROOT / ".tmp" / "proof-local-contact-edit-browser").resolve()),
         ],
         extra_args,
         server_command=build_local_workspace_proof_server_command(
             port,
-            state_dir=ROOT / ".tmp" / "proof-local-contacts-edit-browser-state",
+            state_dir=ROOT / ".tmp" / "proof-local-contact-edit-browser-state",
         ),
         health_url=f"{base_url}/healthz",
     )
@@ -613,7 +615,7 @@ def run_live_contacts_search_emulator_proof(extra_args: list[str]) -> int:
     )
 
 
-def run_live_contacts_edit_browser_proof(extra_args: list[str]) -> int:
+def run_live_contact_edit_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_node_proofs(
         node_binary,
@@ -622,9 +624,9 @@ def run_live_contacts_edit_browser_proof(extra_args: list[str]) -> int:
                 "tools/proofs/cover/cover_live_user_session_playwright.mjs",
                 [
                     "--routes",
-                    "contacts-edit",
+                    "contact-edit",
                     "--report-dir",
-                    str((ROOT / ".tmp" / "proof-live-contacts-edit-browser").resolve()),
+                    str((ROOT / ".tmp" / "proof-live-contact-edit-browser").resolve()),
                     *extra_args,
                 ],
             ),
@@ -1042,10 +1044,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_live_contacts_search_browser_proof(args.extra_args)
     if args.task == "proof-live-contacts-search-emulator":
         return run_live_contacts_search_emulator_proof(args.extra_args)
-    if args.task == "proof-local-contacts-edit-browser":
-        return run_local_contacts_edit_browser_proof(args.extra_args)
-    if args.task == "proof-live-contacts-edit-browser":
-        return run_live_contacts_edit_browser_proof(args.extra_args)
+    if args.task in ("proof-local-contact-edit-browser", "proof-local-contacts-edit-browser"):
+        return run_local_contact_edit_browser_proof(args.extra_args)
+    if args.task in ("proof-live-contact-edit-browser", "proof-live-contacts-edit-browser"):
+        return run_live_contact_edit_browser_proof(args.extra_args)
     if args.task == "proof-local-calendar":
         return run_local_calendar_proof(args.extra_args)
     if args.task == "proof-live-calendar":

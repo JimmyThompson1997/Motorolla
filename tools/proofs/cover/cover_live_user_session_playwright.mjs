@@ -1144,23 +1144,35 @@ async function readContactEditState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
     const pageRoot = document.querySelector(".light-contact-edit-page");
+    const isVisible = node => Boolean(node) && !(node instanceof HTMLElement && (node.hidden || getComputedStyle(node).display === "none"));
     const fieldValue = key => {
       const input = document.querySelector(`[data-contact-edit-field="${key}"]`);
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
-    const save = document.querySelector("[data-contact-edit-save]");
+    const activityValues = Array.from(document.querySelectorAll("input[data-contact-activity-index]"))
+      .map(node => node instanceof HTMLInputElement ? node.value : "")
+      .filter(value => value.length || value === "");
+    const status = document.querySelector("[data-contact-autosave-status]");
+    const firstNameInput = document.querySelector('[data-contact-edit-field="first_name"]');
+    const lastNameInput = document.querySelector('[data-contact-edit-field="last_name"]');
     return {
       route: shell?.getAttribute("data-light-route") || "",
-      page_visible: Boolean(pageRoot),
-      title: String(pageRoot?.querySelector(".light-page-title")?.textContent || "").trim(),
-      first_name: fieldValue("first_name"),
-      last_name: fieldValue("last_name"),
+      pageVisible: Boolean(pageRoot),
+      title: String(pageRoot?.querySelector(".light-contact-edit-photo-title")?.textContent || "").trim(),
+      avatarText: String(pageRoot?.querySelector(".light-contact-detail-avatar .light-avatar")?.textContent || "").trim(),
+      firstName: fieldValue("first_name"),
+      lastName: fieldValue("last_name"),
       summary: fieldValue("summary"),
       email: fieldValue("email"),
       phone: fieldValue("phone"),
-      has_connected_section: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
-      has_photo_preview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
-      save_disabled: save instanceof HTMLButtonElement ? save.disabled : true,
+      activityValues,
+      firstNameVisible: isVisible(firstNameInput),
+      lastNameVisible: isVisible(lastNameInput),
+      hasConnectedSection: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
+      hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
+      hasRedundantHero: Boolean(pageRoot?.querySelector(".light-profile-card")),
+      autosaveStatus: String(status?.getAttribute("data-contact-autosave-status") || "").trim(),
+      autosaveLabel: String(status?.textContent || "").trim(),
     };
   });
 }
@@ -1195,17 +1207,133 @@ async function fillContactEditField(page, fieldName, value, timeoutMs) {
   await input.fill(value);
 }
 
-async function saveContactEditAndWaitForDetail(page, timeoutMs) {
-  const submit = page.locator('[data-contact-edit-save-inline="true"]').first();
-  await submit.waitFor({ state: "visible", timeout: timeoutMs });
-  await submit.click();
-  await waitForRoute(page, "contact-detail", timeoutMs);
+async function waitForContactRecord(baseUrl, apiToken, contactId, predicate, timeoutMs, failureMessage) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0) || 0);
+  let lastRecord = null;
+  while (Date.now() <= deadline) {
+    lastRecord = await authorizedJsonRequest(baseUrl, apiToken, `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
+    if (predicate(lastRecord)) {
+      return lastRecord;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error(`${failureMessage} (last contact record: ${JSON.stringify(lastRecord)})`);
+}
+
+async function waitForContactAutosaveSaved(page, timeoutMs) {
+  await page.waitForFunction(() => {
+    const status = document.querySelector("[data-contact-autosave-status]");
+    return status instanceof HTMLElement && status.getAttribute("data-contact-autosave-status") === "saved";
+  }, undefined, { timeout: timeoutMs });
+}
+
+async function installContactEditTrace(page, fieldName) {
+  await page.evaluate(fieldKey => {
+    if (!window.__contactEditTraceStore) {
+      window.__contactEditTraceStore = {};
+    }
+    const store = {
+      currentNode: null,
+      currentToken: 0,
+      events: [],
+      initialToken: 0,
+      initialValue: "",
+    };
+    const selector = `[data-contact-edit-field="${String(fieldKey || "")}"]`;
+    const bindFieldNode = () => {
+      const next = document.querySelector(selector);
+      if (next !== store.currentNode) {
+        store.currentNode = next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement ? next : null;
+        store.currentToken += 1;
+        if (store.currentNode instanceof HTMLElement) {
+          store.currentNode.dataset.traceToken = String(store.currentToken);
+        }
+        return true;
+      }
+      return false;
+    };
+    const readValue = () => store.currentNode instanceof HTMLInputElement || store.currentNode instanceof HTMLTextAreaElement
+      ? store.currentNode.value
+      : "";
+    const record = (type, event = null) => {
+      const target = event?.target instanceof HTMLElement ? event.target : null;
+      const shouldRecord = !target || target.matches(selector) || target === store.currentNode;
+      if (!shouldRecord) {
+        return;
+      }
+      store.events.push({
+        type,
+        nodeToken: store.currentToken,
+        activeName: document.activeElement?.getAttribute?.("data-contact-edit-field") || "",
+        value: readValue(),
+        key: event?.key || "",
+        data: event?.data || "",
+        inputType: event?.inputType || "",
+      });
+    };
+    bindFieldNode();
+    ["focusin", "focusout", "blur", "beforeinput", "input", "keydown", "keyup"].forEach(type => {
+      document.addEventListener(type, event => {
+        if (bindFieldNode()) {
+          record("contact-edit-node-changed", null);
+        }
+        record(type, event);
+      }, true);
+    });
+    new MutationObserver(() => {
+      if (bindFieldNode()) {
+        record("contact-edit-node-changed", null);
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+    window.__contactEditTraceStore[fieldKey] = store;
+    if (store.currentNode && !store.currentToken) {
+      store.currentToken = 1;
+      store.currentNode.dataset.traceToken = String(store.currentToken);
+    }
+    store.events = [];
+    store.initialToken = store.currentToken;
+    store.initialValue = readValue();
+  }, fieldName);
+}
+
+async function traceContactEditTyping(page, fieldName, value, timeoutMs) {
+  const input = page.locator(`[data-contact-edit-field="${fieldName}"]`).first();
+  await input.waitFor({ state: "visible", timeout: timeoutMs });
+  await input.click();
+  await input.fill("");
+  await installContactEditTrace(page, fieldName);
+  await input.type(value, { delay: 40 });
+  await page.waitForFunction(({ fieldKey, expectedValue }) => {
+    const field = document.querySelector(`[data-contact-edit-field="${fieldKey}"]`);
+    return (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) && field.value === expectedValue;
+  }, { fieldKey: fieldName, expectedValue: value }, { timeout: timeoutMs });
+  const trace = await page.evaluate(fieldKey => {
+    const store = (window.__contactEditTraceStore || {})[fieldKey] || {};
+    const current = document.querySelector(`[data-contact-edit-field="${fieldKey}"]`);
+    return {
+      initialToken: Number(store.initialToken || 0),
+      initialValue: String(store.initialValue || ""),
+      finalToken: Number(store.currentToken || 0),
+      finalValue: current instanceof HTMLInputElement || current instanceof HTMLTextAreaElement ? current.value : "",
+      events: Array.isArray(store.events) ? store.events.slice() : [],
+    };
+  }, fieldName);
+  const eventCounts = trace.events.reduce((counts, event) => {
+    const key = String(event?.type || "");
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    ...trace,
+    eventCounts,
+    editState: await readContactEditState(page),
+  };
 }
 
 function buildContactsEditProofValues(mode) {
   const modeKey = String(mode || "proof").trim().toLowerCase() || "proof";
-  const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "mobile" ? "Mobile" : "Proof";
-  const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "mobile" ? "0199" : "0189";
+  const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "iphone" ? "iPhone" : modeKey === "android" ? "Android" : "Proof";
+  const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "iphone" ? "0199" : modeKey === "android" ? "0209" : "0189";
   return {
     updatedTitle: "Updated Live Contact",
     updatedSummary: `Updated from ${modeKey} live proof edit flow`,
@@ -2069,9 +2197,13 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     );
   }
 
-  if (shouldRunRoute(config, "contacts-edit")) {
+  if (shouldRunRoute(config, "contact-edit")) {
     const { updatedTitle, updatedSummary, updatedEmail, updatedPhone, modeLabel } = buildContactsEditProofValues(mode);
+    const updatedFirstName = "Updated";
+    const updatedLastName = "Live Contact";
+    const updatedActivity = `Follow up from ${modeLabel}`;
     const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
+    const expectedInitials = "UC";
 
     await goHome(page, config);
     await openRouteFromHome(page, "contacts", config.timeoutMs);
@@ -2079,77 +2211,114 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
-    await page.getByRole("button", { name: "Edit contact" }).first().click();
-    await waitForRoute(page, "contact-edit", config.timeoutMs);
     const editState = await readContactEditState(page);
-    assert(editState.page_visible, `${mode}: expected Contacts edit page to be visible`);
-    assert(editState.route === "contact-edit", `${mode}: expected contact-edit route, got ${editState.route}`);
-    assert(!editState.has_connected_section, `${mode}: expected Connected to stay on contact detail, not edit`);
+    assert(editState.pageVisible, `${mode}: expected Contacts detail editor to be visible`);
+    assert(editState.route === "contact-detail", `${mode}: expected contact-detail route, got ${editState.route}`);
+    assert(!editState.hasRedundantHero, `${mode}: Expected contact detail editor to remove the redundant hero`);
+    assert(editState.firstNameVisible && editState.lastNameVisible, `${mode}: expected editable first + last name inputs for the seeded contact`);
+    assert(editState.hasConnectedSection, `${mode}: expected Connected to remain visible on the editor detail`);
     await recorder.capture({
-      route: "contact-edit",
-      action: "Open Contacts edit",
-      expected: "The contact detail opens a full-screen Contacts edit form with editable contact info and no Connected section.",
-      confirmation: "Contacts edit opened with the expected focused edit form.",
+      route: "contact-detail",
+      action: "Open contact detail editor",
+      expected: "The contact detail opens as a single autosaving editor with no redundant hero tile and Connected still visible.",
+      confirmation: "The deployed contact detail opened as the in-place editor with the expected header and fields.",
       observed: { contact_title: seed.contactTitle, contact_edit: editState },
     });
 
-    await fillContactEditField(page, "first_name", "Updated", config.timeoutMs);
-    await fillContactEditField(page, "last_name", "Live Contact", config.timeoutMs);
+    const typingTrace = await traceContactEditTyping(page, "first_name", updatedFirstName, config.timeoutMs);
+    assert((typingTrace.eventCounts.blur || 0) === 0 && (typingTrace.eventCounts.focusout || 0) === 0, `${mode}: Expected contact edit typing to avoid blur/focusout while editing`);
+    assert(typingTrace.initialToken === typingTrace.finalToken, `${mode}: Expected contact edit typing to keep the same mounted input`);
+    await fillContactEditField(page, "last_name", updatedLastName, config.timeoutMs);
     await fillContactEditField(page, "summary", updatedSummary, config.timeoutMs);
     await fillContactEditField(page, "email", updatedEmail, config.timeoutMs);
     await fillContactEditField(page, "phone", updatedPhone, config.timeoutMs);
+    await waitForContactAutosaveSaved(page, config.timeoutMs);
+    let updatedRecord = await waitForContactRecord(
+      config.baseUrl,
+      config.apiToken,
+      seed.contactId,
+      record => record.title === updatedTitle
+        && record.summary === updatedSummary
+        && String(record?.metadata?.email || "") === updatedEmail
+        && String(record?.metadata?.phone || "") === updatedPhone,
+      config.timeoutMs,
+      `${mode}: Expected saved contact detail to show the updated title`
+    );
+    await page.locator('[data-contact-activity-add="true"]').first().click();
+    await page.locator('[data-contact-activity-index="2"]').first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator('[data-contact-activity-index="2"]').first().fill(updatedActivity);
+    await waitForContactAutosaveSaved(page, config.timeoutMs);
+    updatedRecord = await waitForContactRecord(
+      config.baseUrl,
+      config.apiToken,
+      seed.contactId,
+      record => Array.isArray(record?.metadata?.activity)
+        && record.metadata.activity.includes(updatedActivity)
+        && record.metadata.activity.length === 3,
+      config.timeoutMs,
+      `${mode}: Expected activity add to persist on the contact record`
+    );
+    await page.locator('[data-contact-activity-remove="0"]').first().click();
+    await waitForContactAutosaveSaved(page, config.timeoutMs);
+    updatedRecord = await waitForContactRecord(
+      config.baseUrl,
+      config.apiToken,
+      seed.contactId,
+      record => Array.isArray(record?.metadata?.activity)
+        && record.metadata.activity.includes(updatedActivity)
+        && !record.metadata.activity.includes("Created by proof")
+        && record.metadata.activity.length === 2,
+      config.timeoutMs,
+      `${mode}: Expected activity removal to persist on the contact record`
+    );
     await recorder.capture({
-      route: "contact-edit",
-      action: "Update contact fields",
-      expected: "The Contacts edit form accepts updated name, summary, email, and phone values before save.",
-      confirmation: `${modeLabel} edited contact fields populated cleanly in the form.`,
-      observed: { updated_title: updatedTitle, updated_summary: updatedSummary, updated_email: updatedEmail, updated_phone: updatedPhone },
+      route: "contact-detail",
+      action: "Autosave edited contact",
+      expected: "Typing contact fields autosaves name, description, email, phone, and activity changes without leaving the detail route.",
+      confirmation: `${modeLabel} edits autosaved in place and persisted through the Contacts API.`,
+      observed: {
+        updated_title: updatedTitle,
+        updated_summary: updatedSummary,
+        updated_email: updatedEmail,
+        updated_phone: updatedPhone,
+        updated_activity: Array.isArray(updatedRecord.metadata?.activity) ? updatedRecord.metadata.activity.slice() : [],
+        typing_trace: typingTrace,
+      },
     });
 
     const photoInput = page.locator('input[type="file"][data-contact-photo-input="true"]').first();
     await photoInput.setInputFiles(photoPath);
     await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-edit-page .light-avatar.has-photo img")), undefined, { timeout: config.timeoutMs });
-    await recorder.capture({
-      route: "contact-edit",
-      action: "Upload new contact photo",
-      expected: "Selecting a new contact photo updates the edit preview before save.",
-      confirmation: "The contact photo preview updated after upload.",
-      observed: { photo_fixture: photoPath },
-    });
-
-    await saveContactEditAndWaitForDetail(page, config.timeoutMs);
-    await waitForTextInBody(page, updatedTitle, config.timeoutMs);
-    await page.getByText(updatedEmail).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.getByText(updatedPhone).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.getByText(updatedSummary).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    const updatedRecord = await fetch(`${String(config.baseUrl || "").replace(/\/+$/, "")}/api/workspace/contacts/${encodeURIComponent(seed.contactId)}`, {
-      headers: {
-        "Cache-Control": "no-cache, no-store, max-age=0",
-        Pragma: "no-cache",
-      },
-    }).then(async response => {
-      if (!response.ok) {
-        throw new Error(`Could not load updated contact record (${response.status})`);
-      }
-      return response.json();
-    });
-    assert(updatedRecord.title === updatedTitle, `${mode}: Expected saved contact detail to show the updated title, got ${updatedRecord.title}`);
-    assert(updatedRecord.summary === updatedSummary, `${mode}: expected updated summary to persist, got ${updatedRecord.summary}`);
-    assert(updatedRecord.metadata?.email === updatedEmail, `${mode}: expected updated email to persist, got ${updatedRecord.metadata?.email}`);
-    assert(updatedRecord.metadata?.phone === updatedPhone, `${mode}: expected updated phone to persist, got ${updatedRecord.metadata?.phone}`);
-    assert(String(updatedRecord.metadata?.photo_asset_id || "").trim(), `${mode}: expected uploaded contact photo asset id to persist`);
+    await waitForContactAutosaveSaved(page, config.timeoutMs);
+    updatedRecord = await waitForContactRecord(
+      config.baseUrl,
+      config.apiToken,
+      seed.contactId,
+      record => String(record?.metadata?.photo || "").startsWith("data:image/jpeg"),
+      config.timeoutMs,
+      `${mode}: Expected contact edit to persist the uploaded photo`
+    );
+    assert(String(updatedRecord.metadata?.photo || "").trim(), `${mode}: Expected contact edit to persist the uploaded photo`);
+    await page.locator('[data-contact-photo-remove="true"]').first().click();
+    await page.waitForFunction(() => !document.querySelector(".light-contact-edit-page .light-avatar.has-photo img"), undefined, { timeout: config.timeoutMs });
+    await waitForContactAutosaveSaved(page, config.timeoutMs);
+    updatedRecord = await waitForContactRecord(
+      config.baseUrl,
+      config.apiToken,
+      seed.contactId,
+      record => !String(record?.metadata?.photo || "").trim(),
+      config.timeoutMs,
+      `${mode}: Expected contact edit to remove the uploaded photo`
+    );
+    assert(!String(updatedRecord.metadata?.photo || "").trim(), `${mode}: Expected contact edit to remove the uploaded photo`);
+    const photoRemovedState = await readContactEditState(page);
+    assert(photoRemovedState.avatarText === expectedInitials, `${mode}: Expected photo removal to restore initials, got ${photoRemovedState.avatarText}`);
     await recorder.capture({
       route: "contact-detail",
-      action: "Save edited contact",
-      expected: "Saving the contact edit returns to contact detail with the updated title, summary, email, phone, and photo persisted.",
-      confirmation: "Edited contact saved and reopened on detail with the updated values.",
-      observed: {
-        updated_title: updatedRecord.title,
-        updated_summary: updatedRecord.summary,
-        updated_email: updatedRecord.metadata?.email || "",
-        updated_phone: updatedRecord.metadata?.phone || "",
-        photo_asset_id: updatedRecord.metadata?.photo_asset_id || "",
-      },
+      action: "Add and remove contact photo",
+      expected: "Adding a photo persists the preview and removing it restores initials without leaving the detail editor.",
+      confirmation: "The deployed editor persisted photo add/remove correctly and restored initials after removal.",
+      observed: { photo_fixture: photoPath, avatar_text_after_remove: photoRemovedState.avatarText },
     });
 
     await clickBack(page, config.timeoutMs);
@@ -2157,12 +2326,23 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     const editedListState = await readContactsSearchState(page);
     assert(editedListState.row_titles.includes(updatedTitle), `${mode}: Expected edited contact row to reappear with the updated title, got ${editedListState.row_titles.join(", ")}`);
+    await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
+    await waitForRoute(page, "contact-detail", config.timeoutMs);
+    await waitForTextInBody(page, updatedTitle, config.timeoutMs);
+    const reopenedState = await readContactEditState(page);
+    assert(reopenedState.firstName === updatedFirstName, `${mode}: expected reopened detail to preserve first name, got ${reopenedState.firstName}`);
+    assert(reopenedState.lastName === updatedLastName, `${mode}: expected reopened detail to preserve last name, got ${reopenedState.lastName}`);
+    assert(reopenedState.summary === updatedSummary, `${mode}: expected reopened detail to preserve summary, got ${reopenedState.summary}`);
+    assert(reopenedState.email === updatedEmail, `${mode}: expected reopened detail to preserve email, got ${reopenedState.email}`);
+    assert(reopenedState.phone === updatedPhone, `${mode}: expected reopened detail to preserve phone, got ${reopenedState.phone}`);
+    assert(JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Linked to live alpha", updatedActivity]), `${mode}: expected reopened detail to preserve activity edits, got ${JSON.stringify(reopenedState.activityValues)}`);
+    assert(!reopenedState.hasPhotoPreview, `${mode}: expected reopened detail to stay initials-only after photo removal`);
     await recorder.capture({
       route: "contacts",
       action: "Return to edited Contacts list",
-      expected: "Backing out of the saved contact detail returns to the Contacts list with the updated row visible.",
-      confirmation: "Contacts list showed the edited contact row after returning from detail.",
-      observed: { updated_title: updatedTitle, contacts_search: editedListState },
+      expected: "Returning to Contacts shows the edited row, and reopening detail keeps the saved values.",
+      confirmation: "The edited row reappeared in Contacts and reopening detail showed the persisted autosaved values.",
+      observed: { updated_title: updatedTitle, contacts_search: editedListState, reopened_state: reopenedState },
     });
   }
 
@@ -2174,14 +2354,18 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
 }
 
 async function runProofMode(browser, config, mode, seed, runtimeMeeting = null) {
-  const viewport = mode === "mobile"
-    ? { width: 430, height: 932 }
-    : { width: 1400, height: 1000 };
+  const viewport = mode === "iphone"
+    ? { width: 390, height: 844 }
+    : mode === "android"
+      ? { width: 412, height: 915 }
+      : mode === "mobile"
+        ? { width: 430, height: 932 }
+        : { width: 1440, height: 900 };
   const context = await browser.newContext({
     viewport,
     screen: viewport,
-    hasTouch: mode === "mobile",
-    isMobile: mode === "mobile",
+    hasTouch: mode !== "desktop",
+    isMobile: mode !== "desktop",
   });
   await context.addInitScript(() => {
     try {
@@ -2248,8 +2432,11 @@ function renderReport(summary) {
   if (summary.cleanup_error) {
     lines.push(`- Cleanup error: ${summary.cleanup_error}`);
   }
-  for (const lane of ["mobile", "desktop"]) {
+  for (const lane of Array.isArray(summary.proof_modes) && summary.proof_modes.length ? summary.proof_modes : ["mobile", "desktop"]) {
     const result = summary[lane];
+    if (!result) {
+      continue;
+    }
     lines.push("", `## ${lane[0].toUpperCase()}${lane.slice(1)}`, "");
     lines.push(`- Start URL: ${result.page_url}`);
     lines.push(`- Console errors: ${(result.console_errors || []).length}`);
@@ -2294,10 +2481,15 @@ async function main() {
   let remoteManifestResult = null;
   let mobile = null;
   let desktop = null;
+  let iphone = null;
+  let android = null;
   let runtimeMeeting = null;
   let pendingError = null;
   let cleanupOk = true;
   let cleanupError = "";
+  const contactEditOnly = Array.isArray(config.routes)
+    && config.routes.length === 1
+    && config.routes[0] === "contact-edit";
 
   try {
     const chromium = await loadChromium();
@@ -2308,9 +2500,17 @@ async function main() {
       reportDir: config.reportDir,
     });
     runtimeMeeting = await prepareRuntimeMeeting(config.baseUrl, config.apiToken, config.runId, config.timeoutMs);
-    mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);
-    await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
-    desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
+    if (contactEditOnly) {
+      desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
+      await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
+      iphone = await runProofMode(browser, config, "iphone", seed, runtimeMeeting);
+      await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
+      android = await runProofMode(browser, config, "android", seed, runtimeMeeting);
+    } else {
+      mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);
+      await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
+      desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
+    }
     runtimeMeeting = await finalizeRuntimeMeeting(config.baseUrl, config.apiToken, runtimeMeeting, config.timeoutMs);
   } catch (error) {
     pendingError = error;
@@ -2355,10 +2555,13 @@ async function main() {
     cleanup_error: cleanupError || "",
     cleanup_skipped: Boolean(config.keepSeed),
     requested_routes: Array.isArray(config.routes) ? config.routes.slice() : [],
+    proof_modes: contactEditOnly ? ["desktop", "iphone", "android"] : ["mobile", "desktop"],
     universal_feed_tile_routes: UNIVERSAL_FEED_TILE_ROUTES.slice(),
     runtime_meeting: runtimeMeeting,
     mobile,
     desktop,
+    iphone,
+    android,
   };
   writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
   fs.writeFileSync(path.join(config.reportDir, "report.md"), renderReport(summary), "utf8");

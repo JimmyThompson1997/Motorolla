@@ -922,7 +922,6 @@ class WorkspaceStore:
         if current is None:
             return self.upsert_record("contacts", _self_contact_record())
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
-        metadata.pop("photo", None)
         metadata.pop("html", None)
         metadata.pop("html_asset_id", None)
         payload = {
@@ -1059,9 +1058,7 @@ class WorkspaceStore:
                     metadata = {}
                 next_metadata = dict(metadata)
                 is_self = record_id == SELF_CONTACT_ID or bool(next_metadata.get("is_self"))
-                if is_self:
-                    next_metadata.pop("photo", None)
-                elif not bool(row["deleted"]):
+                if not is_self and not bool(row["deleted"]):
                     if not _is_contact_fixture_bitmap_photo(next_metadata.get("photo")):
                         next_metadata["photo"] = _contact_fixture_photo(record_id, str(row["title"] or ""))
                 if next_metadata != metadata:
