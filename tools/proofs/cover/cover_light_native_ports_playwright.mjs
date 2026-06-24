@@ -110,7 +110,7 @@ function assert(condition, message) {
 function isDisposableRouteFetchError(error) {
   const message = String(error && error.message ? error.message : error || "");
   return /target page, context or browser has been closed/i.test(message)
-    || /fetch response has been disposed/i.test(message);
+    || /(?:fetch|apiResponse)(?:\.\w+)?:?\s*Response has been disposed/i.test(message);
 }
 
 async function abortRouteIfDisposed(route, error) {
