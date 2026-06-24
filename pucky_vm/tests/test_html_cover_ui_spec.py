@@ -412,6 +412,47 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
 
+def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() -> None:
+    app = read("app.js")
+
+    graph_list_label = function_block(app, "graphListLabel")
+    timestamp_label = function_block(app, "calendarConnectedTileTimestampLabel")
+    date_label = function_block(app, "calendarConnectedTileDateLabel")
+    connected_value = function_block(app, "connectedRecordValue")
+    ensure_linked_collections = function_block(app, "ensureLinkedCollections")
+    record_loader = function_block(app, "loadWorkspaceRecord")
+    record_lookup = function_block(app, "workspaceRecordByKind")
+    workspace_linked_rows = function_block(app, "workspaceLinkedRows")
+    reminder_linked_rows = function_block(app, "reminderDetailLinkedRows")
+    task_connected_rows = function_block(app, "taskConnectedRows")
+    meeting_connected_detail = function_block(app, "meetingNoteConnectedDetail")
+    project_connected_detail = function_block(app, "projectConnectedDetail")
+
+    assert 'String(record?.kind || "").trim() === "calendar_event"' in graph_list_label
+    assert "return calendarConnectedTileTimestampLabel(record);" in graph_list_label
+    assert "calendarConnectedTileDateLabel(dayKey, timeZone, nowMs)" in timestamp_label
+    assert "calendarEventTimeRange(event, timeZone)" in timestamp_label
+    assert 'return "Today";' in date_label
+    assert 'return "Tomorrow";' in date_label
+    assert 'return "Yesterday";' in date_label
+    assert 'formatCalendarDateKey(normalized, { weekday: "long" })' in date_label
+    assert 'formatCalendarDateKey(normalized, { month: "numeric", day: "numeric", year: "2-digit" })' in date_label
+    assert 'String(relatedKind || "").trim() === "calendar_event" && related' in connected_value
+    assert "return calendarConnectedTileTimestampLabel(related);" in connected_value
+    assert 'String(relatedKind || "") === "calendar_event"' in ensure_linked_collections
+    assert "loadWorkspaceRecord(collection, relatedId, { render: true, reason: \"linked_calendar\" })" in ensure_linked_collections
+    assert "workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`" in record_loader
+    assert "workspaceRecordCacheEntry(bucket, recordId)" in record_lookup
+    assert "connectedRecordValue(entry.relatedKind, entry.related, entry.relation)" in workspace_linked_rows
+    assert "connectedRecordValue(relatedKind, related, relation, { preferSummary: true })" in reminder_linked_rows
+    assert "connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true })" in task_connected_rows
+    assert "return calendarConnectedTileTimestampLabel(related);" in meeting_connected_detail
+    assert "return calendarConnectedTileTimestampLabel(related);" in project_connected_detail
+    assert "value: String(related?.summary || relation || graphKindLabel(relatedKind))" not in task_connected_rows
+    assert "calendarEventDayLabel(related)" not in meeting_connected_detail
+    assert "calendarEventDayLabel(related)" not in project_connected_detail
+
+
 def test_calendar_day_rail_styles_and_contracts_follow_continuous_month_model() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -1476,6 +1517,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'lightCalendarContactChip(entry, { fromRoute: "meeting-note-detail" })' in meeting_note_who_row
     assert "lightGuestAttendeeChip(entry.label)" in meeting_note_who_row
     assert 'if (kind === "calendar_event") {' in meeting_note_connected_detail
+    assert "return calendarConnectedTileTimestampLabel(related);" in meeting_note_connected_detail
     assert 'const timestamp = kind === "note"' in meeting_note_connected_detail
     assert "linkedRecordRecencyMs(kind, related)" in meeting_note_connected_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
@@ -1497,6 +1539,7 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'variant: "flat",' in project_detail
     assert "detailResolver: projectConnectedDetail," in project_detail
     assert "function projectConnectedDetail(entry) {" in app
+    assert "return calendarConnectedTileTimestampLabel(related);" in function_block(app, "projectConnectedDetail")
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
     assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
     assert "lightHtmlDocument(record" not in graph_detail
@@ -1664,6 +1707,7 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);' in task_connected_rows
     assert 'return lightInfoSection("Connected", rows, { showTrailingChevron: false });' in task_connected_section
     assert "lightRecordChip(" not in task_connected_section
+    assert 'connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true })' in task_connected_rows
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert 'const connected = lightTaskConnectedSection(task);' in task_detail_surface
     assert "surface.append(connected);" in task_detail_surface

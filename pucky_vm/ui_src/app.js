@@ -657,7 +657,9 @@
       lastRefreshAt: 0,
       fingerprint: "",
       queryKey: "",
-      queryCache: {}
+      queryCache: {},
+      recordCache: {},
+      recordLoading: {}
     };
   }
 
@@ -2144,6 +2146,74 @@
     bucket.queryCache = nextCache;
   }
 
+  function workspaceRecordCacheEntry(bucket, recordId) {
+    const id = String(recordId || "").trim();
+    if (!bucket || !id || !(bucket.recordCache && typeof bucket.recordCache === "object")) {
+      return null;
+    }
+    const cached = bucket.recordCache[id];
+    return cached && typeof cached === "object" ? cached : null;
+  }
+
+  function rememberWorkspaceRecord(bucket, record, lastRefreshAt = Date.now()) {
+    const id = String(record?.id || record?.record_id || "").trim();
+    if (!bucket || !id || !record || typeof record !== "object") {
+      return false;
+    }
+    const nextFingerprint = stableJsonFingerprint(record);
+    const previous = workspaceRecordCacheEntry(bucket, id);
+    if (previous && previous.fingerprint === nextFingerprint) {
+      return false;
+    }
+    const nextCache = bucket.recordCache && typeof bucket.recordCache === "object"
+      ? { ...bucket.recordCache }
+      : {};
+    nextCache[id] = {
+      record,
+      fingerprint: nextFingerprint,
+      lastRefreshAt: safeNumber(lastRefreshAt) || Date.now()
+    };
+    bucket.recordCache = nextCache;
+    return true;
+  }
+
+  async function loadWorkspaceRecord(collection, recordId, options = {}) {
+    const bucket = state.workspace[collection];
+    const id = String(recordId || "").trim();
+    if (!bucket || !id) {
+      return null;
+    }
+    const cached = workspaceRecordCacheEntry(bucket, id);
+    const staleMs = workspaceCollectionStaleMs(collection);
+    if (!options.force && cached && (Date.now() - safeNumber(cached.lastRefreshAt)) < Math.max(1000, staleMs)) {
+      return cached.record || null;
+    }
+    if (!(bucket.recordLoading && typeof bucket.recordLoading === "object")) {
+      bucket.recordLoading = {};
+    }
+    if (bucket.recordLoading[id]) {
+      return cached?.record || null;
+    }
+    bucket.recordLoading = { ...bucket.recordLoading, [id]: true };
+    try {
+      await ensureLinksApiConfig();
+      const payload = await workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`, {
+        metricKey: `workspace:${collection}:record`
+      });
+      const changed = rememberWorkspaceRecord(bucket, payload, Date.now());
+      if (options.render && changed) {
+        requestRender(`workspace:${collection}:record:${String(options.reason || "refresh")}`);
+      }
+      return payload;
+    } catch (_) {
+      return cached?.record || null;
+    } finally {
+      const nextLoading = { ...(bucket.recordLoading || {}) };
+      delete nextLoading[id];
+      bucket.recordLoading = nextLoading;
+    }
+  }
+
   function applyWorkspaceCacheEntry(bucket, queryKey, entry) {
     if (!bucket || !entry || typeof entry !== "object") {
       return false;
@@ -2151,13 +2221,15 @@
     const nextItems = Array.isArray(entry.items) ? entry.items.slice() : [];
     const nextFingerprint = String(entry.fingerprint || stableJsonFingerprint(nextItems));
     const changed = bucket.fingerprint !== nextFingerprint || String(bucket.queryKey || "") !== queryKey || !bucket.loaded;
+    const refreshedAt = safeNumber(entry.lastRefreshAt) || Date.now();
+    nextItems.forEach(item => rememberWorkspaceRecord(bucket, item, refreshedAt));
     bucket.items = nextItems;
     bucket.fingerprint = nextFingerprint;
     bucket.queryKey = String(queryKey || "");
     bucket.loaded = true;
     bucket.loading = false;
     bucket.error = "";
-    bucket.lastRefreshAt = safeNumber(entry.lastRefreshAt);
+    bucket.lastRefreshAt = refreshedAt;
     bucket.dirty = false;
     return changed;
   }
@@ -2203,6 +2275,7 @@
       const nextItems = Array.isArray(payload && payload.items) ? payload.items : [];
       const nextFingerprint = stableJsonFingerprint(nextItems);
       const refreshedAt = Date.now();
+      nextItems.forEach(item => rememberWorkspaceRecord(bucket, item, refreshedAt));
       rememberWorkspaceCache(bucket, queryKey, nextItems, nextFingerprint, refreshedAt);
       if (options.preload !== true && (bucket.fingerprint !== nextFingerprint || String(bucket.queryKey || "") !== queryKey)) {
         bucket.items = nextItems;
@@ -7829,7 +7902,7 @@
       return String(entry?.relation || kindLabel).trim() || kindLabel;
     }
     if (kind === "calendar_event") {
-      return [kindLabel, calendarEventDayLabel(related), calendarEventTimeRange(related)].filter(Boolean).join(DOT);
+      return calendarConnectedTileTimestampLabel(related);
     }
     const timestamp = kind === "note"
       ? noteTimestampLabel(related)
@@ -7938,8 +8011,57 @@
   }
 
   function graphListLabel(record) {
+    if (String(record?.kind || "").trim() === "calendar_event") {
+      return calendarConnectedTileTimestampLabel(record);
+    }
     const timestamp = workspaceTimestamp(record.event_at_ms || record.start_at_ms || record.due_at_ms || record.updated_at_ms, "Updated");
     return `${timestamp}${DOT}${record.summary || graphKindLabel(record.kind)}`;
+  }
+
+  function calendarConnectedTileTimestampLabel(event, timeZone = calendarEffectiveTimeZone(), nowMs = Date.now()) {
+    const dayKey = calendarEventDateKey(event, timeZone);
+    return `${calendarConnectedTileDateLabel(dayKey, timeZone, nowMs)}${DOT}${calendarEventTimeRange(event, timeZone)}`;
+  }
+
+  function calendarConnectedTileDateLabel(dayKey, timeZone = calendarEffectiveTimeZone(), nowMs = Date.now()) {
+    const normalized = normalizeCalendarDateKey(dayKey) || calendarTodayDateKey(timeZone);
+    const today = calendarDateKeyFromTimestamp(nowMs, timeZone) || calendarTodayDateKey(timeZone);
+    if (normalized === today) {
+      return "Today";
+    }
+    if (normalized === shiftCalendarDateKey(today, 1)) {
+      return "Tomorrow";
+    }
+    if (normalized === shiftCalendarDateKey(today, -1)) {
+      return "Yesterday";
+    }
+    const delta = calendarDateKeyDistance(normalized, today);
+    if (Number.isFinite(delta) && Math.abs(delta) < 7) {
+      return formatCalendarDateKey(normalized, { weekday: "long" });
+    }
+    return formatCalendarDateKey(normalized, { month: "numeric", day: "numeric", year: "2-digit" });
+  }
+
+  function calendarDateKeyDistance(dayKey, baseDayKey) {
+    const day = calendarDateFromKey(dayKey);
+    const base = calendarDateFromKey(baseDayKey);
+    if (!day || !base) {
+      return Number.NaN;
+    }
+    return Math.round((day.getTime() - base.getTime()) / (24 * 60 * 60 * 1000));
+  }
+
+  function connectedRecordValue(relatedKind, related, fallback = "", options = {}) {
+    if (String(relatedKind || "").trim() === "calendar_event" && related) {
+      return calendarConnectedTileTimestampLabel(related);
+    }
+    if (options.preferSummary === true) {
+      const summary = String(related?.summary || "").trim();
+      if (summary) {
+        return summary;
+      }
+    }
+    return String(fallback || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
   }
 
   function calendarEventDetailRows(event, attendees = calendarEventPeople(event)) {
@@ -8161,7 +8283,7 @@
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
       const value = typeof options.valueResolver === "function"
         ? options.valueResolver({ link, related, relatedKind: normalizedKind, relatedId, label, relation })
-        : String(related?.summary || relation || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
+        : connectedRecordValue(relatedKind, related, relation, { preferSummary: true });
       rows.push({
         icon: graphKindIcon(relatedKind),
         accentKey: graphKindAccentKey(relatedKind),
@@ -8528,7 +8650,27 @@
     if (!collection) {
       return null;
     }
-    return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || null;
+    const recordId = String(id || "").trim();
+    const direct = workspaceItems(collection).find(item => item.id === recordId || item.record_id === recordId);
+    if (direct) {
+      return direct;
+    }
+    const bucket = workspaceBucket(collection);
+    const cached = workspaceRecordCacheEntry(bucket, recordId);
+    if (cached?.record) {
+      return cached.record;
+    }
+    const queryCache = bucket?.queryCache && typeof bucket.queryCache === "object" ? bucket.queryCache : {};
+    for (const entry of Object.values(queryCache)) {
+      const match = Array.isArray(entry?.items)
+        ? entry.items.find(item => item.id === recordId || item.record_id === recordId)
+        : null;
+      if (match) {
+        rememberWorkspaceRecord(bucket, match, safeNumber(entry.lastRefreshAt) || Date.now());
+        return match;
+      }
+    }
+    return null;
   }
 
   function workspaceTargetForKind(kind, id) {
@@ -8762,8 +8904,14 @@
       const relatedKind = String(link.source_kind) === currentKind && String(link.source_id) === currentId
         ? link.target_kind
         : link.source_kind;
+      const relatedId = String(link.source_kind) === currentKind && String(link.source_id) === currentId
+        ? link.target_id
+        : link.source_id;
       const collection = workspaceCollectionForKind(relatedKind);
       const bucket = collection ? workspaceBucket(collection) : null;
+      if (String(relatedKind || "") === "calendar_event" && collection && relatedId && !workspaceRecordByKind(relatedKind, relatedId)) {
+        void loadWorkspaceRecord(collection, relatedId, { render: true, reason: "linked_calendar" });
+      }
       if (bucket && !bucket.loaded && !bucket.loading) {
         void loadWorkspaceCollection(collection, { render: true });
       }
@@ -8821,7 +8969,7 @@
     return workspaceLinkedEntries(record, options).map(entry => {
       const resolvedValue = typeof options.valueResolver === "function"
         ? options.valueResolver(entry)
-        : entry.relation;
+        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation);
       return {
         icon: graphKindIcon(entry.relatedKind),
         accentKey: graphKindAccentKey(entry.relatedKind),
@@ -10113,7 +10261,7 @@
       const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);
       const value = entry.relatedKind === "note"
         ? String(entry.related?.summary || entry.relation || "Note").trim() || "Note"
-        : String(entry.related?.summary || entry.relation || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind);
+        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true });
       rows.push({
         icon: graphKindIcon(entry.relatedKind),
         accentKey: graphKindAccentKey(entry.relatedKind),
@@ -10414,7 +10562,7 @@
       return String(entry?.relation || kindLabel).trim() || kindLabel;
     }
     if (kind === "calendar_event") {
-      return [kindLabel, calendarEventDayLabel(related), calendarEventTimeRange(related)].filter(Boolean).join(DOT);
+      return calendarConnectedTileTimestampLabel(related);
     }
     if (kind === "contact") {
       return [kindLabel, String(related.summary || "").trim()].filter(Boolean).join(DOT);

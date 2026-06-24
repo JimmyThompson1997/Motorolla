@@ -92,6 +92,63 @@ const ROUTES = [
     },
   },
 ];
+const CALENDAR_CONNECTED_SURFACES = [
+  {
+    key: "meeting-notes",
+    surface: "Meeting Notes",
+    route: "meeting-notes",
+    readySelector: ".light-graph-row",
+    openerSelector: '[data-record-id="demo-meeting-home-refresh"]',
+    detailSelector: '.light-shell[data-light-route="meeting-note-detail"]',
+    expectedCalendarTitle: "Front porch repair window",
+    blockedSummaries: [
+      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
+    ],
+  },
+  {
+    key: "reminders",
+    surface: "Reminders",
+    route: "reminders",
+    readySelector: ".light-reminder-row",
+    openerSelector: '[data-record-id="demo-reminder-health-call"]',
+    detailSelector: '.light-shell[data-light-route="reminder-detail"]',
+    expectedCalendarTitle: "Clinic paperwork check-in",
+    blockedSummaries: [
+      "Short appointment block to confirm forms, timing, and the follow-up questions.",
+    ],
+  },
+  {
+    key: "projects",
+    surface: "Projects",
+    route: "projects",
+    readySelector: ".light-project-row",
+    openerSelector: '.light-project-row[data-project-id="home-refresh"]',
+    detailSelector: '.light-shell[data-light-route="project-detail"]',
+    expectedCalendarTitle: "Front porch repair window",
+    blockedSummaries: [
+      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
+    ],
+  },
+  {
+    key: "tasks",
+    surface: "Tasks",
+    route: "tasks",
+    readySelector: ".light-task-row, .light-task-detail-surface",
+    openerSelector: '[data-task-id="demo-task-do-paint-samples"] .light-task-row-main',
+    detailSelector: '.light-task-detail-surface[data-task-detail-id="demo-task-do-paint-samples"], .light-shell[data-light-route="task-detail"]',
+    expectedCalendarTitle: "Front porch repair window",
+    blockedSummaries: [
+      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
+    ],
+  },
+];
+const CALENDAR_CONNECTED_TIME_WINDOW_RE = /\b\d{1,2}:\d{2}\s?(?:AM|PM)\s*-\s*\d{1,2}:\d{2}\s?(?:AM|PM)\b/i;
+const CALENDAR_CONNECTED_DATE_PREFIX_RE = /^(?:Today|Tomorrow|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|\d{1,2}\/\d{1,2}\/\d{2})\s*[·•]\s*/;
+const CALENDAR_CONNECTED_ROW_SELECTOR = [
+  '.light-linked-record-feed-row[data-workspace-target-kind="calendar_event"]',
+  '.light-reminder-detail-tile[data-reminder-linked-kind="calendar_event"]',
+  '.light-info-row[data-task-connected-kind="calendar_event"]',
+].join(", ");
 
 function resolveApiToken() {
   return resolveWriteToken({ rootDir: ROOT });
@@ -140,6 +197,9 @@ function buildRouteUrl(config, routeConfig, theme) {
   url.searchParams.set("theme", String(theme || "light"));
   url.searchParams.set("route", String(routeConfig.route || "home"));
   url.searchParams.set("reset_nav", "1");
+  if (String(config.apiToken || "").trim()) {
+    url.searchParams.set("api_token", String(config.apiToken || "").trim());
+  }
   if (String(config.refreshKey || "").trim()) {
     url.searchParams.set("_pucky_refresh", String(config.refreshKey || "").trim());
   }
@@ -167,12 +227,21 @@ async function fetchManifest(config) {
 
 async function saveScreenshot(page, filePath) {
   ensureDir(path.dirname(filePath));
-  await page.screenshot({
-    path: filePath,
-    fullPage: true,
-    animations: "disabled",
-    timeout: 120000,
-  });
+  try {
+    await page.screenshot({
+      path: filePath,
+      fullPage: true,
+      animations: "disabled",
+      timeout: 45000,
+    });
+  } catch (error) {
+    await page.screenshot({
+      path: filePath,
+      fullPage: false,
+      animations: "disabled",
+      timeout: 45000,
+    });
+  }
   return filePath;
 }
 
@@ -385,8 +454,9 @@ async function collectRouteMetrics(page, routeConfig) {
         listRowPills: count(".light-project-chip-row"),
         inboxCards: count(".card-wrap > article.card"),
         archiveActions: count(".archive-reveal-action"),
+        inboxArchiveToggles: count(".inbox-archive-toggle"),
+        inboxManageToggles: count(".inbox-manage-toggle"),
         inlineAudioTriggers: count(".card-inline-audio-trigger"),
-        meetingsToolbar: count(".meetings-embedded-toolbar"),
         meetingsCards: count(".card.card-meeting-list"),
         meetingsEmpty: count(".meetings-empty"),
       },
@@ -395,7 +465,19 @@ async function collectRouteMetrics(page, routeConfig) {
 }
 
 async function collectDetailMetrics(page) {
-  return page.evaluate(({ detailSelector }) => {
+  return page.evaluate(({ detailSelector, calendarConnectedRowSelector }) => {
+    function calendarConnectedRows() {
+      return [...document.querySelectorAll(calendarConnectedRowSelector)].map(node => {
+        const stack = node.querySelector(".light-text-stack");
+        const title = String(stack?.querySelector("strong")?.textContent || "").trim();
+        const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+        return {
+          title,
+          detail,
+          text: String(node.textContent || "").trim().replace(/\s+/g, " "),
+        };
+      }).filter(row => row.title || row.detail || row.text);
+    }
     const detail = document.querySelector(detailSelector);
     const reminderCard = document.querySelector('[data-reminder-detail-card="true"]');
     const reminderShell = document.querySelector(".light-shell");
@@ -417,10 +499,48 @@ async function collectDetailMetrics(page) {
       connectedLinkedRecordSections: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"]').length,
       detailHeroCount: document.querySelectorAll(".light-detail-hero").length,
       chipCloudCount: document.querySelectorAll(".light-chip-cloud").length,
+      calendarConnectedRows: calendarConnectedRows(),
       detailShells: document.querySelectorAll(".detail-shell").length,
       detailPanels: document.querySelectorAll(`${detailSelector}.is-open, ${detailSelector}[aria-hidden="false"]`).length,
     };
-  }, { detailSelector: DETAIL_SELECTOR });
+  }, { detailSelector: DETAIL_SELECTOR, calendarConnectedRowSelector: CALENDAR_CONNECTED_ROW_SELECTOR });
+}
+
+async function collectCalendarConnectedRows(page) {
+  return page.evaluate(selector => {
+    return [...document.querySelectorAll(selector)].map(node => {
+      const stack = node.querySelector(".light-text-stack");
+      const title = String(stack?.querySelector("strong")?.textContent || "").trim();
+      const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+      return {
+        title,
+        detail,
+        text: String(node.textContent || "").trim().replace(/\s+/g, " "),
+      };
+    }).filter(row => row.title || row.detail || row.text);
+  }, CALENDAR_CONNECTED_ROW_SELECTOR);
+}
+
+function assertCalendarConnectedRow(surfaceConfig, rows) {
+  const matchingRows = rows.filter(row => !surfaceConfig.expectedCalendarTitle || row.title === surfaceConfig.expectedCalendarTitle);
+  assert(
+    matchingRows.length > 0,
+    `${surfaceConfig.surface}: expected linked Calendar row for ${surfaceConfig.expectedCalendarTitle}; saw ${JSON.stringify(rows)}`
+  );
+  const row = matchingRows[0];
+  assert(
+    CALENDAR_CONNECTED_DATE_PREFIX_RE.test(row.detail),
+    `${surfaceConfig.surface}: Calendar row should start with relative date, saw "${row.detail}"`
+  );
+  assert(
+    CALENDAR_CONNECTED_TIME_WINDOW_RE.test(row.detail),
+    `${surfaceConfig.surface}: Calendar row should show a start-end time window, saw "${row.detail}"`
+  );
+  for (const blocked of surfaceConfig.blockedSummaries || []) {
+    assert(!row.detail.includes(blocked), `${surfaceConfig.surface}: Calendar row leaked old summary text "${blocked}"`);
+    assert(!row.text.includes(blocked), `${surfaceConfig.surface}: Calendar row container leaked old summary text "${blocked}"`);
+  }
+  return row;
 }
 
 function assertCommonRouteState(routeConfig, metrics) {
@@ -483,7 +603,8 @@ function assertRouteSpecificState(routeConfig, metrics) {
   }
   if (routeConfig.route === "inbox" && metrics.selectorCounts.primary > 0) {
     assert(metrics.selectorCounts.inboxCards > 0, "Inbox: canonical cards should render");
-    assert(metrics.selectorCounts.archiveActions > 0, "Inbox: archive reveal should remain available");
+    assert(metrics.selectorCounts.inboxArchiveToggles === 1, "Inbox: archive filter toggle should remain available");
+    assert(metrics.selectorCounts.inboxManageToggles === 1, "Inbox: manage toggle should remain available");
     assert(metrics.firstRowContentMetrics, "Inbox: missing first-row content metrics");
     assert(metrics.firstRowContentMetrics.bodyRect, "Inbox: missing measurable body width");
     assert(metrics.firstRowContentMetrics.actionsRect, "Inbox: missing measurable action rail width");
@@ -498,7 +619,6 @@ function assertRouteSpecificState(routeConfig, metrics) {
     }
   }
   if (routeConfig.route === "meetings") {
-    assert(metrics.selectorCounts.meetingsToolbar === 1, "Meetings: embedded toolbar should render once");
     if (metrics.selectorCounts.primary > 0) {
       assert(metrics.selectorCounts.meetingsCards === metrics.selectorCounts.primary, "Meetings: rows should stay card-meeting-list");
     } else {
@@ -806,6 +926,87 @@ async function captureRoute(browser, config, routeConfig, theme, viewportName, v
   return summary;
 }
 
+async function captureCalendarConnectedSurface(browser, config, surfaceConfig, theme, viewportName, viewport, consoleEvents, networkEvents) {
+  const routeDir = path.join(config.reportDir, "calendar-connected", surfaceConfig.key, theme, viewportName);
+  ensureDir(routeDir);
+  const context = await browser.newContext({
+    viewport,
+    screen: viewport,
+    hasTouch: viewportName === "mobile",
+    isMobile: viewportName === "mobile",
+  });
+  const page = await context.newPage();
+  page.on("console", message => {
+    consoleEvents.push({
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      type: message.type(),
+      text: message.text(),
+    });
+  });
+  page.on("pageerror", error => {
+    consoleEvents.push({
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      type: "pageerror",
+      text: error.message || String(error),
+    });
+  });
+  page.on("response", response => {
+    networkEvents.push({
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      url: response.url(),
+      status: response.status(),
+      ok: response.ok(),
+    });
+  });
+
+  try {
+    const pageUrl = buildRouteUrl(config, surfaceConfig, theme);
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await waitForRoute(page, surfaceConfig.route, config.timeoutMs);
+    await page.locator(surfaceConfig.readySelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const opener = page.locator(surfaceConfig.openerSelector).first();
+    if (await opener.count()) {
+      await opener.scrollIntoViewIfNeeded();
+      await opener.click();
+    }
+    await page.locator(surfaceConfig.detailSelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.waitForFunction(
+      ({ selector, expectedTitle }) => {
+        const rows = [...document.querySelectorAll(selector)];
+        if (!expectedTitle) {
+          return rows.some(row => row.querySelector(".light-text-stack span"));
+        }
+        return rows.some(row => String(row.querySelector(".light-text-stack strong")?.textContent || "").trim() === expectedTitle);
+      },
+      { selector: CALENDAR_CONNECTED_ROW_SELECTOR, expectedTitle: surfaceConfig.expectedCalendarTitle || "" },
+      { timeout: config.timeoutMs }
+    );
+    const rows = await collectCalendarConnectedRows(page);
+    const matchedRow = assertCalendarConnectedRow(surfaceConfig, rows);
+    const screenshot = await saveScreenshot(page, path.join(routeDir, "calendar-connected-row.png"));
+    const summary = {
+      surface: surfaceConfig.surface,
+      route: surfaceConfig.route,
+      theme,
+      viewport: viewportName,
+      page_url: pageUrl,
+      matched_row: matchedRow,
+      rows,
+      screenshot,
+    };
+    writeJsonFile(path.join(routeDir, "summary.json"), summary);
+    return summary;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -838,6 +1039,26 @@ async function main() {
         }
       }
     }
+    const calendarConnectedSummaries = {};
+    for (const surfaceConfig of CALENDAR_CONNECTED_SURFACES) {
+      calendarConnectedSummaries[surfaceConfig.key] = {};
+      for (const theme of ["light", "dark"]) {
+        calendarConnectedSummaries[surfaceConfig.key][theme] = {};
+        for (const viewportName of ["mobile", "desktop"]) {
+          const viewport = viewportName === "desktop" ? DESKTOP_VIEWPORT : MOBILE_VIEWPORT;
+          calendarConnectedSummaries[surfaceConfig.key][theme][viewportName] = await captureCalendarConnectedSurface(
+            browser,
+            config,
+            surfaceConfig,
+            theme,
+            viewportName,
+            viewport,
+            consoleEvents,
+            networkEvents,
+          );
+        }
+      }
+    }
     const summary = {
       schema: RESULT_SCHEMA,
       ok: true,
@@ -847,6 +1068,7 @@ async function main() {
       manifest_url: manifestResult.manifestUrl,
       remote_manifest: manifestResult.manifest,
       routes: routeSummaries,
+      calendar_connected_surfaces: calendarConnectedSummaries,
     };
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     writeJsonFile(path.join(config.reportDir, "console.json"), consoleEvents);

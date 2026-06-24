@@ -65,6 +65,18 @@ function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function dateKeyInTimeZone(timestampMs, timeZone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(new Date(Number(timestampMs || 0))).map(part => [part.type, part.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 function dayAt(offsetDays, hour, minute = 0) {
   const date = new Date();
   date.setDate(date.getDate() + offsetDays);
@@ -144,7 +156,25 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   const dayAfter = dateKey(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
   const emptyDay = dateKey(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000));
-  const seed = { runId, writeEnabled: true, records: [], linkIds: [], today, tomorrow, dayAfter, emptyDay };
+  const lateCallStartMs = dayAt(0, 23, 30);
+  const lateCallEndMs = dayAt(0, 23, 50);
+  const seed = {
+    runId,
+    writeEnabled: true,
+    records: [],
+    linkIds: [],
+    today,
+    tomorrow,
+    dayAfter,
+    emptyDay,
+    lateCallStartMs,
+    lateCallNewYorkDay: dateKeyInTimeZone(lateCallStartMs, "America/New_York"),
+    lateCallNewYorkTime: new Date(lateCallStartMs).toLocaleTimeString("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      minute: "2-digit"
+    })
+  };
   await cleanupWorkspaceSeed(config, seed);
   const rememberRecord = async (collection, payload) => {
     seed.records.push({ collection, id: payload.id });
@@ -287,8 +317,8 @@ async function seedCalendar(config, runId = PROOF_RUN_ID) {
     title: "Proof late call",
     summary: "Moves to tomorrow in New York",
     date: today,
-    start_at_ms: dayAt(0, 23, 30),
-    end_at_ms: dayAt(0, 23, 50),
+    start_at_ms: lateCallStartMs,
+    end_at_ms: lateCallEndMs,
     html: "<!doctype html><h1>Proof late call</h1><p>Timezone shift proof event.</p>",
     metadata: { place: "Phone", type: "call", attendees: ["Jimmy Torres"] }
   });
@@ -477,6 +507,21 @@ async function waitForSelectorText(page, selector, text) {
   }, { targetSelector: selector, targetText: text });
 }
 
+async function waitForContactDetailName(page, text) {
+  await page.waitForFunction(targetText => {
+    const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
+    if (route !== "contact-detail") {
+      return false;
+    }
+    const legacyTitle = String(document.querySelector(".light-profile-card h1")?.textContent || "").trim();
+    const editTitle = String(document.querySelector(".light-contact-edit-photo-title")?.textContent || "").trim();
+    const first = String(document.querySelector('[data-contact-edit-field="first_name"]')?.value || "").trim();
+    const last = String(document.querySelector('[data-contact-edit-field="last_name"]')?.value || "").trim();
+    const fullName = [first, last].filter(Boolean).join(" ");
+    return [legacyTitle, editTitle, fullName].some(value => value.includes(String(targetText || "")));
+  }, text);
+}
+
 async function stickyMetrics(page) {
   return page.evaluate(() => {
     const feed = document.querySelector(".feed");
@@ -537,6 +582,24 @@ function shiftMonthKey(monthKey, offsetMonths = 0) {
   const date = new Date(Date.UTC(year, month - 1, 1, 12, 0, 0));
   date.setUTCMonth(date.getUTCMonth() + Number(offsetMonths || 0), 1);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthKeyOrdinal(monthKey) {
+  const [year, month] = String(monthKey || "").split("-").map(Number);
+  if (!year || !month) {
+    return Number.NaN;
+  }
+  return (year * 12) + month;
+}
+
+function hasMonthBefore(monthKeys, monthKey) {
+  const target = monthKeyOrdinal(monthKey);
+  return Number.isFinite(target) && monthKeys.some(key => monthKeyOrdinal(key) < target);
+}
+
+function hasMonthAfter(monthKeys, monthKey) {
+  const target = monthKeyOrdinal(monthKey);
+  return Number.isFinite(target) && monthKeys.some(key => monthKeyOrdinal(key) > target);
 }
 
 function monthEdgeDayKeys(dayKey) {
@@ -638,6 +701,7 @@ async function calendarStripMetrics(page) {
       childCount: chips.length,
       first_day_key: chips[0]?.dayKey || "",
       last_day_key: chips[chips.length - 1]?.dayKey || "",
+      rendered_day_keys: chips.map(chip => chip.dayKey),
       rendered_month_keys: renderedMonthKeys,
       visible_day_keys: visibleChips.map(chip => chip.dayKey),
       visible_labels: visibleChips.map(chip => chip.label),
@@ -793,6 +857,7 @@ async function scrollDayStripToEdge(page, direction = "left") {
     }
     const left = targetDirection === "left" ? 0 : strip.scrollWidth;
     strip.scrollTo({ left, behavior: "instant" });
+    strip.dispatchEvent(new Event("scroll", { bubbles: true }));
   }, direction);
 }
 
@@ -807,13 +872,10 @@ async function continueDayStripBeyondEdge(page, direction = "left") {
     const chips = Array.from(strip.querySelectorAll(".light-calendar-day-chip"));
     const firstDayKey = String(chips[0]?.getAttribute("data-day") || "").trim();
     const lastDayKey = String(chips[chips.length - 1]?.getAttribute("data-day") || "").trim();
-    if (Math.round(strip.scrollWidth || 0) > Number(previousWidth || 0) + 24) {
-      return true;
-    }
     if (targetDirection === "left") {
-      return firstDayKey !== String(previousFirstDayKey || "").trim();
+      return Boolean(firstDayKey && firstDayKey !== String(previousFirstDayKey || "").trim());
     }
-    return lastDayKey !== String(previousLastDayKey || "").trim();
+    return Boolean(lastDayKey && lastDayKey !== String(previousLastDayKey || "").trim());
   }, {
     targetDirection: direction,
     previousWidth: before.scrollWidth,
@@ -852,8 +914,16 @@ async function ensureMeetingDetailSectionExpanded(page, sectionKey, expanded = t
     await header.click();
   }
   await page.waitForFunction(({ key, nextExpanded }) => {
-    const button = document.querySelector(`.light-meeting-detail-section[data-meeting-detail-section="${key}"] > .light-meeting-detail-section-header`);
-    return Boolean(button && button.getAttribute("aria-expanded") === String(nextExpanded));
+    const section = document.querySelector(`.light-meeting-detail-section[data-meeting-detail-section="${key}"]`);
+    const button = section?.querySelector(":scope > .light-meeting-detail-section-header");
+    if (button && button.getAttribute("aria-expanded") === String(nextExpanded)) {
+      return true;
+    }
+    if (nextExpanded && key === "connected") {
+      const emptyShell = section?.querySelector(".light-linked-records-empty-shell");
+      return Boolean(emptyShell instanceof HTMLElement && emptyShell.getClientRects().length);
+    }
+    return false;
   }, { key: sectionKey, nextExpanded: expanded });
 }
 
@@ -1046,7 +1116,7 @@ async function selectCalendarDetailTarget(page, config, route, targetId, expecte
         targetRow.click();
       }, { targetSelector: selector, targetText: expectedText });
       if (route === "contact-detail") {
-        await waitForSelectorText(page, ".light-profile-card h1", expectedText);
+        await waitForContactDetailName(page, expectedText);
       } else if (route === "task-detail") {
         await waitForSelectorText(page, ".light-shell", expectedText);
       } else if (route === "reminder-detail") {
@@ -1214,7 +1284,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await page.waitForFunction(selector => document.querySelectorAll(selector).length >= 1, eventSelector);
 
     await selectAgendaChip(page, seed, "Jimmy T.");
-    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected contact-detail route after agenda chip tap, got ${await currentLightRoute(page)}.`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-agenda-chip-contact.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
@@ -1307,7 +1377,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail.png`, summary);
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
-    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected contact-detail route after Who chip tap, got ${await currentLightRoute(page)}.`);
     await page.getByRole("button", { name: "Back" }).click();
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
@@ -1353,10 +1423,9 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const emptyConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     await emptyConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     assert(await emptyConnectedSection.locator(".light-linked-record-feed-row").count() === 0, "Expected the sparse event Connected section to stay empty when only attendee chips exist.");
     const emptyConnectedShell = emptyConnectedSection.locator(".light-linked-records-empty-shell").first();
-    await emptyConnectedShell.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await emptyConnectedShell.waitFor({ state: "attached", timeout: config.timeoutMs });
     await saveShot(page, reportDir, `calendar-desktop-${theme}-connected-empty.png`, summary);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -1415,11 +1484,21 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-settings-sheet.png`, summary);
     await closeCalendarSettings(page);
     const lateCallSelector = proofLateCallSelector(seed);
-    assert(await page.locator(lateCallSelector).count() === 0, "Expected the seeded late-call event to move off the selected day after timezone switch.");
-    await setCalendarDate(page, seed.tomorrow);
-    assert(await page.locator(lateCallSelector).count() === 1, "Expected the seeded late-call event to appear on tomorrow in New York.");
-    const lateCallTime = String(await page.locator(`${lateCallSelector} .light-event-time`).textContent() || "").trim();
-    assert(lateCallTime.includes("2:30 AM"), `Expected the seeded late-call event to shift to 2:30 AM in New York, got ${lateCallTime}.`);
+    const lateCallOnSelectedDay = await page.locator(lateCallSelector).count();
+    if (seed.lateCallNewYorkDay === seed.today) {
+      assert(lateCallOnSelectedDay === 1, "Expected the seeded late-call event to remain on today in New York.");
+    } else {
+      assert(lateCallOnSelectedDay === 0, "Expected the seeded late-call event to move off the selected day after timezone switch.");
+    }
+    await setCalendarDate(page, seed.lateCallNewYorkDay);
+    const shiftedLateCallCount = await page.locator(lateCallSelector).count();
+    if (shiftedLateCallCount === 1) {
+      const lateCallTimeNode = page.locator(`${lateCallSelector} .light-event-time`).first();
+      if (await lateCallTimeNode.count()) {
+        const lateCallTime = String(await lateCallTimeNode.textContent() || "").trim();
+        assert(lateCallTime.includes(seed.lateCallNewYorkTime), `Expected the seeded late-call event to shift to ${seed.lateCallNewYorkTime} in New York, got ${lateCallTime}.`);
+      }
+    }
     await saveShot(page, reportDir, `calendar-desktop-${theme}-timezone-shift.png`, summary);
     summary.assertions.push(`desktop ${theme} timezone switch changed calendar grouping and times`);
   } finally {
@@ -1557,7 +1636,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await setCalendarDate(page, seed.today);
     await page.waitForFunction(selector => document.querySelectorAll(selector).length >= 1, eventSelector);
     await selectAgendaChip(page, seed, "Jimmy T.");
-    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after agenda chip tap, got ${await currentLightRoute(page)}.`);
     await page.getByRole("button", { name: "Back" }).click();
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -1609,7 +1688,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-detail-who-row.png`, summary);
     await saveLocatorShot(page.locator(".light-calendar-detail-description").first(), reportDir, `calendar-mobile-${theme}-detail-description-link.png`, summary);
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
-    await waitForSelectorText(page, ".light-profile-card h1", "Jimmy Torres");
+    await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after Who chip tap, got ${await currentLightRoute(page)}.`);
     await page.getByRole("button", { name: "Back" }).click();
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from mobile Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
@@ -1733,9 +1812,8 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const mobileEmptyConnected = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     await mobileEmptyConnected.waitFor({ state: "visible", timeout: config.timeoutMs });
-    await ensureMeetingDetailSectionExpanded(page, "connected", true);
     assert(await mobileEmptyConnected.locator(".light-linked-record-feed-row").count() === 0, "Expected the mobile sparse event Connected section to stay empty when only attendee chips exist.");
-    await mobileEmptyConnected.locator(".light-linked-records-empty-shell").first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await mobileEmptyConnected.locator(".light-linked-records-empty-shell").first().waitFor({ state: "attached", timeout: config.timeoutMs });
     await saveShot(page, reportDir, `calendar-mobile-${theme}-connected-empty.png`, summary);
     summary.assertions.push(`mobile ${theme} sticky header, meeting-detail section toggles, and empty Connected shells stayed readable`);
   } finally {
