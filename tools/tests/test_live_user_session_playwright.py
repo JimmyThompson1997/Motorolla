@@ -225,6 +225,7 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert 'action: "Open contact detail editor"' in source
     assert 'action: "Autosave edited contact"' in source
     assert 'action: "Add and remove contact photo"' in source
+    assert 'action: "Reload saved contact detail"' in source
     assert 'action: "Return to edited Contacts list"' in source
     assert "readContactEditState" in source
     assert "traceContactEditTyping" in source
@@ -236,6 +237,7 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert "Expected contact detail editor to remove the redundant hero" in source
     assert "Expected contact edit typing to keep the same mounted input" in source
     assert "Expected photo removal to restore initials" in source
+    assert "Expected contact detail reload to stay on the edited contact" in source
     assert "Expected edited contact row to reappear with the updated title" in source
 
 

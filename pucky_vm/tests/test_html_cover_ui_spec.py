@@ -132,6 +132,7 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     assert 'return { route: normalizeHomeShellRoute(queryRoute) || "home" };' in initial_route_state
     assert 'return { route: normalizeHomeShellRoute(persistedRoute) || "home" };' in initial_route_state
     assert 'return normalizeHomeShellRoute(value) || "home";' in route_for_theme
+    assert 'url.searchParams.delete("reset_nav");' in route_sync
     assert 'url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");' in route_sync
 
 
@@ -255,6 +256,7 @@ def test_reminder_visible_refresh_rerenders_time_based_ui_even_when_records_are_
 
 def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_workspace_routes() -> None:
     app = read("app.js")
+    persist_nav = function_block(app, "persistNavState")
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
     light_date_picker = function_block(app, "lightDatePicker")
@@ -269,7 +271,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
 
     assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
     assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)," in app
+    assert "selectedContactId: String(persistedNavState.selected_contact_id || persistedNavState.selectedContactId || \"\").trim() || \"sarah\"," in app
     assert "light_history: normalizeLightRouteHistory(state.lightRouteHistory)," in app
+    assert "selected_contact_id: state.selectedContactId || null," in persist_nav
     assert "const currentSnapshot = captureLightRouteSnapshot();" in light_navigate
     assert "pushLightRouteHistory(currentSnapshot);" in light_navigate
     assert "const snapshot = popLightRouteHistory();" in light_back

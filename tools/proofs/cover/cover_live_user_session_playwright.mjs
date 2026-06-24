@@ -2339,6 +2339,24 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(reopenedState.phone === updatedPhone, `${mode}: expected reopened detail to preserve phone, got ${reopenedState.phone}`);
     assert(JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Linked to live alpha", updatedActivity]), `${mode}: expected reopened detail to preserve activity edits, got ${JSON.stringify(reopenedState.activityValues)}`);
     assert(!reopenedState.hasPhotoPreview, `${mode}: expected reopened detail to stay initials-only after photo removal`);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await waitForRoute(page, "contact-detail", config.timeoutMs);
+    await waitForTextInBody(page, updatedTitle, config.timeoutMs);
+    const reloadedState = await readContactEditState(page);
+    assert(reloadedState.firstName === updatedFirstName, `${mode}: Expected contact detail reload to stay on the edited contact, got ${reloadedState.firstName}`);
+    assert(reloadedState.lastName === updatedLastName, `${mode}: expected reloaded detail to preserve last name, got ${reloadedState.lastName}`);
+    assert(reloadedState.summary === updatedSummary, `${mode}: expected reloaded detail to preserve summary, got ${reloadedState.summary}`);
+    assert(reloadedState.email === updatedEmail, `${mode}: expected reloaded detail to preserve email, got ${reloadedState.email}`);
+    assert(reloadedState.phone === updatedPhone, `${mode}: expected reloaded detail to preserve phone, got ${reloadedState.phone}`);
+    assert(JSON.stringify(reloadedState.activityValues) === JSON.stringify(["Linked to live alpha", updatedActivity]), `${mode}: expected reloaded detail to preserve activity edits, got ${JSON.stringify(reloadedState.activityValues)}`);
+    assert(!reloadedState.hasPhotoPreview, `${mode}: expected reloaded detail to stay initials-only after photo removal`);
+    await recorder.capture({
+      route: "contact-detail",
+      action: "Reload saved contact detail",
+      expected: "Reloading the edited contact detail stays on the same contact and keeps the autosaved values.",
+      confirmation: "The reloaded contact detail stayed on the edited contact with the saved values intact.",
+      observed: { updated_title: updatedTitle, reloaded_state: reloadedState },
+    });
     await recorder.capture({
       route: "contacts",
       action: "Return to edited Contacts list",

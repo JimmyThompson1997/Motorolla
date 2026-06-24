@@ -433,6 +433,7 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "contact-edit-activity" in source
     assert "contact-edit-photo-added" in source
     assert "contact-edit-photo-removed" in source
+    assert "contact-edit-reload" in source
     assert "contact-edit-updated-list" in source
     assert "Updated Proof Contact" in source
     assert "Updated from local proof edit flow" in source
@@ -442,6 +443,7 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "Expected contact edit to persist the uploaded photo" in source
     assert "Expected contact edit to remove the uploaded photo" in source
     assert "Expected photo removal to restore derived initials" in source
+    assert "Expected contact detail reload to stay on the edited contact" in source
     assert 'input[type="file"][data-contact-photo-input="true"]' in source
 
 

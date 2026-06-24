@@ -174,7 +174,7 @@
     lightReturnRoute: "",
     previousLightRoute: "home",
     lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history),
-    selectedContactId: "sarah",
+    selectedContactId: String(persistedNavState.selected_contact_id || persistedNavState.selectedContactId || "").trim() || "sarah",
     selectedMeetingId: "vendor",
     selectedMeetingNoteId: "demo-meeting-home-refresh",
     selectedReminderId: "demo-reminder-paint-samples",
@@ -19550,6 +19550,7 @@
   function syncRouteQueryParam(route) {
     try {
       const url = new URL(window.location.href || "");
+      url.searchParams.delete("reset_nav");
       url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");
       window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);
     } catch (_) {
@@ -19844,6 +19845,7 @@
       localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
+        selected_contact_id: state.selectedContactId || null,
         selected_task_id: state.selectedTaskId || null,
         selected_project_id: state.selectedProjectId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),

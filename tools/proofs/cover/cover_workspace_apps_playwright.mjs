@@ -2642,6 +2642,18 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(reopenedState.phone === updatedPhone, `Expected reopened contact detail to keep phone ${updatedPhone}, got ${reopenedState.phone}`);
   assert(JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Linked to Alpha", updatedActivity]), `Expected reopened contact detail to keep edited activity rows, got ${JSON.stringify(reopenedState.activityValues)}`);
   assert(!reopenedState.hasPhotoPreview, "Expected photo removal to keep the detail editor on initials after reopen");
+  await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
+  await waitForGraphText(page, updatedTitle, config.timeoutMs);
+  const reloadedState = await readContactEditState(page);
+  assert(reloadedState.firstName === updatedFirstName, `Expected contact detail reload to stay on the edited contact, got ${reloadedState.firstName}`);
+  assert(reloadedState.lastName === updatedLastName, `Expected contact detail reload to preserve last name ${updatedLastName}, got ${reloadedState.lastName}`);
+  assert(reloadedState.summary === updatedSummary, `Expected contact detail reload to preserve summary ${updatedSummary}, got ${reloadedState.summary}`);
+  assert(reloadedState.email === updatedEmail, `Expected contact detail reload to preserve email ${updatedEmail}, got ${reloadedState.email}`);
+  assert(reloadedState.phone === updatedPhone, `Expected contact detail reload to preserve phone ${updatedPhone}, got ${reloadedState.phone}`);
+  assert(JSON.stringify(reloadedState.activityValues) === JSON.stringify(["Linked to Alpha", updatedActivity]), `Expected contact detail reload to preserve edited activity rows, got ${JSON.stringify(reloadedState.activityValues)}`);
+  assert(!reloadedState.hasPhotoPreview, "Expected contact detail reload to keep photo removal on initials");
+  screenshots[`${theme}_contact_edit_reload`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-reload`);
   await backHome(page, theme, config.timeoutMs);
 
   summary.contactEdits = summary.contactEdits || [];
@@ -2656,6 +2668,7 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
     updated_phone: updatedPhone,
     activity: Array.isArray(updatedRecord.metadata?.activity) ? updatedRecord.metadata.activity.slice() : [],
     photo_present: Boolean(String(updatedRecord.metadata?.photo || "").trim()),
+    reload_stayed_on_contact: true,
   });
 }
 
