@@ -692,12 +692,18 @@ async function main() {
     const contactDetailSamples = [];
     const calendarDetailSamples = [];
     for (let iteration = 0; iteration < config.iterations; iteration += 1) {
-      await goHome(page, config);
-      await openRouteFromHome(page, "tasks", config.timeoutMs);
+      await page.goto(buildRouteUrl(config, "tasks"), {
+        waitUntil: "domcontentloaded",
+        timeout: config.timeoutMs,
+      });
+      await waitForPerfRouteReady(page, "tasks", config.timeoutMs);
       taskDetailSamples.push(await measureScenario(async () => openFirstTaskDetail(page, config.timeoutMs)));
 
-      await goHome(page, config);
-      await openRouteFromHome(page, "contacts", config.timeoutMs);
+      await page.goto(buildRouteUrl(config, "contacts"), {
+        waitUntil: "domcontentloaded",
+        timeout: config.timeoutMs,
+      });
+      await waitForPerfRouteReady(page, "contacts", config.timeoutMs);
       contactDetailSamples.push(await measureScenario(async () => openFirstContactDetail(page, config.timeoutMs)));
 
       await page.goto(buildRouteUrl(config, "calendar"), {
