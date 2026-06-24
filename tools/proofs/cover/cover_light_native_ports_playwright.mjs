@@ -114,6 +114,30 @@ function isDisposableRouteFetchError(error) {
     || /(?:fetch|apiResponse)(?:\.\w+)?:?\s*Response has been disposed/i.test(message);
 }
 
+function isRetriableRouteFetchError(error) {
+  const message = String(error && error.message ? error.message : error || "");
+  return /client network socket disconnected/i.test(message)
+    || /before secure TLS connection was established/i.test(message)
+    || /\b(?:ECONNRESET|ETIMEDOUT|ECONNREFUSED)\b/i.test(message)
+    || /socket hang up/i.test(message);
+}
+
+async function fetchRouteWithRetry(route) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await route.fetch();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 3 || !isRetriableRouteFetchError(error)) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError || new Error("route.fetch failed");
+}
+
 async function abortRouteIfDisposed(route, error) {
   if (!isDisposableRouteFetchError(error)) {
     return false;
@@ -1247,7 +1271,7 @@ async function installInboxManagementActionInterceptor(page, actionRequests) {
         feedEmulation.delayNextFeedMs = 0;
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
-      const response = await route.fetch();
+      const response = await fetchRouteWithRetry(route);
       const headers = await response.headers();
       const bodyText = await response.text();
       const url = new URL(request.url());
