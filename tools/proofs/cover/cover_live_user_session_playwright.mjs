@@ -2499,7 +2499,9 @@ async function main() {
       cleanupFirst: true,
       reportDir: config.reportDir,
     });
-    runtimeMeeting = await prepareRuntimeMeeting(config.baseUrl, config.apiToken, config.runId, config.timeoutMs);
+    if (!contactEditOnly) {
+      runtimeMeeting = await prepareRuntimeMeeting(config.baseUrl, config.apiToken, config.runId, config.timeoutMs);
+    }
     if (contactEditOnly) {
       desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
       await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
@@ -2510,8 +2512,8 @@ async function main() {
       mobile = await runProofMode(browser, config, "mobile", seed, runtimeMeeting);
       await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
       desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
+      runtimeMeeting = await finalizeRuntimeMeeting(config.baseUrl, config.apiToken, runtimeMeeting, config.timeoutMs);
     }
-    runtimeMeeting = await finalizeRuntimeMeeting(config.baseUrl, config.apiToken, runtimeMeeting, config.timeoutMs);
   } catch (error) {
     pendingError = error;
   } finally {
