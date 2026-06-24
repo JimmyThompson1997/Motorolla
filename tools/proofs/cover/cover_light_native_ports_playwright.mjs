@@ -1620,7 +1620,10 @@ async function readDetailState(page) {
     card_id: String(panel.getAttribute("data-detail-card-id") || "").trim(),
     session_id: String(panel.getAttribute("data-detail-session-id") || "").trim(),
     viewer: String(panel.getAttribute("data-detail-viewer") || "").trim(),
-    title: String(panel.querySelector(".detail-title, .detail-header h1, .detail-header h2")?.textContent || "").trim()
+    title: String(panel.querySelector(".light-page-title, .detail-title, .detail-header h1, .detail-header h2")?.textContent || "").trim(),
+    audio_continuity_present: Boolean(panel.querySelector(".detail-audio-continuity")),
+    audio_continuity_action_count: panel.querySelectorAll(".detail-audio-continuity .detail-audio-action").length || 0,
+    audio_detail_controls_present: Boolean(panel.querySelector(".audio-player, .attachment-audio-player"))
   }));
 }
 
@@ -1641,6 +1644,11 @@ function assertDetailParity(label, left, right) {
   assert(left.session_id === right.session_id, `${label} session id diverged`);
   assert(left.viewer === right.viewer, `${label} viewer diverged`);
   assert(normalizeText(left.title) === normalizeText(right.title), `${label} title diverged`);
+}
+
+function assertNoInheritedAudioContinuity(detail, label) {
+  assert(detail.audio_continuity_present === false, `${label} should not render inherited detail audio continuity`);
+  assert(Number(detail.audio_continuity_action_count || 0) === 0, `${label} should not expose inherited detail audio actions`);
 }
 
 async function closeDetail(page, timeoutMs) {
@@ -1724,47 +1732,6 @@ function compatibleAudioControlLabels(left, right, title) {
   const escapedTitle = String(title || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`^(Play|Pause) ${escapedTitle}$`);
   return pattern.test(leftLabel) && pattern.test(rightLabel);
-}
-
-async function openAudioControls(page, selector, timeoutMs) {
-  const trigger = page.locator(selector).first();
-  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
-  const target = await trigger.evaluate(node => {
-    const article = node.closest("article.card");
-    return {
-      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
-      card_id: String(article?.getAttribute("data-card-id") || "").trim()
-    };
-  });
-  assert(target.card_id || target.session_id, "Audio controls target did not resolve to a canonical card identity");
-  const detailSelector = target.session_id
-    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="transcript_title"]`
-    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="transcript_title"]`;
-  await clickSelector(page, detailSelector, timeoutMs);
-  await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: timeoutMs });
-  const before = await readDetailState(page);
-  const controls = page.locator("#detail .detail-audio-action").filter({ hasText: "Open audio controls" }).first();
-  const controlCount = await controls.count();
-  assert(controlCount > 0, "Card detail did not expose an \"Open audio controls\" action");
-  await clickLocator(page, controls, timeoutMs, "Open audio controls");
-  const openedAudioControls = await page.waitForFunction(() => {
-    const detail = document.getElementById("detail");
-    return String(detail?.getAttribute("data-detail-type") || "") === "audio";
-  }, { timeout: Math.min(2_500, timeoutMs) }).then(() => true).catch(() => false);
-  if (!openedAudioControls) {
-    const retryControls = page.locator("#detail .detail-audio-action").filter({ hasText: "Open audio controls" }).first();
-    await clickLocator(page, retryControls, timeoutMs, "Open audio controls retry");
-    await page.waitForFunction(() => {
-      const detail = document.getElementById("detail");
-      return String(detail?.getAttribute("data-detail-type") || "") === "audio";
-    }, { timeout: timeoutMs });
-  }
-  const after = await readDetailState(page);
-  await closeDetail(page, timeoutMs);
-  return {
-    before,
-    after
-  };
 }
 
 async function clickSelector(page, selector, timeoutMs) {
@@ -1941,7 +1908,7 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
   };
 }
 
-async function openInlineAudioDetail(page, selector, timeoutMs) {
+async function openInlineAudioDetail(page, selector, timeoutMs, options = {}) {
   const targets = await listCardActionTargets(page, selector);
   for (const target of targets) {
     if (!target.card_id && !target.session_id) {
@@ -1998,12 +1965,16 @@ async function openInlineAudioDetail(page, selector, timeoutMs) {
     }
     const progress = await waitForPlayerAdvance(page, Math.min(timeoutMs, 1500), 500);
     const detail = await readDetailState(page);
+    const screenshot = options.reportDir && options.screenshotStem
+      ? await saveScreenshot(page, options.reportDir, options.screenshotStem)
+      : "";
     await closeDetail(page, timeoutMs);
     return {
       target,
       detail,
       player_delta_ms: progress.delta_ms,
-      progress
+      progress,
+      screenshot
     };
   }
   throw new Error("No audio card exposed an inline audio detail strip after playback started");
@@ -2016,16 +1987,53 @@ async function readRichPageFrameState(page) {
     const root = doc?.documentElement;
     const topText = String(body?.innerText || "").trim().slice(0, 200);
     const totalHeight = Math.max(Number(body?.scrollHeight || 0), Number(root?.scrollHeight || 0));
+    const totalWidth = Math.max(Number(body?.scrollWidth || 0), Number(root?.scrollWidth || 0));
     const clientHeight = Number(iframe.clientHeight || 0);
+    const clientWidth = Number(iframe.clientWidth || 0);
     iframe.contentWindow?.scrollTo(0, totalHeight);
     return {
       top_text: topText,
       bottom_text: String(body?.innerText || "").trim().slice(-200),
       iframe_client_height: clientHeight,
+      iframe_client_width: clientWidth,
       scroll_height: totalHeight,
+      scroll_width: totalWidth,
       max_scroll_top: Math.max(0, totalHeight - clientHeight),
       root_scroll_top: Number(root?.scrollTop || 0),
       body_scroll_top: Number(body?.scrollTop || 0)
+    };
+  });
+}
+
+async function readRichDetailLayout(page) {
+  return page.evaluate(() => {
+    const rect = (node) => {
+      if (!(node instanceof HTMLElement)) {
+        return null;
+      }
+      const box = node.getBoundingClientRect();
+      return {
+        left: Number(box.left.toFixed(2)),
+        right: Number(box.right.toFixed(2)),
+        top: Number(box.top.toFixed(2)),
+        bottom: Number(box.bottom.toFixed(2)),
+        width: Number(box.width.toFixed(2)),
+        height: Number(box.height.toFixed(2))
+      };
+    };
+    const header = document.querySelector("#detail .light-page-header");
+    const body = document.querySelector("#detail .detail-content");
+    const bodyInner = document.querySelector("#detail .detail-content-inner");
+    const rich = document.querySelector("#detail .rich-detail");
+    const frame = document.querySelector("#detail .rich-frame");
+    return {
+      inner_width: Number(window.innerWidth || 0),
+      document_scroll_width: Number(document.documentElement?.scrollWidth || 0),
+      header: rect(header),
+      body: rect(body),
+      body_inner: rect(bodyInner),
+      rich: rect(rich),
+      frame: rect(frame)
     };
   });
 }
@@ -2069,6 +2077,8 @@ async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs, r
       dark: await saveScreenshot(darkPage, reportDir, "07-dark-inbox-page-top"),
       light: await saveScreenshot(lightPage, reportDir, "08-light-inbox-page-top")
     };
+    const darkLayout = await readRichDetailLayout(darkPage);
+    const lightLayout = await readRichDetailLayout(lightPage);
     const darkFrame = await readRichPageFrameState(darkPage);
     const lightFrame = await readRichPageFrameState(lightPage);
     const bottomShots = {
@@ -2078,9 +2088,19 @@ async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs, r
     assertDetailParity("Inbox page/attachment", darkDetail.state, lightDetail.state);
     assert(darkDetail.state.detail_type === "page", "Dark Feed page action did not open page detail");
     assert(lightDetail.state.detail_type === "page", "Light Inbox page action did not open page detail");
+    assertNoInheritedAudioContinuity(darkDetail.state, "Dark Feed page detail");
+    assertNoInheritedAudioContinuity(lightDetail.state, "Light Inbox page detail");
     assert(lightDetail.visual.backgroundColor !== darkDetail.visual.backgroundColor, "Inbox page or attachment detail did not switch to light styling");
     assert(!/\/mock\//i.test(darkFrame.top_text), "Dark Feed page detail still rendered mock placeholder content");
     assert(!/\/mock\//i.test(lightFrame.top_text), "Light Inbox page detail still rendered mock placeholder content");
+    assert(darkLayout.header && darkLayout.body && darkLayout.body.top <= darkLayout.header.bottom + 12, `Dark Feed page detail body should start directly below the header (${darkLayout.body?.top} > ${darkLayout.header?.bottom})`);
+    assert(lightLayout.header && lightLayout.body && lightLayout.body.top <= lightLayout.header.bottom + 12, `Light Inbox page detail body should start directly below the header (${lightLayout.body?.top} > ${lightLayout.header?.bottom})`);
+    assert(darkLayout.body && darkLayout.frame && darkLayout.frame.left <= darkLayout.body.left + 2 && darkLayout.frame.right >= darkLayout.body.right - 2, "Dark Feed page detail iframe did not remain full width inside the detail body");
+    assert(lightLayout.body && lightLayout.frame && lightLayout.frame.left <= lightLayout.body.left + 2 && lightLayout.frame.right >= lightLayout.body.right - 2, "Light Inbox page detail iframe did not remain full width inside the detail body");
+    assert(darkLayout.document_scroll_width <= darkLayout.inner_width + 1, `Dark Feed page detail introduced horizontal overflow (${darkLayout.document_scroll_width} > ${darkLayout.inner_width})`);
+    assert(lightLayout.document_scroll_width <= lightLayout.inner_width + 1, `Light Inbox page detail introduced horizontal overflow (${lightLayout.document_scroll_width} > ${lightLayout.inner_width})`);
+    assert(darkFrame.scroll_width <= darkFrame.iframe_client_width + 1, `Dark Feed page iframe introduced horizontal overflow (${darkFrame.scroll_width} > ${darkFrame.iframe_client_width})`);
+    assert(lightFrame.scroll_width <= lightFrame.iframe_client_width + 1, `Light Inbox page iframe introduced horizontal overflow (${lightFrame.scroll_width} > ${lightFrame.iframe_client_width})`);
     const darkTallEnough = darkFrame.scroll_height > darkFrame.iframe_client_height;
     const lightTallEnough = lightFrame.scroll_height > lightFrame.iframe_client_height;
     const darkReachedBottom = darkFrame.root_scroll_top >= darkFrame.max_scroll_top;
@@ -2089,8 +2109,10 @@ async function compareOptionalAttachmentDetail(lightPage, darkPage, timeoutMs, r
       selected = {
         target,
         dark: darkDetail,
+        dark_layout: darkLayout,
         dark_frame: darkFrame,
         light: lightDetail,
+        light_layout: lightLayout,
         light_frame: lightFrame,
         screenshots: {
           top: topShots,
@@ -2452,7 +2474,10 @@ async function main() {
     const darkFeedTitleDetail = await openAndInspectDetail(darkFeedPage, ".card-wrap article.card [data-card-action=\"transcript_title\"]", config.timeoutMs);
     const lightInboxTitleDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card [data-card-action=\"transcript_title\"]", config.timeoutMs);
     assertDetailParity("Inbox transcript/title detail", darkFeedTitleDetail.state, lightInboxTitleDetail.state);
+    assertNoInheritedAudioContinuity(darkFeedTitleDetail.state, "Dark Feed transcript/title detail");
+    assertNoInheritedAudioContinuity(lightInboxTitleDetail.state, "Light Inbox transcript/title detail");
     assert(lightInboxTitleDetail.visual.backgroundColor !== darkFeedTitleDetail.visual.backgroundColor, "Light Inbox title detail did not switch to light styling");
+    screenshots.darkInboxTitleDetail = await saveScreenshot(darkFeedPage, config.reportDir, "05-dark-inbox-title-detail");
     screenshots.inboxTitleDetail = await saveScreenshot(lightPage, config.reportDir, "05-light-inbox-title-detail");
     await closeDetail(darkFeedPage, config.timeoutMs);
     await closeDetail(lightPage, config.timeoutMs);
@@ -2461,6 +2486,8 @@ async function main() {
     const darkFeedSummaryDetail = await openAndInspectDetail(darkFeedPage, ".card-wrap article.card [data-card-action=\"transcript_body\"]", config.timeoutMs);
     const lightInboxSummaryDetail = await openAndInspectDetail(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card [data-card-action=\"transcript_body\"]", config.timeoutMs);
     assertDetailParity("Inbox transcript/summary detail", darkFeedSummaryDetail.state, lightInboxSummaryDetail.state);
+    assertNoInheritedAudioContinuity(darkFeedSummaryDetail.state, "Dark Feed transcript/summary detail");
+    assertNoInheritedAudioContinuity(lightInboxSummaryDetail.state, "Light Inbox transcript/summary detail");
     screenshots.inboxSummaryDetail = await saveScreenshot(lightPage, config.reportDir, "06-light-inbox-summary-detail");
     await closeDetail(darkFeedPage, config.timeoutMs);
     await closeDetail(lightPage, config.timeoutMs);
@@ -2485,32 +2512,31 @@ async function main() {
       `Dark Feed audio did not advance enough after starting playback (${darkFeedAudioState.progress.delta_ms} ms / required ${darkFeedAudioState.progress.required_delta_ms} ms; duration ${darkFeedAudioState.progress.duration_ms} ms; observed_start ${darkFeedAudioState.progress.observed_start_ms} ms; max ${Number(darkFeedAudioState.progress.max_position_ms || 0)} ms; before ${Number(darkFeedAudioState.progress.before?.position_ms || 0)} ms; after ${Number(darkFeedAudioState.progress.after?.position_ms || 0)} ms; state ${String(darkFeedAudioState.progress.after?.state || "")}; playing ${Boolean(darkFeedAudioState.progress.after?.is_playing)})`
     );
     logAction(actions, "open_inline_audio_detail");
-    const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
+    const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs, {
+      reportDir: config.reportDir,
+      screenshotStem: "10a-dark-inbox-audio-detail"
+    });
     const lightInboxInlineAudioDetail = await openInlineAudioDetail(
       lightPage,
       ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]",
-      config.timeoutMs
+      config.timeoutMs,
+      {
+        reportDir: config.reportDir,
+        screenshotStem: "10b-light-inbox-audio-detail"
+      }
     );
     assert(darkFeedInlineAudioDetail.detail.detail_type === "audio", "Dark Feed inline audio strip did not open audio detail");
     assert(lightInboxInlineAudioDetail.detail.detail_type === "audio", "Light Inbox inline audio strip did not open audio detail");
+    assert(darkFeedInlineAudioDetail.detail.audio_detail_controls_present, "Dark Feed inline audio detail should expose audio controls");
+    assert(lightInboxInlineAudioDetail.detail.audio_detail_controls_present, "Light Inbox inline audio detail should expose audio controls");
+    assertNoInheritedAudioContinuity(darkFeedInlineAudioDetail.detail, "Dark Feed inline audio detail");
+    assertNoInheritedAudioContinuity(lightInboxInlineAudioDetail.detail, "Light Inbox inline audio detail");
     assert(
       darkFeedInlineAudioDetail.player_delta_ms >= 500 && lightInboxInlineAudioDetail.player_delta_ms >= 500,
       `Inline audio detail did not preserve the active player session (dark ${darkFeedInlineAudioDetail.player_delta_ms} ms / light ${lightInboxInlineAudioDetail.player_delta_ms} ms)`
     );
-    logAction(actions, "open_audio_controls_navigation");
-    const darkFeedAudioControls = await openAudioControls(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
-    const lightInboxAudioControls = await openAudioControls(
-      lightPage,
-      ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]",
-      config.timeoutMs
-    );
-    assert(darkFeedAudioControls.after.detail_type === "audio", "Dark Feed did not enter audio detail after clicking Open audio controls");
-    assert(lightInboxAudioControls.after.detail_type === "audio", "Light Inbox did not enter audio detail after clicking Open audio controls");
-    assert(
-      JSON.stringify(lightInboxAudioControls.before) === JSON.stringify(darkFeedAudioControls.before),
-      "Audio controls source card differed between dark Feed and light Inbox"
-    );
-    screenshots.inboxAudioDetail = await saveScreenshot(lightPage, config.reportDir, "07-light-inbox-audio-detail");
+    screenshots.darkInboxAudioDetail = darkFeedInlineAudioDetail.screenshot;
+    screenshots.inboxAudioDetail = lightInboxInlineAudioDetail.screenshot;
 
     await backToLightHome(lightPage, config.timeoutMs);
 
@@ -2634,10 +2660,6 @@ async function main() {
         inbox_inline_audio_detail: {
           dark_feed: darkFeedInlineAudioDetail,
           light_inbox: lightInboxInlineAudioDetail
-        },
-        inbox_audio_controls: {
-          dark_feed: darkFeedAudioControls,
-          light_inbox: lightInboxAudioControls
         },
         meetings_detail: lightMeetingsDetail,
         meetings_audio: lightMeetingsAudio

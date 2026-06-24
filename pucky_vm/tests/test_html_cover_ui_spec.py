@@ -957,7 +957,7 @@ def test_feed_detail_uses_full_bleed_scrollable_layout() -> None:
     assert "min-height: 0;" in rich_detail
 
 
-def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> None:
+def test_detail_views_require_explicit_audio_continuity_opt_in_and_preserve_audio_surfaces() -> None:
     app = read("app.js")
     render_fn = function_block(app, "render")
     show_transcript = function_block(app, "showTranscript")
@@ -975,14 +975,16 @@ def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> Non
     render_detail_audio_continuity = function_block(app, "renderDetailAudioContinuity")
 
     assert "renderDetailAudioContinuity();" in render_fn
-    assert 'openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });' in show_transcript
+    assert 'openSideDetail(panel, card.title || "Transcript", content, dismissDetail);' in show_transcript
+    assert "showAudioDetail(resolveAudioControlsTargetCard(card));" not in show_transcript
     assert "fullBleed: true" in show_rich_page
-    assert 'openSideDetail(panel, card.title || "Images", content, dismissGallery, { audioCard: hasAudio(card) ? card : null });' in show_image_reel
-    assert 'openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });' in show_video_attachment
-    assert 'openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });' in show_audio_attachment
-    assert 'openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });' in show_document_attachment
+    assert 'openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { fullBleed: true });' in show_rich_page
+    assert 'openSideDetail(panel, card.title || "Images", content, dismissGallery);' in show_image_reel
+    assert 'openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);' in show_video_attachment
+    assert 'openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);' in show_audio_attachment
+    assert 'openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);' in show_document_attachment
     assert "function openSideDetail(panel, title, content, onDismiss, options = {}) {" in app
-    assert 'const audioCard = hasAudio(options.audioCard) ? options.audioCard : null;' in open_side_detail
+    assert 'const audioCard = options.showAudioContinuity === true && hasAudio(options.audioCard) ? options.audioCard : null;' in open_side_detail
     assert "if (audioCard) {" in open_side_detail
     assert "shell.append(detailAudioContinuity(audioCard));" in open_side_detail
     assert "const detail = normalizeNavDetail(state.navDetail);" in current_detail_audio_card
@@ -990,6 +992,7 @@ def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> Non
     assert "return card && hasAudio(card) ? card : null;" in current_detail_audio_card
     assert "const targetCard = resolveAudioControlsTargetCard(card);" in show_audio_detail
     assert "state.audioCard = targetCard;" in show_audio_detail
+    assert 'openSideDetail(panel, targetCard.title || "Audio", content, dismissAudioDetail);' in show_audio_detail
     assert "const active = findCardByPlayer(state.player);" in resolve_audio_controls_target_card
     assert "const bySession = findCardBySessionId(sessionId);" in resolve_audio_controls_target_card
     assert "return findCardByIdentity(card) || card;" in resolve_audio_controls_target_card
@@ -1007,6 +1010,33 @@ def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> Non
     assert "showAudioDetail(resolveAudioControlsTargetCard(card));" in detail_audio_continuity
     assert 'const existing = panel.querySelector(".detail-audio-continuity");' in render_detail_audio_continuity
     assert "existing.replaceWith(detailAudioContinuity(card));" in render_detail_audio_continuity
+
+
+def test_notes_detail_contract_stays_full_bleed_and_transcript_page_detail_do_not_inherit_audio_chrome() -> None:
+    app = read("app.js")
+    note_detail = function_block(app, "lightNoteDetailPage")
+    show_transcript = function_block(app, "showTranscript")
+    show_rich_page = function_block(app, "showRichPage")
+    show_document_attachment = function_block(app, "showDocumentAttachment")
+
+    assert 'page.classList.add("light-document-page", "light-note-document", "light-note-detail-page");' in note_detail
+    assert 'className: "light-detail-html-body light-note-detail-html-body",' in note_detail
+    assert "fullBleed: true," in note_detail
+    assert "{ audioCard:" not in show_transcript
+    assert "{ audioCard:" not in show_rich_page
+    assert "{ audioCard:" not in show_document_attachment
+
+
+def test_inbox_card_menu_button_keeps_visible_dark_mode_chrome() -> None:
+    styles = read("styles.css")
+    inbox_menu_button = css_block(styles, ".inbox-card-menu-button")
+    inbox_menu_button_icon = css_block(styles, ".inbox-card-menu-button .material-icon")
+
+    assert "border: 1px solid" in inbox_menu_button
+    assert "color: color-mix(in srgb, var(--home-shell-text)" in inbox_menu_button
+    assert "background: color-mix(in srgb, var(--surface-control)" in inbox_menu_button
+    assert "fill: currentColor;" in inbox_menu_button_icon
+    assert "stroke: none;" in inbox_menu_button_icon
 
 
 def test_completed_meeting_detail_refresh_does_not_reopen_after_dismiss() -> None:

@@ -6583,10 +6583,10 @@ button {
   display: grid;
   place-items: center;
   padding: 0;
-  border: 0;
+  border: 1px solid color-mix(in srgb, var(--home-shell-border) 78%, transparent);
   border-radius: 999px;
-  color: var(--home-shell-text-muted);
-  background: color-mix(in srgb, var(--surface-card-elevated) 84%, transparent);
+  color: color-mix(in srgb, var(--home-shell-text) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-control) 92%, transparent);
   transform: translateY(-50%);
 }
 
@@ -6601,6 +6601,8 @@ button {
 .inbox-card-menu-button .material-icon {
   width: 18px;
   height: 18px;
+  fill: currentColor;
+  stroke: none;
 }
 
 .inbox-card-menu {

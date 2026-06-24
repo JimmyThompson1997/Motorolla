@@ -284,6 +284,22 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert 'proof-live-universal-tiles' in source
 
 
+def test_live_native_port_proof_tracks_audio_continuity_opt_out_and_audio_detail_evidence() -> None:
+    source = (ROOT / "tools" / "proofs" / "cover" / "cover_light_native_ports_playwright.mjs").read_text(encoding="utf-8")
+
+    assert "audio_continuity_present" in source
+    assert "audio_detail_controls_present" in source
+    assert "assertNoInheritedAudioContinuity(" in source
+    assert "readRichDetailLayout(" in source
+    assert "05-dark-inbox-title-detail" in source
+    assert "07-dark-inbox-page-top" in source
+    assert "09-dark-inbox-page-bottom" in source
+    assert "10a-dark-inbox-audio-detail" in source
+    assert "10b-light-inbox-audio-detail" in source
+    assert "inbox_audio_controls" not in source
+    assert "openAudioControls(" not in source
+
+
 def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_contracts() -> None:
     universal_source = (ROOT / "tools" / "proofs" / "cover" / "cover_universal_feed_tiles_playwright.mjs").read_text(encoding="utf-8")
     calendar_source = (ROOT / "tools" / "proofs" / "cover" / "cover_calendar_playwright.mjs").read_text(encoding="utf-8")

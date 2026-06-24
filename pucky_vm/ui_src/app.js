@@ -14437,7 +14437,7 @@
     });
     content.append(stack);
     applyDetailDataAttributes(panel, "transcript", card);
-    openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });
+    openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
     rememberNavDetail("transcript", card, options);
     installDetailScrollPersistence(content, "transcript");
     void syncVoiceThreadScope({ reason: "show_transcript", render: true });
@@ -14579,7 +14579,7 @@
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
     applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });
-    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { audioCard: hasAudio(card) ? card : null, fullBleed: true });
+    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { fullBleed: true });
     rememberNavDetail("page", card, options);
     installDetailScrollPersistence(content, "page");
     void syncVoiceThreadScope({ reason: "show_page", render: true });
@@ -15120,7 +15120,7 @@
       });
     }
     applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });
-    openSideDetail(panel, card.title || "Images", content, dismissGallery, { audioCard: hasAudio(card) ? card : null });
+    openSideDetail(panel, card.title || "Images", content, dismissGallery);
     rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
     installDetailScrollPersistence(content, "images");
     void syncVoiceThreadScope({ reason: "show_images", render: true });
@@ -15265,7 +15265,7 @@
     frame.append(shell);
     content.append(frame);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: "video_player" });
-    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
+    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     void syncVoiceThreadScope({ reason: "show_video_attachment", render: true });
@@ -15300,7 +15300,7 @@
     wrap.append(audio);
     content.append(wrap);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: "audio_player" });
-    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
+    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     void syncVoiceThreadScope({ reason: "show_audio_attachment", render: true });
     try {
@@ -15319,7 +15319,7 @@
     const viewer = await documentViewer(card, item, options);
     content.append(viewer);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: attachmentViewerType(item) });
-    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
+    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });
@@ -16050,7 +16050,7 @@
 
   function openSideDetail(panel, title, content, onDismiss, options = {}) {
     const shell = el("div", "detail-shell");
-    const audioCard = hasAudio(options.audioCard) ? options.audioCard : null;
+    const audioCard = options.showAudioContinuity === true && hasAudio(options.audioCard) ? options.audioCard : null;
     const fullBleed = Boolean(options.fullBleed);
     const header = lightHeader(title, { onBack: onDismiss, detail: true });
     const body = el("div", "detail-content");

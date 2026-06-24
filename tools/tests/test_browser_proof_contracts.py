@@ -714,9 +714,21 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "required_delta_ms: requiredDeltaMs" in source
     assert "return 2000;" in source
     assert "player_delta_ms >= 500" in source
-    assert "Open audio controls" in source
-    assert "openAudioControls(" in source
-    assert "inbox_audio_controls" in source
+    assert "audio_continuity_present" in source
+    assert "audio_detail_controls_present" in source
+    assert "assertNoInheritedAudioContinuity(" in source
+    assert "readRichDetailLayout(" in source
+    assert "document_scroll_width" in source
+    assert "iframe_client_width" in source
+    assert "scroll_width" in source
+    assert "assertNoInheritedAudioContinuity(darkFeedTitleDetail.state" in source
+    assert "assertNoInheritedAudioContinuity(lightInboxTitleDetail.state" in source
+    assert "assertNoInheritedAudioContinuity(darkDetail.state, \"Dark Feed page detail\")" in source
+    assert "assertNoInheritedAudioContinuity(lightDetail.state, \"Light Inbox page detail\")" in source
+    assert "audio_detail_controls_present, \"Dark Feed inline audio detail should expose audio controls\"" in source
+    assert "audio_detail_controls_present, \"Light Inbox inline audio detail should expose audio controls\"" in source
+    assert "openAudioControls(" not in source
+    assert "inbox_audio_controls" not in source
     assert "scrollability" in source
     assert "readInboxActionLayout(" in source
     assert "inbox_action_layout" in source
@@ -762,6 +774,7 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "manage_bar" in source
     assert "archive_filter" in source
     assert "no_audio" in source
+    assert "05-dark-inbox-title-detail" in source
     assert "01-normal-expanded-feed" in source
     assert "02-manage-bottom-top" in source
     assert "03-manage-bottom-scrolled-down" in source
@@ -771,6 +784,8 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert "08-archived-menu-unarchive" in source
     assert "09-after-unarchive-active-feed" in source
     assert "10-cleanup-archived-final" in source
+    assert "10a-dark-inbox-audio-detail" in source
+    assert "10b-light-inbox-audio-detail" in source
     assert 'proofUrl.searchParams.set("api_token", String(config.apiToken || "").trim());' in source
     assert 'proofUrl.searchParams.set("_pucky_refresh", runId);' in source
     assert "proof-local-inbox-management" in dev_source
