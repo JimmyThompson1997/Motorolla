@@ -436,11 +436,18 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "saveContactEditAndWaitForDetail" in source
     assert "contacts-edit-open" in source
     assert "contacts-edit-name" in source
+    assert "contacts-edit-text-save-ready" in source
+    assert "contacts-edit-remove-photo" in source
     assert "contacts-edit-photo" in source
+    assert "contacts-edit-reload" in source
     assert "contacts-edit-back-to-list" in source
     assert "Updated Proof Contact" in source
     assert "Updated from local proof edit flow" in source
     assert "updated.proof.one@example.com" in source
+    assert "Expected text-only contact edits to enable save before changing the photo" in source
+    assert "Expected contact edit preview title to update before save" in source
+    assert "Expected contact edit to persist removing the existing photo" in source
+    assert "Expected contact detail reload to stay on the edited contact" in source
     assert "Expected contact edit to persist the updated title" in source
     assert "Expected contact edit to persist the uploaded photo asset" in source
     assert 'input[type="file"][data-contact-photo-input="true"]' in source

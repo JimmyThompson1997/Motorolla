@@ -2076,10 +2076,13 @@ async function readContactEditState(page) {
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
     const save = document.querySelector("[data-contact-edit-save]");
+    const inlineSave = document.querySelector("[data-contact-edit-save-inline]");
+    const removePhoto = document.querySelector("[data-contact-photo-remove='true']");
     return {
       route: shell?.getAttribute("data-light-route") || "",
       pageVisible: Boolean(pageRoot),
       title: String(pageRoot?.querySelector(".light-page-title")?.textContent || "").trim(),
+      previewTitle: String(pageRoot?.querySelector(".light-contact-edit-photo-title")?.textContent || "").trim(),
       firstName: fieldValue("first_name"),
       lastName: fieldValue("last_name"),
       summary: fieldValue("summary"),
@@ -2087,7 +2090,9 @@ async function readContactEditState(page) {
       phone: fieldValue("phone"),
       hasConnectedSection: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
       hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
+      removePhotoVisible: Boolean(removePhoto instanceof HTMLElement && !removePhoto.hidden),
       saveDisabled: save instanceof HTMLButtonElement ? save.disabled : true,
+      inlineSaveDisabled: inlineSave instanceof HTMLButtonElement ? inlineSave.disabled : true,
     };
   });
 }
@@ -2391,6 +2396,7 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(initialEditState.pageVisible, "Expected Contacts edit page to be visible");
   assert(initialEditState.route === "contact-edit", `Expected contact-edit route, got ${initialEditState.route}`);
   assert(!initialEditState.hasConnectedSection, "Expected Contacts edit to keep Connected on detail only");
+  assert(initialEditState.hasPhotoPreview, "Expected seeded contact edit to open with an existing photo preview");
   screenshots[`${theme}_contacts_edit_open`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-edit-open`);
 
   await fillContactEditField(page, "first_name", "Updated", config.timeoutMs);
@@ -2399,6 +2405,39 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   await fillContactEditField(page, "email", updatedEmail, config.timeoutMs);
   await fillContactEditField(page, "phone", updatedPhone, config.timeoutMs);
   screenshots[`${theme}_contacts_edit_name`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-edit-name`);
+  const textReadyState = await readContactEditState(page);
+  assert(!textReadyState.saveDisabled, "Expected text-only contact edits to enable save before changing the photo");
+  assert(!textReadyState.inlineSaveDisabled, "Expected text-only contact edits to enable inline save before changing the photo");
+  assert(textReadyState.previewTitle === updatedTitle, `Expected contact edit preview title to update before save, got ${textReadyState.previewTitle}`);
+  screenshots[`${theme}_contacts_edit_text_save_ready`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-edit-text-save-ready`);
+
+  await page.locator('[data-contact-photo-remove="true"]').first().click();
+  await page.waitForFunction(() => {
+    const remove = document.querySelector('[data-contact-photo-remove="true"]');
+    return !document.querySelector(".light-contact-edit-page .light-avatar.has-photo img")
+      && remove instanceof HTMLElement
+      && remove.hidden;
+  }, undefined, { timeout: config.timeoutMs });
+  const removedPhotoState = await readContactEditState(page);
+  assert(!removedPhotoState.hasPhotoPreview, "Expected removing the contact photo to clear the edit preview");
+  assert(!removedPhotoState.removePhotoVisible, "Expected remove photo action to hide after clearing the photo");
+  screenshots[`${theme}_contacts_edit_remove_photo`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-edit-remove-photo`);
+
+  await saveContactEditAndWaitForDetail(page, config.timeoutMs);
+  await waitForGraphText(page, updatedTitle, config.timeoutMs);
+  await page.getByText(updatedEmail).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.getByText(updatedPhone).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.getByText(updatedSummary).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  const removedPhotoRecord = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(proofContactId)}`);
+  assert(removedPhotoRecord.title === updatedTitle, `Expected contact edit to persist the updated title, got ${removedPhotoRecord.title}`);
+  assert(removedPhotoRecord.summary === updatedSummary, `Expected contact edit to persist the updated summary, got ${removedPhotoRecord.summary}`);
+  assert(removedPhotoRecord.metadata?.email === updatedEmail, `Expected contact edit to persist the updated email, got ${removedPhotoRecord.metadata?.email}`);
+  assert(removedPhotoRecord.metadata?.phone === updatedPhone, `Expected contact edit to persist the updated phone, got ${removedPhotoRecord.metadata?.phone}`);
+  assert(!String(removedPhotoRecord.metadata?.photo || "").trim(), "Expected contact edit to persist removing the existing photo");
+  assert(!String(removedPhotoRecord.metadata?.photo_asset_id || "").trim(), "Expected contact edit to persist removing the existing photo asset");
+
+  await page.getByRole("button", { name: "Edit contact" }).first().click();
+  await waitForLightRoute(page, "contact-edit", config.timeoutMs);
 
   const photoInput = page.locator('input[type="file"][data-contact-photo-input="true"]').first();
   await photoInput.setInputFiles(photoPath);
@@ -2421,6 +2460,14 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(updatedRecord.metadata?.phone === updatedPhone, `Expected contact edit to persist the updated phone, got ${updatedRecord.metadata?.phone}`);
   assert(String(updatedRecord.metadata?.photo_asset_id || "").trim(), "Expected contact edit to persist the uploaded photo asset");
 
+  await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
+  await waitForGraphText(page, updatedTitle, config.timeoutMs);
+  await page.getByText(updatedEmail).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  screenshots[`${theme}_contacts_edit_reload`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-edit-reload`);
+  const reloadedDetailState = await readGraphDetailState(page);
+  assert(reloadedDetailState.route === "contact-detail", `Expected contact detail reload to stay on the edited contact, got ${reloadedDetailState.route}`);
+
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
   await page.locator(`button[data-contact-id="${proofContactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
   const updatedListState = await readContactsSearchState(page);
@@ -2436,7 +2483,9 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
     updated_summary: updatedSummary,
     updated_email: updatedEmail,
     updated_phone: updatedPhone,
+    removed_photo: true,
     photo_asset_id: String(updatedRecord.metadata?.photo_asset_id || ""),
+    reload_stayed_on_contact: true,
   });
 }
 

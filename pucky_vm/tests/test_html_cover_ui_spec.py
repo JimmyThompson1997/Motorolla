@@ -132,6 +132,7 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     assert 'return { route: normalizeHomeShellRoute(queryRoute) || "home" };' in initial_route_state
     assert 'return { route: normalizeHomeShellRoute(persistedRoute) || "home" };' in initial_route_state
     assert 'return normalizeHomeShellRoute(value) || "home";' in route_for_theme
+    assert 'url.searchParams.delete("reset_nav");' in route_sync
     assert 'url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");' in route_sync
 
 
@@ -255,6 +256,7 @@ def test_reminder_visible_refresh_rerenders_time_based_ui_even_when_records_are_
 
 def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_workspace_routes() -> None:
     app = read("app.js")
+    persist_nav = function_block(app, "persistNavState")
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
     light_date_picker = function_block(app, "lightDatePicker")
@@ -269,7 +271,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
 
     assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
     assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)," in app
+    assert "selectedContactId: String(persistedNavState.selected_contact_id || persistedNavState.selectedContactId || \"\").trim() || \"sarah\"," in app
     assert "light_history: normalizeLightRouteHistory(state.lightRouteHistory)," in app
+    assert "selected_contact_id: state.selectedContactId || null," in persist_nav
     assert "const currentSnapshot = captureLightRouteSnapshot();" in light_navigate
     assert "pushLightRouteHistory(currentSnapshot);" in light_navigate
     assert "const snapshot = popLightRouteHistory();" in light_back
@@ -2101,6 +2105,7 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     contacts_search = function_block(app, "lightContactsSearchField")
     sync_contacts_page = function_block(app, "syncContactsPage")
     sync_contacts_search_input = function_block(app, "syncContactsSearchInput")
+    sync_contact_edit_page = function_block(app, "syncContactEditPage")
     contact_search_terms = function_block(app, "contactSearchTerms")
     contact_matches_search = function_block(app, "contactMatchesSearch")
     filtered_contacts = function_block(app, "filteredContactsListItems")
@@ -2110,6 +2115,7 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     light_avatar = function_block(app, "lightAvatar")
     contact_detail = function_block(app, "lightContactDetailPage")
     contact_edit = function_block(app, "lightContactEditPage")
+    update_contact_edit_draft = function_block(app, "updateContactEditDraft")
     contact_profile_card = css_block(styles, ".light-contact-detail-page .light-profile-card")
     contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
     contact_search_input = css_block(styles, ".light-contacts-search")
@@ -2125,9 +2131,11 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert "function normalizeSearchDigits(value)" in app
     assert "let contactsPageNode = null;" in app
     assert "let contactsPageRefs = null;" in app
+    assert "let contactEditPageRefs = null;" in app
     assert '"contact-edit"' in app
     assert "function syncContactsPage()" in app
     assert "function syncContactsSearchInput(refs)" in app
+    assert "function syncContactEditPage()" in app
     assert 'function contactInitialsFromText(value, fallback = "CT") {' in app
     assert "function contactAvatarText(contact) {" in app
     assert "const searchWrap = lightContactsSearchField();" in contacts_page
@@ -2170,6 +2178,15 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert 'return letters[0].slice(0, 2).toUpperCase();' not in contact_draft_avatar
     assert "const initials = contactAvatarText(contact);" in light_avatar
     assert 'meta.avatar || contact.title || "?"' not in light_avatar
+    assert "if (!contactEditPageRefs || !contactEditPageRefs.page) {" in sync_contact_edit_page
+    assert 'if (!contactEditPageRefs.page.isConnected && state.route !== "contact-edit") {' in sync_contact_edit_page
+    assert "const preview = contactEditPreviewRecord(contact, draft);" in sync_contact_edit_page
+    assert "contactEditPageRefs.avatar.replaceWith(lightAvatar(preview, \"large\"));" in sync_contact_edit_page
+    assert "contactEditPageRefs.changePhoto.textContent = draft.photo ? \"Change photo\" : \"Add photo\";" in sync_contact_edit_page
+    assert "contactEditPageRefs.removePhoto.hidden = !draft.photo;" in sync_contact_edit_page
+    assert "contactEditPageRefs.saveButton.disabled = disabled;" in sync_contact_edit_page
+    assert "contactEditPageRefs.submit.disabled = disabled;" in sync_contact_edit_page
+    assert "syncContactEditPage();" in update_contact_edit_draft
     assert 'const page = lightPage("Contact", {' in contact_detail
     assert "detail: true," in contact_detail
     assert 'page.classList.add("light-contact-detail-page");' in contact_detail
@@ -2189,8 +2206,12 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert 'const contact = selectedContact();' in contact_edit
     assert 'contactIsSelf(contact) ? "Edit me" : "Edit contact"' in contact_edit
     assert 'const saveButton = settingsActionButton(' in contact_edit
+    assert "contactEditPageRefs = {" in contact_edit
     assert 'photoInput.type = "file";' in contact_edit
     assert 'photoInput.accept = "image/*";' in contact_edit
+    assert 'updateContactEditDraft(await prepareContactPhotoDraft(file));' in contact_edit
+    assert "syncContactEditPage();" in contact_edit
+    assert "render();" not in contact_edit
     assert 'firstNameInput.autocomplete = "given-name";' in contact_edit
     assert 'lastNameInput.autocomplete = "family-name";' in contact_edit
     assert 'emailInput.type = "email";' in contact_edit

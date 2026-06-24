@@ -1151,10 +1151,13 @@ async function readContactEditState(page) {
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
     const save = document.querySelector("[data-contact-edit-save]");
+    const inlineSave = document.querySelector("[data-contact-edit-save-inline]");
+    const removePhoto = document.querySelector("[data-contact-photo-remove='true']");
     return {
       route: shell?.getAttribute("data-light-route") || "",
       page_visible: Boolean(pageRoot),
       title: String(pageRoot?.querySelector(".light-page-title")?.textContent || "").trim(),
+      preview_title: String(pageRoot?.querySelector(".light-contact-edit-photo-title")?.textContent || "").trim(),
       first_name: fieldValue("first_name"),
       last_name: fieldValue("last_name"),
       summary: fieldValue("summary"),
@@ -1162,7 +1165,9 @@ async function readContactEditState(page) {
       phone: fieldValue("phone"),
       has_connected_section: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
       has_photo_preview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
+      remove_photo_visible: Boolean(removePhoto instanceof HTMLElement && !removePhoto.hidden),
       save_disabled: save instanceof HTMLButtonElement ? save.disabled : true,
+      inline_save_disabled: inlineSave instanceof HTMLButtonElement ? inlineSave.disabled : true,
     };
   });
 }
@@ -2087,6 +2092,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(editState.page_visible, `${mode}: expected Contacts edit page to be visible`);
     assert(editState.route === "contact-edit", `${mode}: expected contact-edit route, got ${editState.route}`);
     assert(!editState.has_connected_section, `${mode}: expected Connected to stay on contact detail, not edit`);
+    assert(editState.has_photo_preview, `${mode}: expected seeded contact edit to open with an existing photo preview`);
     await recorder.capture({
       route: "contact-edit",
       action: "Open Contacts edit",
@@ -2100,14 +2106,61 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     await fillContactEditField(page, "summary", updatedSummary, config.timeoutMs);
     await fillContactEditField(page, "email", updatedEmail, config.timeoutMs);
     await fillContactEditField(page, "phone", updatedPhone, config.timeoutMs);
+    const textReadyState = await readContactEditState(page);
+    assert(!textReadyState.save_disabled, `${mode}: Expected text-only contact edits to enable save before changing the photo`);
+    assert(!textReadyState.inline_save_disabled, `${mode}: Expected text-only contact edits to enable inline save before changing the photo`);
+    assert(textReadyState.preview_title === updatedTitle, `${mode}: Expected contact edit preview title to update before save, got ${textReadyState.preview_title}`);
     await recorder.capture({
       route: "contact-edit",
-      action: "Update contact fields",
-      expected: "The Contacts edit form accepts updated name, summary, email, and phone values before save.",
-      confirmation: `${modeLabel} edited contact fields populated cleanly in the form.`,
-      observed: { updated_title: updatedTitle, updated_summary: updatedSummary, updated_email: updatedEmail, updated_phone: updatedPhone },
+      action: "Confirm text-only edit enables save",
+      expected: "Typing new contact text alone updates the preview title and enables save before any photo change.",
+      confirmation: `${modeLabel} text-only contact edits updated the preview and unlocked save.`,
+      observed: { updated_title: updatedTitle, updated_summary: updatedSummary, updated_email: updatedEmail, updated_phone: updatedPhone, contact_edit: textReadyState },
     });
 
+    await page.locator('[data-contact-photo-remove="true"]').first().click();
+    await page.waitForFunction(() => {
+      const remove = document.querySelector('[data-contact-photo-remove="true"]');
+      return !document.querySelector(".light-contact-edit-page .light-avatar.has-photo img")
+        && remove instanceof HTMLElement
+        && remove.hidden;
+    }, undefined, { timeout: config.timeoutMs });
+    const removedPhotoState = await readContactEditState(page);
+    assert(!removedPhotoState.has_photo_preview, `${mode}: Expected removing the contact photo to clear the edit preview`);
+    assert(!removedPhotoState.remove_photo_visible, `${mode}: Expected remove photo action to hide after clearing the photo`);
+    await recorder.capture({
+      route: "contact-edit",
+      action: "Remove contact photo",
+      expected: "Removing the current contact photo clears the preview while keeping the text edits ready to save.",
+      confirmation: "The contact photo preview cleared and the remove action hid after removal.",
+      observed: { contact_edit: removedPhotoState },
+    });
+
+    await saveContactEditAndWaitForDetail(page, config.timeoutMs);
+    await waitForTextInBody(page, updatedTitle, config.timeoutMs);
+    await page.getByText(updatedEmail).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.getByText(updatedPhone).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.getByText(updatedSummary).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const removedPhotoRecord = await fetch(`${String(config.baseUrl || "").replace(/\/+$/, "")}/api/workspace/contacts/${encodeURIComponent(seed.contactId)}`, {
+      headers: {
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        Pragma: "no-cache",
+      },
+    }).then(async response => {
+      if (!response.ok) {
+        throw new Error(`Could not load updated contact record (${response.status})`);
+      }
+      return response.json();
+    });
+    assert(removedPhotoRecord.title === updatedTitle, `${mode}: Expected saved contact detail to show the updated title, got ${removedPhotoRecord.title}`);
+    assert(removedPhotoRecord.summary === updatedSummary, `${mode}: expected updated summary to persist, got ${removedPhotoRecord.summary}`);
+    assert(removedPhotoRecord.metadata?.email === updatedEmail, `${mode}: expected updated email to persist, got ${removedPhotoRecord.metadata?.email}`);
+    assert(removedPhotoRecord.metadata?.phone === updatedPhone, `${mode}: expected updated phone to persist, got ${removedPhotoRecord.metadata?.phone}`);
+    assert(!String(removedPhotoRecord.metadata?.photo || "").trim(), `${mode}: Expected contact edit to persist removing the existing photo`);
+    assert(!String(removedPhotoRecord.metadata?.photo_asset_id || "").trim(), `${mode}: Expected contact edit to persist removing the existing photo asset`);
+
+    await page.getByRole("button", { name: "Edit contact" }).first().click();
+    await waitForRoute(page, "contact-edit", config.timeoutMs);
     const photoInput = page.locator('input[type="file"][data-contact-photo-input="true"]').first();
     await photoInput.setInputFiles(photoPath);
     await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-edit-page .light-avatar.has-photo img")), undefined, { timeout: config.timeoutMs });
@@ -2151,6 +2204,24 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
         updated_email: updatedRecord.metadata?.email || "",
         updated_phone: updatedRecord.metadata?.phone || "",
         photo_asset_id: updatedRecord.metadata?.photo_asset_id || "",
+      },
+    });
+
+    await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await waitForRoute(page, "contact-detail", config.timeoutMs);
+    await waitForTextInBody(page, updatedTitle, config.timeoutMs);
+    await page.getByText(updatedEmail).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+    const reloadedRoute = await currentRoute(page);
+    assert(reloadedRoute === "contact-detail", `${mode}: Expected contact detail reload to stay on the edited contact, got ${reloadedRoute}`);
+    await recorder.capture({
+      route: "contact-detail",
+      action: "Reload saved contact detail",
+      expected: "Reloading the saved contact detail stays on the same edited contact instead of falling back to another record.",
+      confirmation: "The reloaded contact detail stayed on the edited contact.",
+      observed: {
+        updated_title: updatedTitle,
+        updated_email: updatedEmail,
+        route: reloadedRoute,
       },
     });
 

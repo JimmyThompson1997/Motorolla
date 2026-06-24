@@ -175,7 +175,7 @@
     lightReturnRoute: "",
     previousLightRoute: "home",
     lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history),
-    selectedContactId: "sarah",
+    selectedContactId: String(persistedNavState.selected_contact_id || persistedNavState.selectedContactId || "").trim() || "sarah",
     selectedMeetingId: "vendor",
     selectedMeetingNoteId: "demo-meeting-home-refresh",
     selectedReminderId: "demo-reminder-paint-samples",
@@ -5548,6 +5548,7 @@
       ...state.contacts.editDraft,
       ...patch,
     };
+    syncContactEditPage();
   }
 
   function contactEditPreviewRecord(contact, draft) {
@@ -5737,6 +5738,7 @@
 
   let contactsPageNode = null;
   let contactsPageRefs = null;
+  let contactEditPageRefs = null;
 
   function syncContactsSearchInput(refs) {
     if (document.activeElement !== refs.search && refs.search.value !== state.contacts.search) {
@@ -5886,6 +5888,33 @@
     return field;
   }
 
+  function syncContactEditPage() {
+    if (!contactEditPageRefs || !contactEditPageRefs.page) {
+      contactEditPageRefs = null;
+      return;
+    }
+    if (!contactEditPageRefs.page.isConnected && state.route !== "contact-edit") {
+      contactEditPageRefs = null;
+      return;
+    }
+    const draft = state.contacts.editDraft;
+    const contact = selectedContact() || contactEditPageRefs.contact;
+    if (!draft || !contact) {
+      return;
+    }
+    const preview = contactEditPreviewRecord(contact, draft);
+    const disabled = state.contacts.editSaving || !contactEditHasUnsavedChanges(draft);
+    contactEditPageRefs.previewTitle.textContent = preview.title;
+    contactEditPageRefs.avatar.replaceWith(lightAvatar(preview, "large"));
+    contactEditPageRefs.avatar = contactEditPageRefs.photoCard.querySelector(".light-avatar");
+    contactEditPageRefs.changePhoto.textContent = draft.photo ? "Change photo" : "Add photo";
+    contactEditPageRefs.removePhoto.hidden = !draft.photo;
+    contactEditPageRefs.saveButton.textContent = state.contacts.editSaving ? "Saving..." : "Save";
+    contactEditPageRefs.submit.textContent = state.contacts.editSaving ? "Saving..." : "Save contact";
+    contactEditPageRefs.saveButton.disabled = disabled;
+    contactEditPageRefs.submit.disabled = disabled;
+  }
+
   function lightContactEditPage() {
     const contact = selectedContact();
     if (!contact) {
@@ -5911,11 +5940,13 @@
 
     const preview = contactEditPreviewRecord(contact, draft);
     const photoCard = el("section", "light-contact-edit-photo-card");
+    let avatar = lightAvatar(preview, "large");
     const photoCopy = el("div", "light-contact-edit-photo-copy");
     photoCopy.append(
       el("h2", "light-contact-edit-photo-title", preview.title),
       el("p", "light-contact-edit-photo-detail", "Update the photo, name, summary, email, and phone while Activity and Connected stay read-only."),
     );
+    const previewTitle = photoCopy.querySelector(".light-contact-edit-photo-title");
     const photoActions = el("div", "light-contact-edit-photo-actions");
     const photoInput = el("input", "light-contact-edit-photo-input");
     photoInput.type = "file";
@@ -5929,7 +5960,6 @@
       }
       try {
         updateContactEditDraft(await prepareContactPhotoDraft(file));
-        render();
       } catch (error) {
         showToast(error.message);
       } finally {
@@ -5943,24 +5973,22 @@
       photoInput.click();
     });
     photoActions.append(changePhoto);
-    if (draft.photo) {
-      const removePhoto = el("button", "light-reminder-action-button", "Remove photo");
-      removePhoto.type = "button";
-      removePhoto.dataset.contactPhotoRemove = "true";
-      removePhoto.addEventListener("click", event => {
-        event.preventDefault();
-        updateContactEditDraft({
-          photo: "",
-          photoAssetId: "",
-          pendingPhotoBase64: "",
-          pendingPhotoMimeType: "",
-          pendingPhotoName: "",
-        });
-        render();
+    const removePhoto = el("button", "light-reminder-action-button", "Remove photo");
+    removePhoto.type = "button";
+    removePhoto.dataset.contactPhotoRemove = "true";
+    removePhoto.hidden = !draft.photo;
+    removePhoto.addEventListener("click", event => {
+      event.preventDefault();
+      updateContactEditDraft({
+        photo: "",
+        photoAssetId: "",
+        pendingPhotoBase64: "",
+        pendingPhotoMimeType: "",
+        pendingPhotoName: "",
       });
-      photoActions.append(removePhoto);
-    }
-    photoCard.append(lightAvatar(preview, "large"), photoCopy, photoActions, photoInput);
+    });
+    photoActions.append(removePhoto);
+    photoCard.append(avatar, photoCopy, photoActions, photoInput);
 
     const nameGrid = el("div", "light-contact-edit-name-grid");
     const firstNameInput = el("input", "light-project-input light-contact-edit-input");
@@ -6028,6 +6056,18 @@
       actions,
     );
     page.append(form);
+    contactEditPageRefs = {
+      page,
+      contact,
+      photoCard,
+      avatar,
+      previewTitle,
+      changePhoto,
+      removePhoto,
+      saveButton,
+      submit,
+    };
+    syncContactEditPage();
     return page;
   }
 
@@ -19351,6 +19391,7 @@
   function syncRouteQueryParam(route) {
     try {
       const url = new URL(window.location.href || "");
+      url.searchParams.delete("reset_nav");
       url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");
       window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);
     } catch (_) {
@@ -19645,6 +19686,7 @@
       localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
+        selected_contact_id: state.selectedContactId || null,
         selected_task_id: state.selectedTaskId || null,
         selected_project_id: state.selectedProjectId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),

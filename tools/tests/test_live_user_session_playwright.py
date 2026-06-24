@@ -223,13 +223,20 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "mobile" ? "Mobile" : "Proof";' in source
     assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "mobile" ? "0199" : "0189";' in source
     assert 'action: "Open Contacts edit"' in source
+    assert 'action: "Confirm text-only edit enables save"' in source
+    assert 'action: "Remove contact photo"' in source
     assert 'action: "Save edited contact"' in source
+    assert 'action: "Reload saved contact detail"' in source
     assert 'action: "Return to edited Contacts list"' in source
     assert "readContactEditState" in source
     assert "saveContactEditAndWaitForDetail" in source
     assert "Updated Live Contact" in source
     assert "Updated from ${modeKey} live proof edit flow" in source
     assert "updated.live.contact@example.com" in source
+    assert "Expected text-only contact edits to enable save before changing the photo" in source
+    assert "Expected contact edit preview title to update before save" in source
+    assert "Expected contact edit to persist removing the existing photo" in source
+    assert "Expected contact detail reload to stay on the edited contact" in source
     assert "Expected saved contact detail to show the updated title" in source
     assert "Expected edited contact row to reappear with the updated title" in source
 
