@@ -602,6 +602,34 @@ class FeedStore:
                         artifact_ids.add(artifact_id)
         return artifact_ids
 
+    def _connected_records_from_messages(self, transcript_messages: list[object]) -> list[dict[str, object]]:
+        connected_records: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for message in transcript_messages or []:
+            if not isinstance(message, dict):
+                continue
+            for item in message.get("connected_records") or []:
+                if not isinstance(item, dict):
+                    continue
+                kind = str(item.get("kind") or "").strip()
+                record_id = str(item.get("id") or item.get("record_id") or "").strip()
+                if not kind or not record_id:
+                    continue
+                key = (kind, record_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                connected_records.append(
+                    {
+                        "kind": kind,
+                        "collection": str(item.get("collection") or "").strip(),
+                        "id": record_id,
+                        "title": str(item.get("title") or "").strip(),
+                        "summary": str(item.get("summary") or "").strip(),
+                    }
+                )
+        return connected_records
+
     def _prune_card_artifacts(self, card_id: str, artifact_ids_to_keep: set[str]) -> None:
         if not artifact_ids_to_keep:
             self._conn.execute("DELETE FROM artifacts WHERE card_id = ?", (card_id,))
@@ -712,6 +740,10 @@ class FeedStore:
                 if isinstance(messages, list):
                     transcript_messages.extend(messages)
             latest_item["transcript_messages"] = transcript_messages
+            latest_item["connected_records"] = self._connected_records_from_messages(transcript_messages)
+            card = latest_item.get("card")
+            if isinstance(card, dict):
+                card["connected_records"] = list(latest_item["connected_records"])
         latest_item["thread_history_count"] = len(rows)
         card = latest_item.get("card")
         if isinstance(card, dict):
@@ -745,6 +777,7 @@ class FeedStore:
                 transcript_messages = []
         else:
             transcript_messages = []
+        connected_records = self._connected_records_from_messages(transcript_messages if isinstance(transcript_messages, list) else [])
         try:
             origin = json.loads(str(row["origin_json"] or "") or "{}")
         except Exception:
@@ -766,6 +799,7 @@ class FeedStore:
             "deleted": bool(int(row["deleted"])),
             "text": str(turn["reply_text"]) if turn is not None else str(row["summary"]),
             "transcript_messages": transcript_messages if isinstance(transcript_messages, list) else [],
+            "connected_records": connected_records,
             "card": {
                 "title": str(row["title"]),
                 "summary": str(row["summary"]),
@@ -774,6 +808,7 @@ class FeedStore:
                 "archived": bool(int(row["archived"])),
                 "read": bool(int(row["read"])),
                 "deleted": bool(int(row["deleted"])),
+                "connected_records": connected_records,
             },
             "telemetry": telemetry,
         }

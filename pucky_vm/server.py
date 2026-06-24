@@ -53,22 +53,24 @@ from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
 from .ui_route_perf_ledger import UiRoutePerfLedger
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
-from .workspace_store import SELF_CONTACT_ID, WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
+from .workspace_store import KIND_COLLECTIONS, SELF_CONTACT_ID, WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
 
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "You are Pucky, a concise voice assistant. Return only strict JSON with keys "
-    "reply_text, card_title, card_icon, html, and attachments. reply_text is the spoken user-facing answer. "
-    "card_title is a short title. card_icon is a lowercase slug using only letters, numbers, and underscores. "
-    "html is either null or an object with title and content, where content is a complete HTML document. "
-    "attachments is either null or an array of objects with path, mime_type, title, optional kind, "
-    "optional viewer_path, optional preview_path, and optional text. If you create a browser-displayable file, "
-    "do not only mention its filesystem path in reply_text. You must return it in attachments. "
-    "If the result is inline HTML, html must not be null. "
-    "Available reply-card icons can be listed from {local_api_base}/api/card-icons. "
-    "If none fit, you may add one by POSTing JSON to {local_api_base}/api/card-icons with Authorization: "
-    "Bearer from the local PUCKY_API_TOKEN environment variable, then use that slug in card_icon. "
-    "Do not include markdown fences or any text outside the JSON object."
+    "reply_text, card_title, card_icon, recording_title, attachments, graph_records, graph_links, and connected_records. "
+    "reply_text is the spoken user-facing answer. card_title is a short title. card_icon is a lowercase slug using only "
+    "letters, numbers, and underscores. attachments is either null or an array of true file/media payloads with path, "
+    "mime_type, title, optional kind, optional viewer_path, optional preview_path, and optional text. Do not use reply-level "
+    "HTML pages as the primary output surface. Instead, create or update workspace records in graph_records, connect them with "
+    "graph_links, and list the ordered durable outputs in connected_records. Each graph_record may include record_key plus either "
+    "kind or collection, along with payload fields or a nested payload object. Each graph_link must include source and target refs "
+    "using either record_key or explicit kind/collection + id. connected_records should reference created or existing workspace "
+    "records in the order they should appear in the UI. Notes remain the only rich-content owner, so any durable HTML should live "
+    "inside a note record rather than a reply page. Available reply-card icons can be listed from {local_api_base}/api/card-icons. "
+    "If none fit, you may add one by POSTing JSON to {local_api_base}/api/card-icons with Authorization: Bearer from the local "
+    "PUCKY_API_TOKEN environment variable, then use that slug in card_icon. Do not include markdown fences or any text outside "
+    "the JSON object."
 )
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
 DEFAULT_CARD_ICON = "mail"
@@ -353,9 +355,11 @@ class ReplyEnvelope:
     card_icon: str
     recording_title: str = ""
     transcript_text: str = ""
-    html_title: str = ""
-    html_content: str = ""
     attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    graph_records: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    graph_links: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    connected_records: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    legacy_html_requested: bool = False
 
 
 @dataclass(frozen=True)
@@ -772,6 +776,140 @@ class PuckyVoiceService:
                 validate_delivery_targets=not action_only_patch,
             ),
         )
+
+    @staticmethod
+    def _reply_graph_collection(value: object) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        lower = raw.lower()
+        if lower in WORKSPACE_COLLECTIONS:
+            return lower
+        return KIND_COLLECTIONS.get(lower, "")
+
+    @staticmethod
+    def _reply_graph_record_payload(item: dict[str, object]) -> dict[str, object]:
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else None
+        if payload is None:
+            payload = {
+                key: value
+                for key, value in dict(item or {}).items()
+                if key not in {"record_key", "collection", "kind", "payload"}
+            }
+        payload = dict(payload)
+        explicit_id = str(item.get("id") or payload.get("id") or payload.get("record_id") or "").strip()
+        if explicit_id and "id" not in payload and "record_id" not in payload:
+            payload["id"] = explicit_id
+        return payload
+
+    @staticmethod
+    def _workspace_record_snapshot(record: dict[str, object]) -> dict[str, object]:
+        kind = str(record.get("kind") or "").strip()
+        collection = str(record.get("collection") or KIND_COLLECTIONS.get(kind, "")).strip()
+        record_id = str(record.get("id") or record.get("record_id") or "").strip()
+        return {
+            "kind": kind,
+            "collection": collection,
+            "id": record_id,
+            "title": str(record.get("title") or "").strip(),
+            "summary": str(record.get("summary") or "").strip(),
+        }
+
+    def _lookup_reply_graph_record(self, ref: dict[str, object]) -> dict[str, object] | None:
+        collection = self._reply_graph_collection(ref.get("collection") or ref.get("kind"))
+        record_id = str(ref.get("id") or ref.get("record_id") or "").strip()
+        kind = str(ref.get("kind") or WORKSPACE_COLLECTIONS.get(collection, "")).strip()
+        if not collection or not record_id or not kind:
+            return None
+        record = self.workspace.get_record(collection, record_id)
+        if isinstance(record, dict):
+            return self._workspace_record_snapshot(record)
+        fallback_title = str(ref.get("title") or ref.get("label") or record_id or kind.replace("_", " ").title()).strip()
+        fallback_summary = str(ref.get("summary") or "").strip()
+        return {
+            "kind": kind,
+            "collection": collection,
+            "id": record_id,
+            "title": fallback_title,
+            "summary": fallback_summary,
+        }
+
+    def _resolve_reply_graph_ref(
+        self,
+        ref: object,
+        created_records: dict[str, dict[str, object]],
+    ) -> dict[str, object] | None:
+        if not isinstance(ref, dict):
+            return None
+        record_key = str(ref.get("record_key") or "").strip()
+        if record_key:
+            resolved = created_records.get(record_key)
+            if resolved:
+                return dict(resolved)
+        return self._lookup_reply_graph_record(ref)
+
+    def _resolve_reply_graph_outputs(self, envelope: ReplyEnvelope) -> list[dict[str, object]]:
+        created_records: dict[str, dict[str, object]] = {}
+        created_order: list[dict[str, object]] = []
+        for raw in envelope.graph_records:
+            item = dict(raw or {})
+            collection = self._reply_graph_collection(item.get("collection") or item.get("kind"))
+            if not collection:
+                raise ValueError("graph_record_collection_required")
+            payload = self._reply_graph_record_payload(item)
+            record = self.workspace_upsert_record(collection, payload)
+            snapshot = self._workspace_record_snapshot(record)
+            record_key = str(item.get("record_key") or "").strip() or f"{snapshot['kind']}:{snapshot['id']}"
+            created_records[record_key] = snapshot
+            created_order.append(snapshot)
+        for raw in envelope.graph_links:
+            item = dict(raw or {})
+            source = self._resolve_reply_graph_ref(item.get("source"), created_records)
+            target = self._resolve_reply_graph_ref(item.get("target"), created_records)
+            if not source or not target:
+                raise ValueError("graph_link_record_ref_required")
+            self.workspace.upsert_link(
+                {
+                    "id": item.get("id") or item.get("link_id"),
+                    "source_kind": source["kind"],
+                    "source_id": source["id"],
+                    "target_kind": target["kind"],
+                    "target_id": target["id"],
+                    "label": str(item.get("label") or "").strip(),
+                    "metadata": dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {},
+                }
+            )
+        raw_connected = envelope.connected_records or tuple(created_order)
+        connected_records: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for ref in raw_connected:
+            snapshot = self._resolve_reply_graph_ref(ref, created_records)
+            if not snapshot:
+                raise ValueError("connected_record_ref_required")
+            key = (str(snapshot.get("kind") or "").strip(), str(snapshot.get("id") or "").strip())
+            if not key[0] or not key[1] or key in seen:
+                continue
+            seen.add(key)
+            connected_records.append(snapshot)
+        return connected_records
+
+    @staticmethod
+    def _validate_meeting_graph_outputs(
+        _record: dict[str, object],
+        envelope: ReplyEnvelope,
+        connected_records: list[dict[str, object]],
+    ) -> None:
+        note_records = [
+            item for item in envelope.graph_records
+            if PuckyVoiceService._reply_graph_collection(item.get("collection") or item.get("kind")) == "notes"
+        ]
+        if len(note_records) != 1:
+            raise ValueError("meeting_primary_note_required")
+        if not connected_records or str(connected_records[0].get("kind") or "").strip() != "note":
+            raise ValueError("meeting_primary_note_must_be_first")
+        note_targets = [item for item in connected_records if str(item.get("kind") or "").strip() == "note"]
+        if len(note_targets) != 1:
+            raise ValueError("meeting_connected_note_count_invalid")
 
     def _prepare_reminder_write_payload(
         self,
@@ -3709,6 +3847,11 @@ class PuckyVoiceService:
                     record=record,
                     envelope=envelope,
                 ),
+                graph_output_validator=lambda envelope, connected_records: self._validate_meeting_graph_outputs(
+                    record,
+                    envelope,
+                    connected_records,
+                ),
                 codex_stage="meeting_agent_call",
                 feed_persist_stage="feed_persist",
             )
@@ -3794,7 +3937,7 @@ class PuckyVoiceService:
         transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
         parsed_turns = _parse_meeting_transcript_turns(transcript_text)
         card = result.get("card") if isinstance(result.get("card"), dict) else {}
-        title = str(card.get("title") or result.get("title") or record.get("title") or "").strip()
+        title = str(record.get("title") or card.get("title") or result.get("title") or "").strip()
         if title:
             record["title"] = title
         recording_title = str(result.get("recording_title") or record.get("recording_title") or "").strip()
@@ -3836,6 +3979,9 @@ class PuckyVoiceService:
             }
         )
         record["agent"] = agent
+        connected_records = [dict(item) for item in list(result.get("connected_records") or []) if isinstance(item, dict)]
+        if connected_records:
+            record["connected_records"] = connected_records
 
     def _apply_meeting_agent_state_to_feed_item(self, record: dict[str, object]) -> None:
         feed_item = record.get("feed_item")
@@ -4023,11 +4169,8 @@ class PuckyVoiceService:
         transcript_html_path = ""
         transcript_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript"
         transcript_html_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript_html"
-        summary_artifact_id = f"pucky_card_{meeting_id}:html"
-        transcript_href = self.meeting_artifact_signed_url(transcript_html_artifact_id)
         transcript_plain_href = self.meeting_artifact_signed_url(transcript_artifact_id)
         audio_href = self.meeting_audio_signed_url(meeting_id)
-        finalized_summary_html = ""
         if transcript_source:
             transcript_path = str(self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", transcript_text))
             record["transcript_path"] = transcript_path
@@ -4057,56 +4200,6 @@ class PuckyVoiceService:
                     }
                 )
             )
-            prepared.append(
-                normalize_attachment(
-                    {
-                        "id": f"{meeting_id}:transcript_html",
-                        "path": transcript_html_path,
-                        "artifact": transcript_html_artifact_id,
-                        "viewer_artifact": transcript_html_artifact_id,
-                        "html_artifact": transcript_html_artifact_id,
-                        "viewer_url": transcript_href,
-                        "html_url": transcript_href,
-                        "mime_type": "text/html",
-                        "title": "Transcript",
-                        "kind": "html",
-                        "meeting_id": meeting_id,
-                        "canonical_basename": canonical_basename,
-                        "recording_title": recording_title,
-                        "transcript_path": transcript_path,
-                    }
-                )
-            )
-        if envelope.html_content:
-            html_title = "Meeting Summary"
-            html_artifact = summary_artifact_id
-            finalized_summary_html = _meeting_summary_html_with_vm_links(
-                envelope.html_content,
-                transcript_href,
-                audio_href,
-            )
-            prepared.append(
-                normalize_attachment(
-                    {
-                        "id": f"{meeting_id}:html",
-                        "artifact": html_artifact,
-                        "viewer_artifact": html_artifact,
-                        "html_artifact": html_artifact,
-                        "viewer_url": self.meeting_artifact_signed_url(html_artifact),
-                        "html_url": self.meeting_artifact_signed_url(html_artifact),
-                        "mime_type": "text/html",
-                        "title": html_title,
-                        "kind": "html",
-                        "meeting_id": meeting_id,
-                        "canonical_basename": canonical_basename,
-                        "recording_title": recording_title,
-                        "started_at": str(record.get("started_at") or record.get("created_at") or ""),
-                        "mime_type_audio": str(record.get("mime_type") or ""),
-                        "transcript_path": transcript_path,
-                        "transcript_html_path": transcript_html_path,
-                    }
-                )
-            )
         audio_attachment = _meeting_audio_attachment_payload(record, canonical_basename)
         if audio_attachment:
             if audio_href:
@@ -4126,7 +4219,6 @@ class PuckyVoiceService:
             "recording_title": recording_title,
             "recording_title_source": recording_title_source,
             "canonical_basename": canonical_basename,
-            "summary_html_content": finalized_summary_html,
         }
 
     def _write_meeting_text_artifact(self, meeting_id: str, canonical_basename: str, suffix: str, content: str) -> Path:
@@ -4302,6 +4394,7 @@ class PuckyVoiceService:
             "agent",
             "card_id",
             "card",
+            "connected_records",
             "failure_stage",
             "failure_reason",
             "archived",
@@ -4635,6 +4728,7 @@ class PuckyVoiceService:
         force_unread: bool = False,
         codex_client: CodexProvider | None = None,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
+        graph_output_validator: Callable[[ReplyEnvelope, list[dict[str, object]]], None] | None = None,
         codex_stage: str = "codex_turn",
         feed_persist_stage: str = "feed_persist",
     ) -> dict[str, object]:
@@ -4741,7 +4835,8 @@ class PuckyVoiceService:
         telemetry["reply_chars"] = len(envelope.reply_text)
         telemetry["card_icon"] = envelope.card_icon
         telemetry["recording_title"] = envelope.recording_title
-        telemetry["has_html"] = bool(envelope.html_content)
+        telemetry["graph_record_count"] = len(envelope.graph_records)
+        telemetry["graph_link_count"] = len(envelope.graph_links)
         try:
             client.set_thread_title(envelope.card_title, thread_id=codex_result.used_thread_id)
             telemetry["codex_thread_title_synced"] = True
@@ -4757,6 +4852,12 @@ class PuckyVoiceService:
         telemetry["origin_thread_id"] = origin.get("thread_id", "")
         telemetry["origin_model"] = origin.get("model", "")
         telemetry["origin_reasoning_effort"] = origin.get("reasoning_effort", "")
+        if envelope.legacy_html_requested:
+            raise ValueError("legacy_reply_html_not_supported")
+        connected_records = self._resolve_reply_graph_outputs(envelope)
+        if graph_output_validator is not None:
+            graph_output_validator(envelope, connected_records)
+        telemetry["connected_record_count"] = len(connected_records)
 
         if attachment_builder is not None:
             attachments, attachment_meta = attachment_builder(envelope)
@@ -4794,6 +4895,7 @@ class PuckyVoiceService:
                 text=envelope.reply_text,
                 created_at=_iso_time(time.time()),
                 attachments=attachments,
+                connected_records=connected_records,
             )
         ]
         card: dict[str, object] = {
@@ -4802,17 +4904,8 @@ class PuckyVoiceService:
             "icon": envelope.card_icon,
             "accent": self._card_icon_accent(envelope.card_icon),
             "origin": origin,
+            "connected_records": connected_records,
         }
-        html_mime_type = ""
-        html_base64 = ""
-        final_html_content = str(attachment_meta.get("summary_html_content") or envelope.html_content or "")
-        if final_html_content:
-            html_bytes = final_html_content.encode("utf-8")
-            if len(html_bytes) <= self.config.max_html_bytes:
-                html_mime_type = "text/html"
-                html_base64 = base64.b64encode(html_bytes).decode("ascii")
-                card["html_mime_type"] = html_mime_type
-                card["html_base64"] = html_base64
         telemetry["total_ms"] = _elapsed_ms(total_start)
         telemetry["status"] = "ok"
         telemetry["feed_db_path"] = self.feed.db_path
@@ -4834,8 +4927,8 @@ class PuckyVoiceService:
                 request_audio_base64=request_audio_base64,
                 audio_mime_type=audio_mime_type,
                 audio_base64=audio_base64,
-                html_mime_type=html_mime_type,
-                html_base64=html_base64,
+                html_mime_type="",
+                html_base64="",
                 force_unread=force_unread,
             ),
             sqlite_retry=True,
@@ -4863,6 +4956,7 @@ class PuckyVoiceService:
             result["recording_title"] = envelope.recording_title
         if envelope.transcript_text:
             result["transcript_text"] = envelope.transcript_text
+        result["connected_records"] = connected_records
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -4902,18 +4996,6 @@ class PuckyVoiceService:
                 raw_items = [{"path": path, "title": Path(path).name} for path in fallback_paths]
                 meta["fallback_from_reply_text"] = True
         prepared: list[dict[str, object]] = []
-        if envelope.html_content:
-            prepared.append(
-                normalize_attachment(
-                    {
-                        "id": f"{turn_id}:html",
-                        "artifact": f"pucky_card_{turn_id}:html",
-                        "mime_type": "text/html",
-                        "title": envelope.html_title or envelope.card_title or "HTML page",
-                        "kind": "html",
-                    }
-                )
-            )
         for index, item in enumerate(raw_items):
             normalized = self._prepare_one_reply_attachment(turn_id=turn_id, index=index, item=item)
             if normalized is not None:
@@ -5047,26 +5129,37 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
     card_title = (str(data.get("card_title") or "").strip() or fallback_title(reply_text))[:MAX_CARD_TITLE_CHARS].strip() or "Pucky"
     recording_title = str(data.get("recording_title") or "").strip()[:MAX_CARD_TITLE_CHARS].strip()
     transcript_text = str(data.get("transcript_text") or "").replace("\r\n", "\n").strip()
-    html_title = ""
-    html_content = ""
-    html = data.get("html")
-    if isinstance(html, dict):
-        html_title = str(html.get("title") or "").strip()
-        html_content = str(html.get("content") or "").strip()
     attachments: list[dict[str, object]] = []
     if isinstance(data.get("attachments"), list):
         for item in data.get("attachments") or []:
             if isinstance(item, dict):
                 attachments.append(dict(item))
+    graph_records: list[dict[str, object]] = []
+    if isinstance(data.get("graph_records"), list):
+        for item in data.get("graph_records") or []:
+            if isinstance(item, dict):
+                graph_records.append(dict(item))
+    graph_links: list[dict[str, object]] = []
+    if isinstance(data.get("graph_links"), list):
+        for item in data.get("graph_links") or []:
+            if isinstance(item, dict):
+                graph_links.append(dict(item))
+    connected_records: list[dict[str, object]] = []
+    if isinstance(data.get("connected_records"), list):
+        for item in data.get("connected_records") or []:
+            if isinstance(item, dict):
+                connected_records.append(dict(item))
     return ReplyEnvelope(
-        reply_text,
-        card_title,
-        normalize_card_icon(data.get("card_icon")),
-        recording_title,
-        transcript_text,
-        html_title,
-        html_content,
-        tuple(attachments),
+        reply_text=reply_text,
+        card_title=card_title,
+        card_icon=normalize_card_icon(data.get("card_icon")),
+        recording_title=recording_title,
+        transcript_text=transcript_text,
+        attachments=tuple(attachments),
+        graph_records=tuple(graph_records),
+        graph_links=tuple(graph_links),
+        connected_records=tuple(connected_records),
+        legacy_html_requested=isinstance(data.get("html"), dict) and bool(str((data.get("html") or {}).get("content") or "").strip()),
     )
 
 
@@ -5089,15 +5182,6 @@ def reply_output_schema() -> dict[str, object]:
             "card_title": {"type": "string"},
             "card_icon": {"type": "string"},
             "recording_title": {"type": ["string", "null"]},
-            "html": {
-                "type": ["object", "null"],
-                "additionalProperties": False,
-                "properties": {
-                    "title": {"type": "string"},
-                    "content": {"type": "string"},
-                },
-                "required": ["title", "content"],
-            },
             "attachments": {
                 "type": ["array", "null"],
                 "items": {
@@ -5115,8 +5199,54 @@ def reply_output_schema() -> dict[str, object]:
                     "required": ["path", "mime_type", "title", "kind", "viewer_path", "preview_path", "text"],
                 },
             },
+            "graph_records": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "record_key": {"type": ["string", "null"]},
+                        "collection": {"type": ["string", "null"]},
+                        "kind": {"type": ["string", "null"]},
+                        "payload": {"type": ["object", "null"]},
+                        "id": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": True,
+                },
+            },
+            "graph_links": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "id": {"type": ["string", "null"]},
+                        "link_id": {"type": ["string", "null"]},
+                        "label": {"type": ["string", "null"]},
+                        "metadata": {"type": ["object", "null"]},
+                        "source": {"type": ["object", "null"], "additionalProperties": True},
+                        "target": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "required": ["id", "link_id", "label", "metadata", "source", "target"],
+                },
+            },
+            "connected_records": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "record_key": {"type": ["string", "null"]},
+                        "collection": {"type": ["string", "null"]},
+                        "kind": {"type": ["string", "null"]},
+                        "id": {"type": ["string", "null"]},
+                        "record_id": {"type": ["string", "null"]},
+                        "title": {"type": ["string", "null"]},
+                        "summary": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": True,
+                },
+            },
         },
-        "required": ["reply_text", "card_title", "card_icon", "recording_title", "html", "attachments"],
+        "required": ["reply_text", "card_title", "card_icon", "recording_title", "attachments", "graph_records", "graph_links", "connected_records"],
     }
 
 
@@ -5176,6 +5306,7 @@ def _assistant_transcript_message(
     text: str,
     created_at: str,
     attachments: list[dict[str, object]],
+    connected_records: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     message = {
         "role": "assistant",
@@ -5184,6 +5315,8 @@ def _assistant_transcript_message(
     }
     if attachments:
         message["attachments"] = attachments
+    if connected_records:
+        message["connected_records"] = [dict(item) for item in connected_records if isinstance(item, dict)]
     return message
 
 
@@ -5284,7 +5417,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text. Use due dates only when the meeting explicitly states them. The summary HTML is invalid unless it includes the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} as standalone tokens. Do not wrap those placeholders in your own <a> tags, and do not replace them with raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
+Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish transcript artifacts from transcript_text. Do not emit reply-level HTML. Instead, create exactly one primary regular note in graph_records containing the merged durable meeting output, optionally create any extra task/project/reminder/contact/note updates in graph_records, connect them with graph_links, and list the final durable outputs in connected_records with the primary note first. Use due dates only when the meeting explicitly states them.
 """.strip()
 
 

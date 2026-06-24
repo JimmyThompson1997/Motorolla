@@ -11,11 +11,9 @@ Meeting Mode Agent
    - due date only when explicitly stated
 7. Produce card_title for the feed tile.
 8. Produce recording_title for the saved meeting audio and transcript basename.
-9. Produce the meeting summary HTML.
-10. In the meeting summary HTML, include exactly two standalone placeholder tokens:
-    - {{PUCKY_MEETING_TRANSCRIPT_LINK}}
-    - {{PUCKY_MEETING_AUDIO_LINK}}
-11. Do not wrap those placeholder tokens in your own <a> tags, and do not replace them with raw URLs, /tmp paths, inline JavaScript, or custom playback UI.
-12. The platform will publish the transcript HTML artifact from transcript_text and render the final links.
-13. Do not invent names, owners, due dates, or completed outcomes.
-
+9. Create exactly one primary regular note in graph_records. This note is the canonical durable meeting output.
+10. Put the merged meeting content inside that note. Notes are the only rich-content owner.
+11. Use graph_links for any related task, project, reminder, contact, or note updates you create.
+12. Set connected_records so the primary regular note is first, followed by any other durable outputs in display order.
+13. Do not emit reply-level HTML pages.
+14. Do not invent names, owners, due dates, or completed outcomes.

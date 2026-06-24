@@ -702,6 +702,56 @@ async function waitForMeetingsReady(page, timeoutMs) {
   }, undefined, { timeout: timeoutMs });
 }
 
+async function readInboxConnectedDetailState(page) {
+  return page.evaluate(() => ({
+    detailTitle: String(document.querySelector("#detail .light-page-title")?.textContent || "").replace(/\s+/g, " ").trim(),
+    pageActionCount: document.querySelectorAll('.light-shell[data-light-route="inbox"] [data-card-action="page"], .light-shell[data-light-route="inbox"] [data-card-action="attachment"]').length,
+    connectedChipLabels: Array.from(document.querySelectorAll("#detail .bubble-connected-record-row .light-record-chip"))
+      .map(node => String(node.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean),
+  }));
+}
+
+async function readMeetingRuntimeDetailState(page) {
+  return page.evaluate(() => {
+    const detail = document.getElementById("detail");
+    const connected = detail?.querySelector('.light-linked-records-section[data-linked-records-title="connected"]');
+    const list = connected?.querySelector(".light-linked-record-list");
+    const rows = Array.from(connected?.querySelectorAll(".light-linked-record-feed-row") || []);
+    const detailRows = Array.from(detail?.querySelectorAll(".light-meeting-runtime-details-section .light-calendar-detail-row-label") || [])
+      .map(node => String(node.textContent || "").trim())
+      .filter(Boolean);
+    return {
+      title: String(detail?.querySelector(".light-page-title")?.textContent || "").replace(/\s+/g, " ").trim(),
+      summary: String(detail?.querySelector(".light-meeting-runtime-summary")?.textContent || "").replace(/\s+/g, " ").trim(),
+      detailRows,
+      connectedSectionCount: connected ? 1 : 0,
+      connectedIsFlat: Boolean(list?.classList.contains("is-flat-feed")),
+      connectedRowCount: rows.length,
+      connectedChevronCount: connected?.querySelectorAll(".light-chevron").length || 0,
+      connectedChipCount: connected?.querySelectorAll(".light-graph-chip, .light-graph-chip-row").length || 0,
+      connectedRoutes: rows.map(row => String(row.getAttribute("data-workspace-target-route") || "").trim()),
+      connectedIds: rows.map(row => String(row.getAttribute("data-workspace-target-id") || "").trim()),
+      connectedTitles: rows
+        .map(row => String(row.querySelector(".light-text-stack strong")?.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+      noteRowCount: connected?.querySelectorAll('[data-workspace-target-route="note-detail"]').length || 0,
+    };
+  });
+}
+
+async function waitForNotesListReady(page, timeoutMs) {
+  await page.waitForFunction(() => {
+    return Boolean(document.querySelector(".light-note-row")) || Boolean(document.querySelector(".light-empty-state"));
+  }, undefined, { timeout: timeoutMs });
+}
+
+async function waitForMeetingNotesListReady(page, timeoutMs) {
+  await page.waitForFunction(() => {
+    return Boolean(document.querySelector(".light-graph-row")) || Boolean(document.querySelector(".light-empty-state"));
+  }, undefined, { timeout: timeoutMs });
+}
+
 async function waitForConnectReady(page, timeoutMs) {
   await page.waitForFunction(() => {
     return Boolean(
@@ -1579,7 +1629,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
         route: "meetings",
         action: runtimeMeetingId ? "Open runtime meeting record" : "Open first meeting record",
         expected: runtimeMeetingId
-          ? "The runtime-ingested meeting appears in Meetings and opens its summary detail."
+          ? "The runtime-ingested meeting appears in Meetings and opens its runtime detail shell."
           : "The first meeting record opens its detail panel.",
         confirmation: runtimeMeetingId ? "Runtime meeting detail panel opened." : "Meeting detail panel opened.",
         observed: { empty: false, meeting_title: targetTitle, meeting_card_kind: targetCardKind, detail_title: detailTitle, detail_text: detailText, meeting_id: runtimeMeetingId },
@@ -2431,6 +2481,119 @@ async function runProofMode(browser, config, mode, seed, runtimeMeeting = null) 
   }
 }
 
+async function proveRuntimeMeetingTerminal(browser, config, runtimeMeeting) {
+  const viewport = { width: 430, height: 932 };
+  const context = await browser.newContext({
+    viewport,
+    screen: viewport,
+    hasTouch: true,
+    isMobile: true,
+  });
+  await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
+  const page = await context.newPage();
+  const consoleLogPath = path.join(config.reportDir, "runtime-terminal.console.log");
+  const tracking = buildPageTracking(page, consoleLogPath);
+  const screenshots = {};
+  try {
+    const meetingId = String(runtimeMeeting?.meetingId || "").trim();
+    const meetingTitle = normalizeText(runtimeMeeting?.title || meetingId);
+    assert(meetingId, "Runtime meeting proof is missing meetingId");
+    assert(String(runtimeMeeting?.state || "").trim().toLowerCase() === "completed", `Runtime meeting ${meetingId} did not complete successfully for note-first verification (state ${runtimeMeeting?.state || ""}).`);
+
+    const meetingsUrl = buildRouteUrl(config, "meetings", "light");
+    await gotoAndWaitForRoute(page, meetingsUrl, "meetings", config.timeoutMs);
+    await waitForMeetingsReady(page, config.timeoutMs);
+    const meetingCard = page.locator(`article[data-card-session-id="${meetingId}"] .card-body`).first();
+    await meetingCard.waitFor({ state: "visible", timeout: config.timeoutMs });
+    screenshots.meetings_terminal = await saveScreenshot(page, config.reportDir, "runtime-meetings-terminal");
+    await meetingCard.click();
+    await waitForDetailOpen(page, config.timeoutMs);
+    const meetingDetail = await readMeetingRuntimeDetailState(page);
+    assert(meetingDetail.connectedSectionCount === 1, "Completed runtime meeting detail should render a Connected section.");
+    assert(meetingDetail.connectedIsFlat, "Completed runtime meeting detail should render a flat Connected feed shell.");
+    assert(meetingDetail.connectedRowCount > 0, "Completed runtime meeting detail should render at least one connected row.");
+    assert(meetingDetail.noteRowCount >= 1, "Completed runtime meeting detail should render a regular note as a connected row.");
+    assert(meetingDetail.connectedRoutes[0] === "note-detail", `Completed runtime meeting should put the merged note first in Connected (saw ${meetingDetail.connectedRoutes[0] || "<missing>"}).`);
+    assert(meetingDetail.connectedChevronCount === 0, "Completed runtime meeting Connected feed should omit chevrons.");
+    assert(meetingDetail.connectedChipCount === 0, "Completed runtime meeting Connected feed should omit pills.");
+    screenshots.meeting_detail_connected = await saveScreenshot(page, config.reportDir, "runtime-meeting-detail-connected");
+
+    const noteRow = page.locator('#detail .light-linked-records-section[data-linked-records-title="connected"] [data-workspace-target-route="note-detail"]').first();
+    await noteRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await noteRow.click();
+    await waitForRoute(page, "note-detail", config.timeoutMs);
+    await waitForTextInBody(page, meetingTitle, config.timeoutMs);
+    screenshots.meeting_note_open = await saveScreenshot(page, config.reportDir, "runtime-meeting-note-open");
+    await clickBack(page, config.timeoutMs);
+    await waitForRoute(page, "meetings", config.timeoutMs);
+    await waitForDetailOpen(page, config.timeoutMs);
+    await closeDetailPanel(page, config.timeoutMs);
+
+    const notesUrl = buildRouteUrl(config, "notes", "light");
+    await gotoAndWaitForRoute(page, notesUrl, "notes", config.timeoutMs);
+    await waitForNotesListReady(page, config.timeoutMs);
+    await waitForTextInBody(page, meetingTitle, config.timeoutMs);
+    screenshots.notes_list = await saveScreenshot(page, config.reportDir, "runtime-notes-list");
+
+    const meetingNotesUrl = buildRouteUrl(config, "meeting-notes", "light");
+    await gotoAndWaitForRoute(page, meetingNotesUrl, "meeting-notes", config.timeoutMs);
+    await waitForMeetingNotesListReady(page, config.timeoutMs);
+    const meetingNotesTexts = await page.locator(".light-graph-row").evaluateAll(nodes =>
+      nodes.map(node => String(node.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean)
+    ).catch(() => []);
+    assert(!meetingNotesTexts.some(text => text === meetingTitle), "Captured runtime meeting note should live in Notes only and not leak into Meeting Notes.");
+
+    const inboxUrl = buildRouteUrl(config, "inbox", "light");
+    await gotoAndWaitForRoute(page, inboxUrl, "inbox", config.timeoutMs);
+    await waitForInboxReady(page, config.timeoutMs);
+    const inboxCard = page.locator(`article[data-card-session-id="${meetingId}"] .card-body`).first();
+    await inboxCard.waitFor({ state: "visible", timeout: config.timeoutMs });
+    const inlinePageActions = await page.locator('.light-shell[data-light-route="inbox"] [data-card-action="page"], .light-shell[data-light-route="inbox"] [data-card-action="attachment"]').count();
+    assert(inlinePageActions === 0, `Inbox compact cards should not render page/paperclip actions after the graph-first cutover (found ${inlinePageActions}).`);
+    screenshots.inbox_terminal = await saveScreenshot(page, config.reportDir, "runtime-inbox-terminal");
+    await inboxCard.click();
+    await waitForDetailOpen(page, config.timeoutMs);
+    const inboxDetail = await readInboxConnectedDetailState(page);
+    assert(inboxDetail.connectedChipLabels.length > 0, "Inbox transcript detail should render inline connected record chips for the runtime meeting.");
+    screenshots.inbox_detail_connected = await saveScreenshot(page, config.reportDir, "runtime-inbox-detail-connected");
+    const inlineNoteChip = page.locator('#detail .bubble-connected-record-row [data-workspace-target-route="note-detail"]').first();
+    await inlineNoteChip.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await inlineNoteChip.click();
+    await waitForRoute(page, "note-detail", config.timeoutMs);
+    await waitForTextInBody(page, meetingTitle, config.timeoutMs);
+    await clickBack(page, config.timeoutMs);
+    await waitForRoute(page, "inbox", config.timeoutMs);
+    await waitForDetailOpen(page, config.timeoutMs);
+    await closeDetailPanel(page, config.timeoutMs);
+
+    const pageErrors = tracking.pageErrors.slice();
+    const badConsole = seriousConsoleErrors(tracking.consoleErrors);
+    const badRequests = seriousFailedRequests(tracking.failedRequests, config.baseUrl);
+    const badResponses = seriousHttpErrorResponses(tracking.httpErrorResponses, config.baseUrl);
+    assert(pageErrors.length === 0, `runtime terminal proof: unexpected page errors: ${JSON.stringify(pageErrors)}`);
+    assert(badConsole.length === 0, `runtime terminal proof: unexpected console errors: ${JSON.stringify(badConsole)}`);
+    assert(badRequests.length === 0, `runtime terminal proof: unexpected failed requests: ${JSON.stringify(badRequests)}`);
+    assert(badResponses.length === 0, `runtime terminal proof: unexpected HTTP error responses: ${JSON.stringify(badResponses)}`);
+
+    return {
+      page_url: meetingsUrl,
+      meeting_id: meetingId,
+      meeting_title: meetingTitle,
+      screenshots,
+      meeting_detail: meetingDetail,
+      inbox_detail: inboxDetail,
+      meeting_notes_texts: meetingNotesTexts,
+      console_log: consoleLogPath,
+      page_errors: pageErrors,
+      console_errors: tracking.consoleErrors,
+      failed_requests: tracking.failedRequests,
+      http_error_responses: tracking.httpErrorResponses,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 function renderReport(summary) {
   const lines = [
     "# Live User Session Browser Proof",
@@ -2448,6 +2611,9 @@ function renderReport(summary) {
     lines.push(`- Runtime meeting title: ${summary.runtime_meeting.title}`);
     lines.push(`- Runtime meeting id: ${summary.runtime_meeting.meetingId || ""}`);
     lines.push(`- Archived meetings before proof: ${(summary.runtime_meeting.archivedMeetingIds || []).length}`);
+  }
+  if (summary.runtime_terminal) {
+    lines.push(`- Runtime terminal note-first proof: ok`);
   }
   if (summary.cleanup_error) {
     lines.push(`- Cleanup error: ${summary.cleanup_error}`);
@@ -2504,6 +2670,7 @@ async function main() {
   let iphone = null;
   let android = null;
   let runtimeMeeting = null;
+  let runtimeTerminal = null;
   let pendingError = null;
   let cleanupOk = true;
   let cleanupError = "";
@@ -2533,6 +2700,7 @@ async function main() {
       await restoreTaskProofSeed(config.baseUrl, config.apiToken, seed);
       desktop = await runProofMode(browser, config, "desktop", seed, runtimeMeeting);
       runtimeMeeting = await finalizeRuntimeMeeting(config.baseUrl, config.apiToken, runtimeMeeting, config.timeoutMs);
+      runtimeTerminal = await proveRuntimeMeetingTerminal(browser, config, runtimeMeeting);
     }
   } catch (error) {
     pendingError = error;
@@ -2580,6 +2748,7 @@ async function main() {
     proof_modes: contactEditOnly ? ["desktop", "iphone", "android"] : ["mobile", "desktop"],
     universal_feed_tile_routes: UNIVERSAL_FEED_TILE_ROUTES.slice(),
     runtime_meeting: runtimeMeeting,
+    runtime_terminal: runtimeTerminal,
     mobile,
     desktop,
     iphone,

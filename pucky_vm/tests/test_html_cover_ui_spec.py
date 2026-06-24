@@ -298,7 +298,8 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "const currentSnapshot = captureLightRouteSnapshot();" in light_navigate
     assert "pushLightRouteHistory(currentSnapshot);" in light_navigate
     assert "const snapshot = popLightRouteHistory();" in light_back
-    assert "return restoreLightRouteSnapshot(snapshot);" in light_back
+    assert "const restored = restoreLightRouteSnapshot(snapshot);" in light_back
+    assert "restoreDetailNavOrigin();" in light_back
     assert 'state.route = parent === state.route ? "home" : parent;' in light_back
     assert 'lightCalendarEventChips(event, { fromRoute: "calendar", contactsOnly: true })' in light_event_block
     assert 'limit: 2' not in light_event_block
@@ -328,7 +329,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' not in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     linked_record_section = function_block(app, "lightLinkedRecordSection")
-    assert 'const entries = workspaceLinkedEntries(record, {' in linked_record_section
+    assert "const entries = Array.isArray(options.entries)" in linked_record_section
+    assert 'connectedRecordEntries(options.entries, {' in linked_record_section
+    assert ': workspaceLinkedEntries(record, {' in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert "if (!entries.length && !showWhenEmpty) {" in linked_record_section
     assert 'section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();' in linked_record_section
@@ -419,7 +422,9 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "lightInfoRow(row" in light_info_section
     assert 'lightNavigate("project-detail", { from: "projects" });' in light_project_row
     assert "event.stopPropagation();" in light_attendee_chip
-    assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
+    assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", {' in light_record_chip
+    assert 'taskOrigin: options.taskOrigin || null,' in light_record_chip
+    assert 'detailOrigin: options.detailOrigin || null,' in light_record_chip
 
 
 def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() -> None:
@@ -1060,7 +1065,8 @@ def test_feed_page_uses_real_html_sources_without_mock_fallbacks() -> None:
     assert "function resolveRichPageSource(card) {" in app
     assert 'return htmlPath || (htmlArtifact ? artifactVirtualPath(htmlArtifact) : "") || htmlUrl;' in resolve_rich_page_source
     assert 'return htmlUrl || (htmlArtifact ? artifactApiUrl(htmlArtifact) : "") || htmlPath;' in resolve_rich_page_source
-    assert 'if (hasRichPage(card)) {' in card_view
+    assert 'applyCardActionData(page, "page", card, "reply");' not in card_view
+    assert 'showRichPage(card);' not in card_view
     assert "if (card.html_path) {" not in card_view
     assert 'const pageSource = resolveRichPageSource(card);' in show_rich_page
     assert "content.append(await richFrame(pageSource, card), el(\"div\", \"rich-swipe-edge\"));" in show_rich_page
@@ -1504,7 +1510,9 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "const title = options.title || \"Linked records\";" in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert 'const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";' in linked_record_section
-    assert 'const entries = workspaceLinkedEntries(record, {' in linked_record_section
+    assert "const entries = Array.isArray(options.entries)" in linked_record_section
+    assert 'connectedRecordEntries(options.entries, {' in linked_record_section
+    assert ': workspaceLinkedEntries(record, {' in linked_record_section
     assert "dedupeTargets: options.dedupeTargets === true," in linked_record_section
     assert "if (flatFeed) {" in linked_record_section
     assert 'section.classList.add("is-flat-feed");' in linked_record_section

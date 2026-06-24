@@ -195,6 +195,7 @@
     notesSectionsExpanded: { pinned: true, recent: true },
     notePinPending: {},
     taskNavOrigin: null,
+    detailNavOrigin: null,
     reminderHistoryExpanded: false,
     meetingDetailSections: null,
     meetingDetailSectionCache: {},
@@ -8835,6 +8836,63 @@
     return origin;
   }
 
+  function rememberDetailNavOrigin(origin = null) {
+    if (!origin || typeof origin !== "object") {
+      state.detailNavOrigin = null;
+      return null;
+    }
+    const kind = String(origin.kind || "").trim().toLowerCase();
+    const route = String(origin.route || "").trim().toLowerCase();
+    if (kind === "transcript") {
+      const sessionId = String(origin.sessionId || origin.session_id || "").trim();
+      const threadId = String(origin.threadId || origin.thread_id || "").trim();
+      if (!route || (!sessionId && !threadId)) {
+        state.detailNavOrigin = null;
+        return null;
+      }
+      state.detailNavOrigin = { kind, route, sessionId, threadId };
+      return state.detailNavOrigin;
+    }
+    if (kind === "meeting_detail") {
+      const meetingId = String(origin.meetingId || origin.meeting_id || "").trim();
+      if (!route || !meetingId) {
+        state.detailNavOrigin = null;
+        return null;
+      }
+      state.detailNavOrigin = { kind, route, meetingId };
+      return state.detailNavOrigin;
+    }
+    state.detailNavOrigin = null;
+    return null;
+  }
+
+  function restoreDetailNavOrigin() {
+    const origin = state.detailNavOrigin;
+    if (!origin || typeof origin !== "object") {
+      return false;
+    }
+    state.detailNavOrigin = null;
+    if (String(origin.kind || "") === "transcript") {
+      const card = origin.threadId
+        ? findCardByThreadId(origin.threadId)
+        : findCardBySessionId(origin.sessionId);
+      if (card) {
+        showTranscript(card, { restoring: true });
+        return true;
+      }
+      return false;
+    }
+    if (String(origin.kind || "") === "meeting_detail") {
+      const meetingId = String(origin.meetingId || "").trim();
+      const meeting = state.meetings.records.find(item => String(item?.meeting_id || "").trim() === meetingId);
+      if (meeting) {
+        void showMeetingDetail(meeting);
+        return true;
+      }
+    }
+    return false;
+  }
+
   function openWorkspaceTarget(target, fromRoute = "", options = {}) {
     if (!target || !target.route || !target.selectedKey || !target.id) {
       return false;
@@ -8844,6 +8902,9 @@
         taskId: String(options.taskOrigin.taskId || "").trim(),
         route: String(options.taskOrigin.route || "").trim() || taskDetailReturnRoute()
       };
+    }
+    if (options && options.detailOrigin) {
+      rememberDetailNavOrigin(options.detailOrigin);
     }
     if (target.route === "meeting-detail") {
       state.meetingDetailSections = resetMeetingDetailSections(target.id);
@@ -8857,6 +8918,7 @@
       from: fromRoute || state.route || "",
       selectionPatch: { [target.selectedKey]: target.id },
       preserveTaskOrigin: Boolean(options && options.taskOrigin),
+      preserveDetailOrigin: Boolean(options && options.detailOrigin),
     });
     return true;
   }
@@ -8960,6 +9022,48 @@
     return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
   }
 
+  function connectedRecordEntries(records, options = {}) {
+    const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
+      ? new Set(options.includeKinds.map(value => String(value || "").trim()).filter(Boolean))
+      : null;
+    const excludeKinds = new Set(
+      Array.isArray(options.excludeKinds) ? options.excludeKinds.map(value => String(value || "").trim()).filter(Boolean) : []
+    );
+    const dedupeTargets = options.dedupeTargets !== false;
+    const seenTargets = dedupeTargets ? new Set() : null;
+    const entries = [];
+    (Array.isArray(records) ? records : []).forEach(item => {
+      if (!item || typeof item !== "object") {
+        return;
+      }
+      const kind = String(item.kind || "").trim();
+      const relatedId = String(item.id || item.record_id || "").trim();
+      if (!kind || !relatedId || (includeKinds && !includeKinds.has(kind)) || excludeKinds.has(kind)) {
+        return;
+      }
+      if (seenTargets) {
+        const key = `${kind}:${relatedId}`;
+        if (seenTargets.has(key)) {
+          return;
+        }
+        seenTargets.add(key);
+      }
+      const related = workspaceRecordByKind(kind, relatedId);
+      entries.push({
+        link: null,
+        related,
+        kind,
+        relatedKind: kind,
+        relatedId,
+        label: String(related?.title || item.title || relatedId || graphKindLabel(kind)).trim() || graphKindLabel(kind),
+        relation: graphKindLabel(kind),
+        target: workspaceTargetForKind(kind, related?.id || relatedId),
+        snapshot: item,
+      });
+    });
+    return entries;
+  }
+
   function lightLinkedRecordChips(entry) {
     if (entry?.related) {
       return graphObjectChips(entry.related);
@@ -9024,11 +9128,17 @@
     const title = options.title || "Linked records";
     const showWhenEmpty = options.showWhenEmpty === true;
     const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
-    const entries = workspaceLinkedEntries(record, {
-      includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
-      excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
-      dedupeTargets: options.dedupeTargets === true,
-    });
+    const entries = Array.isArray(options.entries)
+      ? connectedRecordEntries(options.entries, {
+          includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
+          excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
+          dedupeTargets: options.dedupeTargets !== false,
+        })
+      : workspaceLinkedEntries(record, {
+          includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
+          excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
+          dedupeTargets: options.dedupeTargets === true,
+        });
     if (!entries.length && !showWhenEmpty) {
       return null;
     }
@@ -11016,6 +11126,9 @@
     if (!options.preserveTaskOrigin) {
       state.taskNavOrigin = null;
     }
+    if (!options.preserveDetailOrigin) {
+      state.detailNavOrigin = null;
+    }
     if (currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
       pushLightRouteHistory(currentSnapshot);
     }
@@ -11079,7 +11192,11 @@
     const snapshot = popLightRouteHistory();
     if (snapshot) {
       state.taskNavOrigin = null;
-      return restoreLightRouteSnapshot(snapshot);
+      const restored = restoreLightRouteSnapshot(snapshot);
+      if (restored) {
+        restoreDetailNavOrigin();
+      }
+      return restored;
     }
     if (state.taskNavOrigin && state.route !== state.taskNavOrigin.route) {
       state.selectedTaskId = state.taskNavOrigin.taskId;
@@ -11432,7 +11549,10 @@
       chip.dataset.workspaceTargetKind = target.kind || "";
       chip.addEventListener("click", event => {
         event.stopPropagation();
-        openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });
+        openWorkspaceTarget(target, options.fromRoute || state.route || "", {
+          taskOrigin: options.taskOrigin || null,
+          detailOrigin: options.detailOrigin || null,
+        });
       });
     }
     return chip;
@@ -13214,7 +13334,8 @@
         showTranscript(meetingCardFromRecord(record), options);
         return true;
       }
-      return openMeetingSummaryDetail(record, options);
+      showMeetingRuntimeDetail(record, options);
+      return true;
     };
     if (stateName === "completed") {
       openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
@@ -13254,6 +13375,122 @@
     }
     showTranscript(card, options);
     return false;
+  }
+
+  function meetingConnectedRecords(meeting) {
+    const sources = [
+      meeting?.connected_records,
+      meeting?.card?.connected_records,
+      meeting?.feed_item?.connected_records,
+    ];
+    for (const source of sources) {
+      if (Array.isArray(source) && source.length) {
+        return source.map(item => ({ ...(item && typeof item === "object" ? item : {}) }));
+      }
+    }
+    const assistant = Array.isArray(meeting?.feed_item?.transcript_messages)
+      ? meeting.feed_item.transcript_messages.find(item => String(item?.role || "").toLowerCase() === "assistant")
+      : null;
+    return Array.isArray(assistant?.connected_records)
+      ? assistant.connected_records.map(item => ({ ...(item && typeof item === "object" ? item : {}) }))
+      : [];
+  }
+
+  function meetingRuntimeStatusLabel(meeting) {
+    const stateName = meetingState(meeting);
+    if (stateName === "completed") return "Completed";
+    if (stateName === "failed") return "Failed";
+    if (stateName === "processing") return "Processing";
+    return "Uploaded";
+  }
+
+  function meetingRuntimeWhenLabel(meeting) {
+    const raw = String(meeting?.started_at || meeting?.created_at || "").trim();
+    const timestamp = smartTimestamp(raw, "");
+    const duration = formatMeetingDuration(safeNumber(meeting?.duration_ms));
+    return [timestamp, duration].filter(Boolean).join(DOT) || "Unknown";
+  }
+
+  function meetingRuntimeAudioRow(meeting) {
+    const duration = formatMeetingDuration(safeNumber(meeting?.duration_ms));
+    const hasAudioSource = Boolean(meetingPlayablePath(meeting) || String(meeting?.audio_url || "").trim());
+    if (!hasAudioSource) {
+      return lightMeetingNoteDetailRow("audio", "Audio", duration || "Unavailable");
+    }
+    const row = el("button", "light-calendar-detail-row light-meeting-note-detail-row is-clickable");
+    row.type = "button";
+    row.dataset.detailRow = "audio";
+    row.addEventListener("click", () => {
+      void showMeetingAudioDetail(meeting);
+    });
+    row.append(
+      el("strong", "light-calendar-detail-row-label", "Audio"),
+      el("div", "light-calendar-detail-row-value", [duration, "Open recording"].filter(Boolean).join(DOT) || "Open recording")
+    );
+    return row;
+  }
+
+  function meetingRuntimeConnectedDetail(entry) {
+    if (entry?.related) {
+      return meetingNoteConnectedDetail(entry);
+    }
+    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
+    const kindLabel = graphKindLabel(kind);
+    const summary = String(entry?.snapshot?.summary || "").trim();
+    return [kindLabel, summary].filter(Boolean).join(DOT) || kindLabel;
+  }
+
+  function meetingRuntimeConnectedSection(meeting) {
+    return lightLinkedRecordSection(meeting, {
+      title: "Connected",
+      entries: meetingConnectedRecords(meeting),
+      showWhenEmpty: true,
+      fromRoute: "meeting-detail",
+      dedupeTargets: true,
+      showChips: false,
+      showChevron: false,
+      variant: "flat",
+      detailResolver: meetingRuntimeConnectedDetail,
+      openOptions: {
+        detailOrigin: {
+          kind: "meeting_detail",
+          route: "meetings",
+          meetingId: String(meeting?.meeting_id || "").trim(),
+        }
+      },
+    });
+  }
+
+  function meetingRuntimeDetailContent(meeting) {
+    const content = el("div", "detail-content light-document-page light-meeting-runtime-detail");
+    const summary = String(meeting?.card?.summary || meeting?.summary || "").trim();
+    if (summary) {
+      content.append(el("p", "light-event-summary-copy light-meeting-runtime-summary", summary));
+    }
+    const detailsSection = el("section", "light-calendar-detail-section light-meeting-note-details-section light-meeting-runtime-details-section");
+    detailsSection.append(lightSectionTitle("Details"));
+    const card = el("div", "light-calendar-detail-card");
+    card.append(
+      lightMeetingNoteDetailRow("when", "When", meetingRuntimeWhenLabel(meeting)),
+      lightMeetingNoteDetailRow("status", "Status", meetingRuntimeStatusLabel(meeting)),
+      meetingRuntimeAudioRow(meeting),
+    );
+    detailsSection.append(card);
+    content.append(detailsSection, meetingRuntimeConnectedSection(meeting));
+    return content;
+  }
+
+  function showMeetingRuntimeDetail(meeting, options = {}) {
+    state.audioCard = null;
+    const panel = document.getElementById("detail");
+    const detailCard = meetingCardFromRecord(meeting);
+    const content = meetingRuntimeDetailContent(meeting);
+    applyDetailDataAttributes(panel, "meeting_runtime", detailCard, { viewer: "meeting_runtime" });
+    openSideDetail(panel, meetingTitle(meeting), content, dismissDetail);
+    rememberNavDetail("meeting_runtime", detailCard, options);
+    installDetailScrollPersistence(content, "meeting_runtime");
+    restoreScrollPosition(content, options.scrollTop);
+    void syncVoiceThreadScope({ reason: "show_meeting_runtime_detail", render: true });
   }
 
   async function showMeetingAudioDetail(meeting) {
@@ -13315,7 +13552,8 @@
       : [];
     const persistedAssistant = persistedMessages.find(item => String(item?.role || "").toLowerCase() === "assistant") || null;
     const assistantAttachments = Array.isArray(persistedAssistant?.attachments) ? persistedAssistant.attachments : [];
-    return assistantAttachments.length > 0;
+    const connectedRecords = meetingConnectedRecords(meeting);
+    return assistantAttachments.length > 0 || connectedRecords.length > 0;
   }
 
   function meetingCardFromRecord(meeting) {
@@ -13336,6 +13574,7 @@
       audio_mime_type: String(card.mime_type || "audio/mp4"),
       audio_duration_ms: safeNumber(card.duration_ms),
       attachments,
+      connected_records: meetingConnectedRecords(card),
       transcript_messages: meetingTranscriptMessages(card),
       is_meeting_recording: true,
       render_profile: "meeting_list",
@@ -13345,47 +13584,9 @@
 
   function meetingRecordAttachments(meeting) {
     const record = meeting && typeof meeting === "object" ? meeting : {};
-    const card = record.card && typeof record.card === "object" ? record.card : {};
     const meetingId = String(record.meeting_id || "").trim();
     const attachments = [];
-    const summaryArtifactId = meetingId ? `pucky_card_${meetingId}:html` : "";
     const transcriptArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript` : "";
-    const transcriptHtmlArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript_html` : "";
-    const summaryHtmlBase64 = String(card.html_base64 || "").trim();
-    const summaryHtmlText = decodeMeetingSummaryBase64(summaryHtmlBase64);
-    const transcriptHtmlUrl = extractMeetingSummaryLink(summaryHtmlText, /<a\b[^>]*href=["']([^"']*\/api\/shared\/artifacts\/[^"']+)["'][^>]*>/i);
-    const signedAudioUrl = extractMeetingSummaryLink(summaryHtmlText, /<a\b[^>]*href=["']([^"']*\/api\/shared\/meetings\/[^"']*\/audio[^"']*)["'][^>]*>/i);
-    if (summaryHtmlBase64) {
-      attachments.push({
-        id: `meeting-summary-${meetingId || "current"}`,
-        title: "Meeting Summary",
-        kind: "html",
-        mime_type: String(card.html_mime_type || "text/html"),
-        data_url: `data:text/html;base64,${summaryHtmlBase64}`,
-        viewer_src: `data:text/html;base64,${summaryHtmlBase64}`,
-        html_src: `data:text/html;base64,${summaryHtmlBase64}`,
-        artifact: summaryArtifactId,
-        viewer_artifact: summaryArtifactId,
-        html_artifact: summaryArtifactId,
-        meeting_id: meetingId
-      });
-    }
-    const transcriptHtmlPath = String(record.transcript_html_path || "").trim();
-    if (transcriptHtmlPath || transcriptHtmlArtifactId) {
-      attachments.push({
-        id: `meeting-transcript-html-${meetingId || "current"}`,
-        title: "Transcript",
-        kind: "html",
-        mime_type: "text/html",
-        path: transcriptHtmlPath,
-        viewer_url: transcriptHtmlUrl,
-        html_url: transcriptHtmlUrl,
-        artifact: transcriptHtmlArtifactId,
-        viewer_artifact: transcriptHtmlArtifactId,
-        html_artifact: transcriptHtmlArtifactId,
-        meeting_id: meetingId
-      });
-    }
     const transcriptPath = String(record.transcript_path || "").trim();
     const transcriptText = meetingTranscriptText(record);
     if (transcriptText || transcriptPath || transcriptArtifactId) {
@@ -13400,7 +13601,7 @@
         meeting_id: meetingId
       });
     }
-    const audioUrl = signedAudioUrl || String(record.audio_url || "").trim();
+    const audioUrl = String(record.audio_url || "").trim();
     const audioPath = String(record.audio_path || "").trim();
     if (audioUrl || audioPath) {
       attachments.push({
@@ -13533,7 +13734,7 @@
   function meetingTitle(meeting) {
     const raw = meeting && typeof meeting === "object" ? meeting : {};
     const card = raw.card && typeof raw.card === "object" ? raw.card : {};
-    return String(raw.recording_title || card.recording_title || raw.title || raw.meeting_id || "Meeting Recording");
+    return String(raw.title || card.title || raw.recording_title || card.recording_title || raw.meeting_id || "Meeting Recording");
   }
 
   function meetingState(meeting) {
@@ -14276,40 +14477,6 @@
       });
       actions.append(audio);
     }
-    if (!isMeetingList) {
-      const attachmentInfo = firstDisplayableAttachmentInfo(card);
-      if (hasRichPage(card)) {
-        const page = el("button", `action ${actionStateClass(card, "page")}`);
-        page.type = "button";
-        applyCardActionData(page, "page", card, "reply");
-        page.innerHTML = iconSvg("attachment", { filled: true });
-        page.setAttribute("aria-label", `Open page for ${card.title}`);
-        page.addEventListener("click", (event) => {
-          event.stopPropagation();
-          if (inboxManageMode) {
-            toggleInboxManageSelection(card);
-            return;
-          }
-          showRichPage(card);
-        });
-        actions.append(page);
-      } else if (attachmentInfo) {
-        const file = el("button", `action ${actionStateClass(card, "attachment")}`);
-        file.type = "button";
-        applyCardActionData(file, "attachment", card, "reply");
-        file.innerHTML = iconSvg("attachment", { filled: true });
-        file.setAttribute("aria-label", `Open file for ${card.title}`);
-        file.addEventListener("click", (event) => {
-          event.stopPropagation();
-          if (inboxManageMode) {
-            toggleInboxManageSelection(card);
-            return;
-          }
-          showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
-        });
-        actions.append(file);
-      }
-    }
     actions.classList.add(`action-count-${Math.min(2, actions.childElementCount)}`);
 
     if (identity) {
@@ -14911,6 +15078,10 @@
       if (attachments) {
         bubble.append(attachments);
       }
+      const connected = messageConnectedRecordRow(card, message);
+      if (connected) {
+        bubble.append(connected);
+      }
       bubble.append(document.createTextNode(message.text || ""));
       if (message.role !== "user" && !message.synthetic) {
         const actions = el("div", "bubble-actions");
@@ -15053,6 +15224,27 @@
         showAttachmentViewer(card, attachments, { initialIndex, onDismiss: () => showTranscript(card) });
       });
       row.append(chip);
+    });
+    return row.childElementCount ? row : null;
+  }
+
+  function messageConnectedRecordRow(card, message) {
+    const entries = connectedRecordEntries(message?.connected_records, { dedupeTargets: true });
+    if (!entries.length) {
+      return null;
+    }
+    const row = el("div", "bubble-attachment-row bubble-connected-record-row");
+    const detailOrigin = {
+      kind: "transcript",
+      route: "inbox",
+      sessionId: cardSessionId(card),
+      threadId: cardThreadId(card),
+    };
+    entries.forEach(entry => {
+      row.append(lightRecordChip(entry, {
+        fromRoute: "inbox",
+        detailOrigin,
+      }));
     });
     return row.childElementCount ? row : null;
   }
@@ -18165,6 +18357,7 @@
         timestamp: item.timestamp || "",
         created_at: item.created_at || "",
         attachments: normalizedAttachments(item.attachments),
+        connected_records: Array.isArray(item.connected_records) ? item.connected_records.slice() : [],
         images: normalizedImages(item.images)
       }));
     }
@@ -18174,7 +18367,11 @@
         return { role: user ? "user" : "assistant", text: line.replace(/^(user|pucky|assistant):\s*/i, "") };
       });
     }
-    return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
+    return [{
+      role: "assistant",
+      text: card.summary || "No transcript is attached to this reply.",
+      connected_records: Array.isArray(card?.connected_records) ? card.connected_records.slice() : [],
+    }];
   }
 
   function pendingOutboundMessages(card) {
@@ -19737,7 +19934,7 @@
       return null;
     }
     const type = String(detail.type || "");
-    if (!["audio", "transcript", "page", "images", "attachment"].includes(type)) {
+    if (!["audio", "transcript", "page", "images", "attachment", "meeting_failed", "meeting_runtime"].includes(type)) {
       return null;
     }
     const sessionId = String(detail.session_id || "");

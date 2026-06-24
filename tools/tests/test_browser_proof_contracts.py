@@ -863,6 +863,10 @@ def test_real_vm_inbox_proof_uses_universal_feed_dom_contract() -> None:
     assert '.light-shell[data-light-route=\\"inbox\\"] article.card .title' in source
     assert "loading inbox" in source.lower()
     assert "Light Inbox cold load regressed to the reply-only empty state" in source
+    assert "Light Inbox should not expose compact page/attachment actions after the graph-first cutover" in source
+    assert "readInboxTranscriptConnectedState(" in source
+    assert "bubble-connected-record-row .light-record-chip" in source
+    assert "Light Inbox transcript detail should surface inline connected record chips for connected feed items." in source
 
 
 def test_live_user_session_runtime_proof_rejects_missing_result_soft_completion() -> None:
@@ -873,6 +877,11 @@ def test_live_user_session_runtime_proof_rejects_missing_result_soft_completion(
     assert '"completed", "failed"' in source or '["completed", "failed"]' in source
     assert "Timed out waiting for runtime meeting" in source
     assert "meeting stayed in processing past the allowed proof timeout" in source
+    assert "proveRuntimeMeetingTerminal(" in source
+    assert "Completed runtime meeting should put the merged note first in Connected" in source
+    assert "Captured runtime meeting note should live in Notes only and not leak into Meeting Notes." in source
+    assert "Inbox compact cards should not render page/paperclip actions after the graph-first cutover" in source
+    assert "Inbox transcript detail should render inline connected record chips for the runtime meeting." in source
 
 
 def test_meetings_walkthrough_proof_checks_short_and_long_title_alignment() -> None:

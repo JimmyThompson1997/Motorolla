@@ -121,6 +121,63 @@ def meeting_summary_html(
     )
 
 
+def note_graph_record(
+    *,
+    record_key: str,
+    record_id: str,
+    title: str,
+    summary: str,
+    html_content: str = "",
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": record_id,
+        "title": title,
+        "summary": summary,
+    }
+    if html_content:
+        payload["html"] = html_content
+    return {
+        "record_key": record_key,
+        "kind": "note",
+        "payload": payload,
+    }
+
+
+def meeting_graph_reply(
+    *,
+    reply_text: str,
+    card_title: str,
+    recording_title: str,
+    note_id: str,
+    note_title: str,
+    note_summary: str,
+    note_html: str,
+    transcript_text: str = "",
+    attachments: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "reply_text": reply_text,
+        "card_title": card_title,
+        "recording_title": recording_title,
+        "card_icon": "mic",
+        "transcript_text": transcript_text,
+        "attachments": list(attachments or []),
+        "graph_records": [
+            note_graph_record(
+                record_key="meeting_note",
+                record_id=note_id,
+                title=note_title,
+                summary=note_summary,
+                html_content=note_html,
+            )
+        ],
+        "graph_links": [],
+        "connected_records": [
+            {"record_key": "meeting_note"}
+        ],
+    }
+
+
 class FakeCodex:
     ready = True
     thread_id = "thread-1"
@@ -191,30 +248,31 @@ class FakeCodex:
         if "Meeting Mode Agent Handoff" in text:
             card_title = "Meeting Notes"
             recording_title = "Jimmy and Jack Follow-ups"
-            reply = {
-                "reply_text": "Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
-                "card_title": card_title,
-                "recording_title": recording_title,
-                "card_icon": "mic",
-                "html": {
-                    "title": "Meeting Summary",
-                    "content": meeting_summary_html(
-                        title=recording_title,
-                        overview="<p>Follow-up notes prepared.</p>",
-                        participants="<p>Jimmy and Jack</p>",
-                        action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
-                        follow_up="<p>Pucky prepared follow-up notes.</p>",
-                    ),
-                },
-                "attachments": [
+            transcript_text = "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
+            reply = meeting_graph_reply(
+                reply_text="Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
+                card_title=card_title,
+                recording_title=recording_title,
+                note_id="note-meeting-jimmy-jack",
+                note_title=recording_title,
+                note_summary="Follow-up notes prepared.",
+                note_html=meeting_summary_html(
+                    title=recording_title,
+                    overview="<p>Follow-up notes prepared.</p>",
+                    participants="<p>Jimmy and Jack</p>",
+                    action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
+                    follow_up="<p>Pucky prepared follow-up notes.</p>",
+                ),
+                transcript_text=transcript_text,
+                attachments=[
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
+                        "text": transcript_text,
                     }
                 ],
-            }
+            )
             reply_text = json.dumps(reply)
         else:
             reply_text = json.dumps(
@@ -222,10 +280,11 @@ class FakeCodex:
                     "reply_text": "Sure, I can help.",
                     "card_title": "Quick Help",
                     "card_icon": "bolt",
-                    "html": {
-                        "title": "Mini Page",
-                        "content": "<!doctype html><title>Mini Page</title><p>Hello</p>",
-                    },
+                    "recording_title": "",
+                    "attachments": [],
+                    "graph_records": [],
+                    "graph_links": [],
+                    "connected_records": [],
                 }
             )
         return type(
@@ -315,111 +374,115 @@ class MeetingToolCallingCodex(FakeCodex):
         if "raw-title" in meeting_id:
             card_title = meeting_id
             recording_title = meeting_id
-            reply = {
-                "reply_text": "Meeting processed and stored.",
-                "card_title": card_title,
-                "recording_title": recording_title,
-                "card_icon": "mic",
-                "html": {
-                    "title": "Meeting Summary",
-                    "content": meeting_summary_html(
-                        title=recording_title,
-                        overview="<p>Stored the meeting exactly as titled by the agent.</p>",
-                        participants="<p>Jimmy and Jack</p>",
-                        action_items="<ul><li>Jimmy: send the transcript.</li></ul>",
-                        follow_up="<p>No automatic follow-up was executed.</p>",
-                    ),
-                },
-                "attachments": [
+            transcript_text = "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
+            reply = meeting_graph_reply(
+                reply_text="Meeting processed and stored.",
+                card_title=card_title,
+                recording_title=recording_title,
+                note_id="note-meeting-raw-title",
+                note_title=recording_title,
+                note_summary="Stored the meeting exactly as titled by the agent.",
+                note_html=meeting_summary_html(
+                    title=recording_title,
+                    overview="<p>Stored the meeting exactly as titled by the agent.</p>",
+                    participants="<p>Jimmy and Jack</p>",
+                    action_items="<ul><li>Jimmy: send the transcript.</li></ul>",
+                    follow_up="<p>No automatic follow-up was executed.</p>",
+                ),
+                transcript_text=transcript_text,
+                attachments=[
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
+                        "text": transcript_text,
                     }
                 ],
-            }
+            )
         elif "I'm Jimmy and this is Jack" in transcript:
             card_title = "Meeting Notes"
             recording_title = "Jimmy and Jack Follow-ups"
-            reply = {
-                "reply_text": "Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
-                "card_title": card_title,
-                "recording_title": recording_title,
-                "card_icon": "mic",
-                "html": {
-                    "title": "Meeting Summary",
-                    "content": meeting_summary_html(
-                        title=recording_title,
-                        overview="<p>Follow-up notes prepared.</p>",
-                        participants="<p>Jimmy and Jack</p>",
-                        action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
-                        follow_up="<p>Pucky drafted follow-up notes.</p>",
-                    ),
-                },
-                "attachments": [
+            transcript_text = "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
+            reply = meeting_graph_reply(
+                reply_text="Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
+                card_title=card_title,
+                recording_title=recording_title,
+                note_id="note-meeting-followups",
+                note_title=recording_title,
+                note_summary="Follow-up notes prepared.",
+                note_html=meeting_summary_html(
+                    title=recording_title,
+                    overview="<p>Follow-up notes prepared.</p>",
+                    participants="<p>Jimmy and Jack</p>",
+                    action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
+                    follow_up="<p>Pucky drafted follow-up notes.</p>",
+                ),
+                transcript_text=transcript_text,
+                attachments=[
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
+                        "text": transcript_text,
                     }
                 ],
-            }
+            )
         elif not transcript and not attachment_text:
             card_title = "Meeting Notes"
             recording_title = "Silent Audio Check"
-            reply = {
-                "reply_text": "Meeting saved. No clear speech was detected in the recording.",
-                "card_title": card_title,
-                "recording_title": recording_title,
-                "card_icon": "mic",
-                "html": {
-                    "title": "Meeting Summary",
-                    "content": meeting_summary_html(
-                        title=recording_title,
-                        overview="<p>The clip was captured and stored, but no clear speech was detected.</p>",
-                        participants="<p>Unknown participants</p>",
-                        action_items="<p>No action items were confidently identified.</p>",
-                        follow_up="<p>No automatic follow-up was executed.</p>",
-                    ),
-                },
-                "attachments": [
+            transcript_text = "[No clear speech detected.]"
+            reply = meeting_graph_reply(
+                reply_text="Meeting saved. No clear speech was detected in the recording.",
+                card_title=card_title,
+                recording_title=recording_title,
+                note_id="note-meeting-silent-audio",
+                note_title=recording_title,
+                note_summary="The clip was captured and stored, but no clear speech was detected.",
+                note_html=meeting_summary_html(
+                    title=recording_title,
+                    overview="<p>The clip was captured and stored, but no clear speech was detected.</p>",
+                    participants="<p>Unknown participants</p>",
+                    action_items="<p>No action items were confidently identified.</p>",
+                    follow_up="<p>No automatic follow-up was executed.</p>",
+                ),
+                transcript_text=transcript_text,
+                attachments=[
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": "[No clear speech detected.]",
+                        "text": transcript_text,
                     }
                 ],
-            }
+            )
         else:
             card_title = "Meeting Notes"
             recording_title = "Deck Follow-up Review"
-            reply = {
-                "reply_text": "Meeting processed with speaker-separated transcript.",
-                "card_title": card_title,
-                "recording_title": recording_title,
-                "card_icon": "mic",
-                "html": {
-                    "title": "Meeting Summary",
-                    "content": meeting_summary_html(
-                        title=recording_title,
-                        overview="<p>Follow-up items were captured.</p>",
-                        participants="<p>speaker_0 and speaker_1</p>",
-                        action_items="<ul><li>speaker_0: send the revised deck by Friday.</li><li>speaker_1: handle the budget table.</li></ul>",
-                        follow_up="<p>No automatic follow-up was executed.</p>",
-                    ),
-                },
-                "attachments": [
+            transcript_text = attachment_text or "[No clear speech detected.]"
+            reply = meeting_graph_reply(
+                reply_text="Meeting processed with speaker-separated transcript.",
+                card_title=card_title,
+                recording_title=recording_title,
+                note_id="note-meeting-deck-followup",
+                note_title=recording_title,
+                note_summary="Follow-up items were captured.",
+                note_html=meeting_summary_html(
+                    title=recording_title,
+                    overview="<p>Follow-up items were captured.</p>",
+                    participants="<p>speaker_0 and speaker_1</p>",
+                    action_items="<ul><li>speaker_0: send the revised deck by Friday.</li><li>speaker_1: handle the budget table.</li></ul>",
+                    follow_up="<p>No automatic follow-up was executed.</p>",
+                ),
+                transcript_text=transcript_text,
+                attachments=[
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": attachment_text or "[No clear speech detected.]",
+                        "text": transcript_text,
                     }
                 ],
-            }
+            )
         requested_thread_id = str(thread_id or "").strip()
         used_thread_id = requested_thread_id or self.thread_id
         self.thread_id = used_thread_id
@@ -1614,9 +1677,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(body["origin"]["model"], "gpt-5.5")
         self.assertEqual(body["origin"]["reasoning_effort"], "high")
         self.assertEqual(body["card"]["origin"]["thread_id"], "thread-1")
-        self.assertEqual(body["card"]["html_mime_type"], "text/html")
-        self.assertEqual(body["html_mime_type"], "text/html")
-        self.assertIn("<!doctype html>", base64.b64decode(body["card"]["html_base64"]).decode("utf-8"))
+        self.assertEqual(body["connected_records"], [])
+        self.assertEqual(body["card"]["connected_records"], [])
+        self.assertNotIn("html_mime_type", body["card"])
+        self.assertNotIn("html_mime_type", body)
         self.assertNotIn("transcript", body)
         self.assertEqual(self.stt.content_type, "audio/mp4")
         self.assertEqual(self.codex.turns, ["Pucky test turn"])
@@ -1706,9 +1770,8 @@ class ServerTests(unittest.TestCase):
 
         full = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertIn("audio_base64", full["items"][0])
-        self.assertIn("html_base64", full["items"][0])
-        self.assertEqual("text/html", full["items"][0]["html_mime_type"])
-        full_html_bytes = base64.b64decode(full["items"][0]["html_base64"])
+        self.assertNotIn("html_base64", full["items"][0])
+        self.assertEqual(full["items"][0]["connected_records"], [])
 
         compact = self.get_json("/api/feed?limit=10&compact=1", headers={"Authorization": "Bearer secret"})
         self.assertNotIn("audio_base64", compact["items"][0])
@@ -1718,12 +1781,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(compact["items"][0]["audio_bytes"], len(b"RIFFaudio"))
         self.assertEqual(compact["items"][0]["audio_sha256"], hashlib.sha256(b"RIFFaudio").hexdigest())
         self.assertEqual(compact["items"][0]["audio_media_id"], f"feed:{turn['card_id']}:audio")
-        self.assertEqual(compact["items"][0]["html_mime_type"], "text/html")
-        self.assertEqual(compact["items"][0]["html_artifact"], f"{turn['card_id']}:html")
-        self.assertEqual(compact["items"][0]["html_bytes"], len(full_html_bytes))
-        self.assertEqual(compact["items"][0]["html_sha256"], hashlib.sha256(full_html_bytes).hexdigest())
-        self.assertTrue(compact["items"][0]["html_url"].startswith(self.base_url + "/api/artifacts/"))
-        self.assertNotIn(str(self.tmp.name), compact["items"][0]["html_url"])
+        self.assertEqual(compact["items"][0]["connected_records"], [])
         self.assertTrue(compact["items"][0]["audio_url"].startswith(self.base_url + "/api/artifacts/"))
         self.assertNotIn(str(self.tmp.name), compact["items"][0]["audio_url"])
 
@@ -2124,18 +2182,16 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Use Deepgram for the meeting transcript and diarization.", prompt)
         self.assertIn("keep distinct anonymous speakers separated as neutral labels", prompt)
         self.assertIn("Return the cleaned labeled transcript in transcript_text.", prompt)
-        self.assertIn("The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text.", prompt)
+        self.assertIn("Do not emit reply-level HTML.", prompt)
+        self.assertIn("create exactly one primary regular note in graph_records", prompt)
+        self.assertIn("connected_records with the primary note first", prompt)
         self.assertIn("Use due dates only when the meeting explicitly states them.", prompt)
-        self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", prompt)
-        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", prompt)
         self.assertIn("Meeting Mode Agent", self.meeting_codex.developer_instructions[-1])
         self.assertIn("Transcribe and diarize it with Deepgram.", self.meeting_codex.developer_instructions[-1])
         self.assertIn("relabel them to real names only when clearly justified", self.meeting_codex.developer_instructions[-1])
         self.assertIn("recording_title", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("The platform will publish the transcript HTML artifact from transcript_text", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("render the final links", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("Create exactly one primary regular note in graph_records.", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("Do not emit reply-level HTML pages.", self.meeting_codex.developer_instructions[-1])
         self.assertIn("due date only when explicitly stated", self.meeting_codex.developer_instructions[-1])
         self.assertNotIn("Your job is to turn one finished meeting recording into", self.meeting_codex.developer_instructions[-1])
         self.assertNotIn("Hard constraints:", self.meeting_codex.developer_instructions[-1])
@@ -2151,20 +2207,22 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["feed_item"]["telemetry"]["transcription_provider"], "deepgram")
         self.assertEqual(meeting["feed_item"]["telemetry"]["meeting_title_quality"], "human_like")
         self.assertEqual(meeting["feed_item"]["telemetry"]["meeting_recording_title"], "Jimmy and Jack Follow-ups")
+        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
+        self.assertEqual(meeting["connected_records"][0]["id"], "note-meeting-followups")
 
         persisted = self.service.feed.get_item(meeting["card_id"])
         self.assertIsNotNone(persisted)
         self.assertEqual(persisted["title"], "Meeting Notes")
         self.assertFalse(persisted["read"])
         self.assertFalse(persisted["archived"])
+        self.assertEqual(persisted["connected_records"][0]["kind"], "note")
+        self.assertEqual(persisted["connected_records"][0]["id"], "note-meeting-followups")
         messages = persisted["transcript_messages"]
         self.assertEqual(messages[0]["text"], "Meeting recording")
         self.assertNotIn("Meeting Mode Agent Handoff", json.dumps(messages))
         self.assertNotIn("attachments", messages[0])
         attachments = messages[1]["attachments"]
         transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
-        transcript_html_attachment = next(item for item in attachments if item["title"] == "Transcript")
-        summary_attachment = next(item for item in attachments if item["id"] == "meeting-20260601-120000-device-abc123ef:html")
         audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
         self.assertEqual(transcript_attachment["kind"], "text")
         self.assertIn("Jimmy:", transcript_attachment["text"])
@@ -2172,19 +2230,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(transcript_attachment["recording_title"], "Jimmy and Jack Follow-ups")
         self.assertIn("/api/shared/artifacts/", str(transcript_attachment["src"]))
         self.assertIn("token=", str(transcript_attachment["src"]))
-        self.assertEqual(transcript_html_attachment["kind"], "html")
-        self.assertEqual(transcript_html_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
-        self.assertEqual(transcript_html_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
-        self.assertEqual(transcript_html_attachment["recording_title"], "Jimmy and Jack Follow-ups")
-        self.assertIn("meeting_transcript_html", transcript_html_attachment["artifact"])
-        self.assertIn("/api/shared/artifacts/", str(transcript_html_attachment["viewer_url"]))
-        self.assertIn("token=", str(transcript_html_attachment["viewer_url"]))
-        self.assertEqual(summary_attachment["title"], "Meeting Summary")
-        self.assertEqual(summary_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
-        self.assertEqual(summary_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
-        self.assertEqual(summary_attachment["recording_title"], "Jimmy and Jack Follow-ups")
-        self.assertEqual(summary_attachment["viewer"]["viewer_artifact"], summary_attachment["artifact"])
-        self.assertEqual(summary_attachment["viewer"]["viewer_url"], summary_attachment["viewer_url"])
         self.assertEqual(audio_attachment["kind"], "audio")
         self.assertEqual(audio_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(audio_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
@@ -2193,20 +2238,14 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(str(audio_attachment["path"]).endswith(".m4a"))
         self.assertIn("/api/shared/meetings/meeting-20260601-120000-device-abc123ef/audio", str(audio_attachment["url"]))
         self.assertIn("token=", str(audio_attachment["url"]))
-        raw_summary_html = base64.b64decode(str(self.service.feed.get_artifact(summary_attachment["artifact"])["content_base64"])).decode("utf-8")
-        self.assertIn("/api/shared/artifacts/", raw_summary_html)
-        self.assertIn("/api/shared/meetings/meeting-20260601-120000-device-abc123ef/audio", raw_summary_html)
-        self.assertNotIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", raw_summary_html)
-        self.assertNotIn("{{PUCKY_MEETING_AUDIO_LINK}}", raw_summary_html)
-        self.assertNotIn("/api/meetings/", raw_summary_html)
-        self.assertNotIn("<script", raw_summary_html.lower())
-        raw_transcript_html = base64.b64decode(str(self.service.feed.get_artifact(transcript_html_attachment["artifact"])["content_base64"])).decode("utf-8")
-        self.assertIn("Transcript", raw_transcript_html)
-        self.assertIn("Jimmy", raw_transcript_html)
         self.assertEqual(meeting["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertTrue(Path(meeting["audio_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
         self.assertTrue(Path(meeting["transcript_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
         self.assertTrue(Path(meeting["transcript_html_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
+        note = self.service.workspace.get_record("notes", "note-meeting-followups")
+        self.assertIsNotNone(note)
+        self.assertEqual(note["title"], "Jimmy and Jack Follow-ups")
+        self.assertIn("Follow-up notes prepared.", note["html"])
         self.assertEqual(self.meeting_codex.tool_calls[-1]["schema"], "pucky.meeting_deepgram_transcribe.v1")
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
@@ -2900,18 +2939,20 @@ class ServerTests(unittest.TestCase):
                     (),
                     {
                         "reply_text": json.dumps(
-                            {
-                                "reply_text": "I processed the meeting.",
-                                "card_title": "Meeting Summary",
-                                "recording_title": "Transcript Text Fallback",
-                                "card_icon": "mic",
-                                "transcript_text": (
+                            meeting_graph_reply(
+                                reply_text="I processed the meeting.",
+                                card_title="Meeting Summary",
+                                recording_title="Transcript Text Fallback",
+                                note_id="note-transcript-text-fallback",
+                                note_title="Transcript Text Fallback",
+                                note_summary="Transcript text fallback note.",
+                                note_html="<h1>Transcript Text Fallback</h1><p>Transcript text fallback note.</p>",
+                                transcript_text=(
                                     "[00:00-00:02] Jimmy: We should ship on Thursday.\n"
                                     "[00:02-00:04] Jack: I can own the deploy."
                                 ),
-                                "html": None,
-                                "attachments": [],
-                            }
+                                attachments=[],
+                            )
                         ),
                         "used_thread_id": "thread-transcript-text",
                         "requested_thread_id": "",
@@ -2966,13 +3007,16 @@ class ServerTests(unittest.TestCase):
                     (),
                     {
                         "reply_text": json.dumps(
-                            {
-                                "reply_text": "I processed the meeting.",
-                                "card_title": "Meeting Summary",
-                                "card_icon": "mic",
-                                "html": None,
-                                "attachments": [],
-                            }
+                            meeting_graph_reply(
+                                reply_text="I processed the meeting.",
+                                card_title="Meeting Summary",
+                                recording_title="Missing Transcript Result",
+                                note_id="note-missing-transcript-result",
+                                note_title="Missing Transcript Result",
+                                note_summary="Meeting output without transcript fallback.",
+                                note_html="<h1>Missing Transcript Result</h1><p>Transcript missing.</p>",
+                                attachments=[],
+                            )
                         ),
                         "used_thread_id": "thread-missing-result",
                         "requested_thread_id": "",
@@ -3080,21 +3124,16 @@ class ServerTests(unittest.TestCase):
         }
         envelope = parse_reply_envelope(
             json.dumps(
-                {
-                    "reply_text": "I processed the meeting.",
-                    "card_title": "Meeting Summary",
-                    "recording_title": "Launch Readiness Recording",
-                    "card_icon": "mic",
-                    "html": {
-                        "title": "Meeting Summary",
-                        "content": (
-                            "<section><h1>Overview</h1><p>Meeting summary.</p>"
-                            "<p>{{PUCKY_MEETING_TRANSCRIPT_LINK}}</p>"
-                            "<p>{{PUCKY_MEETING_AUDIO_LINK}}</p></section>"
-                        ),
-                    },
-                    "attachments": [],
-                }
+                meeting_graph_reply(
+                    reply_text="I processed the meeting.",
+                    card_title="Meeting Summary",
+                    recording_title="Launch Readiness Recording",
+                    note_id="note-launch-readiness-recording",
+                    note_title="Launch Readiness Recording",
+                    note_summary="Meeting summary.",
+                    note_html="<section><h1>Overview</h1><p>Meeting summary.</p></section>",
+                    attachments=[],
+                )
             )
         )
         with patch.object(self.service, "_meeting_record_by_id", return_value=latest_record):
@@ -3105,12 +3144,10 @@ class ServerTests(unittest.TestCase):
             )
         titles = [str(item.get("title") or "") for item in attachments]
         self.assertIn("Transcript (Plain Text)", titles)
-        self.assertIn("Transcript", titles)
-        self.assertIn("Meeting Summary", titles)
         self.assertIn("Meeting Audio", titles)
         transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
         self.assertIn("Jimmy:", str(transcript_attachment.get("text") or ""))
-        self.assertIn("/api/shared/meetings/", str(attachment_meta.get("summary_html_content") or ""))
+        self.assertNotIn("summary_html_content", attachment_meta)
 
     def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
         audio = b"RIFFmeeting-audio"
@@ -4422,6 +4459,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(attachments["type"], ["array", "null"])
         self.assertIn("attachments", schema["required"])
         self.assertNotIn("meeting_result", schema["properties"])
+        self.assertIn("graph_records", schema["properties"])
+        self.assertIn("graph_links", schema["properties"])
+        self.assertIn("connected_records", schema["properties"])
+        self.assertIn("graph_records", schema["required"])
+        self.assertIn("graph_links", schema["required"])
+        self.assertIn("connected_records", schema["required"])
         item_schema = attachments["items"]
         self.assertEqual(
             item_schema["required"],
@@ -4455,7 +4498,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(envelope.recording_title, "Recording Title")
         self.assertEqual(envelope.card_icon, "sparkles")
         self.assertEqual(envelope.transcript_text, "")
-        self.assertEqual(envelope.html_content, "")
+        self.assertEqual(envelope.graph_records, ())
+        self.assertEqual(envelope.graph_links, ())
+        self.assertEqual(envelope.connected_records, ())
+        self.assertFalse(envelope.legacy_html_requested)
 
     def test_large_html_is_omitted(self) -> None:
         self.service.config = make_config(max_html_bytes=4)

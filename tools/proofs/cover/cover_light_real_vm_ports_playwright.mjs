@@ -73,6 +73,22 @@ async function visibleTitles(page, selector) {
   );
 }
 
+function feedCardSelector(item) {
+  const sessionId = String(item?.session_id || item?.meeting_id || "").trim();
+  if (sessionId) {
+    return `article[data-card-session-id="${sessionId}"]`;
+  }
+  const cardId = String(item?.card_id || item?.id || "").trim();
+  if (cardId) {
+    return `article[data-card-id="${cardId}"]`;
+  }
+  return "";
+}
+
+function pickConnectedFeedItem(feedItems) {
+  return (Array.isArray(feedItems) ? feedItems : []).find(item => Array.isArray(item?.connected_records) && item.connected_records.length > 0) || null;
+}
+
 async function clickLightTile(page, route) {
   const tile = page.locator(`.light-app-tile[data-route="${route}"]`);
   await tile.waitFor({ state: "visible", timeout: 10000 });
@@ -122,6 +138,15 @@ async function backToHome(page) {
   await page.locator(".light-shell[data-light-route=\"home\"]").waitFor({ state: "visible", timeout: 5000 });
 }
 
+async function readInboxTranscriptConnectedState(page) {
+  return page.evaluate(() => ({
+    connectedChipCount: document.querySelectorAll("#detail .bubble-connected-record-row .light-record-chip").length,
+    connectedChipLabels: Array.from(document.querySelectorAll("#detail .bubble-connected-record-row .light-record-chip"))
+      .map(node => String(node.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean),
+  }));
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -166,9 +191,12 @@ async function main() {
     const coldInboxTitles = await visibleTitles(page, ".light-shell[data-light-route=\"inbox\"] article.card .title");
     const matchingColdInboxTitles = coldInboxTitles.filter(title => apiFeedTitles.has(title));
     const coldInboxEmptyText = normalizeText(await page.locator(".light-shell[data-light-route=\"inbox\"] .empty").first().textContent().catch(() => ""));
+    const inboxPageAction = page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"page\"], .light-shell[data-light-route=\"inbox\"] [data-card-action=\"attachment\"]");
+    const inboxPageActionCount = await inboxPageAction.count();
     assert(coldInboxCardCount > 0, "Light Inbox cold load did not render canonical Home card DOM");
     assert(matchingColdInboxTitles.length > 0, `Light Inbox cold-load titles did not match VM /api/feed titles: ${JSON.stringify(coldInboxTitles.slice(0, 5))}`);
     assert(!/No replies yet\./i.test(coldInboxEmptyText), `Light Inbox cold load regressed to the reply-only empty state: ${coldInboxEmptyText}`);
+    assert(inboxPageActionCount === 0, `Light Inbox should not expose compact page/attachment actions after the graph-first cutover (found ${inboxPageActionCount}).`);
     screenshots.inboxCold = await saveScreenshot(page, config.reportDir, "03-vm-light-inbox-cold");
 
     const detailTarget = page.locator(".light-shell[data-light-route=\"inbox\"] .card-wrap article.card:not(.card-meeting-processing) .card-body");
@@ -189,21 +217,30 @@ async function main() {
         optionalActions.inbox_audio_click = String(error?.message || error || "failed").slice(0, 240);
       }
     }
-    const inboxPageAction = page.locator(".light-shell[data-light-route=\"inbox\"] [data-card-action=\"page\"], .light-shell[data-light-route=\"inbox\"] [data-card-action=\"attachment\"]");
-    const inboxPageActionCount = await inboxPageAction.count();
     optionalActions.inbox_page_action_count = inboxPageActionCount;
-    if (inboxPageActionCount) {
-      try {
-        await inboxPageAction.first().click({ timeout: 5000 });
+    optionalActions.inbox_page_click = "retired";
+
+    const connectedFeedItem = pickConnectedFeedItem(feedItems);
+    if (connectedFeedItem) {
+      const selector = feedCardSelector(connectedFeedItem);
+      const bodySelector = selector ? `${selector} .card-body` : "";
+      optionalActions.connected_feed_card_selector = bodySelector;
+      assert(bodySelector, "Light Inbox could not build a DOM selector for the connected API feed item.");
+      assert(await page.locator(bodySelector).count(), "Light Inbox did not render the connected API feed item in the canonical card list.");
+      if (bodySelector && await page.locator(bodySelector).count()) {
+        await page.locator(bodySelector).first().click();
         await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
-        screenshots.inboxPage = await saveScreenshot(page, config.reportDir, "05-vm-light-inbox-page");
-        optionalActions.inbox_page_click = "ok";
+        const connectedDetail = await readInboxTranscriptConnectedState(page);
+        assert(connectedDetail.connectedChipCount > 0, "Light Inbox transcript detail should surface inline connected record chips for connected feed items.");
+        screenshots.inboxConnectedDetail = await saveScreenshot(page, config.reportDir, "05-vm-light-inbox-connected-detail");
+        optionalActions.inbox_connected_detail_chip_count = connectedDetail.connectedChipCount;
+        optionalActions.inbox_connected_detail_labels = connectedDetail.connectedChipLabels.slice(0, 6);
         await dismissDetail(page);
-      } catch (error) {
-        optionalActions.inbox_page_click = String(error?.message || error || "failed").slice(0, 240);
+      } else {
+        optionalActions.inbox_connected_detail_chip_count = 0;
+        optionalActions.inbox_connected_detail_labels = [];
       }
     }
-    assert(inboxPageActionCount > 0, "Light Inbox did not expose canonical page/attachment actions");
 
     await backToHome(page);
     await clickLightTile(page, "meetings");
@@ -249,6 +286,7 @@ async function main() {
       page_url: config.pageUrl,
       feed_api_count: feedItems.length,
       meetings_api_count: meetingItems.length,
+      connected_feed_api_count: Array.isArray(feedItems) ? feedItems.filter(item => Array.isArray(item?.connected_records) && item.connected_records.length > 0).length : 0,
       inbox_card_count: inboxCardCount,
       meeting_card_count: meetingCardCount,
       matching_inbox_titles: matchingInboxTitles.slice(0, 10),
