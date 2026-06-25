@@ -83,9 +83,9 @@ def test_shipped_semantic_registry_colors_are_unique_and_conservative() -> None:
         "reminders": "#f59e0b",
         "notes": "#c28a00",
         "tasks": "#22c55e",
-        "calendar": "#ef4444",
+        "calendar": "#3f6df6",
         "projects": "#f97316",
-        "contacts": "#db2777",
+        "contacts": "#ef4444",
     }
     assert expected.keys() <= entries.keys()
     for semantic_key, color in expected.items():

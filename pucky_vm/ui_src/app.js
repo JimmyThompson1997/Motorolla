@@ -13148,7 +13148,7 @@
 
   function calendarTimeZoneSettingsCard() {
     const row = el("article", "settings-card settings-native-select-card");
-    row.style.setProperty("--accent", "#ff6c5f");
+    row.style.setProperty("--accent", "#3f6df6");
     row.setAttribute("data-setting-id", "calendar-time-zone");
     const iconEl = el("div", "settings-card-icon");
     iconEl.innerHTML = iconSvg("calendar", { filled: true });
