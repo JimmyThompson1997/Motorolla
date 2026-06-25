@@ -287,6 +287,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     persist_nav = function_block(app, "persistNavState")
     light_navigate = function_block(app, "lightNavigate")
     light_back = function_block(app, "lightBack")
+    pop_light_history = function_block(app, "popLightRouteHistory")
     light_date_picker = function_block(app, "lightDatePicker")
     light_event_block = function_block(app, "lightCalendarEventBlock")
     light_attendee_chip = function_block(app, "lightAttendeeChip")
@@ -296,14 +297,26 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     light_record_chip = function_block(app, "lightRecordChip")
     build_calendar_day_rail = function_block(app, "buildCalendarDayRail")
     continue_calendar_day_rail = function_block(app, "continueCalendarDayRail")
+    snapshot_record = function_block(app, "lightRouteSnapshotExactRecord")
+    snapshot_restorable = function_block(app, "lightRouteSnapshotIsRestorable")
 
     assert "const LIGHT_ROUTE_HISTORY_LIMIT = 12;" in app
     assert "lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history)," in app
     assert "selectedContactId: String(persistedNavState.selected_contact_id || persistedNavState.selectedContactId || \"\").trim() || \"sarah\"," in app
     assert "light_history: normalizeLightRouteHistory(state.lightRouteHistory)," in app
     assert "selected_contact_id: state.selectedContactId || null," in persist_nav
+    assert 'function lightRouteSnapshotExactRecord(snapshot) {' in app
+    assert 'function lightRouteSnapshotIsRestorable(snapshot) {' in app
+    assert 'return workspaceRecordById(collection, recordId, null);' in snapshot_record
+    assert 'const reminder = reminderById(normalized.selectedReminderId, null);' in snapshot_restorable
+    assert 'return Boolean(reminder) && reminderIsNavigableFromList(reminder);' in snapshot_restorable
+    assert "const exactRecord = lightRouteSnapshotExactRecord(normalized);" in snapshot_restorable
+    assert "return Boolean(exactRecord);" in snapshot_restorable
     assert "const currentSnapshot = captureLightRouteSnapshot();" in light_navigate
     assert "pushLightRouteHistory(currentSnapshot);" in light_navigate
+    assert "const replaceHistory = options.replaceHistory === true;" in light_navigate
+    assert "if (!replaceHistory && currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {" in light_navigate
+    assert "if (!lightRouteSnapshotIsRestorable(snapshot)) {" in pop_light_history
     assert "const snapshot = popLightRouteHistory();" in light_back
     assert "const restored = restoreLightRouteSnapshot(snapshot);" in light_back
     assert "restoreDetailNavOrigin();" in light_back
@@ -1984,7 +1997,9 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'page.append(lightInfoSection("Linked records", linkedRows));' not in reminder_detail
     assert "return markReminderDone(reminder);" in dismiss_reminder
     assert "applyReminderMutation(normalizedReminderId, \"done\"" in mark_reminder_done
-    assert 'lightNavigate("reminders", { from: "reminder-detail" });' in mark_reminder_done
+    assert 'lightNavigate("reminders", {' in mark_reminder_done
+    assert 'replaceHistory: true,' in mark_reminder_done
+    assert 'selectionPatch: { selectedReminderId: "" }' in mark_reminder_done
     assert 'metadata: {' in snooze_reminder
     assert 'snoozed_until_ms: nextDueAtMs,' in snooze_reminder
     assert 'delivery_state: "pending",' in snooze_reminder

@@ -8504,6 +8504,10 @@
     return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder);
   }
 
+  function reminderIsNavigableFromList(reminder) {
+    return reminderIsActive(reminder);
+  }
+
   function reminderSnoozeCountdown(reminder, nowMs) {
     if (!reminderIsSnoozed(reminder)) {
       return null;
@@ -10062,7 +10066,11 @@
     const optimisticReminder = reminderWithDoneStatus(currentReminder);
     const nextReminder = await applyReminderMutation(normalizedReminderId, "done", optimisticReminder, { status: "done" });
     if (nextReminder && state.route === "reminder-detail") {
-      lightNavigate("reminders", { from: "reminder-detail" });
+      lightNavigate("reminders", {
+        from: "reminder-detail",
+        replaceHistory: true,
+        selectionPatch: { selectedReminderId: "" },
+      });
     }
     return nextReminder;
   }
@@ -10873,6 +10881,20 @@
     })[String(route || "")] || "";
   }
 
+  function lightRouteDetailCollection(route) {
+    return ({
+      "inbox-detail": "feed-items",
+      "meeting-detail": "calendar-events",
+      "meeting-note-detail": "meeting-notes",
+      "reminder-detail": "reminders",
+      "note-detail": "notes",
+      "task-detail": "tasks",
+      "project-detail": "projects",
+      "contact-detail": "contacts",
+      "contact-edit": "contacts"
+    })[String(route || "")] || "";
+  }
+
   function captureLightRouteScrollTop(route = state.route) {
     const normalizedRoute = normalizeLightHistoryRoute(route);
     if (!normalizedRoute) {
@@ -10927,6 +10949,36 @@
     return [normalized.route, detailKey, detailId, calendarKey].join("::");
   }
 
+  function lightRouteSnapshotExactRecord(snapshot) {
+    const normalized = normalizeLightRouteSnapshot(snapshot);
+    if (!normalized) {
+      return null;
+    }
+    const detailKey = lightRouteDetailKey(normalized.route);
+    const collection = lightRouteDetailCollection(normalized.route);
+    const recordId = detailKey ? String(normalized[detailKey] || "") : "";
+    if (!detailKey || !collection || !recordId) {
+      return null;
+    }
+    return workspaceRecordById(collection, recordId, null);
+  }
+
+  function lightRouteSnapshotIsRestorable(snapshot) {
+    const normalized = normalizeLightRouteSnapshot(snapshot);
+    if (!normalized) {
+      return false;
+    }
+    if (normalized.route === "reminder-detail") {
+      const reminder = reminderById(normalized.selectedReminderId, null);
+      return Boolean(reminder) && reminderIsNavigableFromList(reminder);
+    }
+    if (!isLightDetailRoute(normalized.route)) {
+      return true;
+    }
+    const exactRecord = lightRouteSnapshotExactRecord(normalized);
+    return Boolean(exactRecord);
+  }
+
   function captureLightRouteSnapshot(route = state.route) {
     const normalizedRoute = normalizeLightHistoryRoute(route);
     if (!normalizedRoute) {
@@ -10968,6 +11020,9 @@
         continue;
       }
       if (lightRouteSnapshotIdentity(snapshot) === currentIdentity) {
+        continue;
+      }
+      if (!lightRouteSnapshotIsRestorable(snapshot)) {
         continue;
       }
       state.lightRouteHistory = history;
@@ -11104,6 +11159,7 @@
     const selectionPatch = options.selectionPatch && typeof options.selectionPatch === "object"
       ? options.selectionPatch
       : null;
+    const replaceHistory = options.replaceHistory === true;
     if (!options.skipContactDetailFlush) {
       const continued = runAfterContactDetailFlush(nextRoute, selectionPatch, () => {
         lightNavigate(route, {
@@ -11129,7 +11185,7 @@
     if (!options.preserveDetailOrigin) {
       state.detailNavOrigin = null;
     }
-    if (currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
+    if (!replaceHistory && currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
       pushLightRouteHistory(currentSnapshot);
     }
     if (options.from) {
@@ -11962,8 +12018,16 @@
     return workspaceItems("feed-items").find(item => item.id === state.selectedFeedId) || workspaceItems("feed-items")[0] || null;
   }
 
+  function workspaceRecordById(collection, id, fallback = null) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) {
+      return fallback;
+    }
+    return workspaceItems(collection).find(item => item.id === normalizedId || item.record_id === normalizedId) || fallback;
+  }
+
   function selectedWorkspaceRecord(collection, id, fallback = null) {
-    return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || workspaceItems(collection)[0] || fallback;
+    return workspaceRecordById(collection, id, workspaceItems(collection)[0] || fallback);
   }
 
   function todayDateKey(offsetDays = 0) {

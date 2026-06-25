@@ -540,6 +540,26 @@ def test_reminders_browser_proof_covers_orphaned_recipient_actions() -> None:
     assert "error toast" in source.lower()
 
 
+def test_reminders_browser_proof_covers_stale_history_after_dismiss_sequence() -> None:
+    source = read_source("reminders_v3_browser_proof.mjs")
+
+    assert "historyReminderOneId" in source
+    assert "historyReminderTwoId" in source
+    assert "historyReminderThreeId" in source
+    assert 'window.localStorage.getItem("pucky.cover.nav_state.v1")' in source
+    assert 'await page.locator(".light-back-button").click();' in source
+    assert "window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack()" in source
+    assert "Back once should return to reminders, not a dismissed reminder detail" in source
+    assert "Back twice should return to home, not a dismissed reminder detail" in source
+    assert "Expected light_history to scrub dismissed reminder-detail snapshots" in source
+    assert "Expected light_history to scrub reminders snapshots that still point at dismissed reminder ids" in source
+    assert 'screenshotPrefix: "history_top_back"' in source
+    assert 'stepPrefix: "a"' in source
+    assert 'screenshotPrefix: "history_android_back"' in source
+    assert 'stepPrefix: "b"' in source
+    assert 'reminder => reminderIsDismissed(reminder)' in source
+
+
 def test_workspace_tasks_archive_proof_covers_today_first_select_mode_and_detail_archive() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 

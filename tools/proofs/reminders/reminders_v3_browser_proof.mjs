@@ -202,6 +202,16 @@ async function backToRoute(page, route, timeoutMs) {
   await waitForLightRoute(page, route, timeoutMs);
 }
 
+async function pressTopBack(page) {
+  await page.locator(".light-back-button").click();
+  await page.waitForTimeout(250);
+}
+
+async function pressAndroidBack(page) {
+  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  await page.waitForTimeout(250);
+}
+
 async function waitForReminderRecord(config, reminderId, predicate, description, timeoutMs) {
   const startedAt = Date.now();
   let lastRecord = null;
@@ -276,6 +286,17 @@ async function readReminderListState(page, reminderIds = []) {
     }, {});
     return { sectionTitles: titles, rows };
   }, { ids: reminderIds });
+}
+
+async function readLightHistoryState(page) {
+  return page.evaluate(() => {
+    const raw = window.localStorage.getItem("pucky.cover.nav_state.v1");
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      route: String(parsed?.route || "").trim(),
+      light_history: Array.isArray(parsed?.light_history) ? parsed.light_history : []
+    };
+  });
 }
 
 async function readReminderDetailState(page) {
@@ -565,6 +586,92 @@ async function assertCompactReminderDetail(page, expectedState, expectedActions,
   return detail;
 }
 
+async function runReminderDismissHistoryLane(page, config, summary, options) {
+  const reminderIds = Array.isArray(options?.reminderIds) ? options.reminderIds : [];
+  const routeBack = typeof options?.back === "function" ? options.back : pressTopBack;
+  const screenshotPrefix = String(options?.screenshotPrefix || "history").trim();
+  const stepPrefix = String(options?.stepPrefix || "a").trim().toLowerCase() || "a";
+  const summaryKey = String(options?.summaryKey || screenshotPrefix).trim();
+  const dismissedIds = reminderIds.slice(0, 2);
+  const thirdReminderId = String(reminderIds[2] || "").trim();
+  assert(reminderIds.length === 3 && dismissedIds.every(Boolean) && thirdReminderId, `Expected three reminder ids for ${summaryKey}`);
+
+  await page.goto(pageUrl(config.baseUrl, config.theme, config.apiToken), { waitUntil: "commit", timeout: config.timeoutMs });
+  await waitForHome(page, config.theme, config.timeoutMs);
+  await openTile(page, "Reminders", "reminders", config.timeoutMs);
+  for (const reminderId of reminderIds) {
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  }
+  summary.screenshots[`${screenshotPrefix}_${stepPrefix}0_list`] = await saveScreenshot(page, config.reportDir, `${screenshotPrefix}-${stepPrefix}0-list`);
+
+  const dismissScreens = [
+    { reminderId: reminderIds[0], beforeKey: `${screenshotPrefix}_${stepPrefix}1_detail_before_first_dismiss`, afterKey: `${screenshotPrefix}_${stepPrefix}2_list_after_first_dismiss`, beforeName: `${screenshotPrefix}-${stepPrefix}1-detail-before-first-dismiss`, afterName: `${screenshotPrefix}-${stepPrefix}2-list-after-first-dismiss` },
+    { reminderId: reminderIds[1], beforeKey: `${screenshotPrefix}_${stepPrefix}3_detail_before_second_dismiss`, afterKey: `${screenshotPrefix}_${stepPrefix}4_list_after_second_dismiss`, beforeName: `${screenshotPrefix}-${stepPrefix}3-detail-before-second-dismiss`, afterName: `${screenshotPrefix}-${stepPrefix}4-list-after-second-dismiss` },
+  ];
+  for (const lane of dismissScreens) {
+    await page.locator(`.light-reminder-row[data-reminder-id="${lane.reminderId}"]`).click();
+    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+    await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
+    summary.screenshots[lane.beforeKey] = await saveScreenshot(page, config.reportDir, lane.beforeName);
+    await page.locator('[data-reminder-action="dismiss"]').click();
+    await waitForReminderRecord(
+      config,
+      lane.reminderId,
+      reminder => reminderIsDismissed(reminder),
+      `${lane.reminderId} should dismiss during ${summaryKey}`,
+      config.timeoutMs
+    );
+    await assertNoToast(page, `${lane.reminderId} dismiss`);
+    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), lane.reminderId, { timeout: config.timeoutMs });
+    summary.screenshots[lane.afterKey] = await saveScreenshot(page, config.reportDir, lane.afterName);
+  }
+
+  await page.locator(`.light-reminder-row[data-reminder-id="${thirdReminderId}"]`).click();
+  await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
+  await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
+  summary.screenshots[`${screenshotPrefix}_${stepPrefix}5_detail_before_back`] = await saveScreenshot(page, config.reportDir, `${screenshotPrefix}-${stepPrefix}5-detail-before-back`);
+
+  await routeBack(page);
+  await waitForLightRoute(page, "reminders", config.timeoutMs);
+  await page.locator(`.light-reminder-row[data-reminder-id="${thirdReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  const returnedToList = await page.evaluate(() => {
+    return document.querySelector(".light-shell")?.getAttribute("data-light-route") === "reminders"
+      && !document.querySelector('[data-reminder-detail-card="true"]');
+  });
+  assert(returnedToList, "Back once should return to reminders, not a dismissed reminder detail");
+  summary.screenshots[`${screenshotPrefix}_${stepPrefix}6_list_after_back_once`] = await saveScreenshot(page, config.reportDir, `${screenshotPrefix}-${stepPrefix}6-list-after-back-once`);
+
+  await routeBack(page);
+  await waitForLightRoute(page, "home", config.timeoutMs);
+  const returnedHome = await page.evaluate(() => {
+    return document.querySelector(".light-shell")?.getAttribute("data-light-route") === "home"
+      && !document.querySelector('[data-reminder-detail-card="true"]');
+  });
+  assert(returnedHome, "Back twice should return to home, not a dismissed reminder detail");
+  summary.screenshots[`${screenshotPrefix}_${stepPrefix}7_home`] = await saveScreenshot(page, config.reportDir, `${screenshotPrefix}-${stepPrefix}7-home`);
+
+  const historyState = await readLightHistoryState(page);
+  const historySnapshots = Array.isArray(historyState.light_history) ? historyState.light_history : [];
+  assert(
+    !historySnapshots.some(snapshot => snapshot?.route === "reminder-detail" && dismissedIds.includes(String(snapshot?.selectedReminderId || "").trim())),
+    "Expected light_history to scrub dismissed reminder-detail snapshots"
+  );
+  assert(
+    !historySnapshots.some(snapshot => snapshot?.route === "reminders" && dismissedIds.includes(String(snapshot?.selectedReminderId || "").trim())),
+    "Expected light_history to scrub reminders snapshots that still point at dismissed reminder ids"
+  );
+
+  const thirdRecord = await apiRequest(config, "GET", `/api/workspace/reminders/${thirdReminderId}`);
+  assert(String(thirdRecord?.status || "").trim().toLowerCase() === "open", `${thirdReminderId} should remain open after the back-stack lane`);
+  summary.lifecycle[summaryKey] = {
+    dismissed_ids: dismissedIds,
+    survivor_id: thirdReminderId,
+    history_state: historyState,
+    survivor_status: String(thirdRecord?.status || "").trim().toLowerCase()
+  };
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -586,7 +693,25 @@ async function main() {
   const orphanContactId = `browser-proof-orphan-contact-${runId}`;
   const orphanDismissReminderId = `browser-proof-orphan-dismiss-${runId}`;
   const orphanSnoozeReminderId = `browser-proof-orphan-snooze-${runId}`;
-  const createdReminderIds = [reminderAId, reminderBId, comparisonReminderId, orphanDismissReminderId, orphanSnoozeReminderId];
+  const historyReminderOneId = `browser-proof-history-one-${runId}`;
+  const historyReminderTwoId = `browser-proof-history-two-${runId}`;
+  const historyReminderThreeId = `browser-proof-history-three-${runId}`;
+  const androidHistoryReminderOneId = `browser-proof-history-android-one-${runId}`;
+  const androidHistoryReminderTwoId = `browser-proof-history-android-two-${runId}`;
+  const androidHistoryReminderThreeId = `browser-proof-history-android-three-${runId}`;
+  const createdReminderIds = [
+    reminderAId,
+    reminderBId,
+    comparisonReminderId,
+    orphanDismissReminderId,
+    orphanSnoozeReminderId,
+    historyReminderOneId,
+    historyReminderTwoId,
+    historyReminderThreeId,
+    androidHistoryReminderOneId,
+    androidHistoryReminderTwoId,
+    androidHistoryReminderThreeId,
+  ];
   const baselineActive = await activeReminderCount(config);
   const reminderADueAtMs = Date.now() + LIVE_TO_SNOOZE_DELAY_MS;
   const reminderBDueAtMs = Date.now() - 60_000;
@@ -912,10 +1037,76 @@ async function main() {
     await waitForReminderRowState(page, orphanSnoozeReminderId, "snoozed", config.timeoutMs);
     summary.screenshots.orphan_snooze_after_list = await saveScreenshot(page, config.reportDir, "orphan-snooze-after-list");
 
+    for (const [reminderId, title, summaryText, dueOffsetMs] of [
+      [
+        historyReminderOneId,
+        "Browser Proof History One",
+        "First live reminder for the top-back stale history lane.",
+        -90_000
+      ],
+      [
+        historyReminderTwoId,
+        "Browser Proof History Two",
+        "Second live reminder for the top-back stale history lane.",
+        -80_000
+      ],
+      [
+        historyReminderThreeId,
+        "Browser Proof History Three",
+        "Third live reminder should survive back navigation to reminders then home.",
+        -70_000
+      ],
+      [
+        androidHistoryReminderOneId,
+        "Browser Proof Android History One",
+        "First live reminder for the Android back stale history lane.",
+        -90_000
+      ],
+      [
+        androidHistoryReminderTwoId,
+        "Browser Proof Android History Two",
+        "Second live reminder for the Android back stale history lane.",
+        -80_000
+      ],
+      [
+        androidHistoryReminderThreeId,
+        "Browser Proof Android History Three",
+        "Third live reminder should survive Android back navigation to reminders then home.",
+        -70_000
+      ],
+    ]) {
+      await apiRequest(config, "POST", "/api/workspace/reminders", {
+        id: reminderId,
+        title,
+        summary: summaryText,
+        status: "open",
+        due_at_ms: Date.now() + dueOffsetMs,
+        metadata: {
+          recipients: [{ id: "self", kind: "self", label: "Me" }],
+          destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+        }
+      });
+    }
+    await runReminderDismissHistoryLane(page, config, summary, {
+      reminderIds: [historyReminderOneId, historyReminderTwoId, historyReminderThreeId],
+      back: pressTopBack,
+      screenshotPrefix: "history_top_back",
+      stepPrefix: "a",
+      summaryKey: "history_top_back"
+    });
+    await runReminderDismissHistoryLane(page, config, summary, {
+      reminderIds: [androidHistoryReminderOneId, androidHistoryReminderTwoId, androidHistoryReminderThreeId],
+      back: pressAndroidBack,
+      screenshotPrefix: "history_android_back",
+      stepPrefix: "b",
+      summaryKey: "history_android_back"
+    });
+
     summary.assertions.push("Reminder list icons stay visually static for live and upcoming rows on the hosted list.");
     summary.assertions.push("Dismiss removes a live reminder from the active set, routes back to reminders, and decrements the home badge without showing a toast.");
     summary.assertions.push("Snoozed reminders remain inside Upcoming and their countdown ring advances every second without chunked 15-second plateaus.");
     summary.assertions.push("Orphaned-recipient reminders still allow Dismiss and Snooze after the linked contact record is deleted, without surfacing an error toast.");
+    summary.assertions.push("Back once returns to reminders, and Back twice returns to home without resurrecting dismissed reminder details.");
 
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     writeReminderProofSummary(config.reportDir, summary);
