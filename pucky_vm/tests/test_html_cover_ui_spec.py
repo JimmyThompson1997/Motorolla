@@ -128,6 +128,21 @@ def test_semantic_icon_registry_drives_home_tiles_and_reverse_lookup() -> None:
     assert '{ route: "inbox", label: "Inbox", semantic: "inbox", kind: "real" }' in routes
 
 
+def test_contacts_and_calendar_routes_apply_semantic_shell_accents() -> None:
+    app = read("app.js")
+    canonical_view = function_block(app, "homeShellCanonicalView")
+    mock_view = function_block(app, "homeShellMockView")
+    route_accent_key = function_block(app, "lightRouteSemanticAccentKey")
+    apply_route_accent = function_block(app, "applyLightRouteAccent")
+
+    assert 'if (value === "calendar" || value === "meeting-detail") return "calendar";' in route_accent_key
+    assert 'if (value === "contacts" || value === "contact-detail") return "contacts";' in route_accent_key
+    assert 'applySemanticIconAccent(node, accentKey, { propertyName: "--home-shell-accent", allowEmpty: true });' in apply_route_accent
+    assert 'applySemanticIconAccent(node, accentKey, { propertyName: "--accent-primary", allowEmpty: true });' in apply_route_accent
+    assert "applyLightRouteAccent(view, route);" in canonical_view
+    assert "applyLightRouteAccent(view, route);" in mock_view
+
+
 def test_route_aliases_collapse_legacy_entry_points() -> None:
     app = read("app.js")
     routes = read("pucky-routes.js")

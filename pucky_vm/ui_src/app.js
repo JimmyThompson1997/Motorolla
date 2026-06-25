@@ -5342,6 +5342,7 @@
     const view = el("section", "light-shell");
     view.dataset.lightRoute = route || "home";
     view.dataset.homeShellKind = HOME_SHELL_CANONICAL_ROUTES.has(route) ? "canonical" : "mock";
+    applyLightRouteAccent(view, route);
     view.append(page);
     return view;
   }
@@ -5350,6 +5351,7 @@
     const view = el("section", "light-shell");
     view.dataset.lightRoute = route || "home";
     view.dataset.homeShellKind = "mock";
+    applyLightRouteAccent(view, route);
     view.append(page);
     return view;
   }
@@ -5485,6 +5487,13 @@
     lightNavigate(route);
   }
 
+  function lightRouteSemanticAccentKey(route) {
+    const value = String(route || "").trim().toLowerCase();
+    if (value === "calendar" || value === "meeting-detail") return "calendar";
+    if (value === "contacts" || value === "contact-detail") return "contacts";
+    return "";
+  }
+
   function semanticIconAccentKey(accentKey) {
     const key = String(accentKey || "").trim().toLowerCase();
     return SEMANTIC_ICON_REGISTRY[key] ? key : "";
@@ -5517,6 +5526,12 @@
     node.dataset.appAccent = resolvedKey;
     node.style.setProperty(propertyName, accent);
     return accent;
+  }
+
+  function applyLightRouteAccent(node, route) {
+    const accentKey = lightRouteSemanticAccentKey(route);
+    applySemanticIconAccent(node, accentKey, { propertyName: "--home-shell-accent", allowEmpty: true });
+    applySemanticIconAccent(node, accentKey, { propertyName: "--accent-primary", allowEmpty: true });
   }
 
   function canonicalIconAccentKey(iconKey) {
