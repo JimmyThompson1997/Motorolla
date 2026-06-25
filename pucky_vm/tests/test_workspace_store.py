@@ -415,6 +415,35 @@ def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: P
     assert edited["metadata"]["content_updated_at_ms"] == 1_800_000_002_000
 
 
+def test_workspace_store_lists_pinned_projects_before_recent_projects(tmp_path: Path) -> None:
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
+
+    store.upsert_record(
+        "projects",
+        {
+            "id": "recent-project",
+            "title": "Recent Project",
+            "summary": "Newest unpinned project",
+            "updated_at_ms": 1_800_000_100_000,
+        },
+    )
+    store.upsert_record(
+        "projects",
+        {
+            "id": "pinned-project",
+            "title": "Pinned Project",
+            "summary": "Older pinned project",
+            "updated_at_ms": 1_800_000_000_000,
+        },
+    )
+    store.patch_record("projects", "pinned-project", {"pinned": True})
+
+    result = store.list_records("projects")
+    project_ids = [item["id"] for item in result["items"]]
+
+    assert project_ids[:2] == ["pinned-project", "recent-project"]
+
+
 def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> None:
     clock = Clock(10_000)
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)

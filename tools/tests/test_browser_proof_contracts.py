@@ -30,6 +30,7 @@ def test_browser_facing_proofs_drop_legacy_web_ui_token_precedence() -> None:
         "cover_links_scroll_probe.mjs",
         "cover_notes_feed_centering_real_vm_playwright.mjs",
         "cover_notes_detail_flash_playwright.mjs",
+        "cover_projects_pin_playwright.mjs",
         "cover_workspace_apps_playwright.mjs",
         "meeting_mode_agent_real_vm_playwright.mjs",
         "meetings_load_probe.mjs",
@@ -148,6 +149,29 @@ def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() 
     assert 'request.method() === "PATCH"' in source
     assert '.light-note-row[data-note-id="march"] .light-note-pin-button' in source
     assert "Notes pin write failed" in source
+
+
+def test_projects_pin_browser_proof_covers_section_toggle_and_detail_contract() -> None:
+    source = read_source("cover_projects_pin_playwright.mjs")
+
+    assert LEGACY_WEB_TOKEN_ENV not in source
+    assert "PUCKY_API_TOKEN" in source
+    assert ".light-projects-section-header" in source
+    assert ".light-project-pin-button" in source
+    assert '.light-project-row[data-project-id="' in source
+    assert "Pinned section did not collapse" in source
+    assert "Recent section did not collapse" in source
+    assert "pinning into a collapsed pinned section should auto-expand it" in source
+    assert "unpinning into a collapsed recent section should auto-expand it" in source
+    assert "pin button click should not leave the projects route" in source
+    assert "project copy overlaps pin button" in source
+    assert "rollback should restore the pinned section collapse state" in source
+    assert "project detail did not open from project copy tap" in source
+    assert "baseline-projects-list.png" in source
+    assert "after-pin.png" in source
+    assert "after-unpin.png" in source
+    assert "failure-rollback.png" in source
+    assert "project-detail.png" in source
 
 
 def test_notes_centering_write_proof_stays_out_of_release_lane_and_uses_api_token() -> None:

@@ -194,6 +194,8 @@
     reminderMutationPending: {},
     notesSectionsExpanded: { pinned: true, recent: true },
     notePinPending: {},
+    projectsSectionsExpanded: { pinned: true, recent: true },
+    projectPinPending: {},
     taskNavOrigin: null,
     detailNavOrigin: null,
     reminderHistoryExpanded: false,
@@ -7184,6 +7186,9 @@
     if (surface === "notes") {
       return "light-notes-section";
     }
+    if (surface === "projects") {
+      return "light-projects-section";
+    }
     if (surface === "reminders") {
       return "light-reminder-list-section";
     }
@@ -7193,6 +7198,9 @@
   function universalFeedListClassName(surface) {
     if (surface === "notes") {
       return "light-notes-section-body";
+    }
+    if (surface === "projects") {
+      return "light-projects-section-body";
     }
     if (surface === "meeting-notes") {
       return "light-list light-graph-list";
@@ -7277,9 +7285,14 @@
     if (descriptor.surface === "notes" && descriptor.key) {
       section.dataset.notesSection = descriptor.key;
     }
+    if (descriptor.surface === "projects" && descriptor.key) {
+      section.dataset.projectsSection = descriptor.key;
+    }
     const bodyId = descriptor.key ? `light-${descriptor.surface || "feed"}-section-${descriptor.key}` : "";
     if (descriptor.collapsible && descriptor.surface === "notes") {
       section.append(lightNotesSectionHeader(descriptor.label, descriptor.key, descriptor.count, descriptor.expanded, bodyId));
+    } else if (descriptor.collapsible && descriptor.surface === "projects") {
+      section.append(lightProjectsSectionHeader(descriptor.label, descriptor.key, descriptor.count, descriptor.expanded, bodyId));
     } else if (descriptor.label) {
       const header = el("div", "light-feed-section-header");
       header.append(lightSectionTitle(descriptor.label));
@@ -7418,8 +7431,9 @@
   }
 
   function universalProjectFeedTileDescriptor(project, sectionKey = "") {
+    const projectId = projectRecordId(project);
     return normalizeUniversalFeedTileDescriptor({
-      id: String(project?.id || "").trim(),
+      id: projectId,
       surface: "projects",
       variant: "project",
       sectionKey: String(sectionKey || "").trim().toLowerCase(),
@@ -7428,7 +7442,7 @@
       summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
       chips: [],
       leading: { icon: "folder", show: true },
-      trailing: null,
+      trailing: { kind: "pin", pending: projectPinPending(projectId), pinned: Boolean(project?.pinned) },
       interactive: true,
       open: () => {
         state.selectedProjectId = project.id;
@@ -10620,35 +10634,222 @@
 
   function lightProjectsPage() {
     const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
+    const projects = allProjects();
+    const pinned = projects.filter(project => project.pinned);
+    const sections = [];
+    if (pinned.length) {
+      sections.push(lightProjectsSection("Pinned", "pinned", pinned));
+    }
+    sections.push(lightProjectsSection("Recent", "recent", projects.filter(project => !project.pinned)));
     return renderUniversalFeedPage({
       title: "Projects",
       surface: "projects",
+      surfaceClassName: "light-projects-feed",
       status,
-      sections: [{
-        key: "projects",
-        label: "",
-        count: allProjects().length,
-        collapsible: false,
-        expanded: true,
-        emptyState: null,
-        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))
-      }],
+      sections,
     });
+  }
+
+  function projectRecordId(project) {
+    return String(project?.id || project?.record_id || "").trim();
+  }
+
+  function projectTimestampLabel(project) {
+    return workspaceTimestamp(project?.updated_at_ms, "Updated");
+  }
+
+  function projectMetaLine(project) {
+    return {
+      summary: String(project?.summary || "").trim(),
+      timestamp: projectTimestampLabel(project),
+    };
+  }
+
+  function projectPinPending(projectId) {
+    return Boolean(state.projectPinPending[String(projectId || "").trim()]);
+  }
+
+  function setProjectPinPending(projectId, pending) {
+    const key = String(projectId || "").trim();
+    const next = { ...state.projectPinPending };
+    if (!key) {
+      state.projectPinPending = next;
+      return;
+    }
+    if (pending) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    state.projectPinPending = next;
+  }
+
+  function projectsWithPinnedState(items, projectId, nextPinned) {
+    const targetId = String(projectId || "").trim();
+    const source = Array.isArray(items) ? items : [];
+    const target = source.find(item => projectRecordId(item) === targetId);
+    if (!targetId || !target) {
+      return source.slice();
+    }
+    const toggled = { ...target, pinned: nextPinned };
+    const pinned = [];
+    const recent = [];
+    source.forEach(item => {
+      if (projectRecordId(item) === targetId) {
+        return;
+      }
+      if (item?.pinned) {
+        pinned.push(item);
+        return;
+      }
+      recent.push(item);
+    });
+    return nextPinned
+      ? [toggled, ...pinned, ...recent]
+      : [...pinned, toggled, ...recent];
+  }
+
+  async function toggleProjectPin(project) {
+    const projectId = projectRecordId(project);
+    if (!projectId || projectPinPending(projectId)) {
+      return;
+    }
+    const projectsBucket = state.workspace.projects;
+    if (!projectsBucket || !Array.isArray(projectsBucket.items)) {
+      return;
+    }
+    const previousItems = projectsBucket.items.slice();
+    const previousSectionsExpanded = {
+      ...state.projectsSectionsExpanded
+    };
+    const nextPinned = !Boolean(project.pinned);
+    projectsBucket.error = "";
+    setProjectsSectionExpanded(nextPinned ? "pinned" : "recent", true);
+    projectsBucket.items = projectsWithPinnedState(previousItems, projectId, nextPinned);
+    setProjectPinPending(projectId, true);
+    render();
+    try {
+      await patchWorkspaceRecord("projects", projectId, { pinned: nextPinned });
+      await loadWorkspaceCollection("projects", { render: true, force: true });
+      projectsBucket.error = "";
+    } catch (error) {
+      projectsBucket.items = previousItems;
+      state.projectsSectionsExpanded = previousSectionsExpanded;
+      projectsBucket.error = "";
+      setProjectPinPending(projectId, false);
+      render();
+      showToast(error.message);
+      return;
+    }
+    setProjectPinPending(projectId, false);
+    render();
+  }
+
+  function projectSectionExpanded(sectionKey) {
+    return state.projectsSectionsExpanded?.[sectionKey] !== false;
+  }
+
+  function setProjectsSectionExpanded(sectionKey, expanded) {
+    state.projectsSectionsExpanded = {
+      ...state.projectsSectionsExpanded,
+      [sectionKey]: Boolean(expanded),
+    };
+  }
+
+  function toggleProjectsSection(sectionKey) {
+    setProjectsSectionExpanded(sectionKey, !projectSectionExpanded(sectionKey));
+    render();
+  }
+
+  function lightProjectsSectionHeader(title, sectionKey, count, expanded, controlsId) {
+    const button = el("button", "light-feed-section-header light-projects-section-header");
+    button.type = "button";
+    button.dataset.projectsSection = sectionKey;
+    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-controls", controlsId);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleProjectsSection(sectionKey);
+    });
+    const copy = el("span", "light-projects-section-copy");
+    copy.append(
+      el("span", "light-projects-section-label", String(title).toUpperCase()),
+      el("span", "light-projects-section-count", String(count))
+    );
+    const chevron = el("span", "light-projects-section-chevron");
+    chevron.innerHTML = iconSvg(expanded ? "expand_more" : "chevron_right");
+    button.append(copy, chevron);
+    return button;
+  }
+
+  function lightProjectsSection(title, sectionKey, projects) {
+    return {
+      key: sectionKey,
+      label: title,
+      count: projects.length,
+      collapsible: true,
+      expanded: projectSectionExpanded(sectionKey),
+      emptyState: null,
+      items: projects.map(project => universalProjectFeedTileDescriptor(project, sectionKey))
+    };
   }
 
   function lightProjectRow(project, options = {}) {
     const flatFeed = options.flatFeed === true;
-    const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
-    row.type = "button";
-    row.dataset.projectId = project.id;
-    row.addEventListener("click", () => {
-      state.selectedProjectId = project.id;
+    const row = el("div", "light-feed-row light-project-row");
+    if (flatFeed) {
+      row.classList.add("is-flat-feed");
+    }
+    const projectId = projectRecordId(project);
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", project.title || "Open project");
+    row.dataset.projectId = projectId;
+    row.dataset.projectPinned = String(Boolean(project.pinned));
+    const openProject = () => {
+      if (!projectId) {
+        return;
+      }
+      state.selectedProjectId = projectId;
       lightNavigate("project-detail", { from: "projects" });
+    };
+    row.addEventListener("click", openProject);
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openProject();
+      }
     });
-    row.append(
-      lightSmallIcon("folder"),
-      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Project"}`)
-    );
+    const meta = projectMetaLine(project);
+    const copy = el("span", "light-project-feed-copy");
+    copy.append(el("strong", "", project.title || "Untitled project"));
+    const metaRow = el("span", "light-project-row-meta");
+    if (meta.summary) {
+      metaRow.append(el("span", "light-project-row-summary", meta.summary));
+    } else {
+      metaRow.classList.add("is-time-only");
+    }
+    metaRow.append(el("span", "light-project-row-time", meta.timestamp));
+    copy.append(metaRow);
+    row.dataset.projectHasSummary = String(Boolean(meta.summary));
+    const pin = el("button", "light-project-pin-button");
+    pin.type = "button";
+    pin.disabled = projectPinPending(projectId);
+    pin.dataset.projectPinned = String(Boolean(project.pinned));
+    pin.setAttribute("aria-label", project.pinned ? "Unpin project" : "Pin project");
+    pin.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      void toggleProjectPin(project);
+    });
+    pin.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+      }
+    });
+    pin.innerHTML = iconSvg("pin", { filled: Boolean(project.pinned) });
+    row.append(copy, pin);
     return row;
   }
 

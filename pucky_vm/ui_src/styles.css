@@ -4069,7 +4069,6 @@ button {
 
 .light-contact-row,
 .light-note-row,
-.light-project-row,
 .light-graph-row,
 .light-alert-row,
 .light-feed-row {
@@ -4107,7 +4106,27 @@ button {
   -webkit-user-select: none;
 }
 
+.light-project-row {
+  min-height: 74px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  border-radius: 0;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .light-notes-feed {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 12px;
+}
+
+.light-projects-feed {
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -4120,7 +4139,19 @@ button {
   flex-direction: column;
 }
 
+.light-projects-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .light-notes-section + .light-notes-section {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-projects-section + .light-projects-section {
   margin-top: 4px;
   padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
@@ -4140,7 +4171,25 @@ button {
   cursor: pointer;
 }
 
+.light-projects-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--home-shell-text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
 .light-notes-section-header:active {
+  opacity: 0.72;
+}
+
+.light-projects-section-header:active {
   opacity: 0.72;
 }
 
@@ -4150,7 +4199,20 @@ button {
   border-radius: 10px;
 }
 
+.light-projects-section-header:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
 .light-notes-section-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.light-projects-section-copy {
   min-width: 0;
   display: flex;
   align-items: baseline;
@@ -4166,7 +4228,23 @@ button {
   text-transform: uppercase;
 }
 
+.light-projects-section-label {
+  color: var(--home-shell-text-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .light-notes-section-count {
+  color: color-mix(in srgb, var(--home-shell-text-muted) 76%, transparent);
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.light-projects-section-count {
   color: color-mix(in srgb, var(--home-shell-text-muted) 76%, transparent);
   font-size: 12px;
   line-height: 1.2;
@@ -4180,7 +4258,19 @@ button {
   color: color-mix(in srgb, var(--home-shell-text-muted) 84%, transparent);
 }
 
+.light-projects-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--home-shell-text-muted) 84%, transparent);
+}
+
 .light-notes-section-chevron .material-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.light-projects-section-chevron .material-icon {
   width: 16px;
   height: 16px;
 }
@@ -4189,7 +4279,15 @@ button {
   display: none !important;
 }
 
+.light-projects-section-body[hidden] {
+  display: none !important;
+}
+
 .light-note-row + .light-note-row {
+  border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
+}
+
+.light-project-row + .light-project-row {
   border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
 }
 
@@ -4197,7 +4295,17 @@ button {
   background: color-mix(in srgb, var(--home-shell-card-strong) 72%, transparent);
 }
 
+.light-project-row:active {
+  background: color-mix(in srgb, var(--home-shell-card-strong) 72%, transparent);
+}
+
 .light-note-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  outline-offset: -2px;
+  border-radius: 14px;
+}
+
+.light-project-row:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
   outline-offset: -2px;
   border-radius: 14px;
@@ -4209,7 +4317,24 @@ button {
   gap: 2px;
 }
 
+.light-project-feed-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
 .light-note-feed-copy strong {
+  min-width: 0;
+  color: var(--home-shell-text);
+  font-size: 17px;
+  line-height: 1.08;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.light-project-feed-copy strong {
   min-width: 0;
   color: var(--home-shell-text);
   font-size: 17px;
@@ -4230,7 +4355,21 @@ button {
   line-height: 1.18;
 }
 
+.light-project-row-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--home-shell-text-muted);
+  font-size: 13px;
+  line-height: 1.18;
+}
+
 .light-note-row-meta.is-time-only {
+  justify-content: flex-end;
+}
+
+.light-project-row-meta.is-time-only {
   justify-content: flex-end;
 }
 
@@ -4241,7 +4380,20 @@ button {
   white-space: nowrap;
 }
 
+.light-project-row-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .light-note-row-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.light-project-row-time {
   margin-left: auto;
   flex: 0 0 auto;
   white-space: nowrap;
@@ -4268,7 +4420,33 @@ button {
   cursor: pointer;
 }
 
+.light-project-pin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  justify-self: end;
+  align-self: center;
+  color: #5c6472;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
 .light-note-pin-button:active {
+  background: transparent;
+  opacity: 0.7;
+}
+
+.light-project-pin-button:active {
   background: transparent;
   opacity: 0.7;
 }
@@ -4283,12 +4461,32 @@ button {
   stroke-linejoin: round;
 }
 
+.light-project-pin-button .material-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .light-note-pin-button[data-note-pinned="true"] {
   color: #c88500;
   background: transparent;
 }
 
+.light-project-pin-button[data-project-pinned="true"] {
+  color: #c88500;
+  background: transparent;
+}
+
 .light-note-pin-button[data-note-pinned="true"] .material-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
+.light-project-pin-button[data-project-pinned="true"] .material-icon {
   fill: currentColor;
   stroke: none;
 }

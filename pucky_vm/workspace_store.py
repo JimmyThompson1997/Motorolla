@@ -532,7 +532,7 @@ class WorkspaceStore:
         elif kind == "feed_item":
             order = "ORDER BY event_at_ms DESC, updated_at_ms DESC"
         elif kind == "project":
-            order = "ORDER BY updated_at_ms DESC, title ASC"
+            order = "ORDER BY pinned DESC, updated_at_ms DESC, record_id ASC"
         elif kind == "contact":
             order = f"ORDER BY record_id = '{SELF_CONTACT_ID}' DESC, title COLLATE NOCASE ASC"
         elif kind == "message":

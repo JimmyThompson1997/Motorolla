@@ -1493,6 +1493,90 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert app.count("lightHtmlDocument(") == 2
 
 
+def test_projects_pin_rows_clone_notes_section_toggle_and_right_side_pin_contract() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    light_projects = function_block(app, "lightProjectsPage")
+    light_projects_section = function_block(app, "lightProjectsSection")
+    light_projects_section_header = function_block(app, "lightProjectsSectionHeader")
+    universal_project_descriptor = function_block(app, "universalProjectFeedTileDescriptor")
+    render_universal_section = function_block(app, "renderUniversalFeedSection")
+    toggle_project_pin = function_block(app, "toggleProjectPin")
+    project_row = function_block(app, "lightProjectRow")
+    projects_feed_block = css_block(styles, ".light-projects-feed")
+    projects_section_header_block = css_block(styles, ".light-projects-section-header")
+    project_row_block = css_block(styles, ".light-project-row")
+    project_meta_block = css_block(styles, ".light-project-row-meta")
+    project_summary_block = css_block(styles, ".light-project-row-summary")
+    project_time_block = css_block(styles, ".light-project-row-time")
+    project_pin_button_block = css_block(styles, ".light-project-pin-button")
+    project_pin_icon_block = css_block(styles, ".light-project-pin-button .material-icon")
+
+    assert "projectsSectionsExpanded: { pinned: true, recent: true }," in app
+    assert "projectPinPending: {}," in app
+    assert "const projects = allProjects();" in light_projects
+    assert 'const pinned = projects.filter(project => project.pinned);' in light_projects
+    assert 'sections.push(lightProjectsSection("Pinned", "pinned", pinned));' in light_projects
+    assert 'sections.push(lightProjectsSection("Recent", "recent", projects.filter(project => !project.pinned)));' in light_projects
+    assert 'surface: "projects",' in light_projects
+    assert 'surfaceClassName: "light-projects-feed",' in light_projects
+    assert "return {" in light_projects_section
+    assert "collapsible: true," in light_projects_section
+    assert "expanded: projectSectionExpanded(sectionKey)," in light_projects_section
+    assert "items: projects.map(project => universalProjectFeedTileDescriptor(project, sectionKey))" in light_projects_section
+    assert 'const button = el("button", "light-feed-section-header light-projects-section-header");' in light_projects_section_header
+    assert "button.dataset.projectsSection = sectionKey;" in light_projects_section_header
+    assert 'button.setAttribute("aria-expanded", String(expanded));' in light_projects_section_header
+    assert 'button.setAttribute("aria-controls", controlsId);' in light_projects_section_header
+    assert 'iconSvg(expanded ? "expand_more" : "chevron_right")' in light_projects_section_header
+    assert 'if (descriptor.collapsible && descriptor.surface === "projects") {' in render_universal_section
+    assert 'section.dataset.projectsSection = descriptor.key;' in render_universal_section
+    assert 'const projectId = projectRecordId(project);' in universal_project_descriptor
+    assert 'trailing: { kind: "pin", pending: projectPinPending(projectId), pinned: Boolean(project?.pinned) },' in universal_project_descriptor
+    assert 'const row = el("div", "light-feed-row light-project-row");' in project_row
+    assert 'row.setAttribute("role", "button");' in project_row
+    assert "row.tabIndex = 0;" in project_row
+    assert 'row.dataset.projectPinned = String(Boolean(project.pinned));' in project_row
+    assert 'const meta = projectMetaLine(project);' in project_row
+    assert 'const copy = el("span", "light-project-feed-copy");' in project_row
+    assert 'const metaRow = el("span", "light-project-row-meta");' in project_row
+    assert 'metaRow.append(el("span", "light-project-row-summary", meta.summary));' in project_row
+    assert 'metaRow.append(el("span", "light-project-row-time", meta.timestamp));' in project_row
+    assert 'const pin = el("button", "light-project-pin-button");' in project_row
+    assert 'pin.dataset.projectPinned = String(Boolean(project.pinned));' in project_row
+    assert 'pin.setAttribute("aria-label", project.pinned ? "Unpin project" : "Pin project");' in project_row
+    assert "void toggleProjectPin(project);" in project_row
+    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(project.pinned) });' in project_row
+    assert "row.append(copy, pin);" in project_row
+    assert 'lightSmallIcon("folder")' not in project_row
+    assert "const nextPinned = !Boolean(project.pinned);" in toggle_project_pin
+    assert 'setProjectsSectionExpanded(nextPinned ? "pinned" : "recent", true);' in toggle_project_pin
+    assert 'await patchWorkspaceRecord("projects", projectId, { pinned: nextPinned });' in toggle_project_pin
+    assert 'await loadWorkspaceCollection("projects", { render: true, force: true });' in toggle_project_pin
+    assert "showToast(error.message);" in toggle_project_pin
+
+    assert "display: flex;" in projects_feed_block
+    assert "flex-direction: column;" in projects_feed_block
+    assert "width: 100%;" in projects_section_header_block
+    assert "justify-content: space-between;" in projects_section_header_block
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in project_row_block
+    assert "padding: 12px 0;" in project_row_block
+    assert "display: flex;" in project_meta_block
+    assert "gap: 10px;" in project_meta_block
+    assert "overflow: hidden;" in project_summary_block
+    assert "text-overflow: ellipsis;" in project_summary_block
+    assert "margin-left: auto;" in project_time_block
+    assert "white-space: nowrap;" in project_time_block
+    assert "width: 36px;" in project_pin_button_block
+    assert "height: 36px;" in project_pin_button_block
+    assert "background: transparent;" in project_pin_button_block
+    assert "border: 0;" in project_pin_button_block
+    assert "width: 16px;" in project_pin_icon_block
+    assert "height: 16px;" in project_pin_icon_block
+    assert '.light-project-pin-button[data-project-pinned="true"]' in styles
+
+
 def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -2070,11 +2154,11 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert "function lightMeetingsSection(" in app
     assert "return renderUniversalFeedPage({" in projects_page
     assert 'surface: "projects",' in projects_page
-    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "projects"))' in projects_page
+    assert 'surfaceClassName: "light-projects-feed",' in projects_page
     assert 'renderMode: "flat",' in project_descriptor
     assert "const flatFeed = options.flatFeed === true;" in project_row
-    assert 'flatFeed ? "is-flat-feed" : ""' in project_row
-    assert 'lightSmallIcon("folder")' in project_row
+    assert 'row.classList.add("is-flat-feed");' in project_row
+    assert 'lightSmallIcon("folder")' not in project_row
     assert "return renderUniversalFeedPage({" in inbox_page
     assert 'surface: "inbox",' in inbox_page
     assert 'surfaceTag: "section",' in inbox_page
