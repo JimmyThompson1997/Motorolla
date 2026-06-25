@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
@@ -714,6 +715,7 @@ class PuckyVoiceService:
         if self.meeting_codex is not self.codex:
             self.meeting_codex.start()
         ensure_broker_initialized()
+        self._recover_stale_meeting_runtime_records()
         if self._reminder_poll_thread is None or not self._reminder_poll_thread.is_alive():
             self._reminder_stop_event.clear()
             self._reminder_poll_thread = threading.Thread(
@@ -722,6 +724,312 @@ class PuckyVoiceService:
                 daemon=True,
             )
             self._reminder_poll_thread.start()
+
+    def _meeting_runtime_recovery_threshold_seconds(self) -> float:
+        return max(360.0, float(self.config.codex_turn_timeout) + 60.0)
+
+    def _meeting_runtime_recovery_transcript_attachment(
+        self,
+        record: dict[str, object],
+    ) -> tuple[dict[str, object], str]:
+        attachment = _meeting_fallback_transcript_attachment(record)
+        if attachment:
+            return attachment, "existing_record"
+        meeting_id = _safe_meeting_id(record.get("meeting_id"))
+        if not meeting_id:
+            return {}, ""
+        tool_result = self.meeting_deepgram_transcribe_tool(
+            {"meeting_id": meeting_id},
+            thread_id=meeting_id,
+            turn_id=meeting_id,
+        )
+        latest = self._meeting_record_by_id(meeting_id)
+        if isinstance(latest, dict):
+            for key in (
+                "tool_transcript_text",
+                "tool_transcript_attachment_text",
+                "tool_speaker_turns",
+                "transcript_text",
+                "speaker_turns",
+                "speaker_labels",
+                "agent",
+            ):
+                if key in latest:
+                    record[key] = latest[key]
+        attachment = _meeting_fallback_transcript_attachment(record)
+        if attachment:
+            return attachment, "meeting_deepgram_transcribe"
+        if bool(tool_result.get("ok")):
+            return {
+                "title": "Transcript (Plain Text)",
+                "kind": "text",
+                "text": "[No clear speech detected.]",
+            }, "no_speech_placeholder"
+        return {}, ""
+
+    def _complete_meeting_from_transcript_fallback(
+        self,
+        record: dict[str, object],
+        audio: bytes,
+        mime_type: str,
+        *,
+        fallback_reason: str,
+        recovery_reason: str,
+    ) -> bool:
+        meeting_id = _safe_meeting_id(record.get("meeting_id"))
+        if not meeting_id:
+            return False
+        transcript_attachment, transcript_source = self._meeting_runtime_recovery_transcript_attachment(record)
+        transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
+        if not transcript_text:
+            return False
+        title = _meeting_fallback_display_title(record)
+        no_speech = "no clear speech detected" in transcript_text.lower()
+        note_summary = (
+            "The recording was saved, but no clear speech was detected."
+            if no_speech
+            else _meeting_transcript_preview(transcript_text) or "Transcript-backed meeting note."
+        )
+        reply_text = (
+            "Meeting saved. No clear speech was detected, so I stored the recording as a note."
+            if no_speech
+            else "Meeting saved. I stored a transcript-backed note because the meeting agent was unavailable."
+        )
+        note_id = f"meeting-note-{meeting_id}"
+        note_html = _meeting_transcript_html_document(
+            {
+                **record,
+                "title": title,
+                "recording_title": title,
+            },
+            transcript_text,
+        )
+        envelope = ReplyEnvelope(
+            reply_text=reply_text,
+            card_title=title,
+            card_icon="mic",
+            recording_title=title,
+            transcript_text=transcript_text,
+            attachments=(),
+            graph_records=(
+                {
+                    "record_key": "meeting_note",
+                    "kind": "note",
+                    "payload": {
+                        "id": note_id,
+                        "title": title,
+                        "summary": note_summary,
+                        "html": note_html,
+                        "metadata": {
+                            "source_kind": "meeting",
+                            "source_id": meeting_id,
+                            "meeting_id": meeting_id,
+                            "fallback_reason": recovery_reason,
+                        },
+                    },
+                },
+            ),
+            graph_links=(),
+            connected_records=(
+                {
+                    "record_key": "meeting_note",
+                },
+            ),
+        )
+        connected_records = self._resolve_reply_graph_outputs(envelope)
+        self._validate_meeting_graph_outputs(record, envelope, connected_records)
+        attachments, _attachment_meta = self._prepare_meeting_reply_attachments(
+            meeting_id=meeting_id,
+            record=record,
+            envelope=envelope,
+        )
+        transcript_messages = [
+            _user_transcript_message(
+                text="Meeting recording",
+                created_at=str(record.get("created_at") or _iso_time(time.time())),
+                turn_id=meeting_id,
+                request_audio_mime_type=mime_type,
+                has_request_audio=True,
+                request_audio_attachment=_meeting_request_audio_attachment(record),
+            ),
+            _assistant_transcript_message(
+                text=reply_text,
+                created_at=_iso_time(time.time()),
+                attachments=attachments,
+                connected_records=connected_records,
+            ),
+        ]
+        result = _run_staged_operation(
+            "feed_persist",
+            lambda: self.feed.upsert_turn_result(
+                turn_id=meeting_id,
+                session_id=meeting_id,
+                reply_mode=REPLY_MODE_CARD_ONLY,
+                reply_text=reply_text,
+                title=title,
+                summary=reply_text,
+                icon="mic",
+                origin=_normalize_origin(
+                    {
+                        "runtime": "pucky",
+                        "thread_id": meeting_id,
+                        "source": "meeting_recording",
+                        "meeting_id": meeting_id,
+                        "card_kind": "meeting_result",
+                        "meeting_state": "completed",
+                    },
+                    meeting_id,
+                ),
+                telemetry={
+                    "event": "pucky.meeting.agent_fallback_note",
+                    "status": "ok",
+                    "stage": "meeting_agent_fallback_note",
+                    "meeting_id": meeting_id,
+                    "fallback_reason": fallback_reason,
+                    "recovery_reason": recovery_reason,
+                    "transcript_source": transcript_source,
+                    "request_audio_bytes": len(audio),
+                    "content_type": mime_type,
+                },
+                transcript_messages=transcript_messages,
+                request_audio_mime_type=mime_type,
+                request_audio_base64=base64.b64encode(audio).decode("ascii"),
+                audio_mime_type="",
+                audio_base64="",
+                html_mime_type="",
+                html_base64="",
+                force_unread=True,
+            ),
+            sqlite_retry=True,
+        )
+        result = self._decorate_feed_item(result)
+        result["transcript_messages"] = transcript_messages
+        result["recording_title"] = title
+        result["transcript_text"] = transcript_text
+        result["connected_records"] = connected_records
+        record["state"] = "completed"
+        record["updated_at"] = _iso_time(time.time())
+        record["card_id"] = str(result.get("card_id") or "")
+        record["card"] = result.get("card") if isinstance(result.get("card"), dict) else {}
+        record["feed_item"] = result
+        record["failure_reason"] = ""
+        record["failure_stage"] = ""
+        self._apply_meeting_agent_reply(record, result)
+        agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
+        fallback_agent_state = {
+            "label": "Meeting Mode Agent",
+            "fallback_mode": "transcript_note",
+            "fallback_reason": recovery_reason,
+            "fallback_transcript_source": transcript_source,
+            "last_tool_error": fallback_reason,
+        }
+        agent.update(fallback_agent_state)
+        record["agent"] = agent
+        self._remember_meeting_agent_state(meeting_id, fallback_agent_state)
+        self._apply_meeting_agent_state(record)
+        self._apply_meeting_agent_state_to_feed_item(record)
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
+        return True
+
+    def _finalize_meeting_runtime_failure(
+        self,
+        record: dict[str, object],
+        audio: bytes,
+        mime_type: str,
+        *,
+        failure_stage: str,
+        failure_reason: str,
+    ) -> None:
+        record["state"] = "failed"
+        record["updated_at"] = _iso_time(time.time())
+        record["failure_stage"] = failure_stage
+        record["failure_reason"] = failure_reason
+        record["transcript_status"] = "failed"
+        record["transcript_error"] = str(failure_reason)
+        record["diarization_status"] = "failed"
+        try:
+            failed = _run_staged_operation(
+                "meeting_failed_card_upsert",
+                lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
+                sqlite_retry=True,
+            )
+            record["card_id"] = str(failed.get("card_id") or "")
+            record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
+            record["feed_item"] = failed
+        except Exception as failed_exc:
+            failed_stage = failed_exc.stage if isinstance(failed_exc, _StagedOperationError) else "meeting_failed_card_upsert"
+            record["failed_card_error"] = str(
+                failed_exc.original if isinstance(failed_exc, _StagedOperationError) else failed_exc
+            )
+            record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
+        self._apply_meeting_agent_state(record)
+        self._apply_meeting_agent_state_to_feed_item(record)
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
+
+    def _recover_stale_meeting_runtime_records(self) -> None:
+        now_epoch = time.time()
+        threshold = self._meeting_runtime_recovery_threshold_seconds()
+        for item in self._load_meetings():
+            record = dict(item or {})
+            meeting_id = _safe_meeting_id(record.get("meeting_id"))
+            if not meeting_id or bool(record.get("archived")):
+                continue
+            state = str(record.get("state") or "").strip().lower()
+            updated_epoch = _parse_iso_time_epoch_seconds(record.get("updated_at") or record.get("created_at") or "")
+            stale_processing = bool(
+                state == "processing"
+                and updated_epoch is not None
+                and now_epoch - updated_epoch >= threshold
+            )
+            recover_failed = bool(
+                state == "failed"
+                and str(record.get("failure_stage") or "").strip() == "meeting_agent_call"
+                and not list(record.get("connected_records") or [])
+                and (
+                    "codex turn failed" in str(record.get("failure_reason") or "").lower()
+                    or "usagelimitexceeded" in str(record.get("failure_reason") or "").lower()
+                    or "codexappservererror" in str(record.get("failure_reason") or "").lower()
+                )
+            )
+            if not stale_processing and not recover_failed:
+                continue
+            audio_payload = self.meeting_audio(meeting_id)
+            if audio_payload is None:
+                if stale_processing:
+                    self._finalize_meeting_runtime_failure(
+                        record,
+                        b"",
+                        str(record.get("mime_type") or "audio/mp4"),
+                        failure_stage="meeting_agent_timeout",
+                        failure_reason="TimeoutError: Meeting processing exceeded the runtime recovery window.",
+                    )
+                continue
+            audio, resolved_mime_type, _filename = audio_payload
+            recovery_reason = "stale_processing_recovery" if stale_processing else "meeting_agent_call_recovery"
+            if self._complete_meeting_from_transcript_fallback(
+                record,
+                audio,
+                resolved_mime_type,
+                fallback_reason=str(record.get("failure_reason") or "").strip(),
+                recovery_reason=recovery_reason,
+            ):
+                continue
+            if stale_processing:
+                self._finalize_meeting_runtime_failure(
+                    record,
+                    audio,
+                    resolved_mime_type,
+                    failure_stage="meeting_agent_timeout",
+                    failure_reason="TimeoutError: Meeting processing exceeded the runtime recovery window.",
+                )
 
     def health(self) -> dict[str, object]:
         return {
@@ -3867,53 +4175,47 @@ class PuckyVoiceService:
             self._apply_meeting_agent_state_to_feed_item(record)
             if record.get("transcript_status") == "missing_transcript_attachment":
                 failure_reason = self._meeting_transcript_validation_reason(record)
-                record["state"] = "failed"
-                record["transcript_status"] = "failed"
-                record["transcript_error"] = failure_reason
-                record["diarization_status"] = "failed"
-                record["failure_reason"] = failure_reason
-                record["failure_stage"] = "meeting_transcript_validation"
-                failed = _run_staged_operation(
-                    "meeting_failed_card_upsert",
-                    lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
-                    sqlite_retry=True,
+                self._finalize_meeting_runtime_failure(
+                    record,
+                    audio,
+                    mime_type,
+                    failure_stage="meeting_transcript_validation",
+                    failure_reason=failure_reason,
                 )
-                record["card_id"] = str(failed.get("card_id") or "")
-                record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
-                record["feed_item"] = failed
         except Exception as exc:
             stage = exc.stage if isinstance(exc, _StagedOperationError) else "meeting_agent_call"
             root = exc.original if isinstance(exc, _StagedOperationError) else exc
-            record["state"] = "failed"
-            record["updated_at"] = _iso_time(time.time())
-            record["failure_stage"] = self._meeting_failure_stage(stage, root)
-            record["failure_reason"] = f"{root.__class__.__name__}: {root}"
-            record["transcript_status"] = "failed"
-            record["transcript_error"] = str(record["failure_reason"])
-            record["diarization_status"] = "failed"
-            try:
-                failed = _run_staged_operation(
-                    "meeting_failed_card_upsert",
-                    lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
-                    sqlite_retry=True,
+            failure_stage = self._meeting_failure_stage(stage, root)
+            failure_reason = f"{root.__class__.__name__}: {root}"
+            recovered = False
+            if failure_stage == "meeting_agent_call" and any(
+                token in failure_reason.lower()
+                for token in ("codex turn failed", "usagelimitexceeded", "codexappservererror")
+            ):
+                recovered = self._complete_meeting_from_transcript_fallback(
+                    record,
+                    audio,
+                    mime_type,
+                    fallback_reason=failure_reason,
+                    recovery_reason="meeting_agent_call_fallback",
                 )
-                record["card_id"] = str(failed.get("card_id") or "")
-                record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
-                record["feed_item"] = failed
-            except Exception as failed_exc:
-                failed_stage = failed_exc.stage if isinstance(failed_exc, _StagedOperationError) else "meeting_failed_card_upsert"
-                record["failed_card_error"] = str(
-                    failed_exc.original if isinstance(failed_exc, _StagedOperationError) else failed_exc
+            if not recovered:
+                self._finalize_meeting_runtime_failure(
+                    record,
+                    audio,
+                    mime_type,
+                    failure_stage=failure_stage,
+                    failure_reason=failure_reason,
                 )
-                record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
             result = {}
-        self._apply_meeting_agent_state(record)
-        self._apply_meeting_agent_state_to_feed_item(record)
-        _run_staged_operation(
-            "meeting_index_write",
-            lambda: self._upsert_meeting(record),
-            sqlite_retry=True,
-        )
+        if str(record.get("state") or "").strip().lower() != "failed":
+            self._apply_meeting_agent_state(record)
+            self._apply_meeting_agent_state_to_feed_item(record)
+            _run_staged_operation(
+                "meeting_index_write",
+                lambda: self._upsert_meeting(record),
+                sqlite_retry=True,
+            )
 
     @staticmethod
     def _apply_meeting_agent_reply(record: dict[str, object], result: dict[str, object]) -> None:
@@ -5502,6 +5804,50 @@ def _elapsed_ms(start: float) -> int:
 
 def _iso_time(epoch_seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
+
+
+def _parse_iso_time_epoch_seconds(value: object) -> float | None:
+    clean = str(value or "").strip()
+    if not clean:
+        return None
+    try:
+        return datetime.fromisoformat(clean.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _meeting_fallback_display_title(record: dict[str, object]) -> str:
+    meeting_id = str(record.get("meeting_id") or "").strip()
+    for key in ("title", "recording_title"):
+        candidate = str(record.get(key) or "").strip()
+        if (
+            candidate
+            and _meeting_title_quality(candidate, meeting_id) == "human_like"
+            and candidate.lower() not in {"processing meeting recording", "meeting processing failed"}
+        ):
+            return candidate
+    for raw in (record.get("started_at"), record.get("created_at"), record.get("updated_at")):
+        epoch = _parse_iso_time_epoch_seconds(raw)
+        if epoch is None:
+            continue
+        return f"Meeting Note {time.strftime('%Y-%m-%d %H:%M', time.gmtime(epoch))}"
+    return "Meeting Note"
+
+
+def _meeting_transcript_preview(transcript_text: object, *, max_chars: int = 140) -> str:
+    for raw_line in str(transcript_text or "").splitlines():
+        clean_line = str(raw_line or "").strip()
+        if not clean_line:
+            continue
+        match = MEETING_TRANSCRIPT_LINE_RE.match(clean_line)
+        if match:
+            clean_line = str(match.group("text") or "").strip()
+        if not clean_line:
+            continue
+        if len(clean_line) <= max_chars:
+            return clean_line
+        return clean_line[: max(0, max_chars - 1)].rstrip() + "…"
+    return ""
 
 
 def _normalize_turn_id(raw: str | None) -> str:

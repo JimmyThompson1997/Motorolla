@@ -2314,17 +2314,11 @@ class ServerTests(unittest.TestCase):
             for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
             if item["title"] == "Transcript (Plain Text)"
         )
-        transcript_html_attachment = next(
-            item
-            for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
-            if item["title"] == "Transcript"
-        )
         self.assertEqual(transcript_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
         self.assertEqual(transcript_attachment["recording_title"], "Quarterly Deck Recording")
-        self.assertEqual(transcript_html_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
-        self.assertEqual(transcript_html_attachment["recording_title"], "Quarterly Deck Recording")
+        self.assertFalse(any(item["title"] == "Transcript" for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]))
 
-    def test_meeting_signed_summary_transcript_and_audio_urls_are_browser_readable_without_auth(self) -> None:
+    def test_meeting_signed_transcript_and_audio_urls_are_browser_readable_without_auth(self) -> None:
         self.post_json(
             "/api/meetings",
             {
@@ -2347,14 +2341,12 @@ class ServerTests(unittest.TestCase):
             time.sleep(0.1)
         self.assertEqual(meeting["state"], "completed")
         attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
-        summary_attachment = next(item for item in attachments if item["title"] == "Meeting Summary")
-        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript")
+        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
         audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
 
         for url in (
-            str(summary_attachment["viewer_url"]),
-            str(transcript_attachment["viewer_url"]),
-            str(audio_attachment["url"]),
+            str(transcript_attachment.get("url") or transcript_attachment.get("src") or ""),
+            str(audio_attachment.get("url") or audio_attachment.get("src") or ""),
         ):
             with urllib.request.urlopen(urllib.parse.urljoin(self.base_url, url), timeout=10) as response:
                 body = response.read()
@@ -2448,7 +2440,7 @@ class ServerTests(unittest.TestCase):
         attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
         self.assertTrue(any(item["title"] == "Meeting Audio" and item["kind"] == "audio" for item in attachments))
         self.assertTrue(any(item["title"] == "Transcript (Plain Text)" for item in attachments))
-        self.assertTrue(any(item["title"] == "Transcript" for item in attachments))
+        self.assertFalse(any(item["title"] == "Transcript" for item in attachments))
 
     def test_raw_meeting_title_is_allowed_and_flagged_machine_like(self) -> None:
         raw_meeting_id = "meeting-20260603-121500-device-raw-title"
@@ -3103,6 +3095,111 @@ class ServerTests(unittest.TestCase):
         item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
         self.assertEqual(item["card_kind"], "meeting_failed")
         self.assertEqual(item["origin"]["failure_stage"], "meeting_agent_timeout")
+
+    def test_meeting_agent_call_failure_falls_back_to_transcript_note(self) -> None:
+        class UsageLimitMeetingCodex(FakeCodex):
+            def send_turn(
+                self,
+                text: str,
+                *,
+                thread_id: str | None = None,
+                output_schema: dict[str, object] | None = None,
+                **_kwargs,
+            ):
+                self.turns.append(text)
+                self.output_schemas.append(output_schema)
+                raise RuntimeError(
+                    "Codex turn failed: {'message': 'Usage limit reached.', 'codexErrorInfo': 'usageLimitExceeded'}"
+                )
+
+        self.service.meeting_codex = UsageLimitMeetingCodex()
+        meeting_id = "meeting-20260601-120707-device-agent-fallback"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:07:07Z",
+                "stopped_at": "2026-06-01T12:07:12Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
+            },
+        )
+        meeting = {}
+        for _ in range(50):
+            rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") in {"completed", "failed"}:
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(meeting["state"], "completed")
+        self.assertEqual(meeting["transcript_status"], "completed")
+        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
+        self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "completed")
+        self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_result")
+        self.assertIn("transcript-backed note", meeting["feed_item"]["summary"])
+        self.assertEqual(meeting["agent"]["fallback_mode"], "transcript_note")
+        self.assertEqual(meeting["agent"]["fallback_transcript_source"], "meeting_deepgram_transcribe")
+        self.assertIn("usageLimitExceeded", meeting["agent"]["last_tool_error"])
+        note = self.service.workspace.get_record("notes", meeting["connected_records"][0]["id"])
+        self.assertIsNotNone(note)
+        self.assertIn("Transcript", str(note.get("html") or ""))
+        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
+        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
+        self.assertEqual(item["meeting_state"], "completed")
+        self.assertEqual(item["connected_records"][0]["kind"], "note")
+
+    def test_stale_processing_meeting_is_recovered_to_transcript_note(self) -> None:
+        meeting_id = "meeting-20260601-120708-device-stale-processing"
+        audio = b"RIFFmeeting-audio"
+        self.service._meetings_dir.mkdir(parents=True, exist_ok=True)
+        audio_path = self.service._meetings_dir / f"{meeting_id}.wav"
+        audio_path.write_bytes(audio)
+        record = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": meeting_id,
+            "state": "processing",
+            "created_at": "2026-06-01T12:07:08Z",
+            "updated_at": "2026-06-01T12:07:08Z",
+            "started_at": "2026-06-01T12:07:08Z",
+            "stopped_at": "2026-06-01T12:07:13Z",
+            "duration_ms": 5000,
+            "device_id": "device-1",
+            "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+            "mime_type": "audio/wav",
+            "audio_bytes": len(audio),
+            "audio_path": str(audio_path),
+            "audio_url": "",
+            "metadata": {},
+            "transcript_status": "agent_pending",
+            "transcript_error": "",
+            "transcript_text": "",
+            "transcript_result": {},
+            "diarization_requested": True,
+            "diarization_status": "agent_pending",
+            "speaker_turns": [],
+            "agent": {"label": "Meeting Mode Agent"},
+            "archived": False,
+            "failure_stage": "",
+        }
+        placeholder = self.service._upsert_meeting_processing_card(record, audio, "audio/wav")
+        record["card_id"] = str(placeholder.get("card_id") or "")
+        record["card"] = placeholder.get("card") if isinstance(placeholder.get("card"), dict) else {}
+        record["feed_item"] = placeholder
+        self.service._upsert_meeting(record)
+
+        self.service._recover_stale_meeting_runtime_records()
+
+        meeting = self.service.meeting_detail(meeting_id)["meeting"]
+        self.assertEqual(meeting["state"], "completed")
+        self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "completed")
+        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
+        self.assertEqual(meeting["agent"]["fallback_mode"], "transcript_note")
+        self.assertEqual(meeting["agent"]["fallback_reason"], "stale_processing_recovery")
+        self.assertEqual(meeting["agent"]["fallback_transcript_source"], "meeting_deepgram_transcribe")
 
     def test_meeting_attachment_builder_falls_back_to_tool_transcript_when_agent_omits_transcript_attachment(self) -> None:
         meeting_id = "meeting-20260601-120701-device-abc123ef"
