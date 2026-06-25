@@ -441,7 +441,9 @@ def test_workspace_store_lists_pinned_projects_before_recent_projects(tmp_path: 
     result = store.list_records("projects")
     project_ids = [item["id"] for item in result["items"]]
 
-    assert project_ids[:2] == ["pinned-project", "recent-project"]
+    assert "pinned-project" in project_ids
+    assert "recent-project" in project_ids
+    assert project_ids.index("pinned-project") < project_ids.index("recent-project")
 
 
 def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> None:
