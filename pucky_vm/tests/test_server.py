@@ -4287,6 +4287,45 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def post_multipart(
+        self,
+        path: str,
+        *,
+        fields: dict[str, object],
+        files: list[tuple[str, str, str, bytes]],
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        boundary = f"----pucky-{uuid.uuid4().hex}"
+        body = bytearray()
+        for name, value in fields.items():
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+            body.extend(str(value).encode("utf-8"))
+            body.extend(b"\r\n")
+        for field_name, filename, content_type, content in files:
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'.encode("utf-8")
+            )
+            body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+            body.extend(content)
+            body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+        merged = {
+            "Authorization": "Bearer secret",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        }
+        if headers:
+            merged.update(headers)
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=bytes(body),
+            method="POST",
+            headers=merged,
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
     def post_empty(self, path: str, headers: dict[str, str] | None = None) -> dict:
         request = urllib.request.Request(
             self.base_url + path,
@@ -4304,6 +4343,44 @@ class ServerTests(unittest.TestCase):
     def issue_portal_token(self) -> str:
         payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
         return self.portal_token(payload["portal_url"])
+
+    def test_text_turn_accepts_multipart_user_attachments_and_preserves_them_on_user_message(self) -> None:
+        note_bytes = b"THREAD-COMPOSE-UNIT unique text attachment line\nsecond line\n"
+        image_bytes = b"\x89PNG\r\n\x1a\nthread-compose-proof"
+
+        body = self.post_multipart(
+            "/api/turn/text",
+            fields={
+                "text": "Please inspect the attachments.",
+                "turn_id": "thread-compose-multipart-1",
+                "thread_mode": "existing",
+                "thread_id": "thread-compose-existing",
+                "thread_scope_source": "thread_transcript",
+                "proof_reply_delay_ms": "6000",
+            },
+            files=[
+                ("files", "thread-compose-note.txt", "text/plain", note_bytes),
+                ("files", "thread-compose-proof.png", "image/png", image_bytes),
+            ],
+        )
+
+        prompt = self.codex.turns[-1]
+        self.assertIn("thread-compose-note.txt", prompt)
+        self.assertIn("THREAD-COMPOSE-UNIT unique text attachment line", prompt)
+        self.assertIn("thread-compose-proof.png", prompt)
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "thread-compose-existing")
+        self.assertEqual(body["telemetry"]["requested_thread_id"], "thread-compose-existing")
+        self.assertEqual(body["telemetry"]["proof_reply_delay_ms_requested"], 6000)
+
+        messages = body["transcript_messages"]
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["text"], "Please inspect the attachments.")
+        attachments = messages[0]["attachments"]
+        self.assertEqual([attachment["title"] for attachment in attachments], ["thread-compose-note.txt", "thread-compose-proof.png"])
+        self.assertEqual(attachments[0]["kind"], "text")
+        self.assertEqual(attachments[1]["kind"], "image")
+        self.assertEqual(attachments[0]["viewer"]["type"], "text")
+        self.assertEqual(attachments[1]["viewer"]["type"], "image_gallery")
 
 
 if __name__ == "__main__":

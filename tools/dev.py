@@ -62,8 +62,15 @@ TASK_HELP = {
     "test-full": "Run the full Python suite for VM, tooling, and puckyctl.",
     "proof-local-notes-flash-browser": "Boot the local workspace proof server and run the v2 Notes fast-twitch browser proof against the current local bundle.",
     "proof-live-notes-flash-browser": "Run the v2 Notes fast-twitch browser proof against the hosted VM with manifest verification.",
+    "proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle.",
+    "proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification.",
+    "proof-local-calendar": "Boot the local workspace proof server and run the Calendar continuous-month browser proof against the current local bundle.",
+    "proof-live-calendar": "Run the Calendar continuous-month browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
     "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
+    "proof-local-thread-compose-browser": "Boot the local inbox/media proof server and run the Inbox thread compose browser proof against the current local bundle.",
+    "proof-live-thread-compose-browser": "Run the Inbox thread compose browser proof against the hosted VM with manifest refresh verification.",
+    "proof-live-thread-compose-emulator": "Run the Inbox thread compose emulator proof artifact generator for hosted verification follow-up.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
     "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
@@ -308,6 +315,16 @@ def run_local_web_proof(extra_args: list[str]) -> int:
                     ),
                 ),
                 (
+                    "tools/proofs/cover/cover_home_app_labels_playwright.mjs",
+                    [
+                        "--base-url",
+                        "http://127.0.0.1:8767",
+                        "--report-dir",
+                        str((ROOT / ".tmp" / "proof-local-web" / "home-app-labels").resolve()),
+                        *extra_args,
+                    ],
+                ),
+                (
                     "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
                     [
                         "--base-url",
@@ -385,6 +402,52 @@ def run_local_notes_flash_browser_proof(extra_args: list[str]) -> int:
     )
 
 
+def run_local_contacts_search_browser_proof(extra_args: list[str]) -> int:
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_workspace_apps_playwright.mjs",
+        [
+            "--base-url",
+            base_url,
+            "--api-token",
+            "proof-token",
+            "--sections",
+            "contacts",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-contacts-search-browser").resolve()),
+        ],
+        extra_args,
+        server_command=build_local_workspace_proof_server_command(
+            port,
+            state_dir=ROOT / ".tmp" / "proof-local-contacts-search-browser-state",
+        ),
+        health_url=f"{base_url}/healthz",
+    )
+
+
+def run_local_calendar_proof(extra_args: list[str]) -> int:
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_calendar_playwright.mjs",
+        [
+            "--base-url",
+            base_url,
+            "--api-token",
+            "proof-token",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-calendar").resolve()),
+        ],
+        extra_args,
+        server_command=build_local_workspace_proof_server_command(
+            port,
+            state_dir=ROOT / ".tmp" / "proof-local-calendar-state",
+        ),
+        health_url=f"{base_url}/healthz",
+    )
+
+
 def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_node_proofs(
@@ -398,6 +461,54 @@ def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
                     *extra_args,
                 ],
             ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_contacts_search_browser_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/cover/cover_live_user_session_playwright.mjs",
+                [
+                    "--routes",
+                    "contacts",
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-contacts-search-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_calendar_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    live_root = (ROOT / ".tmp" / "proof-live-calendar").resolve()
+    base_url = append_refresh_param("https://pucky.fly.dev", refresh_seed)
+    return run_node_proofs(
+        node_binary,
+        [
+            *[
+                (
+                    "tools/proofs/cover/cover_calendar_playwright.mjs",
+                    [
+                        "--browser",
+                        browser_name,
+                        "--base-url",
+                        base_url,
+                        "--report-dir",
+                        str((live_root / browser_name).resolve()),
+                        *extra_args,
+                    ],
+                )
+                for browser_name in ("chromium", "webkit")
+            ],
         ],
         env=proof_env(),
     )
@@ -439,6 +550,60 @@ def run_live_universal_feed_tiles_proof(extra_args: list[str]) -> int:
             ),
         ],
         env=proof_env(),
+    )
+
+
+def run_local_thread_compose_browser_proof(extra_args: list[str]) -> int:
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_inbox_thread_compose_playwright.mjs",
+        [
+            "--page-url",
+            "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-thread-compose-browser").resolve()),
+            "--timeout-ms",
+            "30000",
+        ],
+        extra_args,
+        server_command=LOCAL_INBOX_MEDIA_PROOF_SERVER,
+        health_url="http://127.0.0.1:8768/healthz",
+    )
+
+
+def run_live_thread_compose_browser_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    page_url = append_refresh_param(
+        "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+        refresh_seed,
+    )
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/cover/cover_inbox_thread_compose_playwright.mjs",
+                [
+                    "--page-url",
+                    page_url,
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-thread-compose-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_thread_compose_emulator_proof(extra_args: list[str]) -> int:
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/phone/phone_inbox_thread_compose_emulator_proof.py",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-live-thread-compose-emulator").resolve()),
+            *extra_args,
+        ]
     )
 
 
@@ -522,6 +687,18 @@ def run_live_web_proof(extra_args: list[str]) -> int:
     )
     scripts.append(
         (
+            "tools/proofs/cover/cover_home_app_labels_playwright.mjs",
+            [
+                "--base-url",
+                append_refresh_param("https://pucky.fly.dev", refresh_seed),
+                "--report-dir",
+                str((live_root / "home-app-labels").resolve()),
+                *extra_args,
+            ],
+        )
+    )
+    scripts.append(
+        (
             "tools/proofs/cover/cover_live_user_session_playwright.mjs",
             [
                 "--report-dir",
@@ -587,10 +764,24 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_notes_flash_browser_proof(args.extra_args)
     if args.task == "proof-live-notes-flash-browser":
         return run_live_notes_flash_browser_proof(args.extra_args)
+    if args.task == "proof-local-contacts-search-browser":
+        return run_local_contacts_search_browser_proof(args.extra_args)
+    if args.task == "proof-live-contacts-search-browser":
+        return run_live_contacts_search_browser_proof(args.extra_args)
+    if args.task == "proof-local-calendar":
+        return run_local_calendar_proof(args.extra_args)
+    if args.task == "proof-live-calendar":
+        return run_live_calendar_proof(args.extra_args)
     if args.task == "proof-local-universal-tiles":
         return run_local_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-live-universal-tiles":
         return run_live_universal_feed_tiles_proof(args.extra_args)
+    if args.task == "proof-local-thread-compose-browser":
+        return run_local_thread_compose_browser_proof(args.extra_args)
+    if args.task == "proof-live-thread-compose-browser":
+        return run_live_thread_compose_browser_proof(args.extra_args)
+    if args.task == "proof-live-thread-compose-emulator":
+        return run_live_thread_compose_emulator_proof(args.extra_args)
     if args.task == "proof-local-web":
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":

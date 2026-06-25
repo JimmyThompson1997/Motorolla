@@ -31,7 +31,7 @@ def test_live_user_session_runner_records_manifest_refresh_seed_cleanup_and_repo
     assert '"reminders"' in source
     assert "const UNIVERSAL_FEED_TILE_ROUTES = [" in source
     assert '"notes"' in source
-    assert '"tags"' in source
+    assert '"projects"' in source
     assert '"inbox"' in source
     assert '"meetings"' in source
     assert 'url.searchParams.set("api_token"' not in source
@@ -50,7 +50,7 @@ def test_live_user_session_runner_keeps_connect_read_only_and_uses_home_route() 
     assert 'await openRouteFromHome(page, "meeting-notes", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "reminders", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "notes", config.timeoutMs);' in source
-    assert 'await openRouteFromHome(page, "tags", config.timeoutMs);' in source
+    assert 'await openRouteFromHome(page, "projects", config.timeoutMs);' in source
     assert 'await openRouteFromHome(page, "contacts", config.timeoutMs);' in source
     assert "route=apps" not in source
     assert "route=feed" not in source
@@ -119,6 +119,7 @@ def test_tools_package_exposes_inbox_related_proofs() -> None:
 
     assert payload["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
     assert payload["scripts"]["test:cover-light-native-ports"] == "node ./proofs/cover/cover_light_native_ports_playwright.mjs"
+    assert payload["scripts"]["test:cover-inbox-thread-compose"] == "node ./proofs/cover/cover_inbox_thread_compose_playwright.mjs"
 
 
 def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
@@ -126,6 +127,7 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
 
     assert "cover_light_native_ports_playwright.mjs" in source
     assert "cover_inbox_tile_audio_truth_playwright.mjs" in source
+    assert "cover_inbox_thread_compose_playwright.mjs" in source
     assert "cover_calendar_playwright.mjs" in source
     assert "cover_live_user_session_playwright.mjs" in source
     assert "--skip-canonical-check" in source
@@ -146,8 +148,14 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert 'proof-live-contacts-search-browser' in source
     assert 'proof-local-calendar' in source
     assert 'proof-live-calendar' in source
+    assert 'live_root = (ROOT / ".tmp" / "proof-live-calendar").resolve()' in source
+    assert 'live_root / browser_name' in source
+    assert '"--browser"' in source
     assert 'proof-local-universal-tiles' in source
     assert 'proof-live-universal-tiles' in source
+    assert 'proof-local-thread-compose-browser' in source
+    assert 'proof-live-thread-compose-browser' in source
+    assert 'proof-live-thread-compose-emulator' in source
 
 
 def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_contracts() -> None:

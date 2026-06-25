@@ -7,12 +7,15 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -28,6 +31,8 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
@@ -60,6 +65,7 @@ public class MainActivity extends Activity {
     private static final int REQUEST_ALL_PERMISSIONS = 1001;
     private static final int REQUEST_ASSISTANT_SETUP_PERMISSIONS = 4206;
     private static final int ASSISTANT_SETUP_NOTIFICATION_ID = 4207;
+    private static final int REQUEST_WEB_FILE_CHOOSER = 4208;
     private static final String ASSISTANT_SETUP_CHANNEL_ID = "pucky_assistant_setup";
     private static final int BACKGROUND = Color.rgb(2, 6, 10);
     private static final String HOSTED_UI_URL = "https://pucky.fly.dev/ui/pucky/latest/index.html";
@@ -70,6 +76,7 @@ public class MainActivity extends Activity {
     private ButtonController buttonController;
     private WebView webShell;
     private PuckyWebBridge webBridge;
+    private ValueCallback<Uri[]> pendingWebFileChooserCallback;
     private boolean stateReceiverRegistered;
     private boolean screenReceiverRegistered;
     private boolean pendingAssistantSetupAfterPermission;
@@ -203,6 +210,31 @@ public class MainActivity extends Activity {
             pendingAssistantSetupAfterPermission = false;
             mainHandler.post(this::continueAssistantSetupFlow);
         }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_WEB_FILE_CHOOSER) {
+            ValueCallback<Uri[]> callback = pendingWebFileChooserCallback;
+            pendingWebFileChooserCallback = null;
+            if (callback != null) {
+                Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                if (results == null && resultCode == RESULT_OK) {
+                    if (data != null && data.getData() != null) {
+                        results = new Uri[] { data.getData() };
+                    } else if (data != null && data.getClipData() != null) {
+                        ClipData clipData = data.getClipData();
+                        results = new Uri[clipData.getItemCount()];
+                        for (int index = 0; index < clipData.getItemCount(); index += 1) {
+                            results[index] = clipData.getItemAt(index).getUri();
+                        }
+                    }
+                }
+                callback.onReceiveValue(results);
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     private void registerStateReceivers() {
@@ -355,6 +387,40 @@ public class MainActivity extends Activity {
         webShell.setOverScrollMode(View.OVER_SCROLL_NEVER);
         configureWebShellSettings(webShell);
         webShell.setWebViewClient(new PuckyWebResourceClient(this, uiBundleController, uiSurfaceController));
+        webShell.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (pendingWebFileChooserCallback != null) {
+                    pendingWebFileChooserCallback.onReceiveValue(null);
+                }
+                pendingWebFileChooserCallback = filePathCallback;
+                Intent chooserIntent;
+                try {
+                    chooserIntent = fileChooserParams != null
+                            ? fileChooserParams.createIntent()
+                            : new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                } catch (Exception error) {
+                    pendingWebFileChooserCallback = null;
+                    return false;
+                }
+                chooserIntent.addCategory(Intent.CATEGORY_OPENABLE);
+                chooserIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                if (chooserIntent.getType() == null) {
+                    chooserIntent.setType("*/*");
+                }
+                try {
+                    startActivityForResult(Intent.createChooser(chooserIntent, "Select files"), REQUEST_WEB_FILE_CHOOSER);
+                    return true;
+                } catch (ActivityNotFoundException error) {
+                    ValueCallback<Uri[]> callback = pendingWebFileChooserCallback;
+                    pendingWebFileChooserCallback = null;
+                    if (callback != null) {
+                        callback.onReceiveValue(null);
+                    }
+                    return false;
+                }
+            }
+        });
         webBridge = new PuckyWebBridge(this, webShell, uiBundleController, settingsStore);
         webShell.addJavascriptInterface(webBridge, "PuckyAndroid");
         com.pucky.device.ui.UiAutomationController.attach(webShell);

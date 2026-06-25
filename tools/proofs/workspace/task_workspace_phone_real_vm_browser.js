@@ -218,6 +218,12 @@ async function readTaskState(page) {
       const rect = node.getBoundingClientRect();
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     }) || document.querySelector(".light-task-detail-surface");
+    const infoSections = Array.from(detail?.querySelectorAll(".light-info-section") || []);
+    const infoSection = title => infoSections.find(section =>
+      String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === title
+    ) || null;
+    const peopleSection = infoSection("people");
+    const attachedSection = infoSection("attached");
     const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
       .map(node => String(node.textContent || "").trim().toLowerCase());
     const sections = Array.from(document.querySelectorAll(".light-task-section-toggle")).map(toggle => {
@@ -265,25 +271,33 @@ async function readTaskState(page) {
           done: row.classList.contains("is-done"),
         }))
       : [];
-    const attached = detail
-      ? Array.from(detail.querySelectorAll(".light-task-chip-cloud [data-workspace-target-kind]")).map(node => ({
+    const attached = attachedSection
+      ? Array.from(attachedSection.querySelectorAll('.light-info-row[data-workspace-target-kind]')).map(node => ({
           kind: String(node.getAttribute("data-workspace-target-kind") || ""),
           id: String(node.getAttribute("data-workspace-target-id") || ""),
           route: String(node.getAttribute("data-workspace-target-route") || ""),
-          label: String(node.textContent || "").replace(/\s+/g, " ").trim(),
-          hasIcon: Boolean(node.querySelector(".light-record-chip-icon")),
+          label: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+          value: String(node.querySelector(".light-text-stack span")?.textContent || "").trim(),
+          hasIcon: Boolean(node.querySelector(".light-small-icon svg")),
+          uses_small_icon: Boolean(node.querySelector(".light-small-icon")),
         }))
       : [];
-    const people = detail
-      ? Array.from(detail.querySelectorAll(".light-task-person-row")).map(row => {
-          const chip = row.querySelector('[data-workspace-target-kind="contact"]');
+    const people = peopleSection
+      ? Array.from(peopleSection.querySelectorAll(".light-info-row")).map(row => {
+          const icon = row.querySelector(".light-small-icon");
+          const iconStyle = icon ? getComputedStyle(icon) : null;
           return {
             role: String(row.getAttribute("data-task-person-role") || ""),
-            label: String(row.querySelector(".light-task-person-label")?.textContent || "").trim(),
-            kind: String(chip?.getAttribute("data-workspace-target-kind") || ""),
-            id: String(chip?.getAttribute("data-workspace-target-id") || ""),
-            route: String(chip?.getAttribute("data-workspace-target-route") || ""),
-            text: String(chip?.textContent || "").replace(/\s+/g, " ").trim(),
+            label: String(row.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+            value: String(row.querySelector(".light-text-stack span")?.textContent || "").trim(),
+            kind: String(row.getAttribute("data-workspace-target-kind") || ""),
+            id: String(row.getAttribute("data-workspace-target-id") || ""),
+            route: String(row.getAttribute("data-workspace-target-route") || ""),
+            text: String(row.textContent || "").replace(/\s+/g, " ").trim(),
+            icon_color: String(iconStyle?.color || "").trim(),
+            icon_background: String(iconStyle?.backgroundColor || "").trim(),
+            icon_has_svg: Boolean(icon?.querySelector("svg")),
+            uses_small_icon: icon?.classList.contains("light-small-icon") || false,
           };
         })
       : [];
@@ -297,8 +311,9 @@ async function readTaskState(page) {
       hasPeopleSection: sectionTitles.includes("people"),
       hasChecklistSection: sectionTitles.includes("checklist"),
       hasAttachedSection: sectionTitles.includes("attached"),
-      attachedChipIconCount: detail?.querySelectorAll(".light-task-chip-cloud .light-record-chip-icon").length || 0,
-      hasLegacyCreatedByRow: Boolean(detail?.querySelector('.light-info-row[data-workspace-target-kind="contact"]')),
+      attachedRowCount: attached.length,
+      hasTaskPersonChips: Boolean(peopleSection?.querySelector(".light-record-chip")),
+      hasTaskAttachmentChips: Boolean(attachedSection?.querySelector(".light-record-chip")),
       statusTriggerPresent: Boolean(detail?.querySelector(".light-task-status-trigger")),
       statusCircleTriggerPresent: Boolean(detail?.querySelector(".light-task-status-circle-trigger")),
       people,

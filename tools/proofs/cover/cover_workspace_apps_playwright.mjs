@@ -15,6 +15,16 @@ const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://1
 const VIEWPORT = { width: 430, height: 932 };
 const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };
 const PROOF_RUN_ID = "proof-workspace";
+const CLEANUP_RECORD_COLLECTION_ORDER = [
+  "reminders",
+  "meeting-notes",
+  "projects",
+  "feed-items",
+  "calendar-events",
+  "tasks",
+  "notes",
+  "contacts"
+];
 
 function resolveApiToken() {
   const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
@@ -164,10 +174,7 @@ function shouldRunSection(config, sectionName) {
     return true;
   }
   const target = String(sectionName || "").trim().toLowerCase();
-  if (requested.includes(target)) {
-    return true;
-  }
-  return target === "tags" && requested.includes("projects");
+  return requested.includes(target);
 }
 
 async function readCollection(config, collection, now = null) {
@@ -316,6 +323,20 @@ async function deleteWorkspaceLink(config, linkId) {
   }
 }
 
+async function sweepSeedRecordsByPrefix(config, runId = PROOF_RUN_ID) {
+  const prefix = `${String(runId || PROOF_RUN_ID).trim()}-`;
+  for (const collection of CLEANUP_RECORD_COLLECTION_ORDER) {
+    const payload = await readCollection(config, collection);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const matchingIds = items
+      .map(item => String(item?.record_id || item?.id || "").trim())
+      .filter(recordId => recordId.startsWith(prefix));
+    for (const recordId of matchingIds) {
+      await deleteWorkspaceRecord(config, collection, recordId);
+    }
+  }
+}
+
 async function cleanupWorkspaceSeed(config, seed) {
   if (!seed?.writeEnabled) {
     return false;
@@ -324,11 +345,13 @@ async function cleanupWorkspaceSeed(config, seed) {
   for (const linkId of manifest.linkIds) {
     await deleteWorkspaceLink(config, linkId);
   }
-  for (const [collection, ids] of Object.entries(manifest.recordIds)) {
+  for (const collection of CLEANUP_RECORD_COLLECTION_ORDER) {
+    const ids = Array.isArray(manifest.recordIds?.[collection]) ? manifest.recordIds[collection] : [];
     for (const recordId of ids) {
       await deleteWorkspaceRecord(config, collection, recordId);
     }
   }
+  await sweepSeedRecordsByPrefix(config, seed.runId || PROOF_RUN_ID);
   return true;
 }
 
@@ -442,13 +465,13 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       });
     }
 
-    await apiRequest(config, "POST", "/api/workspace/tags", {
+    await apiRequest(config, "POST", "/api/workspace/projects", {
       id: `${runId}-alpha-project`,
       title: "Proof Alpha Project",
       summary: "Alpha has two named threads.",
       metadata: { threads: ["Alpha kickoff", "Alpha launch"] }
     });
-    await apiRequest(config, "POST", "/api/workspace/tags", {
+    await apiRequest(config, "POST", "/api/workspace/projects", {
       id: `${runId}-beta-project`,
       title: "Proof Beta Project",
       summary: "Beta has three named threads.",
@@ -610,12 +633,12 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     if (!isUnauthorizedError(error)) {
       throw error;
     }
-    const [notes, tasks, events, feeds, tags, contacts, meetingNotes, reminders] = await Promise.all([
+    const [notes, tasks, events, feeds, projects, contacts, meetingNotes, reminders] = await Promise.all([
       readCollection(config, "notes"),
       readCollection(config, "tasks"),
       readCollection(config, "calendar-events"),
       readCollection(config, "feed-items"),
-      readCollection(config, "tags"),
+      readCollection(config, "projects"),
       readCollection(config, "contacts"),
       readCollection(config, "meeting-notes"),
       readCollection(config, "reminders")
@@ -630,7 +653,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       tasks,
       calendarEvents: events,
       feedItems: feeds,
-      projects: tags,
+      projects,
       contacts,
       meetingNotes,
       reminders
@@ -1340,7 +1363,7 @@ async function proveCalendar(page, config, seed, theme, screenshots, summary) {
 }
 
 async function proveFeed(page, config, seed, theme, screenshots, summary) {
-  await openTile(page, "Tags", "tags", config.timeoutMs);
+  await openTile(page, "Projects", "projects", config.timeoutMs);
   const projects = seed.writeEnabled ? null : (seed.projects || []);
   if (seed.writeEnabled) {
     await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1393,8 +1416,8 @@ async function proveFeed(page, config, seed, theme, screenshots, summary) {
     await waitForGraphText(page, "Proof Pinned Note", config.timeoutMs);
     screenshots[`${theme}_inbox_related_note`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-related-note`);
     await topBackToRoute(page, "inbox-detail", "Proof Project Decision", config.timeoutMs);
-    await page.locator(`[data-workspace-target-route="tag-detail"][data-workspace-target-id="${seed.runId}-alpha-project"]`).first().click();
-    await waitForLightRoute(page, "tag-detail", config.timeoutMs);
+    await page.locator(`[data-workspace-target-route="project-detail"][data-workspace-target-id="${seed.runId}-alpha-project"]`).first().click();
+    await waitForLightRoute(page, "project-detail", config.timeoutMs);
     await waitForGraphText(page, "Proof Alpha Project", config.timeoutMs);
     screenshots[`${theme}_inbox_related_project`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-related-project`);
     await topBackToRoute(page, "inbox-detail", "Proof Project Decision", config.timeoutMs);
@@ -1404,7 +1427,7 @@ async function proveFeed(page, config, seed, theme, screenshots, summary) {
 }
 
 async function proveProjects(page, config, seed, theme, screenshots, summary) {
-  await openTile(page, "Tags", "tags", config.timeoutMs);
+  await openTile(page, "Projects", "projects", config.timeoutMs);
   const projects = seed.writeEnabled ? null : (seed.projects || []);
   if (seed.writeEnabled) {
     await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1428,8 +1451,10 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
   const detailState = await readGraphDetailState(page);
-  assert(detailState.route === "tag-detail", `Expected tag-detail route, got ${detailState.route}`);
+  assert(detailState.route === "project-detail", `Expected project-detail route, got ${detailState.route}`);
   assert(!detailState.hasHtmlFrame, "Did not expect project detail to render a generated HTML iframe");
+  assert(!detailState.projectDetailHasHero, "Expected project detail hero card to be removed");
+  assert(!detailState.projectDetailHasChipCloud, "Expected project detail chip cloud to be removed");
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   if (seed.writeEnabled) {
     await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -1441,7 +1466,7 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
       await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
       await waitForLightRoute(page, route, config.timeoutMs);
       await waitForGraphText(page, text, config.timeoutMs);
-      await topBackToRoute(page, "tag-detail", "Proof Alpha Project", config.timeoutMs);
+      await topBackToRoute(page, "project-detail", "Proof Alpha Project", config.timeoutMs);
     }
     screenshots[`${theme}_project_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-project-after-back`);
   }
@@ -1666,7 +1691,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
       await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
       for (const [route, id, text] of [
         ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
-        ["tag-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
+        ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
         ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
       ]) {
         await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
@@ -1942,7 +1967,9 @@ async function readGraphDetailState(page) {
     route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
     text: document.querySelector(".light-shell")?.textContent || "",
     hasHtmlFrame: Boolean(document.querySelector(".light-detail-html-body .light-html-frame")),
-    hasNotes: /\bnotes\b/i.test(document.querySelector(".light-shell")?.textContent || "")
+    hasNotes: /\bnotes\b/i.test(document.querySelector(".light-shell")?.textContent || ""),
+    projectDetailHasHero: Boolean(document.querySelector(".light-detail-hero")),
+    projectDetailHasChipCloud: Boolean(document.querySelector(".light-chip-cloud"))
   }));
 }
 
@@ -2022,7 +2049,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_reminder_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-after-back`);
   await backHome(page, theme, config.timeoutMs);
 
-  await openTile(page, "Tags", "tags", config.timeoutMs);
+  await openTile(page, "Projects", "projects", config.timeoutMs);
   await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).click();
   for (const text of ["Proof Graph Meeting", "Proof Pinned Note", "Proof Future Task"]) {
     await waitForGraphText(page, text, config.timeoutMs);
@@ -2040,7 +2067,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   summary.graphRipple = summary.graphRipple || [];
   summary.graphRipple.push({ theme, meeting, reminder, project: `${seed.runId}-alpha-project`, contact: `${seed.runId}-contact-one` });
-  summary.assertions.push(`${theme} meeting-notes/reminders/tags/contacts/feed use top Back to return to the exact prior detail`);
+  summary.assertions.push(`${theme} meeting-notes/reminders/projects/contacts/feed use top Back to return to the exact prior detail`);
 }
 
 async function runTheme(page, config, seed, theme, summary, networkLog) {
@@ -2060,7 +2087,7 @@ async function runTheme(page, config, seed, theme, summary, networkLog) {
   if (shouldRunSection(config, "feed")) {
     await proveFeed(page, config, seed, theme, screenshots, summary);
   }
-  if (shouldRunSection(config, "tags")) {
+  if (shouldRunSection(config, "projects")) {
     await proveProjects(page, config, seed, theme, screenshots, summary);
   }
   if (shouldRunSection(config, "contacts")) {
@@ -2146,7 +2173,7 @@ async function main() {
       darkSeed = null;
     }
     summary.assertions.push("light and dark home-shell loaded");
-    summary.assertions.push("notes/tasks/calendar/feed/tags/contacts/meeting-notes/reminders read /api/workspace records");
+    summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
     summary.assertions.push("note detail remains the only generated HTML iframe surface across workspace object apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");

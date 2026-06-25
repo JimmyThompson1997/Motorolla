@@ -21,14 +21,10 @@ WORKSPACE_COLLECTIONS: dict[str, str] = {
     "tasks": "task",
     "calendar-events": "calendar_event",
     "feed-items": "feed_item",
-    "tags": "project",
+    "projects": "project",
     "contacts": "contact",
     "meeting-notes": "meeting_note",
     "reminders": "reminder",
-}
-
-WORKSPACE_COLLECTION_ALIASES: dict[str, str] = {
-    "projects": "tags",
 }
 
 KIND_COLLECTIONS = {value: key for key, value in WORKSPACE_COLLECTIONS.items()}
@@ -37,17 +33,21 @@ SELF_CONTACT_TITLE = "Me"
 SELF_CONTACT_SUMMARY = "Personal reminder delivery profile"
 CONTACT_EMAIL_ENDPOINT_LABELS = ("email", "gmail", "mail")
 CONTACT_PHONE_ENDPOINT_LABELS = ("phone", "sms", "text", "mobile", "call")
+CONTACT_PHOTO_FIXTURES = (
+    "fixtures/contact_photos/maya.webp",
+    "fixtures/contact_photos/sam.webp",
+    "fixtures/contact_photos/eric.webp",
+    "fixtures/contact_photos/proof-contact.webp",
+)
+CONTACT_PHOTO_BY_ID = {
+    "maya": "fixtures/contact_photos/maya.webp",
+    "sam-rivera": "fixtures/contact_photos/sam.webp",
+    "eric-donaldson": "fixtures/contact_photos/eric.webp",
+}
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
-
-def canonical_collection_name(collection: object) -> str:
-    value = str(collection or "").strip()
-    if not value:
-        return ""
-    return WORKSPACE_COLLECTION_ALIASES.get(value, value)
 
 
 def _json_dumps(value: Any) -> str:
@@ -78,7 +78,7 @@ def _workspace_kind_label(kind: object) -> str:
         "task": "Task",
         "calendar_event": "Calendar",
         "feed_item": "Inbox",
-        "project": "Tag",
+        "project": "Project",
         "contact": "Contact",
         "meeting_note": "Meeting note",
         "reminder": "Reminder",
@@ -149,6 +149,20 @@ def _contact_metadata_without_endpoints(metadata: dict[str, Any]) -> dict[str, A
     cleaned = dict(metadata or {})
     cleaned.pop("endpoints", None)
     return cleaned
+
+
+def _is_contact_fixture_bitmap_photo(value: object) -> bool:
+    photo = str(value or "").strip()
+    return photo.startswith("fixtures/contact_photos/") and photo.lower().endswith((".jpg", ".jpeg", ".webp"))
+
+
+def _contact_fixture_photo(record_id: str, title: str = "") -> str:
+    clean_id = str(record_id or "").strip()
+    if clean_id in CONTACT_PHOTO_BY_ID:
+        return CONTACT_PHOTO_BY_ID[clean_id]
+    key = f"{clean_id}:{title}".strip(":") or "contact"
+    index = sum(ord(char) for char in key) % len(CONTACT_PHOTO_FIXTURES)
+    return CONTACT_PHOTO_FIXTURES[index]
 
 
 def _normalize_reminder_recipient_id(value: object) -> str:
@@ -480,8 +494,7 @@ class WorkspaceStore:
         date: str = "",
         limit: int = 200,
     ) -> dict[str, object]:
-        canonical_collection = canonical_collection_name(collection)
-        kind = self.kind_for_collection(canonical_collection)
+        kind = self.kind_for_collection(collection)
         query = [
             "SELECT * FROM workspace_records WHERE kind = ?",
             "" if include_deleted else "AND deleted = 0",
@@ -499,7 +512,7 @@ class WorkspaceStore:
         elif kind == "feed_item":
             order = "ORDER BY event_at_ms DESC, updated_at_ms DESC"
         elif kind == "project":
-            order = "ORDER BY updated_at_ms DESC, title ASC"
+            order = "ORDER BY pinned DESC, updated_at_ms DESC, record_id ASC"
         elif kind == "contact":
             order = f"ORDER BY record_id = '{SELF_CONTACT_ID}' DESC, title COLLATE NOCASE ASC"
         elif kind == "message":
@@ -516,7 +529,7 @@ class WorkspaceStore:
         items = [self._row_to_record(row) for row in rows]
         return {
             "schema": "pucky.workspace.list.v1",
-            "collection": canonical_collection,
+            "collection": collection,
             "kind": kind,
             "count": len(items),
             "items": items,
@@ -763,6 +776,8 @@ class WorkspaceStore:
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
+            contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
+            contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
             notes_only_html_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_notes_only_html_v1'").fetchone()
             metadata_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'workspace_metadata_cleanup_v1'").fetchone()
             demo_time_refresh_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_demo_time_refresh_v1'").fetchone()
@@ -810,6 +825,10 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
+        if not contact_html_removed:
+            self._remove_contact_html_v1(now)
+        if not contact_cleanup_photos:
+            self._cleanup_contacts_and_photos_v1(now)
         if not notes_only_html_seeded:
             self._migrate_notes_only_html_v1(now)
         if not metadata_cleanup_seeded:
@@ -823,6 +842,9 @@ class WorkspaceStore:
         if current is None:
             return self.upsert_record("contacts", _self_contact_record())
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
+        metadata.pop("photo", None)
+        metadata.pop("html", None)
+        metadata.pop("html_asset_id", None)
         payload = {
             "id": SELF_CONTACT_ID,
             "title": SELF_CONTACT_TITLE,
@@ -873,6 +895,100 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("contact_endpoints_removed_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _remove_contact_html_v1(self, now_ms: int) -> None:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT record_id, metadata_json FROM workspace_records WHERE kind = 'contact'"
+            ).fetchall()
+            for row in rows:
+                metadata = _json_loads(row["metadata_json"], {})
+                next_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                next_metadata.pop("html", None)
+                next_metadata.pop("html_asset_id", None)
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET html = '',
+                        html_asset_id = '',
+                        metadata_json = ?,
+                        updated_at_ms = ?
+                    WHERE kind = 'contact'
+                      AND record_id = ?
+                    """,
+                    (_json_dumps(next_metadata), now_ms, row["record_id"]),
+                )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_html_removed_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _cleanup_contacts_and_photos_v1(self, now_ms: int) -> None:
+        with self._lock:
+            clinic_row = self._conn.execute(
+                """
+                SELECT html, metadata_json
+                FROM workspace_records
+                WHERE kind = 'contact' AND record_id = 'clinic-front-desk'
+                """
+            ).fetchone()
+            should_remove_legacy_clinic = False
+            if clinic_row is not None:
+                clinic_metadata = _json_loads(clinic_row["metadata_json"], {})
+                clinic_email = str(clinic_metadata.get("email") or "").strip() if isinstance(clinic_metadata, dict) else ""
+                clinic_html = str(clinic_row["html"] or "").strip()
+                should_remove_legacy_clinic = not clinic_email and not clinic_html
+            if should_remove_legacy_clinic:
+                self._conn.execute(
+                    """
+                    DELETE FROM workspace_links
+                    WHERE (source_kind = 'contact' AND source_id = 'clinic-front-desk')
+                       OR (target_kind = 'contact' AND target_id = 'clinic-front-desk')
+                    """
+                )
+                self._conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET archived = 1,
+                        deleted = 1,
+                        updated_at_ms = ?
+                    WHERE kind = 'contact'
+                      AND record_id = 'clinic-front-desk'
+                    """,
+                    (now_ms,),
+                )
+            rows = self._conn.execute(
+                "SELECT record_id, title, metadata_json, deleted FROM workspace_records WHERE kind = 'contact'"
+            ).fetchall()
+            for row in rows:
+                record_id = str(row["record_id"] or "").strip()
+                metadata = _json_loads(row["metadata_json"], {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                next_metadata = dict(metadata)
+                is_self = record_id == SELF_CONTACT_ID or bool(next_metadata.get("is_self"))
+                if is_self:
+                    next_metadata.pop("photo", None)
+                elif not bool(row["deleted"]):
+                    if not _is_contact_fixture_bitmap_photo(next_metadata.get("photo")):
+                        next_metadata["photo"] = _contact_fixture_photo(record_id, str(row["title"] or ""))
+                if next_metadata != metadata:
+                    self._conn.execute(
+                        """
+                        UPDATE workspace_records
+                        SET metadata_json = ?,
+                            updated_at_ms = ?
+                        WHERE kind = 'contact'
+                          AND record_id = ?
+                        """,
+                        (_json_dumps(next_metadata), now_ms, record_id),
+                    )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("contact_cleanup_photos_v1", "1", now_ms),
             )
             self._conn.commit()
 
@@ -1111,7 +1227,7 @@ class WorkspaceStore:
 
     @staticmethod
     def kind_for_collection(collection: str) -> str:
-        kind = WORKSPACE_COLLECTIONS.get(canonical_collection_name(collection))
+        kind = WORKSPACE_COLLECTIONS.get(str(collection or "").strip())
         if not kind:
             raise ValueError("unknown_workspace_collection")
         return kind
@@ -1552,7 +1668,7 @@ def seeded_workspace_snapshot(
         if str(asset.get("id") or asset.get("asset_id") or "").strip()
     }
     next_records = {
-        canonical_collection_name(collection): [dict(record) for record in records]
+        collection: [dict(record) for record in records]
         for collection, records in records_by_collection.items()
     }
     next_links = [dict(link) for link in links]
@@ -1564,7 +1680,7 @@ def seeded_workspace_snapshot(
         if str(note.get("id") or note.get("record_id") or "").strip()
     }
     for collection, records in next_records.items():
-        kind = WORKSPACE_COLLECTIONS.get(canonical_collection_name(collection), "")
+        kind = WORKSPACE_COLLECTIONS.get(collection, "")
         for record in records:
             metadata = dict(record.get("metadata") or {}) if isinstance(record.get("metadata"), dict) else {}
             html = str(record.get("html") or "").strip()
@@ -1918,7 +2034,7 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                 "metadata": {"icon": "note", "type": "note_update"},
             },
         ],
-        "tags": [
+        "projects": [
             {
                 "id": "aurora",
                 "title": "Project Aurora",
@@ -2151,7 +2267,7 @@ def default_workspace_graph_records(now_ms: int) -> dict[str, list[dict[str, obj
                 "metadata": {"place": "Phone", "attendees": ["Sam Rivera"], "type": "call"},
             },
         ],
-        "tags": [
+        "projects": [
             {
                 "id": "home-refresh",
                 "title": "Home refresh",

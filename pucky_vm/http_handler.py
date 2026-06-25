@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import cgi
 import html
+import io
 import json
 import mimetypes
 from http import HTTPStatus
@@ -22,7 +24,7 @@ from .http_surface import (
 from .links_portal import _links_portal_document
 from .ui_bundle import UI_SRC, bundle_config_script
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
-from .workspace_store import WORKSPACE_COLLECTIONS, canonical_collection_name
+from .workspace_store import WORKSPACE_COLLECTIONS
 
 if TYPE_CHECKING:
     from .server import PuckyVoiceService
@@ -30,6 +32,37 @@ if TYPE_CHECKING:
 
 def _truthy_query(value: object) -> bool:
     return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def _multipart_form_payload(headers, body: bytes) -> tuple[dict[str, object], list[dict[str, object]]]:
+    form = cgi.FieldStorage(
+        fp=io.BytesIO(body),
+        headers=headers,
+        environ={
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": str(headers.get("Content-Type") or ""),
+            "CONTENT_LENGTH": str(len(body)),
+        },
+        keep_blank_values=True,
+    )
+    payload: dict[str, object] = {}
+    files: list[dict[str, object]] = []
+    for key in form.keys():
+        field = form[key]
+        items = field if isinstance(field, list) else [field]
+        for item in items:
+            if getattr(item, "filename", None):
+                files.append(
+                    {
+                        "field_name": str(key or "").strip(),
+                        "filename": str(item.filename or "").strip() or "attachment",
+                        "content_type": str(item.type or "application/octet-stream").strip() or "application/octet-stream",
+                        "content": item.file.read() if getattr(item, "file", None) is not None else b"",
+                    }
+                )
+            else:
+                payload[str(key or "").strip()] = item.value
+    return payload, files
 
 
 def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_types: set[str]):
@@ -545,9 +578,17 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 try:
-                    payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
-                    if not isinstance(payload, dict):
-                        raise ValueError("text_payload_must_be_object")
+                    content_type = str(self.headers.get("Content-Type") or "").strip().lower()
+                    if content_type.startswith("multipart/form-data"):
+                        payload, uploaded_files = _multipart_form_payload(
+                            self.headers,
+                            self._read_body(32 * 1024 * 1024),
+                        )
+                    else:
+                        payload = json.loads(self._read_body(256 * 1024).decode("utf-8"))
+                        uploaded_files = []
+                        if not isinstance(payload, dict):
+                            raise ValueError("text_payload_must_be_object")
                     result = service.handle_text_turn(
                         str(payload.get("text") or ""),
                         str(payload.get("turn_id") or self.headers.get("X-Pucky-Turn-Id", "") or ""),
@@ -575,6 +616,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                             or self.headers.get("X-Pucky-Proof-Reply-Delay-Ms", "")
                             or ""
                         ),
+                        user_attachments=uploaded_files,
                     )
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -735,10 +777,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             suffix = str(path or "").removeprefix("/api/workspace/").strip("/")
             if not suffix:
                 return []
-            parts = [unquote(part).strip() for part in suffix.split("/") if part.strip()]
-            if parts:
-                parts[0] = canonical_collection_name(parts[0])
-            return parts
+            return [unquote(part).strip() for part in suffix.split("/") if part.strip()]
 
         def _allows_public_browser_user_read(self, path: str) -> bool:
             value = str(path or "").strip()

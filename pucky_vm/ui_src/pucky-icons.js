@@ -184,7 +184,7 @@ window.PUCKY_UI_ICONS = {
     notes: { icon: "note", colors: { dark: "#f2a000", light: "#f2a000" } },
     tasks: { icon: "checklist", colors: { dark: "#22c55e", light: "#22c55e" } },
     calendar: { icon: "calendar", colors: { dark: "#ff443a", light: "#ff443a" } },
-    tags: { icon: "sell", colors: { dark: "#0f9fb8", light: "#0f9fb8" } },
+    projects: { icon: "folder", colors: { dark: "#0f9fb8", light: "#0f9fb8" } },
     contacts: { icon: "contacts", colors: { dark: "#f43f68", light: "#f43f68" } }
   }
 };

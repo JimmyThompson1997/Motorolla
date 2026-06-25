@@ -752,10 +752,15 @@ class PuckyVoiceService:
         existing = self.workspace.get_record(clean_collection, record_id, include_deleted=True)
         if existing is None:
             return None
+        action_only_patch = self._is_reminder_action_only_patch(payload)
         return self.workspace.patch_record(
             clean_collection,
             record_id,
-            self._prepare_reminder_write_payload(payload, existing=existing),
+            self._prepare_reminder_write_payload(
+                payload,
+                existing=existing,
+                validate_delivery_targets=not action_only_patch,
+            ),
         )
 
     def _prepare_reminder_write_payload(
@@ -763,6 +768,7 @@ class PuckyVoiceService:
         payload: dict[str, object],
         *,
         existing: dict[str, object] | None,
+        validate_delivery_targets: bool = True,
     ) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise ValueError("workspace_payload_must_be_object")
@@ -779,9 +785,33 @@ class PuckyVoiceService:
             or "open"
         ).strip().lower() or "open"
         normalized = _normalize_reminder_metadata(merged_metadata, status=status)
-        self._validate_reminder_metadata(normalized)
+        if validate_delivery_targets:
+            self._validate_reminder_metadata(normalized)
         reminder["metadata"] = normalized
         return reminder
+
+    def _is_reminder_action_only_patch(self, payload: dict[str, object] | None) -> bool:
+        if not isinstance(payload, dict) or not payload:
+            return False
+        allowed_keys = {"status", "due_at_ms", "metadata"}
+        if any(str(key or "").strip() not in allowed_keys for key in payload):
+            return False
+        if "status" in payload and str(payload.get("status") or "").strip().lower() != "done":
+            return False
+        incoming_metadata = payload.get("metadata")
+        if incoming_metadata is not None and not isinstance(incoming_metadata, dict):
+            return False
+        if isinstance(incoming_metadata, dict):
+            allowed_metadata_keys = {
+                "delivery_state",
+                "last_fired_at_ms",
+                "last_fired_due_at_ms",
+                "last_delivery_error",
+                "snoozed_until_ms",
+            }
+            if any(str(key or "").strip() not in allowed_metadata_keys for key in incoming_metadata):
+                return False
+        return "status" in payload or "due_at_ms" in payload
 
     def _validate_reminder_metadata(self, metadata: dict[str, object]) -> None:
         recipients = self._reminder_recipients_from_metadata(metadata)
@@ -4452,6 +4482,7 @@ class PuckyVoiceService:
         thread_scope_source: str | None = None,
         thread_card_id: str | None = None,
         proof_reply_delay_ms: str | int | None = None,
+        user_attachments: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         transcript = str(text or "").strip()
         if not transcript:
@@ -4491,19 +4522,26 @@ class PuckyVoiceService:
             telemetry["requested_reasoning_effort"] = requested_reasoning_effort
         telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
         telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
+        normalized_user_attachments, prompt_attachment_context = self._prepare_user_turn_attachments(
+            turn_id,
+            user_attachments or [],
+        )
+        telemetry["user_attachment_count"] = len(normalized_user_attachments)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         try:
             return self._handle_transcript_turn(
                 turn_id=turn_id,
                 session_id=session_id,
                 reply_mode=reply_mode,
-                transcript=transcript,
+                transcript=f"{transcript}\n\n{prompt_attachment_context}".strip() if prompt_attachment_context else transcript,
                 telemetry=telemetry,
                 total_start=total_start,
                 request_audio_mime_type="",
                 request_audio_base64="",
+                display_transcript_text=transcript,
                 model=requested_model or None,
                 reasoning_effort=requested_reasoning_effort or None,
+                user_attachments=normalized_user_attachments,
             )
         except Exception as exc:
             failed_stage, root = _unwrap_staged_exception(exc, fallback_stage="codex_running")
@@ -4537,6 +4575,7 @@ class PuckyVoiceService:
         model: str | None = None,
         reasoning_effort: str | None = None,
         force_unread: bool = False,
+        user_attachments: list[dict[str, object]] | None = None,
         codex_client: CodexProvider | None = None,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
         codex_stage: str = "codex_turn",
@@ -4693,6 +4732,7 @@ class PuckyVoiceService:
                 request_audio_mime_type=request_audio_mime_type,
                 has_request_audio=bool(request_audio_base64),
                 request_audio_attachment=request_audio_attachment,
+                attachments=user_attachments,
             ),
             _assistant_transcript_message(
                 text=envelope.reply_text,
@@ -4790,6 +4830,58 @@ class PuckyVoiceService:
         time.sleep(requested_ms / 1000.0)
         telemetry["proof_reply_delay_ms_applied"] = requested_ms
         telemetry["proof_reply_delay_elapsed_ms"] = _elapsed_ms(start)
+
+    def _user_turn_upload_dir(self, turn_id: str) -> Path:
+        base = Path(self.config.feed_db_path).with_name("pucky_uploaded_attachments")
+        target = base / _normalize_turn_id(turn_id)
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _prepare_user_turn_attachments(
+        self,
+        turn_id: str,
+        uploaded_files: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], str]:
+        if not uploaded_files:
+            return [], ""
+        prepared: list[dict[str, object]] = []
+        prompt_lines: list[str] = []
+        upload_dir = self._user_turn_upload_dir(turn_id)
+        for index, raw in enumerate(uploaded_files[: max(1, int(self.config.max_attachment_count or 1))]):
+            filename = re.sub(r"[^A-Za-z0-9._-]+", "-", str(raw.get("filename") or "attachment")).strip("-") or f"attachment-{index + 1}"
+            mime_type = str(raw.get("content_type") or _guess_attachment_mime(filename) or "application/octet-stream").strip() or "application/octet-stream"
+            content = raw.get("content") or b""
+            if isinstance(content, bytearray):
+                content = bytes(content)
+            if not isinstance(content, bytes):
+                content = bytes(str(content), "utf-8")
+            if len(content) > max(1, int(self.config.max_attachment_bytes)):
+                raise ValueError(f"attachment_too_large:{filename}")
+            stored_path = upload_dir / f"{index + 1:02d}-{filename}"
+            stored_path.write_bytes(content)
+            attachment: dict[str, object] = {
+                "id": f"{turn_id}:user_attachment:{index + 1}",
+                "path": str(stored_path),
+                "artifact": f"pucky_card_{turn_id}:user_attachment:{index + 1}:original",
+                "mime_type": mime_type,
+                "title": filename,
+                "size_bytes": len(content),
+            }
+            excerpt = ""
+            if _is_inline_text_mime(mime_type) or mime_type in {"text/html", "application/xhtml+xml"}:
+                excerpt = content.decode("utf-8", errors="replace")[:4000]
+                if excerpt:
+                    attachment["text"] = excerpt
+            normalized = normalize_attachment(attachment)
+            prepared.append(normalized)
+            line = f"- {filename} ({mime_type}, {len(content)} bytes)"
+            if excerpt:
+                line += f":\n{excerpt[:1200]}"
+            prompt_lines.append(line)
+        prompt = ""
+        if prompt_lines:
+            prompt = "User attached files:\n" + "\n".join(prompt_lines)
+        return prepared, prompt
 
     def _prepare_reply_attachments(
         self,
@@ -5117,12 +5209,15 @@ def _user_transcript_message(
     request_audio_mime_type: str,
     has_request_audio: bool,
     request_audio_attachment: dict[str, object] | None = None,
+    attachments: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     message: dict[str, object] = {
         "role": "user",
         "text": text,
         "created_at": created_at,
     }
+    if attachments:
+        message["attachments"] = attachments
     return message
 
 

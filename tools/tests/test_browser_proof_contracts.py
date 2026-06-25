@@ -24,6 +24,7 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
         "cover_calendar_playwright.mjs",
         "cover_links_scroll_probe.mjs",
         "cover_notes_feed_centering_real_vm_playwright.mjs",
+        "cover_projects_pin_playwright.mjs",
         "cover_workspace_apps_playwright.mjs",
         "meeting_mode_agent_real_vm_playwright.mjs",
         "meetings_load_probe.mjs",
@@ -36,6 +37,8 @@ def test_browser_facing_proofs_prefer_web_ui_token() -> None:
         script_names.append("cover_hosted_bug_hunt_playwright.mjs")
     if has_source("cover_universal_feed_tiles_playwright.mjs"):
         script_names.append("cover_universal_feed_tiles_playwright.mjs")
+    if has_source("cover_links_auth_flow_live_playwright.mjs"):
+        script_names.append("cover_links_auth_flow_live_playwright.mjs")
     for script_name in script_names:
         assert "PUCKY_WEB_UI_TOKEN" in read_source(script_name), script_name
 
@@ -72,7 +75,7 @@ def test_live_user_session_browser_proof_avoids_stale_routes_and_contacts_edit()
     assert '"meeting-notes"' in source
     assert '"reminders"' in source
     assert '"notes"' in source
-    assert '"tags"' in source
+    assert '"projects"' in source
 
 
 def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() -> None:
@@ -98,6 +101,15 @@ def test_workspace_apps_browser_proof_checks_full_bleed_note_detail_layout() -> 
     assert "Expected note detail desktop HTML body to remain full width" in source
 
 
+def test_workspace_apps_browser_proof_asserts_project_detail_chrome_is_removed() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "projectDetailHasHero" in source
+    assert "projectDetailHasChipCloud" in source
+    assert "Expected project detail hero card to be removed" in source
+    assert "Expected project detail chip cloud to be removed" in source
+
+
 def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
 
@@ -108,6 +120,28 @@ def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract(
     assert 'request.method() === "PATCH"' in source
     assert '.light-note-row[data-note-id="march"] .light-note-pin-button' in source
     assert "Notes pin write failed" in source
+
+
+def test_projects_pin_browser_proof_covers_section_toggle_and_detail_contract() -> None:
+    source = read_source("cover_projects_pin_playwright.mjs")
+
+    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert ".light-projects-section-header" in source
+    assert ".light-project-pin-button" in source
+    assert '.light-project-row[data-project-id="' in source
+    assert "Pinned section did not collapse" in source
+    assert "Recent section did not collapse" in source
+    assert "pinning into a collapsed pinned section should auto-expand it" in source
+    assert "unpinning into a collapsed recent section should auto-expand it" in source
+    assert "pin button click should not leave the projects route" in source
+    assert "project copy overlaps pin button" in source
+    assert "rollback should restore the pinned section collapse state" in source
+    assert "project detail did not open from project copy tap" in source
+    assert "baseline-projects-list.png" in source
+    assert "after-pin.png" in source
+    assert "after-unpin.png" in source
+    assert "failure-rollback.png" in source
+    assert "project-detail.png" in source
 
 
 def test_live_notes_centering_proof_unlocks_preview_before_toggling_rows() -> None:
@@ -185,6 +219,59 @@ def test_workspace_tasks_detail_proof_uses_status_control_contract() -> None:
     assert 'detailState.statusValue === "done"' in source
     assert 'detailState.statusLabel === "Done"' in source
     assert ".light-task-detail-toggle" not in source
+
+
+def test_workspace_apps_browser_proof_cleans_up_reminders_before_contacts_and_sweeps_prefix_records() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert 'const CLEANUP_RECORD_COLLECTION_ORDER = [' in source
+    assert '"reminders"' in source.split("const CLEANUP_RECORD_COLLECTION_ORDER = [", 1)[1].split("];", 1)[0]
+    assert source.split("const CLEANUP_RECORD_COLLECTION_ORDER = [", 1)[1].split("];", 1)[0].index('"reminders"') < source.split("const CLEANUP_RECORD_COLLECTION_ORDER = [", 1)[1].split("];", 1)[0].index('"contacts"')
+    assert "startsWith(`${runId}-`)" in source or "startsWith(prefix)" in source
+    assert "sweepSeedRecordsByPrefix" in source
+
+
+def test_reminders_browser_proof_covers_orphaned_recipient_actions() -> None:
+    source = read_source("reminders_v3_browser_proof.mjs")
+
+    assert "orphanContactId" in source
+    assert "orphanDismissReminderId" in source
+    assert "orphanSnoozeReminderId" in source
+    assert 'await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`' in source
+    assert '[data-reminder-action="dismiss"]' in source
+    assert '[data-reminder-action="snooze"]' in source
+    assert "error toast" in source.lower()
+
+
+def test_live_connect_auth_browser_proof_requires_explicit_token_and_real_transition() -> None:
+    source = read_source("cover_links_auth_flow_live_playwright.mjs")
+    package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")
+
+    assert "PUCKY_WEB_UI_TOKEN" in source
+    assert "PUCKY_API_TOKEN" in source
+    assert 'url.searchParams.set("api_token", String(config.apiToken || "").trim());' in source
+    assert 'url.searchParams.set("route", "connect");' in source
+    assert 'if (transition.kind === "none") {' in source
+    assert "never opened an auth surface" in source
+    assert '"test:cover-links-auth-flow-live": "node ./proofs/cover/cover_links_auth_flow_live_playwright.mjs"' in package
+
+
+def test_emulator_connect_auth_proof_uses_chrome_cdp_and_no_mock_http_server() -> None:
+    source = read_source("phone_links_auth_flow_emulator_proof.py")
+    helper = read_source("phone_links_auth_flow_browser.js")
+
+    assert "PUCKY_API_TOKEN" in source
+    assert "PUCKY_DEVICE_TOKEN" in source
+    assert "10.0.2.2" not in source
+    assert 'CHROME_PACKAGE = "com.android.chrome"' in source
+    assert "discover_chrome_cdp_url" in source
+    assert '"pucky_api_token": args.api_token' in source or '"pucky_api_token": args.api_token,' in source
+    assert 'payload["token"] = args.device_token' in source
+    assert 'surface="chrome_auth"' in source
+    assert '"surface": surface,' in source
+    assert "chromium.connectOverCDP" in helper
+    assert 'mode === "chrome_auth"' in helper
+    assert "filtered_slugs" in helper
 
 
 def test_task_workspace_live_proof_reads_linked_notes_from_notes_section() -> None:
@@ -310,6 +397,32 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert '"10-light-inbox-page-bottom"' in source
 
 
+def test_thread_compose_browser_and_emulator_proofs_require_real_send_state_evidence() -> None:
+    browser_source = read_source("cover_inbox_thread_compose_playwright.mjs")
+    emulator_source = read_source("phone_inbox_thread_compose_emulator_proof.py")
+
+    assert "THREAD-COMPOSE-" in browser_source
+    assert "proof_reply_delay_ms" in browser_source
+    assert "Sending" in browser_source
+    assert "Thinking..." in browser_source
+    assert "blocked_second_send" in browser_source
+    assert "attachment_queued" in browser_source
+    assert "request_count_before_release" in browser_source
+    assert "thread-compose-note.txt" in browser_source
+    assert "thread-compose-proof.png" in browser_source
+    assert "manifest_commit" in browser_source
+    assert "trace.zip" in browser_source or "tracing.stop" in browser_source
+    assert "video_path" in browser_source
+
+    assert "THREAD-COMPOSE-" in emulator_source
+    assert "proof_reply_delay_ms" in emulator_source
+    assert "thread-compose-note.txt" in emulator_source
+    assert "thread-compose-proof.png" in emulator_source
+    assert "chooser" in emulator_source.lower()
+    assert "thinking" in emulator_source.lower()
+    assert "request_count" in emulator_source
+
+
 def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:
     source = read_source("cover_inbox_media_proof_server.py")
 
@@ -425,7 +538,7 @@ def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     assert 'route: "notes"' in source
     assert 'route: "meeting-notes"' in source
     assert 'route: "reminders"' in source
-    assert 'route: "tags"' in source
+    assert 'route: "projects"' in source
     assert 'route: "inbox"' in source
     assert 'route: "meetings"' in source
     assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
@@ -518,3 +631,36 @@ def test_calendar_browser_proof_covers_continuous_month_rail_contract() -> None:
     assert "Expected the selected month to expose day 1 on the rail" in calendar_source
     assert "Expected passive rail scrolling to keep the selected date input stable" in calendar_source
     assert "Expected no desktop calendar rail chevrons to remain" in calendar_source
+
+
+def test_calendar_browser_proof_captures_selection_motion_evidence_contract() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert 'import { chromium, webkit } from "playwright-core";' in source
+    assert "const CALENDAR_SELECTION_MOTION_DURATION_MS = 180;" in source
+    assert "const CALENDAR_SELECTION_MOTION_MIN_MS = 120;" in source
+    assert "const CALENDAR_SELECTION_MOTION_MAX_MS = 280;" in source
+    assert "async function startCalendarMotionProbe(page, scenario) {" in source
+    assert "async function finishCalendarMotionProbe(page, timeoutMs = 2000) {" in source
+    assert "async function runCalendarMotionScenario(page, networkLog, reportDir, summary, laneKey, scenario) {" in source
+    assert "async function runCalendarMotionChecks(page, networkLog, reportDir, summary, laneKey, seed, options = {}) {" in source
+    assert 'const motionPath = path.join(scenarioDir, "motion.json");' in source
+    assert 'const beforeShot = path.join(scenarioDir, "before.png");' in source
+    assert 'const midShot = path.join(scenarioDir, "mid.png");' in source
+    assert 'const afterShot = path.join(scenarioDir, "after.png");' in source
+    assert 'id: "date-input-short"' in source
+    assert 'id: "date-input-long"' in source
+    assert 'id: "day-chip-short"' in source
+    assert 'id: "today-button-return"' in source
+    assert 'id: "reduced-motion-short"' in source
+    assert "request_delta" in source
+    assert "intermediate_scroll_values" in source
+    assert "reached_target" in source
+    assert "end_input_value" in source
+    assert "final_center_delta" in source
+    assert "expected no extra calendar API requests" in source
+    assert "expected at least four distinct scrollLeft values" in source
+    assert "summary.motion_assertions" in source
+    assert "trace_path" in source
+    assert "video_path" in source
+    assert "browser_name: config.browserName" in source

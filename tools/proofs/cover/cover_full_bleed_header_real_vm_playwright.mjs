@@ -386,10 +386,10 @@ async function main() {
 
     await captureRoute(page, config, "feed", "02-inbox", screenshots, metricsList, baselineTopLevelRef);
     await captureRoute(page, config, "contacts", "04-contacts", screenshots, metricsList, baselineTopLevelRef);
-    await captureRoute(page, config, "tags", "06-tags", screenshots, metricsList, baselineTopLevelRef);
+    await captureRoute(page, config, "projects", "06-projects", screenshots, metricsList, baselineTopLevelRef);
     await captureRoute(page, config, "settings", "08-settings", screenshots, metricsList, baselineTopLevelRef);
     await captureDetailRoute(page, config, "contacts", ".light-contact-row", "10-contact-detail", screenshots, metricsList);
-    await captureDetailRoute(page, config, "tags", ".light-project-row", "12-tag-detail", screenshots, metricsList);
+    await captureDetailRoute(page, config, "projects", ".light-project-row", "12-project-detail", screenshots, metricsList);
 
     summary.screenshots = {
       ...summary.screenshots,
@@ -397,14 +397,14 @@ async function main() {
       "03-inbox-scrolled": screenshots["02-inbox_scrolled"],
       "04-contacts-top": screenshots["04-contacts_top"],
       "05-contacts-scrolled": screenshots["04-contacts_scrolled"],
-      "06-tags-top": screenshots["06-tags_top"],
-      "07-tags-scrolled": screenshots["06-tags_scrolled"],
+      "06-projects-top": screenshots["06-projects_top"],
+      "07-projects-scrolled": screenshots["06-projects_scrolled"],
       "08-settings-top": screenshots["08-settings_top"],
       "09-settings-scrolled": screenshots["08-settings_scrolled"],
       "10-contact-detail-top": screenshots["10-contact-detail_top"],
       "11-contact-detail-scrolled": screenshots["10-contact-detail_scrolled"],
-      "12-tag-detail-top": screenshots["12-tag-detail_top"],
-      "13-tag-detail-scrolled": screenshots["12-tag-detail_scrolled"]
+      "12-project-detail-top": screenshots["12-project-detail_top"],
+      "13-project-detail-scrolled": screenshots["12-project-detail_scrolled"]
     };
 
     const screenshotAliases = {
@@ -412,14 +412,14 @@ async function main() {
       "02-inbox-scrolled": "03-inbox-scrolled",
       "04-contacts-top": "04-contacts-top",
       "04-contacts-scrolled": "05-contacts-scrolled",
-      "06-tags-top": "06-tags-top",
-      "06-tags-scrolled": "07-tags-scrolled",
+      "06-projects-top": "06-projects-top",
+      "06-projects-scrolled": "07-projects-scrolled",
       "08-settings-top": "08-settings-top",
       "08-settings-scrolled": "09-settings-scrolled",
       "10-contact-detail-top": "10-contact-detail-top",
       "10-contact-detail-scrolled": "11-contact-detail-scrolled",
-      "12-tag-detail-top": "12-tag-detail-top",
-      "12-tag-detail-scrolled": "13-tag-detail-scrolled"
+      "12-project-detail-top": "12-project-detail-top",
+      "12-project-detail-scrolled": "13-project-detail-scrolled"
     };
 
     summary.screens = metricsList.map(metrics => {

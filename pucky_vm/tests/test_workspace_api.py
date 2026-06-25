@@ -236,12 +236,12 @@ def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> No
 
         project = request_json(
             base_url,
-            "/api/workspace/tags",
+            "/api/workspace/projects",
             method="POST",
             token="test-token",
             body={"id": "api-project", "title": "API Project", "metadata": {"threads": ["Thread A", "Thread B"]}},
         )
-        assert project["collection"] == "tags"
+        assert project["collection"] == "projects"
         assert project["metadata"]["threads"] == ["Thread A", "Thread B"]
 
         link = request_json(
@@ -259,10 +259,11 @@ def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> No
             },
         )
         assert link["target_id"] == "api-note"
-        linked_project = request_json(base_url, "/api/workspace/tags/api-project")
+        linked_project = request_json(base_url, "/api/workspace/projects/api-project")
         assert any(item["target_id"] == "api-note" for item in linked_project["links"])
-        linked_project_alias = request_json(base_url, "/api/workspace/projects/api-project")
-        assert linked_project_alias["id"] == "api-project"
+        with pytest.raises(urllib.error.HTTPError) as tags_error:
+            request_json(base_url, "/api/workspace/tags/api-project")
+        assert tags_error.value.code == 404
 
         contact = request_json(
             base_url,
@@ -343,7 +344,7 @@ def test_workspace_api_uses_note_only_html_and_404s_assets(tmp_path: Path) -> No
         assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_reminder["links"])
         assert any(item["target_kind"] == "meeting_note" and item["target_id"] == "api-meeting-note" for item in linked_reminder["links"])
 
-        linked_project = request_json(base_url, "/api/workspace/tags/api-project")
+        linked_project = request_json(base_url, "/api/workspace/projects/api-project")
         assert any(item["target_kind"] == "contact" and item["target_id"] == "api-contact" for item in linked_project["links"])
         assert any(item["target_kind"] == "task" and item["target_id"] == "api-task" for item in linked_project["links"])
         assert any(item["target_kind"] == "note" and item["target_id"] == "api-note" for item in linked_project["links"])
@@ -508,6 +509,136 @@ def test_workspace_api_rejects_unconfigured_reminder_destinations(tmp_path: Path
             )
         assert connected_error.value.code == 400
         assert "reminder_destination_not_configured:slack" in connected_error.value.read().decode("utf-8")
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_allows_dismiss_patch_for_orphaned_recipient_reminder(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        request_json(
+            base_url,
+            "/api/workspace/contacts",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-contact",
+                "title": "Orphan Contact",
+                "metadata": {
+                    "phone": "+14155550168",
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-reminder",
+                "title": "Orphan reminder",
+                "status": "open",
+                "due_at_ms": 60_000,
+                "metadata": {
+                    "recipients": [
+                        {"id": "self", "kind": "self", "label": "Me"},
+                        {"id": "orphan-contact", "kind": "contact", "contact_id": "orphan-contact", "label": "Orphan Contact"},
+                    ],
+                    "destinations": [
+                        {"channel": "phone_notification", "recipient_ids": ["self"]},
+                        {"channel": "sms", "recipient_ids": ["orphan-contact"]},
+                    ],
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/contacts/orphan-contact",
+            method="DELETE",
+            token="test-token",
+        )
+
+        done = request_json(
+            base_url,
+            "/api/workspace/reminders/orphan-reminder",
+            method="PATCH",
+            token="test-token",
+            body={"status": "done"},
+        )
+        assert done["status"] == "done"
+        assert done["metadata"]["snoozed_until_ms"] == 0
+        assert done["metadata"]["destinations"][1]["channel"] == "sms"
+        assert done["metadata"]["recipients"][1]["id"] == "orphan-contact"
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_allows_snooze_patch_for_orphaned_recipient_reminder(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        request_json(
+            base_url,
+            "/api/workspace/contacts",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-contact",
+                "title": "Orphan Contact",
+                "metadata": {
+                    "phone": "+14155550168",
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "orphan-reminder",
+                "title": "Orphan reminder",
+                "status": "open",
+                "due_at_ms": 60_000,
+                "metadata": {
+                    "recipients": [
+                        {"id": "self", "kind": "self", "label": "Me"},
+                        {"id": "orphan-contact", "kind": "contact", "contact_id": "orphan-contact", "label": "Orphan Contact"},
+                    ],
+                    "destinations": [
+                        {"channel": "phone_notification", "recipient_ids": ["self"]},
+                        {"channel": "sms", "recipient_ids": ["orphan-contact"]},
+                    ],
+                },
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/contacts/orphan-contact",
+            method="DELETE",
+            token="test-token",
+        )
+
+        snoozed = request_json(
+            base_url,
+            "/api/workspace/reminders/orphan-reminder",
+            method="PATCH",
+            token="test-token",
+            body={
+                "due_at_ms": 120_000,
+                "metadata": {
+                    "delivery_state": "pending",
+                    "last_fired_at_ms": 0,
+                    "last_fired_due_at_ms": 0,
+                    "last_delivery_error": "",
+                    "snoozed_until_ms": 120_000,
+                },
+            },
+        )
+        assert snoozed["due_at_ms"] == 120_000
+        assert snoozed["metadata"]["delivery_state"] == "pending"
+        assert snoozed["metadata"]["snoozed_until_ms"] == 120_000
+        assert snoozed["metadata"]["destinations"][1]["channel"] == "sms"
+        assert snoozed["metadata"]["recipients"][1]["id"] == "orphan-contact"
     finally:
         server.shutdown()
 

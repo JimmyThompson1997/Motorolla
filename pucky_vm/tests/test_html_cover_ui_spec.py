@@ -122,8 +122,8 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     route_for_theme = function_block(app, "resolveRouteForTheme")
     route_sync = function_block(app, "syncRouteQueryParam")
 
-    assert 'projects: "tags"' in routes
-    assert '"project-detail": "tag-detail"' in routes
+    assert 'projects: "tags"' not in routes
+    assert '"project-detail": "tag-detail"' not in routes
     assert "const ROUTE_ALIASES = routeCatalog.ROUTE_ALIASES && typeof routeCatalog.ROUTE_ALIASES === \"object\"" in app
     assert 'feed: "inbox"' not in routes
     assert 'links: "connect"' not in routes
@@ -299,7 +299,7 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert "lightInfoRow(row)" in light_info_section
     assert "openWorkspaceTarget(" in light_info_row
     assert "row.fromRoute || state.route || \"\"" in light_info_row
-    assert 'openWorkspaceTarget(item.target, "tag-detail")' in light_project_section_item
+    assert 'openWorkspaceTarget(item.target, "project-detail")' in light_project_section_item
     assert "event.stopPropagation();" in light_attendee_chip
     assert 'openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });' in light_record_chip
 
@@ -344,6 +344,31 @@ def test_calendar_day_rail_styles_and_contracts_follow_continuous_month_model() 
     assert 'chip.dataset.month = calendarMonthKey(dayKey);' in app
     assert "function appendCalendarDayRailMonth(strip, monthKey) {" in app
     assert "function prependCalendarDayRailMonth(strip, monthKey) {" in app
+
+
+def test_calendar_day_rail_selection_motion_contracts() -> None:
+    app = read("app.js")
+
+    light_date_picker = function_block(app, "lightDatePicker")
+    light_calendar_day_chip = function_block(app, "lightCalendarDayChip")
+    build_calendar_day_rail = function_block(app, "buildCalendarDayRail")
+    continue_calendar_day_rail = function_block(app, "continueCalendarDayRail")
+    center_calendar_day_strip = function_block(app, "centerCalendarDayStrip")
+    select_calendar_date = function_block(app, "selectCalendarDate")
+    capture_motion = function_block(app, "captureCalendarDayRailSelectionMotion")
+
+    assert "function prefersReducedMotion() {" in app
+    assert 'selectCalendarDate(input.value, { source: "date-input" });' in light_date_picker
+    assert 'selectCalendarDate(calendarTodayDateKey(), { source: "today-button" });' in light_date_picker
+    assert 'selectCalendarDate(dayKey, { source: "day-chip" });' in light_calendar_day_chip
+    assert "captureCalendarDayRailSelectionMotion(normalized, options)" in select_calendar_date
+    assert "state.pendingCalendarDayRailSelectionMotion = motion;" in select_calendar_date
+    assert 'strip.dataset.selectionMotionSource = String(motion.source || "selection").trim() || "selection";' in build_calendar_day_rail
+    assert "queueCalendarDayStripSelectionMotion(strip, dayKey, motion);" in build_calendar_day_rail
+    assert "animateCalendarDayRailSelection(strip, startLeft, targetLeft, motion)" in app
+    assert "if (prefersReducedMotion()) {" in capture_motion
+    assert 'behavior: "auto"' not in center_calendar_day_strip
+    assert "state.selectedCalendarDate" not in continue_calendar_day_rail
 
 
 def test_styles_drop_legacy_shell_chrome_and_follow_modern_route_names() -> None:
@@ -529,6 +554,50 @@ def test_bridge_connect_surfaces_missing_provisioning_token() -> None:
     assert 'api_token_present: Boolean(String(state.links.apiToken || "").trim())' in links_debug_metrics
     assert 'portal_token_present: Boolean(String(state.links.token || "").trim())' in links_debug_metrics
     assert 'inline_message: String(state.links.error || state.links.message || "")' in links_debug_metrics
+
+
+def test_browser_open_truthfully_reports_popup_fallback_or_failure() -> None:
+    app = read("app.js")
+    browser_request = function_block(app, "browserRequest")
+
+    assert 'await new Promise(resolve => setTimeout(resolve, 24));' in browser_request
+    assert 'const popupHref = String(popup.location && popup.location.href || "").trim();' in browser_request
+    assert 'launch_surface: "popup"' in browser_request
+    assert 'popup_opened: true' in browser_request
+    assert 'launch_surface: "same_tab"' in browser_request
+    assert 'same_tab_navigation: true' in browser_request
+    assert 'throw new Error(detail ? `browser.open failed to launch auth: ${detail}` : "browser.open could not open a popup or navigate this tab.");' in browser_request
+
+
+def test_connect_debug_metrics_capture_filtered_slugs_and_last_handoff_state() -> None:
+    app = read("app.js")
+    initial_links_state = function_block(app, "initialLinksState")
+    links_debug_root = function_block(app, "linksDebugRoot")
+    open_links_auth_flow = function_block(app, "openLinksAuthFlow")
+    links_debug_metrics = function_block(app, "linksDebugMetrics")
+
+    assert 'last_handoff: blankLinksHandoffState()' in links_debug_root
+    assert 'lastHandoff: blankLinksHandoffState(),' in initial_links_state
+    assert 'const handoff = normalizeLinksBrowserOpenResult(' in open_links_auth_flow
+    assert 'setLinksHandoffState(handoff);' in open_links_auth_flow
+    assert 'linksDebugRecord(' in open_links_auth_flow
+    assert '"browser_open_result"' in open_links_auth_flow
+    assert 'filtered_slugs: filteredSlugs,' in links_debug_metrics
+    assert 'last_handoff_event: String(handoff.event || "")' in links_debug_metrics
+    assert 'last_handoff_surface: String(handoff.launch_surface || "")' in links_debug_metrics
+    assert 'last_handoff_same_tab_navigation: Boolean(handoff.same_tab_navigation)' in links_debug_metrics
+
+
+def test_connect_native_config_waits_for_bridge_request_before_declaring_missing_token() -> None:
+    app = read("app.js")
+    request_native_config = function_block(app, "requestNativeLinksConfig")
+    ensure_links_api_config = function_block(app, "ensureLinksApiConfig")
+
+    assert 'const deadlineAt = Date.now() + LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS;' in request_native_config
+    assert 'if (!(window.Pucky && typeof window.Pucky.request === "function")) {' in request_native_config
+    assert 'await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));' in request_native_config
+    assert 'return await Pucky.request({ command: "pucky.config.get", args: {} });' in request_native_config
+    assert 'const config = await requestNativeLinksConfig();' in ensure_links_api_config
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:
@@ -782,6 +851,59 @@ def test_detail_views_surface_active_tile_audio_continuity_and_controls() -> Non
     assert "existing.replaceWith(detailAudioContinuity(card));" in render_detail_audio_continuity
 
 
+def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_polling() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    render_fn = function_block(app, "render")
+    load_turn_status = function_block(app, "loadTurnStatus")
+    show_transcript = function_block(app, "showTranscript")
+    render_transcript_detail_content = function_block(app, "renderTranscriptDetailContent")
+    transcript_detail_messages = function_block(app, "transcriptDetailMessages")
+    render_thread_composer = function_block(app, "renderThreadComposer")
+    thread_composer_state = function_block(app, "threadComposerStateForCard")
+    send_thread_composer_turn = function_block(app, "sendThreadComposerTurn")
+    pending_outbound_messages = function_block(app, "pendingOutboundMessages")
+    refresh_open_transcript_detail = function_block(app, "refreshOpenTranscriptDetail")
+
+    assert "threadComposerDrafts: {}," in app
+    assert "function renderTranscriptDetailContent(card) {" in app
+    assert "function transcriptDetailMessages(card) {" in app
+    assert "function renderThreadComposer(card) {" in app
+    assert "function threadComposerStateForCard(card) {" in app
+    assert "function sendThreadComposerTurn(card) {" in app
+    assert "function refreshOpenTranscriptDetail() {" in app
+    assert "refreshOpenTranscriptDetail();" in render_fn
+    assert "if (shouldPollHostedTurnStatus()) {" in load_turn_status
+    assert 'snapshot = await loadHostedTurnStatus(turnId);' in load_turn_status
+    assert "const content = renderTranscriptDetailContent(card);" in show_transcript
+    assert "const messages = transcriptDetailMessages(card);" in render_transcript_detail_content
+    assert "const composer = renderThreadComposer(card);" in render_transcript_detail_content
+    assert "content.append(stack, composer);" in render_transcript_detail_content
+    assert "const pendingMessages = pendingOutboundMessages(pendingCard);" in transcript_detail_messages
+    assert "if (turnRequestedThreadId(state.turn) !== cardThreadId(card)) {" in transcript_detail_messages
+    assert "textarea.disabled = false;" in render_thread_composer
+    assert 'const input = document.createElement("input");' in render_thread_composer
+    assert 'input.type = "file";' in render_thread_composer
+    assert "input.multiple = true;" in render_thread_composer
+    assert 'const send = el("button", "thread-composer-send", "Send");' in render_thread_composer
+    assert "void sendThreadComposerTurn(card);" in render_thread_composer
+    assert 'mode: "existing_thread",' in thread_composer_state
+    assert "apiTokenPresent: Boolean(String(state.links.apiToken || \"\").trim())," in thread_composer_state
+    assert "inFlight: isTurnActive(state.turn) && turnRequestedThreadId(state.turn) === threadId," in thread_composer_state
+    assert "const proofReplyDelayMs = composerProofReplyDelayMs();" in send_thread_composer_turn
+    assert "const form = new FormData();" in send_thread_composer_turn
+    assert 'form.append("files", queued.file, queued.name);' in send_thread_composer_turn
+    assert 'body: { text: draft.text,' in send_thread_composer_turn
+    assert "await refreshCardsFromVmSnapshot({ reason: \"thread_composer_send\", render: false });" in send_thread_composer_turn
+    assert "existing.replaceWith(next);" in refresh_open_transcript_detail
+    assert "attachments: normalizedAttachments(card?.pending_user_attachments)" in pending_outbound_messages
+    assert ".thread-composer {" in styles
+    assert ".thread-composer-shell {" in styles
+    assert ".thread-composer-input {" in styles
+    assert ".thread-composer-queued {" in styles
+    assert ".thread-composer-send:disabled {" in styles
+
+
 def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> None:
     app = read("app.js")
     focus_card = function_block(app, "uiDebugFocusCard")
@@ -866,7 +988,7 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert "note?.content_updated_at_ms" in note_timestamp
     assert "note?.created_at_ms" in note_timestamp
     assert "note?.updated_at_ms" in note_timestamp
-    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);' in app
+    assert 'const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);' in app
     assert "return UNIVERSAL_FLAT_FEED_SURFACES.has(surfaceKey);" in flat_feed_surface
     assert "notesSectionsExpanded: { pinned: true, recent: true }," in app
     assert "return renderUniversalFeedPage({" in light_notes
@@ -1042,6 +1164,90 @@ def test_light_notes_pin_rows_use_right_side_toggle_and_shared_list_layout() -> 
     assert app.count("lightHtmlDocument(") == 2
 
 
+def test_projects_pin_rows_clone_notes_section_toggle_and_right_side_pin_contract() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+
+    light_projects = function_block(app, "lightProjectsPage")
+    light_projects_section = function_block(app, "lightProjectsSection")
+    light_projects_section_header = function_block(app, "lightProjectsSectionHeader")
+    universal_project_descriptor = function_block(app, "universalProjectFeedTileDescriptor")
+    render_universal_section = function_block(app, "renderUniversalFeedSection")
+    toggle_project_pin = function_block(app, "toggleProjectPin")
+    project_row = function_block(app, "lightProjectRow")
+    projects_feed_block = css_block(styles, ".light-projects-feed")
+    projects_section_header_block = css_block(styles, ".light-projects-section-header")
+    project_row_block = css_block(styles, ".light-project-row")
+    project_meta_block = css_block(styles, ".light-project-row-meta")
+    project_summary_block = css_block(styles, ".light-project-row-summary")
+    project_time_block = css_block(styles, ".light-project-row-time")
+    project_pin_button_block = css_block(styles, ".light-project-pin-button")
+    project_pin_icon_block = css_block(styles, ".light-project-pin-button .material-icon")
+
+    assert "projectsSectionsExpanded: { pinned: true, recent: true }," in app
+    assert "projectPinPending: {}," in app
+    assert "const projects = allProjects();" in light_projects
+    assert 'const pinned = projects.filter(project => project.pinned);' in light_projects
+    assert 'sections.push(lightProjectsSection("Pinned", "pinned", pinned));' in light_projects
+    assert 'sections.push(lightProjectsSection("Recent", "recent", projects.filter(project => !project.pinned)));' in light_projects
+    assert 'surface: "projects",' in light_projects
+    assert 'surfaceClassName: "light-projects-feed",' in light_projects
+    assert "return {" in light_projects_section
+    assert "collapsible: true," in light_projects_section
+    assert "expanded: projectSectionExpanded(sectionKey)," in light_projects_section
+    assert "items: projects.map(project => universalProjectFeedTileDescriptor(project, sectionKey))" in light_projects_section
+    assert 'const button = el("button", "light-feed-section-header light-projects-section-header");' in light_projects_section_header
+    assert "button.dataset.projectsSection = sectionKey;" in light_projects_section_header
+    assert 'button.setAttribute("aria-expanded", String(expanded));' in light_projects_section_header
+    assert 'button.setAttribute("aria-controls", controlsId);' in light_projects_section_header
+    assert 'iconSvg(expanded ? "expand_more" : "chevron_right")' in light_projects_section_header
+    assert 'if (descriptor.collapsible && descriptor.surface === "projects") {' in render_universal_section
+    assert 'section.dataset.projectsSection = descriptor.key;' in render_universal_section
+    assert 'const projectId = projectRecordId(project);' in universal_project_descriptor
+    assert 'trailing: { kind: "pin", pending: projectPinPending(projectId), pinned: Boolean(project?.pinned) },' in universal_project_descriptor
+    assert 'const row = el("div", "light-feed-row light-project-row");' in project_row
+    assert 'row.setAttribute("role", "button");' in project_row
+    assert "row.tabIndex = 0;" in project_row
+    assert 'row.dataset.projectPinned = String(Boolean(project.pinned));' in project_row
+    assert 'const meta = projectMetaLine(project);' in project_row
+    assert 'const copy = el("span", "light-project-feed-copy");' in project_row
+    assert 'const metaRow = el("span", "light-project-row-meta");' in project_row
+    assert 'metaRow.append(el("span", "light-project-row-summary", meta.summary));' in project_row
+    assert 'metaRow.append(el("span", "light-project-row-time", meta.timestamp));' in project_row
+    assert 'const pin = el("button", "light-project-pin-button");' in project_row
+    assert 'pin.dataset.projectPinned = String(Boolean(project.pinned));' in project_row
+    assert 'pin.setAttribute("aria-label", project.pinned ? "Unpin project" : "Pin project");' in project_row
+    assert "void toggleProjectPin(project);" in project_row
+    assert 'pin.innerHTML = iconSvg("pin", { filled: Boolean(project.pinned) });' in project_row
+    assert "row.append(copy, pin);" in project_row
+    assert 'lightSmallIcon("folder")' not in project_row
+    assert "const nextPinned = !Boolean(project.pinned);" in toggle_project_pin
+    assert 'setProjectsSectionExpanded(nextPinned ? "pinned" : "recent", true);' in toggle_project_pin
+    assert 'await patchWorkspaceRecord("projects", projectId, { pinned: nextPinned });' in toggle_project_pin
+    assert 'await loadWorkspaceCollection("projects", { render: true, force: true });' in toggle_project_pin
+    assert "showToast(error.message);" in toggle_project_pin
+
+    assert "display: flex;" in projects_feed_block
+    assert "flex-direction: column;" in projects_feed_block
+    assert "width: 100%;" in projects_section_header_block
+    assert "justify-content: space-between;" in projects_section_header_block
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in project_row_block
+    assert "padding: 12px 0;" in project_row_block
+    assert "display: flex;" in project_meta_block
+    assert "gap: 10px;" in project_meta_block
+    assert "overflow: hidden;" in project_summary_block
+    assert "text-overflow: ellipsis;" in project_summary_block
+    assert "margin-left: auto;" in project_time_block
+    assert "white-space: nowrap;" in project_time_block
+    assert "width: 36px;" in project_pin_button_block
+    assert "height: 36px;" in project_pin_button_block
+    assert "background: transparent;" in project_pin_button_block
+    assert "border: 0;" in project_pin_button_block
+    assert "width: 16px;" in project_pin_icon_block
+    assert "height: 16px;" in project_pin_icon_block
+    assert '.light-project-pin-button[data-project-pinned="true"]' in styles
+
+
 def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     app = read("app.js")
 
@@ -1069,6 +1275,8 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "lightHtmlDocument(item" not in feed_detail
     assert '["Artifacts", "attachment", projectAssets(project)]' not in project_detail
     assert "lightHtmlDocument(project" not in project_detail
+    assert "lightDetailHero(" not in project_detail
+    assert "lightChipCloud(" not in project_detail
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
     assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
     assert "lightHtmlDocument(record" not in graph_detail
@@ -1419,11 +1627,11 @@ def test_projects_inbox_and_meetings_join_universal_feed_pipeline_without_rewrit
     assert "function lightInboxSection(" in app
     assert "function lightMeetingsSection(" in app
     assert "return renderUniversalFeedPage({" in projects_page
-    assert 'surface: "tags",' in projects_page
-    assert 'items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))' in projects_page
+    assert 'surface: "projects",' in projects_page
+    assert 'surfaceClassName: "light-projects-feed",' in projects_page
     assert 'renderMode: "flat",' in project_descriptor
     assert "const flatFeed = options.flatFeed === true;" in project_row
-    assert 'flatFeed ? "is-flat-feed" : ""' in project_row
+    assert "row.classList.add(\"is-flat-feed\");" in project_row
     assert 'const chips = el("span", "light-project-chip-row");' not in project_row
     assert "return renderUniversalFeedPage({" in inbox_page
     assert 'surface: "inbox",' in inbox_page

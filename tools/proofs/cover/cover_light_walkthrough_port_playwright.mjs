@@ -377,10 +377,10 @@ async function main() {
     screenshots.feed = await screenshot(page, config.reportDir, "14-light-feed-detail");
     await backToHome(page);
 
-    await clickTile(page, "tags");
+    await clickTile(page, "projects");
     await page.locator(".light-project-row").first().click();
-    await assertVisible(page, ".light-shell[data-light-route=\"tag-detail\"] .light-project-section-grid", "tag detail");
-    screenshots.tags = await screenshot(page, config.reportDir, "15-light-tag-detail");
+    await assertVisible(page, ".light-shell[data-light-route=\"project-detail\"] .light-project-section-grid", "project detail");
+    screenshots.projects = await screenshot(page, config.reportDir, "15-light-project-detail");
     await backToHome(page);
 
     await clickTile(page, "contacts");

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pucky_vm.workspace_store import (
     SELF_CONTACT_ID,
+    WORKSPACE_COLLECTIONS,
     WorkspaceStore,
     _linked_note_link_id,
     _linked_note_record_id,
@@ -89,6 +90,11 @@ def test_workspace_store_keeps_note_html_and_clears_non_note_html(tmp_path: Path
     assert task["html_asset_id"] == ""
     assert "project" not in task["metadata"]
     assert "source" not in task["metadata"]
+
+
+def test_workspace_store_uses_projects_collection_and_drops_tags_alias() -> None:
+    assert WORKSPACE_COLLECTIONS["projects"] == "project"
+    assert "tags" not in WORKSPACE_COLLECTIONS
 
 
 def test_contact_endpoint_migration_backfills_email_phone_and_removes_metadata(tmp_path: Path) -> None:
@@ -301,6 +307,39 @@ def test_note_content_timestamp_tracks_content_edits_not_pin_toggles(tmp_path: P
     assert edited["updated_at_ms"] == 1_800_000_002_000
     assert edited["content_updated_at_ms"] == 1_800_000_002_000
     assert edited["metadata"]["content_updated_at_ms"] == 1_800_000_002_000
+
+
+def test_workspace_store_lists_pinned_projects_before_recent_projects(tmp_path: Path) -> None:
+    clock = Clock(1_800_000_000_000)
+    store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"), clock_ms=clock)
+
+    store.upsert_record(
+        "projects",
+        {
+            "id": "proof-pinned-project",
+            "title": "Proof pinned project",
+            "summary": "Starts unpinned.",
+        },
+    )
+    clock.value = 1_800_000_001_000
+    store.upsert_record(
+        "projects",
+        {
+            "id": "proof-recent-project",
+            "title": "Proof recent project",
+            "summary": "Newer but unpinned.",
+        },
+    )
+    clock.value = 1_800_000_002_000
+    pinned = store.patch_record("projects", "proof-pinned-project", {"pinned": True})
+    assert pinned is not None
+    assert pinned["pinned"] is True
+
+    projects = store.list_records("projects")["items"]
+    project_ids = [str(item["id"]) for item in projects]
+    assert project_ids.index("proof-pinned-project") < project_ids.index("proof-recent-project")
+    assert projects[0]["id"] == "proof-pinned-project"
+    assert projects[0]["pinned"] is True
 
 
 def test_task_grouping_auto_moves_when_clock_passes_deadline(tmp_path: Path) -> None:

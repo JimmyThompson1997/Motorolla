@@ -49,9 +49,12 @@
   const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
   const CALENDAR_CLUSTER_WINDOW_MS = 15 * 60 * 1000;
   const CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX = 180;
+  const CALENDAR_DAY_RAIL_SELECTION_MOTION_MS = 180;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
+  const LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS = 2200;
+  const LINKS_NATIVE_CONFIG_RETRY_MS = 120;
   const TASK_SPLIT_MIN_WIDTH_PX = 900;
   const MIN_PLAYBACK_SPEED = 0.5;
   const MAX_PLAYBACK_SPEED = 3;
@@ -95,7 +98,7 @@
   const HOME_SHELL_CANONICAL_ROUTES = new Set(Array.isArray(routeCatalog.HOME_SHELL_CANONICAL_ROUTES)
     ? routeCatalog.HOME_SHELL_CANONICAL_ROUTES
     : []);
-  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "tags", "inbox", "meetings"]);
+  const UNIVERSAL_FLAT_FEED_SURFACES = new Set(["notes", "meeting-notes", "reminders", "projects", "inbox", "meetings"]);
   const LIGHT_ROUTE_PARENTS = routeCatalog.LIGHT_ROUTE_PARENTS && typeof routeCatalog.LIGHT_ROUTE_PARENTS === "object"
     ? routeCatalog.LIGHT_ROUTE_PARENTS
     : {};
@@ -132,7 +135,7 @@
     "selectedReminderId",
     "selectedNoteId",
     "selectedTaskId",
-    "selectedTagId",
+    "selectedProjectId",
     "selectedFeedId"
   ];
   const LINKS_AUTH_SCHEME_LABELS = {
@@ -166,17 +169,21 @@
     selectedReminderId: "demo-reminder-paint-samples",
     selectedNoteId: "q4",
     selectedTaskId: String(persistedNavState.selected_task_id || "").trim() || "demo-task-do-paint-samples",
-    selectedTagId: String(persistedNavState.selected_tag_id || persistedNavState.selected_project_id || "").trim() || "aurora",
+    selectedProjectId: String(persistedNavState.selected_project_id || persistedNavState.selected_tag_id || "").trim() || "aurora",
     selectedFeedId: "maya-budget",
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarDayRailStartMonth: "",
     calendarDayRailEndMonth: "",
+    pendingCalendarDayRailSelectionMotion: null,
+    calendarDayRailSelectionAnimation: null,
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
     taskMutationPending: {},
     reminderMutationPending: {},
     notesSectionsExpanded: { pinned: true, recent: true },
     notePinPending: {},
+    projectsSectionsExpanded: { pinned: true, recent: true },
+    projectPinPending: {},
     taskFilter: "all",
     taskNavOrigin: null,
     reminderHistoryExpanded: false,
@@ -185,7 +192,7 @@
       tasks: { items: [], loaded: false, loading: false, error: "" },
       "calendar-events": { items: [], loaded: false, loading: false, error: "" },
       "feed-items": { items: [], loaded: false, loading: false, error: "" },
-      tags: { items: [], loaded: false, loading: false, error: "" },
+      projects: { items: [], loaded: false, loading: false, error: "" },
       contacts: { items: [], loaded: false, loading: false, error: "" },
       messages: { items: [], loaded: false, loading: false, error: "" },
       "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
@@ -217,6 +224,7 @@
     scrubbingAudioKey: "",
     audioToggleBusyKey: "",
     timestampTap: null,
+    threadComposerDrafts: {},
     audioCard: null,
     traceCard: null,
     metaCard: null,
@@ -950,19 +958,69 @@
       if (!url) {
         throw new Error("browser.open requires url");
       }
-      try {
-        window.open(url, "_blank", "noopener,noreferrer");
-      } catch (_) {
-        if (window.location && typeof window.location.assign === "function") {
-          window.location.assign(url);
+      let popup = null;
+      let popupError = null;
+      if (typeof window.open === "function") {
+        try {
+          popup = window.open("", "_blank", "noopener,noreferrer");
+          if (popup && popup.location && typeof popup.location.assign === "function") {
+            popup.location.assign(url);
+          }
+        } catch (error) {
+          popupError = error;
         }
       }
-      return {
-        schema: "pucky.browser_open.v1",
-        launched: true,
-        uri: url,
-        user_mediated: true
-      };
+      let popupOpened = false;
+      if (popup) {
+        await new Promise(resolve => setTimeout(resolve, 24));
+        try {
+          if (typeof popup.closed === "boolean" && popup.closed === true) {
+            popupOpened = false;
+          } else {
+            try {
+              const popupHref = String(popup.location && popup.location.href || "").trim();
+              popupOpened = Boolean(popupHref && popupHref !== "about:blank");
+            } catch (_) {
+              popupOpened = true;
+            }
+          }
+        } catch (_) {
+          popupOpened = true;
+        }
+      }
+      if (popupOpened) {
+        return {
+          schema: "pucky.browser_open.v1",
+          launched: true,
+          uri: url,
+          user_mediated: true,
+          launch_surface: "popup",
+          popup_opened: true,
+          same_tab_navigation: false
+        };
+      }
+      let assignError = null;
+      if (window.location && typeof window.location.assign === "function") {
+        try {
+          window.location.assign(url);
+          return {
+            schema: "pucky.browser_open.v1",
+            launched: true,
+            uri: url,
+            user_mediated: true,
+            launch_surface: "same_tab",
+            popup_opened: false,
+            same_tab_navigation: true
+          };
+        } catch (error) {
+          assignError = error;
+        }
+      }
+      const detail = [popupError, assignError]
+        .map(error => String(error && error.message ? error.message : error || "").trim())
+        .filter(Boolean)
+        .join("; ");
+      throw new Error(detail ? `browser.open failed to launch auth: ${detail}` : "browser.open could not open a popup or navigate this tab.");
     }
     if (command === "player.asset.prepare") {
       const url = String(args.url || "").trim();
@@ -1175,6 +1233,30 @@
     return payload;
   }
 
+  async function turnTextApiRequest(options = {}) {
+    await ensureLinksApiConfig();
+    const init = {
+      method: "POST",
+      cache: String(options.cache || "no-store"),
+      headers: { Accept: "application/json" }
+    };
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    if (options.formData instanceof FormData) {
+      init.body = options.formData;
+    } else {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.body || {});
+    }
+    const response = await fetch(`${linksApiBaseUrl()}/api/turn/text`, init);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Text turn failed (${response.status})`));
+    }
+    return payload;
+  }
+
   async function workspaceApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
@@ -1370,7 +1452,13 @@
 
   async function loadTurnStatus(options = {}) {
     try {
-      const snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
+      const turnId = turnStatusTurnId(state.turn);
+      let snapshot;
+      if (shouldPollHostedTurnStatus()) {
+        snapshot = await loadHostedTurnStatus(turnId);
+      } else {
+        snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
+      }
       applyTurnStatus(snapshot);
       if (options.render) {
         render();
@@ -1682,13 +1770,28 @@
     return labels.join(" + ");
   }
 
+  function blankLinksHandoffState() {
+    return {
+      at: "",
+      event: "",
+      slug: "",
+      auth_url: "",
+      launched: false,
+      launch_surface: "",
+      popup_opened: false,
+      same_tab_navigation: false,
+      error: ""
+    };
+  }
+
   function linksDebugRoot() {
     if (!window.__PUCKY_LINKS_DEBUG__ || typeof window.__PUCKY_LINKS_DEBUG__ !== "object") {
       window.__PUCKY_LINKS_DEBUG__ = {
         schema: "pucky.links_debug.v1",
         route_sessions: [],
         click_sessions: [],
-        last_event: null
+        last_event: null,
+        last_handoff: blankLinksHandoffState()
       };
     }
     return window.__PUCKY_LINKS_DEBUG__;
@@ -1796,6 +1899,51 @@
   function linksDebugStartClickSession(slug) {
     linksDebugStartSession("click", { slug: String(slug || "") });
     linksDebugRecord("row_click", { slug: String(slug || "") }, "click");
+  }
+
+  function linksHandoffState() {
+    const current = state.links.lastHandoff;
+    if (!current || typeof current !== "object") {
+      return blankLinksHandoffState();
+    }
+    return Object.assign(blankLinksHandoffState(), current);
+  }
+
+  function setLinksHandoffState(patch = {}) {
+    state.links.lastHandoff = Object.assign(blankLinksHandoffState(), linksHandoffState(), patch);
+    linksDebugRoot().last_handoff = Object.assign({}, state.links.lastHandoff);
+    return state.links.lastHandoff;
+  }
+
+  function normalizeLinksBrowserOpenResult(result, options = {}) {
+    const raw = result && typeof result === "object" ? result : {};
+    const event = String(options.event || "browser_open_result").trim() || "browser_open_result";
+    const slug = String(options.slug || "").trim();
+    const authUrl = String(raw.uri || raw.url || options.authUrl || "").trim();
+    const launched = raw.launched !== false;
+    const popupOpened = raw.popup_opened === true;
+    const sameTabNavigation = raw.same_tab_navigation === true;
+    let launchSurface = String(raw.launch_surface || raw.surface || "").trim();
+    if (!launchSurface) {
+      if (popupOpened) {
+        launchSurface = "popup";
+      } else if (sameTabNavigation) {
+        launchSurface = "same_tab";
+      } else if (launched && !hostedConnectReadOnlyMode()) {
+        launchSurface = "external_intent";
+      }
+    }
+    return {
+      at: new Date().toISOString(),
+      event,
+      slug,
+      auth_url: authUrl,
+      launched,
+      launch_surface: launchSurface,
+      popup_opened: popupOpened || launchSurface === "popup",
+      same_tab_navigation: sameTabNavigation || launchSurface === "same_tab",
+      error: String(raw.error || options.error || "").trim()
+    };
   }
 
   function hostedConnectReadOnlyMode() {
@@ -2141,6 +2289,17 @@
     state.links.handoffLocked = true;
     state.links.handoffDeadlineAt = Date.now() + LINKS_BROWSER_HANDOFF_LOCK_MS;
     state.links.openingSlug = slug;
+    setLinksHandoffState({
+      at: new Date().toISOString(),
+      event: "handoff_started",
+      slug: String(slug || "").trim(),
+      auth_url: "",
+      launched: false,
+      launch_surface: "",
+      popup_opened: false,
+      same_tab_navigation: false,
+      error: ""
+    });
     state.links.error = "";
     state.links.message = "";
     state.links.messageKind = "";
@@ -2154,6 +2313,7 @@
 
   async function openLinksAuthFlow(app) {
     const slug = String(app && app.slug || "").trim();
+    let authUrl = "";
     if (!slug || linksHandoffLocked()) {
       return;
     }
@@ -2182,14 +2342,44 @@
         },
         "click"
       );
-      const authUrl = String(payload && payload.auth_url || "").trim();
+      authUrl = String(payload && payload.auth_url || "").trim();
       if (!authUrl) {
         throw new Error("Connect did not return a valid auth URL.");
       }
       if (String(payload && payload.auth_mode || state.links.auth_mode) === "browser") {
-        linksDebugRecord("browser_open_requested", { slug }, "click");
-        await Pucky.request({ command: "browser.open", args: { url: authUrl } });
+        linksDebugRecord("browser_open_requested", { slug, auth_url: authUrl }, "click");
+        const handoff = normalizeLinksBrowserOpenResult(
+          await Pucky.request({ command: "browser.open", args: { url: authUrl } }),
+          { slug, authUrl }
+        );
+        setLinksHandoffState(handoff);
+        linksDebugRecord(
+          "browser_open_result",
+          {
+            slug,
+            auth_url: handoff.auth_url,
+            launch_surface: handoff.launch_surface,
+            launched: handoff.launched,
+            popup_opened: handoff.popup_opened,
+            same_tab_navigation: handoff.same_tab_navigation
+          },
+          "click"
+        );
+        if (!handoff.launched) {
+          throw new Error(handoff.error || "Browser handoff did not launch an auth surface.");
+        }
       } else if (window.location && typeof window.location.assign === "function") {
+        setLinksHandoffState({
+          at: new Date().toISOString(),
+          event: "same_tab_assign",
+          slug,
+          auth_url: authUrl,
+          launched: true,
+          launch_surface: "same_tab",
+          popup_opened: false,
+          same_tab_navigation: true,
+          error: ""
+        });
         window.location.assign(authUrl);
         return;
       } else {
@@ -2203,6 +2393,17 @@
       } else {
         state.links.error = detail || "Could not open the auth flow.";
       }
+      setLinksHandoffState({
+        at: new Date().toISOString(),
+        event: "handoff_error",
+        slug,
+        auth_url: authUrl,
+        launched: false,
+        launch_surface: "",
+        popup_opened: false,
+        same_tab_navigation: false,
+        error: state.links.error
+      });
       linksDebugRecord("handoff_error", { slug, detail: state.links.error }, "click");
       releaseLinksHandoff({ render: false, reason: "error" });
     } finally {
@@ -2222,6 +2423,52 @@
     return DEFAULT_LINKS_API_BASE;
   }
 
+  function shouldPollHostedTurnStatus() {
+    const turnId = turnStatusTurnId(state.turn);
+    return Boolean(turnId) && state.turn && state.turn.composer_managed === true;
+  }
+
+  async function loadHostedTurnStatus(turnId) {
+    const cleanTurnId = String(turnId || "").trim();
+    if (!cleanTurnId) {
+      return state.turn;
+    }
+    await ensureLinksApiConfig();
+    const headers = {};
+    if (state.links.apiToken) {
+      headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    const response = await fetch(
+      `${linksApiBaseUrl()}/api/turn/status?turn_id=${encodeURIComponent(cleanTurnId)}`,
+      { cache: "no-store", headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Turn status failed (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async function requestNativeLinksConfig() {
+    const deadlineAt = Date.now() + LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS;
+    let lastError = null;
+    while (Date.now() < deadlineAt) {
+      if (!(window.Pucky && typeof window.Pucky.request === "function")) {
+        await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
+        continue;
+      }
+      try {
+        return await Pucky.request({ command: "pucky.config.get", args: {} });
+      } catch (error) {
+        lastError = error;
+      }
+      await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
+    }
+    if (lastError) {
+      throw lastError;
+    }
+    throw new Error("Native bridge did not expose pucky.config.get.");
+  }
+
   async function ensureLinksApiConfig() {
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
@@ -2233,7 +2480,7 @@
       return;
     }
     try {
-      const config = await Pucky.request({ command: "pucky.config.get", args: {} });
+      const config = await requestNativeLinksConfig();
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
       state.links.apiToken = String(config && config.api_token || "");
       state.links.deviceId = "";
@@ -2382,6 +2629,7 @@
     renderFeed();
     renderAudioDetail();
     renderDetailAudioContinuity();
+    refreshOpenTranscriptDetail();
     noteFlashDebugRecord("render_end");
   }
 
@@ -2921,6 +3169,10 @@
     const feed = document.getElementById("feed");
     const scrollport = linksScrollElement();
     const filtered = linksFilteredApps();
+    const filteredSlugs = filtered
+      .map(item => String(item && item.slug || "").trim())
+      .filter(Boolean);
+    const handoff = linksHandoffState();
     const scrollTop = Math.max(0, safeNumber(scrollport && scrollport.scrollTop));
     const viewportHeight = Math.max(LINKS_ROW_HEIGHT, safeNumber(scrollport && scrollport.clientHeight));
     const startIndex = filtered.length ? Math.min(filtered.length - 1, Math.max(0, Math.floor(scrollTop / LINKS_ROW_HEIGHT))) : 0;
@@ -2935,6 +3187,7 @@
       catalog_source: String(state.links.catalogSource || ""),
       catalog_version: String(state.links.catalogVersion || ""),
       filtered_app_count: filtered.length,
+      filtered_slugs: filteredSlugs,
       rendered_row_count: linksPageRefs?.rows ? linksPageRefs.rows.querySelectorAll(".links-app-row").length : 0,
       connected_loaded: Boolean(state.links.connectedLoaded),
       api_token_present: Boolean(String(state.links.apiToken || "").trim()),
@@ -2945,6 +3198,14 @@
       logo_errors: safeNumber(state.links.logoErrors),
       inline_message: String(state.links.error || state.links.message || ""),
       toast_message: String(state.lastToast.message || ""),
+      last_handoff_event: String(handoff.event || ""),
+      last_handoff_slug: String(handoff.slug || ""),
+      last_handoff_url: String(handoff.auth_url || ""),
+      last_handoff_surface: String(handoff.launch_surface || ""),
+      last_handoff_launched: Boolean(handoff.launched),
+      last_handoff_popup_opened: Boolean(handoff.popup_opened),
+      last_handoff_same_tab_navigation: Boolean(handoff.same_tab_navigation),
+      last_handoff_error: String(handoff.error || ""),
       first_visible_slug: String(firstVisible && firstVisible.slug || ""),
       last_visible_slug: String(lastVisible && lastVisible.slug || ""),
       feed: {
@@ -3110,6 +3371,7 @@
       logoErrors: 0,
       message: "",
       messageKind: "",
+      lastHandoff: blankLinksHandoffState(),
       lastRefreshAt: 0
     };
   }
@@ -3696,11 +3958,9 @@
         view.append(lightTaskDetailPage());
         break;
       case "projects":
-      case "tags":
         view.append(lightProjectsPage());
         break;
       case "project-detail":
-      case "tag-detail":
         view.append(lightProjectDetailPage());
         break;
       case "home":
@@ -4057,8 +4317,7 @@
     input.value = selectedCalendarDateKey();
     input.setAttribute("aria-label", "Calendar date");
     input.addEventListener("change", () => {
-      state.selectedCalendarDate = normalizeCalendarDateKey(input.value) || calendarTodayDateKey();
-      render();
+      selectCalendarDate(input.value, { source: "date-input" });
     });
     field.append(input);
     controls.append(field);
@@ -4066,8 +4325,7 @@
       const today = el("button", "light-calendar-today-button", "Today");
       today.type = "button";
       today.addEventListener("click", () => {
-        state.selectedCalendarDate = calendarTodayDateKey();
-        render();
+        selectCalendarDate(calendarTodayDateKey(), { source: "today-button" });
       });
       controls.append(today);
     }
@@ -4080,16 +4338,122 @@
     return picker;
   }
 
+  function prefersReducedMotion() {
+    try {
+      return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function compareCalendarDateKeys(left, right) {
+    const normalizedLeft = normalizeCalendarDateKey(left);
+    const normalizedRight = normalizeCalendarDateKey(right);
+    if (!normalizedLeft && !normalizedRight) {
+      return 0;
+    }
+    if (!normalizedLeft) {
+      return -1;
+    }
+    if (!normalizedRight) {
+      return 1;
+    }
+    return normalizedLeft.localeCompare(normalizedRight);
+  }
+
+  function calendarDayRailCurrentStrip() {
+    return document.querySelector('.light-shell[data-light-route="calendar"] .light-calendar-day-strip');
+  }
+
+  function calendarDayRailTargetLeft(strip, dayKey, alignment = "center") {
+    if (!(strip instanceof HTMLElement)) {
+      return 0;
+    }
+    const normalized = normalizeCalendarDateKey(dayKey) || selectedCalendarDateKey();
+    const chip = strip.querySelector(`.light-calendar-day-chip[data-day="${normalized}"]`);
+    if (!(chip instanceof HTMLElement)) {
+      return Math.max(0, Number(strip.scrollLeft || 0));
+    }
+    const maxLeft = Math.max(0, strip.scrollWidth - strip.clientWidth);
+    const currentLeft = Number(strip.scrollLeft || 0);
+    const stripRect = strip.getBoundingClientRect();
+    const chipRect = chip.getBoundingClientRect();
+    const unclamped = alignment === "start"
+      ? currentLeft + (chipRect.left - stripRect.left) - 12
+      : alignment === "end"
+        ? currentLeft + (chipRect.right - stripRect.right) + 12
+        : currentLeft + ((chipRect.left + (chipRect.width / 2)) - (stripRect.left + (stripRect.width / 2)));
+    return Math.max(0, Math.min(maxLeft, unclamped));
+  }
+
+  function clearCalendarDayRailSelectionAnimation() {
+    const active = state.calendarDayRailSelectionAnimation;
+    if (active && active.rafId) {
+      cancelAnimationFrame(active.rafId);
+    }
+    state.calendarDayRailSelectionAnimation = null;
+  }
+
+  function captureCalendarDayRailSelectionMotion(normalized, options = {}) {
+    const current = selectedCalendarDateKey();
+    if (prefersReducedMotion()) {
+      return {
+        source: String(options.source || "selection").trim() || "selection",
+        animate: false,
+        fromDayKey: current,
+        toDayKey: normalized,
+        direction: compareCalendarDateKeys(normalized, current),
+      };
+    }
+    const strip = calendarDayRailCurrentStrip();
+    if (!(strip instanceof HTMLElement)) {
+      return null;
+    }
+    return {
+      source: String(options.source || "selection").trim() || "selection",
+      animate: true,
+      fromDayKey: current,
+      toDayKey: normalized,
+      previousScrollLeft: Number(strip.scrollLeft || 0),
+      direction: compareCalendarDateKeys(normalized, current),
+    };
+  }
+
+  function selectCalendarDate(dayKey, options = {}) {
+    const normalized = normalizeCalendarDateKey(dayKey) || calendarTodayDateKey();
+    if (normalized === selectedCalendarDateKey()) {
+      return false;
+    }
+    clearCalendarDayRailSelectionAnimation();
+    const motion = captureCalendarDayRailSelectionMotion(normalized, options);
+    state.pendingCalendarDayRailSelectionMotion = motion;
+    state.selectedCalendarDate = normalized;
+    render();
+    return true;
+  }
+
   function buildCalendarDayRail(strip, dayKey = selectedCalendarDateKey()) {
     if (!(strip instanceof HTMLElement)) {
       return;
     }
+    clearCalendarDayRailSelectionAnimation();
     const monthKeys = calendarDayRailMonthKeys(dayKey);
     strip.replaceChildren();
     state.calendarDayRailStartMonth = "";
     state.calendarDayRailEndMonth = "";
     monthKeys.forEach(monthKey => appendCalendarDayRailMonth(strip, monthKey));
-    queueCalendarDayStripCenter(strip, dayKey);
+    const motion = state.pendingCalendarDayRailSelectionMotion
+      && state.pendingCalendarDayRailSelectionMotion.toDayKey === normalizeCalendarDateKey(dayKey)
+      ? state.pendingCalendarDayRailSelectionMotion
+      : null;
+    state.pendingCalendarDayRailSelectionMotion = null;
+    if (motion) {
+      strip.dataset.selectionMotionSource = String(motion.source || "selection").trim() || "selection";
+      queueCalendarDayStripSelectionMotion(strip, dayKey, motion);
+    } else {
+      delete strip.dataset.selectionMotionSource;
+      queueCalendarDayStripCenter(strip, dayKey);
+    }
     queueCalendarDayRailContinuation(strip);
   }
 
@@ -4128,7 +4492,7 @@
   }
 
   function queueCalendarDayRailContinuation(strip) {
-    if (!(strip instanceof HTMLElement) || strip.dataset.railContinuationQueued === "1") {
+    if (!(strip instanceof HTMLElement) || strip.dataset.railContinuationQueued === "1" || strip.dataset.selectionMotionActive === "1") {
       return;
     }
     strip.dataset.railContinuationQueued = "1";
@@ -4165,16 +4529,88 @@
     requestAnimationFrame(() => centerCalendarDayStrip(strip, dayKey));
   }
 
+  function queueCalendarDayStripSelectionMotion(strip, dayKey = selectedCalendarDateKey(), motion = null) {
+    const run = () => {
+      if (!(strip instanceof HTMLElement)) {
+        return;
+      }
+      const normalized = normalizeCalendarDateKey(dayKey) || selectedCalendarDateKey();
+      const targetLeft = calendarDayRailTargetLeft(strip, normalized, "center");
+      const previousDayKey = normalizeCalendarDateKey(motion?.fromDayKey);
+      let startLeft = targetLeft;
+      if (previousDayKey && strip.querySelector(`.light-calendar-day-chip[data-day="${previousDayKey}"]`)) {
+        startLeft = calendarDayRailTargetLeft(strip, previousDayKey, "center");
+      } else {
+        const direction = Number(motion?.direction || compareCalendarDateKeys(normalized, previousDayKey));
+        if (direction > 0) {
+          startLeft = calendarDayRailTargetLeft(strip, normalized, "start");
+        } else if (direction < 0) {
+          startLeft = calendarDayRailTargetLeft(strip, normalized, "end");
+        }
+      }
+      if (!motion || motion.animate === false || typeof requestAnimationFrame !== "function") {
+        delete strip.dataset.selectionMotionActive;
+        animateCalendarDayRailSelection(strip, startLeft, targetLeft, { animate: false });
+        return;
+      }
+      strip.dataset.selectionMotionActive = "1";
+      strip.scrollLeft = startLeft;
+      requestAnimationFrame(() => animateCalendarDayRailSelection(strip, startLeft, targetLeft, motion));
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      run();
+      return;
+    }
+    requestAnimationFrame(run);
+  }
+
   function centerCalendarDayStrip(strip, dayKey = selectedCalendarDateKey()) {
     if (!(strip instanceof HTMLElement)) {
       return;
     }
-    const chip = strip.querySelector(`.light-calendar-day-chip[data-day="${dayKey}"]`);
-    if (!(chip instanceof HTMLElement)) {
+    strip.scrollLeft = calendarDayRailTargetLeft(strip, dayKey, "center");
+  }
+
+  function animateCalendarDayRailSelection(strip, startLeft, targetLeft, motion) {
+    if (!(strip instanceof HTMLElement)) {
       return;
     }
-    const left = chip.offsetLeft - Math.max(0, (strip.clientWidth - chip.offsetWidth) / 2);
-    strip.scrollTo({ left: Math.max(0, left), behavior: "auto" });
+    const fromLeft = Math.max(0, Number(startLeft || 0));
+    const finalLeft = Math.max(0, Number(targetLeft || 0));
+    clearCalendarDayRailSelectionAnimation();
+    const previousScrollSnapType = strip.style.scrollSnapType;
+    strip.style.scrollSnapType = "none";
+    strip.scrollLeft = fromLeft;
+    if (!motion?.animate || Math.abs(finalLeft - fromLeft) < 1) {
+      strip.style.scrollSnapType = previousScrollSnapType;
+      delete strip.dataset.selectionMotionActive;
+      strip.scrollLeft = finalLeft;
+      queueCalendarDayRailContinuation(strip);
+      return;
+    }
+    const easeOutCubic = value => 1 - Math.pow(1 - value, 3);
+    const startedAt = performance.now();
+    const animation = { strip, rafId: 0 };
+    state.calendarDayRailSelectionAnimation = animation;
+    const step = now => {
+      if (state.calendarDayRailSelectionAnimation !== animation) {
+        return;
+      }
+      const elapsed = Math.min(1, (now - startedAt) / CALENDAR_DAY_RAIL_SELECTION_MOTION_MS);
+      strip.scrollLeft = fromLeft + (finalLeft - fromLeft) * easeOutCubic(elapsed);
+      if (elapsed < 1) {
+        animation.rafId = requestAnimationFrame(step);
+        return;
+      }
+      strip.scrollLeft = finalLeft;
+      if (state.calendarDayRailSelectionAnimation === animation) {
+        state.calendarDayRailSelectionAnimation = null;
+      }
+      strip.style.scrollSnapType = previousScrollSnapType;
+      delete strip.dataset.selectionMotionActive;
+      queueCalendarDayRailContinuation(strip);
+    };
+    animation.rafId = requestAnimationFrame(step);
   }
 
   function lightCalendarAgendaHeading() {
@@ -4229,8 +4665,7 @@
     chip.dataset.day = dayKey;
     chip.dataset.month = calendarMonthKey(dayKey);
     chip.addEventListener("click", () => {
-      state.selectedCalendarDate = dayKey;
-      render();
+      selectCalendarDate(dayKey, { source: "day-chip" });
     });
     const dots = el("span", "light-calendar-day-dots");
     calendarDayMarkers(dayKey).forEach(tone => dots.append(el("span", `light-calendar-day-dot ${tone}`, "")));
@@ -4476,6 +4911,9 @@
     if (surface === "notes") {
       return "light-notes-section";
     }
+    if (surface === "projects") {
+      return "light-projects-section";
+    }
     if (surface === "reminders") {
       return "light-reminder-list-section";
     }
@@ -4486,14 +4924,14 @@
     if (surface === "notes") {
       return "light-notes-section-body";
     }
+    if (surface === "projects") {
+      return "light-projects-section-body";
+    }
     if (surface === "meeting-notes") {
       return "light-list light-graph-list";
     }
     if (surface === "reminders") {
       return "light-list light-graph-list";
-    }
-    if (surface === "tags") {
-      return "light-list";
     }
     if (surface === "meetings") {
       return "meetings-list-card";
@@ -4569,9 +5007,14 @@
     if (descriptor.surface === "notes" && descriptor.key) {
       section.dataset.notesSection = descriptor.key;
     }
+    if (descriptor.surface === "projects" && descriptor.key) {
+      section.dataset.projectsSection = descriptor.key;
+    }
     const bodyId = descriptor.key ? `light-${descriptor.surface || "feed"}-section-${descriptor.key}` : "";
     if (descriptor.collapsible && descriptor.surface === "notes") {
       section.append(lightNotesSectionHeader(descriptor.label, descriptor.key, descriptor.count, descriptor.expanded, bodyId));
+    } else if (descriptor.collapsible && descriptor.surface === "projects") {
+      section.append(lightProjectsSectionHeader(descriptor.label, descriptor.key, descriptor.count, descriptor.expanded, bodyId));
     } else if (descriptor.label) {
       const header = el("div", "light-feed-section-header");
       header.append(lightSectionTitle(descriptor.label));
@@ -4708,21 +5151,22 @@
   }
 
   function universalProjectFeedTileDescriptor(project, sectionKey = "") {
+    const projectId = projectRecordId(project);
     return normalizeUniversalFeedTileDescriptor({
-      id: String(project?.id || "").trim(),
-      surface: "tags",
+      id: projectId,
+      surface: "projects",
       variant: "project",
       sectionKey: String(sectionKey || "").trim().toLowerCase(),
-      title: project?.title || "Untitled tag",
+      title: project?.title || "Untitled project",
       meta: { project },
-      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Tag"}`,
-      chips: projectChips(project),
-      leading: { icon: "sell", show: true },
-      trailing: null,
+      summary: `${workspaceTimestamp(project?.updated_at_ms, "Updated")}${DOT}${project?.summary || "Project"}`,
+      chips: [],
+      leading: { icon: "folder", show: true },
+      trailing: { kind: "pin", pending: projectPinPending(projectId), pinned: Boolean(project?.pinned) },
       interactive: true,
       open: () => {
-        state.selectedTagId = project.id;
-        lightNavigate("tag-detail", { from: "tags" });
+        state.selectedProjectId = project.id;
+        lightNavigate("project-detail", { from: "projects" });
       },
       renderMode: "flat",
     });
@@ -5743,7 +6187,7 @@
       task: "Task",
       calendar_event: "Calendar",
       feed_item: "Inbox",
-      project: "Tag",
+      project: "Project",
       contact: "Contact",
       message: "Message",
       meeting_note: "Meeting note",
@@ -5762,7 +6206,7 @@
       task: "checklist",
       calendar_event: "calendar",
       feed_item: "text",
-      project: "sell",
+      project: "folder",
       contact: "contacts",
       message: "chat",
       meeting_note: "record_voice_over",
@@ -5791,7 +6235,7 @@
       task: "task-detail",
       calendar_event: "meeting-detail",
       feed_item: "inbox-detail",
-      project: "tag-detail",
+      project: "project-detail",
       contact: "contact-detail",
       meeting_note: "meeting-note-detail",
       reminder: "reminder-detail"
@@ -5801,7 +6245,7 @@
       task: "selectedTaskId",
       calendar_event: "selectedMeetingId",
       feed_item: "selectedFeedId",
-      project: "selectedTagId",
+      project: "selectedProjectId",
       contact: "selectedContactId",
       meeting_note: "selectedMeetingNoteId",
       reminder: "selectedReminderId"
@@ -7446,49 +7890,233 @@
   }
 
   function lightProjectsPage() {
-    const status = lightWorkspaceStatus("tags", "sell", "No tags yet");
+    const status = lightWorkspaceStatus("projects", "folder", "No projects yet");
+    const projects = allProjects();
+    const pinned = projects.filter(project => project.pinned);
+    const sections = [];
+    if (pinned.length) {
+      sections.push(lightProjectsSection("Pinned", "pinned", pinned));
+    }
+    sections.push(lightProjectsSection("Recent", "recent", projects.filter(project => !project.pinned)));
     return renderUniversalFeedPage({
-      title: "Tags",
-      surface: "tags",
+      title: "Projects",
+      surface: "projects",
+      surfaceClassName: "light-projects-feed",
       status,
-      sections: [{
-        key: "tags",
-        label: "",
-        count: allProjects().length,
-        collapsible: false,
-        expanded: true,
-        emptyState: null,
-        items: allProjects().map(project => universalProjectFeedTileDescriptor(project, "tags"))
-      }],
+      sections,
     });
+  }
+
+  function projectRecordId(project) {
+    return String(project?.id || project?.record_id || "").trim();
+  }
+
+  function projectTimestampLabel(project) {
+    return workspaceTimestamp(project?.updated_at_ms, "Updated");
+  }
+
+  function projectMetaLine(project) {
+    return {
+      summary: String(project?.summary || "").trim(),
+      timestamp: projectTimestampLabel(project),
+    };
+  }
+
+  function projectPinPending(projectId) {
+    return Boolean(state.projectPinPending[String(projectId || "").trim()]);
+  }
+
+  function setProjectPinPending(projectId, pending) {
+    const key = String(projectId || "").trim();
+    const next = { ...state.projectPinPending };
+    if (!key) {
+      state.projectPinPending = next;
+      return;
+    }
+    if (pending) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    state.projectPinPending = next;
+  }
+
+  function projectsWithPinnedState(items, projectId, nextPinned) {
+    const targetId = String(projectId || "").trim();
+    const source = Array.isArray(items) ? items : [];
+    const target = source.find(item => projectRecordId(item) === targetId);
+    if (!targetId || !target) {
+      return source.slice();
+    }
+    const toggled = { ...target, pinned: nextPinned };
+    const pinned = [];
+    const recent = [];
+    source.forEach(item => {
+      if (projectRecordId(item) === targetId) {
+        return;
+      }
+      if (item?.pinned) {
+        pinned.push(item);
+        return;
+      }
+      recent.push(item);
+    });
+    return nextPinned
+      ? [toggled, ...pinned, ...recent]
+      : [...pinned, toggled, ...recent];
+  }
+
+  async function toggleProjectPin(project) {
+    const projectId = projectRecordId(project);
+    if (!projectId || projectPinPending(projectId)) {
+      return;
+    }
+    const projectsBucket = state.workspace.projects;
+    if (!projectsBucket || !Array.isArray(projectsBucket.items)) {
+      return;
+    }
+    const previousItems = projectsBucket.items.slice();
+    const previousSectionsExpanded = {
+      ...state.projectsSectionsExpanded
+    };
+    const nextPinned = !Boolean(project.pinned);
+    projectsBucket.error = "";
+    setProjectsSectionExpanded(nextPinned ? "pinned" : "recent", true);
+    projectsBucket.items = projectsWithPinnedState(previousItems, projectId, nextPinned);
+    setProjectPinPending(projectId, true);
+    render();
+    try {
+      await patchWorkspaceRecord("projects", projectId, { pinned: nextPinned });
+      await loadWorkspaceCollection("projects", { render: true, force: true });
+      projectsBucket.error = "";
+    } catch (error) {
+      projectsBucket.items = previousItems;
+      state.projectsSectionsExpanded = previousSectionsExpanded;
+      projectsBucket.error = "";
+      setProjectPinPending(projectId, false);
+      render();
+      showToast(error.message);
+      return;
+    }
+    setProjectPinPending(projectId, false);
+    render();
+  }
+
+  function projectSectionExpanded(sectionKey) {
+    return state.projectsSectionsExpanded?.[sectionKey] !== false;
+  }
+
+  function setProjectsSectionExpanded(sectionKey, expanded) {
+    state.projectsSectionsExpanded = {
+      ...state.projectsSectionsExpanded,
+      [sectionKey]: Boolean(expanded),
+    };
+  }
+
+  function toggleProjectsSection(sectionKey) {
+    setProjectsSectionExpanded(sectionKey, !projectSectionExpanded(sectionKey));
+    render();
+  }
+
+  function lightProjectsSectionHeader(title, sectionKey, count, expanded, controlsId) {
+    const button = el("button", "light-feed-section-header light-projects-section-header");
+    button.type = "button";
+    button.dataset.projectsSection = sectionKey;
+    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-controls", controlsId);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleProjectsSection(sectionKey);
+    });
+    const copy = el("span", "light-projects-section-copy");
+    copy.append(
+      el("span", "light-projects-section-label", String(title).toUpperCase()),
+      el("span", "light-projects-section-count", String(count))
+    );
+    const chevron = el("span", "light-projects-section-chevron");
+    chevron.innerHTML = iconSvg(expanded ? "expand_more" : "chevron_right");
+    button.append(copy, chevron);
+    return button;
+  }
+
+  function lightProjectsSection(title, sectionKey, projects) {
+    return {
+      key: sectionKey,
+      label: title,
+      count: projects.length,
+      collapsible: true,
+      expanded: projectSectionExpanded(sectionKey),
+      emptyState: null,
+      items: projects.map(project => universalProjectFeedTileDescriptor(project, sectionKey))
+    };
   }
 
   function lightProjectRow(project, options = {}) {
     const flatFeed = options.flatFeed === true;
-    const row = el("button", ["light-card", "light-feed-row", "light-project-row", flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
-    row.type = "button";
-    row.dataset.projectId = project.id;
-    row.dataset.tagId = project.id;
-    row.addEventListener("click", () => {
-      state.selectedTagId = project.id;
-      lightNavigate("tag-detail", { from: "tags" });
+    const row = el("div", "light-feed-row light-project-row");
+    if (flatFeed) {
+      row.classList.add("is-flat-feed");
+    }
+    const projectId = projectRecordId(project);
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", project.title || "Open project");
+    row.dataset.projectId = projectId;
+    row.dataset.projectPinned = String(Boolean(project.pinned));
+    const openProject = () => {
+      if (!projectId) {
+        return;
+      }
+      state.selectedProjectId = projectId;
+      lightNavigate("project-detail", { from: "projects" });
+    };
+    row.addEventListener("click", openProject);
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openProject();
+      }
     });
-    row.append(
-      lightSmallIcon("sell"),
-      lightTextStack(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`),
-    );
+    const meta = projectMetaLine(project);
+    const copy = el("span", "light-project-feed-copy");
+    copy.append(el("strong", "", project.title || "Untitled project"));
+    const metaRow = el("span", "light-project-row-meta");
+    if (meta.summary) {
+      metaRow.append(el("span", "light-project-row-summary", meta.summary));
+    } else {
+      metaRow.classList.add("is-time-only");
+    }
+    metaRow.append(el("span", "light-project-row-time", meta.timestamp));
+    copy.append(metaRow);
+    row.dataset.projectHasSummary = String(Boolean(meta.summary));
+    const pin = el("button", "light-project-pin-button");
+    pin.type = "button";
+    pin.disabled = projectPinPending(projectId);
+    pin.dataset.projectPinned = String(Boolean(project.pinned));
+    pin.setAttribute("aria-label", project.pinned ? "Unpin project" : "Pin project");
+    pin.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      void toggleProjectPin(project);
+    });
+    pin.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+      }
+    });
+    pin.innerHTML = iconSvg("pin", { filled: Boolean(project.pinned) });
+    row.append(copy, pin);
     return row;
   }
 
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
-      return lightPage("Tag", { subtitle: "Tag not found.", detail: true });
+      return lightPage("Project", { subtitle: "Project not found.", detail: true });
     }
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
-    page.append(lightDetailHero(project.title, `${workspaceTimestamp(project.updated_at_ms, "Updated")}${DOT}${project.summary || "Tag"}`, "sell"));
-    page.append(lightChipCloud(projectChips(project)));
     const grid = el("div", "light-project-section-grid");
     [
       ["Threads", "chat", projectThreads(project)],
@@ -7525,7 +8153,7 @@
       row.dataset.workspaceTargetRoute = item.target.route;
       row.dataset.workspaceTargetId = item.target.id;
       row.dataset.workspaceTargetKind = item.target.kind || "";
-      row.addEventListener("click", () => openWorkspaceTarget(item.target, "tag-detail"));
+      row.addEventListener("click", () => openWorkspaceTarget(item.target, "project-detail"));
     }
     row.append(
       el("span", "", item.label || ""),
@@ -7704,7 +8332,7 @@
       "reminder-detail": "selectedReminderId",
       "note-detail": "selectedNoteId",
       "task-detail": "selectedTaskId",
-      "tag-detail": "selectedTagId",
+      "project-detail": "selectedProjectId",
       "contact-detail": "selectedContactId"
     })[String(route || "")] || "";
   }
@@ -7734,8 +8362,8 @@
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       normalized[key] = String(snapshot[key] || "");
     });
-    if (!normalized.selectedTagId) {
-      normalized.selectedTagId = String(snapshot.selectedProjectId || "");
+    if (!normalized.selectedProjectId) {
+      normalized.selectedProjectId = String(snapshot.selectedTagId || "");
     }
     return normalized;
   }
@@ -7819,9 +8447,9 @@
         state[key] = String(selectionPatch[key] || "");
       }
     });
-    if (!Object.prototype.hasOwnProperty.call(selectionPatch, "selectedTagId")
-      && Object.prototype.hasOwnProperty.call(selectionPatch, "selectedProjectId")) {
-      state.selectedTagId = String(selectionPatch.selectedProjectId || "");
+    if (!Object.prototype.hasOwnProperty.call(selectionPatch, "selectedProjectId")
+      && Object.prototype.hasOwnProperty.call(selectionPatch, "selectedTagId")) {
+      state.selectedProjectId = String(selectionPatch.selectedTagId || "");
     }
   }
 
@@ -8300,18 +8928,6 @@
     return hero;
   }
 
-  function lightDetailHero(title, detail, icon) {
-    const hero = el("section", "light-card light-detail-hero");
-    hero.append(lightSmallIcon(icon), lightTextStack(title, detail));
-    return hero;
-  }
-
-  function lightChipCloud(chips) {
-    const cloud = el("div", "light-chip-cloud");
-    chips.forEach(chip => cloud.append(el("span", "", chip)));
-    return cloud;
-  }
-
   function calendarFormatTime(timestampMs, timeZone = calendarEffectiveTimeZone()) {
     const value = Number(timestampMs || 0);
     if (!Number.isFinite(value) || value <= 0) {
@@ -8644,21 +9260,11 @@
   }
 
   function selectedProject() {
-    return selectedWorkspaceRecord("tags", state.selectedTagId);
+    return selectedWorkspaceRecord("projects", state.selectedProjectId);
   }
 
   function allProjects() {
-    return workspaceItems("tags");
-  }
-
-  function projectChips(project) {
-    const meta = project?.metadata || {};
-    if (Array.isArray(meta.chips) && meta.chips.length) {
-      return meta.chips.map(String);
-    }
-    const threads = projectThreads(project).filter(item => item !== "Nothing linked yet").length;
-    const links = Array.isArray(project?.links) ? project.links.length : 0;
-    return [`${threads} thread${threads === 1 ? "" : "s"}`, `${links} link${links === 1 ? "" : "s"}`];
+    return workspaceItems("projects");
   }
 
   function projectThreads(project) {
@@ -8700,7 +9306,7 @@
       "reminder-detail",
       "note-detail",
       "task-detail",
-      "tag-detail",
+      "project-detail",
       "contact-detail"
     ].includes(String(route || ""));
   }
@@ -11371,53 +11977,7 @@
       restoreFeedScroll();
     }
     const panel = document.getElementById("detail");
-    const messages = messagesForCard(card);
-    const content = el("div", "detail-content chat-detail");
-    const stack = el("div", "chat-stack");
-    messages.forEach((message, index) => {
-      const images = messageImages(card, message, index, messages);
-      if (message.role !== "user" && images.length) {
-        stack.append(chatMediaBubble(card, images));
-      }
-      const bubble = el("div", [
-        "bubble",
-        message.role === "user" ? "user" : "assistant",
-        message.pending_placeholder ? "is-thinking" : "",
-        message.pending_failed ? "is-failed" : "",
-      ].filter(Boolean).join(" "));
-      const attachments = messageAttachmentRow(card, message, index);
-      if (attachments) {
-        bubble.append(attachments);
-      }
-      bubble.append(document.createTextNode(message.text || ""));
-      if (message.role !== "user" && !message.synthetic) {
-        const actions = el("div", "bubble-actions");
-        const meta = el("button", "bubble-origin-action");
-        meta.type = "button";
-        meta.innerHTML = iconSvg("settings", { filled: false });
-        meta.setAttribute("aria-label", "Open reply details");
-        meta.addEventListener("click", (event) => {
-          event.stopPropagation();
-          showOriginSheet(card);
-        });
-        const trace = el("button", "bubble-trace-action");
-        trace.type = "button";
-        trace.innerHTML = iconSvg("lightbulb_2", { filled: false });
-        trace.setAttribute("aria-label", "Open thinking logs");
-        trace.addEventListener("click", (event) => {
-          event.stopPropagation();
-          showTurnTrace(card, message, index);
-        });
-        actions.append(meta, trace);
-        bubble.append(actions);
-      }
-      const stamp = messageTimestamp(message);
-      if (stamp) {
-        bubble.append(el("span", "bubble-meta", stamp));
-      }
-      stack.append(bubble);
-    });
-    content.append(stack);
+    const content = renderTranscriptDetailContent(card);
     applyDetailDataAttributes(panel, "transcript", card);
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("transcript", card, options);
@@ -14664,6 +15224,7 @@
         role: "user",
         text: transcript,
         created_at: createdAt,
+        attachments: normalizedAttachments(card?.pending_user_attachments),
         synthetic: true
       },
       {
@@ -14675,6 +15236,496 @@
         pending_failed: failed
       }
     ];
+  }
+
+  function threadComposerDraft(threadId) {
+    const key = String(threadId || "").trim();
+    const raw = key && state.threadComposerDrafts && typeof state.threadComposerDrafts === "object"
+      ? state.threadComposerDrafts[key]
+      : null;
+    return {
+      text: String(raw?.text || ""),
+      files: Array.isArray(raw?.files) ? raw.files.filter(Boolean) : []
+    };
+  }
+
+  function setThreadComposerDraft(threadId, draft = {}) {
+    const key = String(threadId || "").trim();
+    if (!key) {
+      return;
+    }
+    const text = String(draft.text || "");
+    const files = Array.isArray(draft.files) ? draft.files.filter(Boolean) : [];
+    const next = { ...state.threadComposerDrafts };
+    if (!text.trim() && !files.length) {
+      delete next[key];
+    } else {
+      next[key] = { text, files };
+    }
+    state.threadComposerDrafts = next;
+  }
+
+  function threadComposerDraftKeyForCard(card) {
+    const threadId = String(cardThreadId(card) || "").trim();
+    if (threadId) {
+      return `thread:${threadId}`;
+    }
+    const sessionId = String(cardSessionId(card) || "").trim();
+    if (sessionId) {
+      return `session:${sessionId}`;
+    }
+    const cardId = String(card?.card_id || "").trim();
+    return cardId ? `card:${cardId}` : "";
+  }
+
+  function threadComposerAttachmentKind(mimeType, name = "") {
+    const mime = String(mimeType || "").trim().toLowerCase();
+    const lowerName = String(name || "").trim().toLowerCase();
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("video/")) return "video";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime === "text/html" || mime === "application/xhtml+xml" || /\.html?$/i.test(lowerName)) return "html";
+    if (mime === "text/csv" || mime === "text/tab-separated-values" || /\.csv$/i.test(lowerName) || /\.tsv$/i.test(lowerName)) return "table";
+    if (
+      mime.startsWith("text/")
+      || mime === "application/json"
+      || mime === "application/xml"
+      || mime === "text/xml"
+      || /\.md$/i.test(lowerName)
+      || /\.txt$/i.test(lowerName)
+      || /\.json$/i.test(lowerName)
+    ) {
+      return "text";
+    }
+    if (mime === "application/pdf") return "document";
+    return "unknown";
+  }
+
+  async function queuedThreadComposerFile(file) {
+    const name = String(file?.name || "attachment").trim() || "attachment";
+    const mimeType = String(file?.type || "").trim() || "application/octet-stream";
+    const kind = threadComposerAttachmentKind(mimeType, name);
+    let textExcerpt = "";
+    if (kind === "text" || kind === "table" || kind === "html") {
+      try {
+        textExcerpt = String(await file.text()).slice(0, 4000);
+      } catch (_) {
+        textExcerpt = "";
+      }
+    }
+    return {
+      id: `queued:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      name,
+      mimeType,
+      kind,
+      sizeBytes: Number(file?.size || 0),
+      textExcerpt,
+      previewUrl: kind === "image" ? URL.createObjectURL(file) : ""
+    };
+  }
+
+  function queuedThreadComposerAttachment(queued) {
+    if (!queued || typeof queued !== "object") {
+      return null;
+    }
+    const attachment = {
+      id: String(queued.id || ""),
+      title: String(queued.name || "Attachment"),
+      filename: String(queued.name || "attachment"),
+      mime_type: String(queued.mimeType || "application/octet-stream"),
+      kind: String(queued.kind || "unknown"),
+      size_bytes: Number(queued.sizeBytes || 0),
+      text: String(queued.textExcerpt || "")
+    };
+    if (queued.previewUrl) {
+      attachment.src = String(queued.previewUrl || "");
+      attachment.preview_src = String(queued.previewUrl || "");
+    }
+    return normalizeAttachment(attachment);
+  }
+
+  function composerProofReplyDelayMs() {
+    const explicit = Number(window.PuckyComposerProofReplyDelayMs || 0);
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return Math.max(0, Math.round(explicit));
+    }
+    try {
+      const value = Number(new URLSearchParams(window.location.search || "").get("proof_reply_delay_ms") || 0);
+      return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function optimisticComposerTurnStatus({ turnId, threadId, transcript, attachments = [] }) {
+    return {
+      schema: "pucky.turn_status.v1",
+      turn_id: turnId,
+      stage: "upload_received",
+      status: "running",
+      requested_thread_mode: "existing",
+      requested_thread_id: String(threadId || ""),
+      thread_scope_source: "thread_transcript",
+      user_transcript: String(transcript || ""),
+      pending_user_attachments: attachments,
+      composer_managed: true,
+      configured: Boolean(String(state.links.apiToken || "").trim()),
+      indicator: {
+        schema: "pucky.turn_indicator.v1",
+        state: "uploading",
+        visual_state: "uploading",
+        mic_on: false,
+        speech_detected: false,
+        uploading: true,
+        stt_running: false,
+        codex_running: false,
+        tts_running: false,
+        speaking: false,
+        failed: false,
+        remote_stage: "upload_received",
+        active: true
+      }
+    };
+  }
+
+  function transcriptDetailMessages(card) {
+    const messages = messagesForCard(card);
+    if (!card || isPendingOutboundCard(card)) {
+      return messages;
+    }
+    if (turnRequestedThreadId(state.turn) !== cardThreadId(card)) {
+      return messages;
+    }
+    const pendingCard = pendingTurnCard(state.turn, state.cards);
+    if (!pendingCard) {
+      return messages;
+    }
+    const pendingMessages = pendingOutboundMessages(pendingCard);
+    return messages.concat(pendingMessages);
+  }
+
+  function autoSizeComposerTextarea(textarea) {
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(180, Math.max(44, textarea.scrollHeight));
+    textarea.style.height = `${nextHeight}px`;
+  }
+
+  function threadComposerStateForCard(card) {
+    const threadScope = threadScopeForCard(card, "thread_transcript");
+    const threadId = String(threadScope?.thread_id || "").trim();
+    const draftKey = threadComposerDraftKeyForCard(card);
+    const draft = threadComposerDraft(draftKey);
+    const apiBaseUrl = String(state.links.apiBaseUrl || linksApiBaseUrl() || "").trim();
+    const apiTokenPresent = Boolean(String(state.links.apiToken || "").trim());
+    const inFlight = isTurnActive(state.turn) && turnRequestedThreadId(state.turn) === threadId;
+    const hasDraftContent = Boolean(String(draft.text || "").trim()) || draft.files.length > 0;
+    let disabledReason = "";
+    if (String(state.route || "").trim() !== "inbox") {
+      disabledReason = "Inbox chat replies are only enabled from the Inbox feed.";
+    } else if (!threadId) {
+      disabledReason = "Draft only until this transcript is backed by a live thread.";
+    } else if (!apiBaseUrl || !apiTokenPresent) {
+      disabledReason = "Draft only until this browser session has an authenticated live lane.";
+    } else if (inFlight) {
+      disabledReason = "This thread is still waiting on a reply.";
+    } else if (!hasDraftContent) {
+      disabledReason = "Write a message or attach a file to send.";
+    }
+    return {
+      mode: "existing_thread",
+      threadId,
+      thread_id: threadId,
+      draftKey,
+      draft,
+      apiBaseUrl,
+      apiBaseUrlPresent: Boolean(apiBaseUrl),
+      apiTokenPresent: Boolean(String(state.links.apiToken || "").trim()),
+      inFlight: isTurnActive(state.turn) && turnRequestedThreadId(state.turn) === threadId,
+      sendEnabled: !disabledReason && hasDraftContent,
+      disabledReason,
+      hasDraftContent
+    };
+  }
+
+  function renderThreadComposer(card) {
+    const composerState = threadComposerStateForCard(card);
+    const shell = el("div", "thread-composer-shell");
+    const composer = el("section", "thread-composer");
+    const textarea = document.createElement("textarea");
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.hidden = true;
+    textarea.className = "thread-composer-input";
+    textarea.placeholder = "Type a reply";
+    textarea.value = composerState.draft.text;
+    textarea.rows = 1;
+    textarea.setAttribute("aria-label", "Thread reply");
+    textarea.disabled = false;
+    textarea.addEventListener("input", () => {
+      setThreadComposerDraft(composerState.draftKey, {
+        text: textarea.value,
+        files: threadComposerDraft(composerState.draftKey).files
+      });
+      autoSizeComposerTextarea(textarea);
+    });
+    textarea.addEventListener("keydown", event => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void sendThreadComposerTurn(card);
+      }
+    });
+    input.addEventListener("change", async () => {
+      const selected = Array.from(input.files || []);
+      if (!selected.length) {
+        input.value = "";
+        return;
+      }
+      const current = threadComposerDraft(composerState.draftKey);
+      const nextFiles = current.files.concat(await Promise.all(selected.map(file => queuedThreadComposerFile(file))));
+      setThreadComposerDraft(composerState.draftKey, { text: current.text, files: nextFiles });
+      input.value = "";
+      refreshOpenTranscriptDetail();
+    });
+    const queued = el("div", "thread-composer-queued");
+    composerState.draft.files.forEach(file => {
+      const chip = el("div", "thread-composer-chip");
+      chip.append(el("span", "thread-composer-chip-label", file.name || "Attachment"));
+      const remove = el("button", "thread-composer-chip-remove", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", event => {
+        event.preventDefault();
+        const current = threadComposerDraft(composerState.draftKey);
+        setThreadComposerDraft(composerState.draftKey, {
+          text: current.text,
+          files: current.files.filter(item => item.id !== file.id)
+        });
+        refreshOpenTranscriptDetail();
+      });
+      chip.append(remove);
+      queued.append(chip);
+    });
+    const controls = el("div", "thread-composer-controls");
+    const attach = el("button", "thread-composer-attach", "Attach");
+    attach.type = "button";
+    attach.addEventListener("click", event => {
+      event.preventDefault();
+      input.click();
+    });
+    const status = el("div", "thread-composer-status", composerState.disabledReason || "Ready to send.");
+    const send = el("button", "thread-composer-send", "Send");
+    send.type = "button";
+    send.disabled = !composerState.sendEnabled;
+    send.addEventListener("click", () => {
+      void sendThreadComposerTurn(card);
+    });
+    controls.append(attach, status, send);
+    composer.append(input, textarea);
+    if (queued.childElementCount) {
+      composer.append(queued);
+    }
+    composer.append(controls);
+    shell.append(composer);
+    requestAnimationFrame(() => autoSizeComposerTextarea(textarea));
+    return shell;
+  }
+
+  function renderTranscriptDetailContent(card) {
+    const content = el("div", "detail-content chat-detail");
+    const stack = el("div", "chat-stack");
+    const messages = transcriptDetailMessages(card);
+    messages.forEach((message, index) => {
+      const images = messageImages(card, message, index, messages);
+      if (message.role !== "user" && images.length) {
+        stack.append(chatMediaBubble(card, images));
+      }
+      const bubble = el("div", [
+        "bubble",
+        message.role === "user" ? "user" : "assistant",
+        message.pending_placeholder ? "is-thinking" : "",
+        message.pending_failed ? "is-failed" : "",
+      ].filter(Boolean).join(" "));
+      const attachments = messageAttachmentRow(card, message, index);
+      if (attachments) {
+        bubble.append(attachments);
+      }
+      bubble.append(document.createTextNode(message.text || ""));
+      if (message.role !== "user" && !message.synthetic) {
+        const actions = el("div", "bubble-actions");
+        const meta = el("button", "bubble-origin-action");
+        meta.type = "button";
+        meta.innerHTML = iconSvg("settings", { filled: false });
+        meta.setAttribute("aria-label", "Open reply details");
+        meta.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showOriginSheet(card);
+        });
+        const trace = el("button", "bubble-trace-action");
+        trace.type = "button";
+        trace.innerHTML = iconSvg("lightbulb_2", { filled: false });
+        trace.setAttribute("aria-label", "Open thinking logs");
+        trace.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showTurnTrace(card, message, index);
+        });
+        actions.append(meta, trace);
+        bubble.append(actions);
+      }
+      const stamp = messageTimestamp(message);
+      if (stamp) {
+        bubble.append(el("span", "bubble-meta", stamp));
+      }
+      stack.append(bubble);
+    });
+    const composer = renderThreadComposer(card);
+    content.append(stack, composer);
+    return content;
+  }
+
+  async function sendThreadComposerTurn(card) {
+    await ensureLinksApiConfig();
+    const composerState = threadComposerStateForCard(card);
+    if (!composerState.sendEnabled) {
+      refreshOpenTranscriptDetail();
+      return null;
+    }
+    const draft = {
+      text: String(composerState.draft.text || "").trim(),
+      files: Array.isArray(composerState.draft.files) ? composerState.draft.files.slice() : []
+    };
+    const turnId = `thread-compose-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    setThreadComposerDraft(composerState.draftKey, { text: "", files: [] });
+    const pendingUserAttachments = draft.files
+      .map(file => queuedThreadComposerAttachment(file))
+      .filter(Boolean);
+    applyTurnStatus(optimisticComposerTurnStatus({
+      turnId,
+      threadId: composerState.threadId,
+      transcript: draft.text,
+      attachments: pendingUserAttachments
+    }));
+    render();
+    try {
+      const proofReplyDelayMs = composerProofReplyDelayMs();
+      if (draft.files.length) {
+        const form = new FormData();
+        form.append("text", draft.text);
+        form.append("turn_id", turnId);
+        form.append("thread_mode", "existing");
+        form.append("thread_id", composerState.threadId);
+        form.append("thread_scope_source", "thread_transcript");
+        form.append("thread_card_id", String(card?.card_id || ""));
+        if (proofReplyDelayMs > 0) {
+          form.append("proof_reply_delay_ms", String(proofReplyDelayMs));
+        }
+        draft.files.forEach(queued => {
+          form.append("files", queued.file, queued.name);
+        });
+        await turnTextApiRequest({ formData: form });
+      } else {
+        await turnTextApiRequest({
+          body: { text: draft.text, turn_id: turnId, thread_mode: "existing", thread_id: composerState.threadId, thread_scope_source: "thread_transcript", thread_card_id: String(card?.card_id || ""), proof_reply_delay_ms: proofReplyDelayMs }
+        });
+      }
+      applyTurnStatus({
+        ...state.turn,
+        stage: "completed",
+        status: "ok",
+        indicator: {
+          ...normalizeTurnStatus(state.turn).indicator,
+          state: "idle",
+          visual_state: "idle",
+          uploading: false,
+          stt_running: false,
+          codex_running: false,
+          tts_running: false,
+          speaking: false,
+          failed: false,
+          active: false,
+          remote_stage: "completed"
+        }
+      });
+      await refreshCardsFromVmSnapshot({ reason: "thread_composer_send", render: false });
+      const rebound = syncOpenThreadDetailAfterCards();
+      if (!rebound) {
+        refreshOpenTranscriptDetail();
+      }
+      render();
+      return turnId;
+    } catch (error) {
+      const current = threadComposerDraft(composerState.draftKey);
+      if (!String(current.text || "").trim() && !current.files.length) {
+        setThreadComposerDraft(composerState.draftKey, draft);
+      }
+      applyTurnStatus({
+        ...state.turn,
+        stage: "failed",
+        status: "failed",
+        error_message: String(error?.message || "Thread send failed."),
+        pending_error: String(error?.message || "Thread send failed."),
+        indicator: {
+          ...normalizeTurnStatus(state.turn).indicator,
+          state: "failed",
+          visual_state: "failed",
+          uploading: false,
+          stt_running: false,
+          codex_running: false,
+          tts_running: false,
+          speaking: false,
+          failed: true,
+          active: false,
+          remote_stage: "failed"
+        }
+      });
+      showToast(String(error?.message || "Thread send failed."));
+      render();
+      return null;
+    }
+  }
+
+  function refreshOpenTranscriptDetail() {
+    const detail = normalizeNavDetail(state.navDetail);
+    if (!detail || detail.type !== "transcript") {
+      return false;
+    }
+    const panel = document.getElementById("detail");
+    if (!panel || !panel.classList.contains("is-open")) {
+      return false;
+    }
+    const existing = panel.querySelector(".chat-detail");
+    if (!existing) {
+      return false;
+    }
+    const card = resolveNavDetailCard(detail);
+    if (!card) {
+      return false;
+    }
+    const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(existing);
+    const previousScrollTop = existing.scrollTop;
+    const activeTextarea = existing.querySelector(".thread-composer-input");
+    const shouldRestoreFocus = activeTextarea instanceof HTMLTextAreaElement && activeTextarea === document.activeElement;
+    const selectionStart = shouldRestoreFocus ? activeTextarea.selectionStart : 0;
+    const selectionEnd = shouldRestoreFocus ? activeTextarea.selectionEnd : 0;
+    const next = renderTranscriptDetailContent(card);
+    existing.replaceWith(next);
+    installDetailScrollPersistence(next, "transcript");
+    if (shouldStickToLatest) {
+      scrollTranscriptToLatest(next);
+    } else {
+      restoreScrollPosition(next, previousScrollTop);
+    }
+    if (shouldRestoreFocus) {
+      const textarea = next.querySelector(".thread-composer-input");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.focus();
+        textarea.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+    return true;
   }
 
   function scrollTranscriptToLatest(content) {
@@ -16472,7 +17523,7 @@
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
         selected_task_id: state.selectedTaskId || null,
-        selected_tag_id: state.selectedTagId || null,
+        selected_project_id: state.selectedProjectId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
         feed_scroll_top: state.feedScrollTop,
         detail: normalizeNavDetail(state.navDetail),

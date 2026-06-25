@@ -90,8 +90,12 @@ public final class SettingsStore {
         return prefs.getString(PUCKY_TURN_URL, "https://pucky.fly.dev/api/turn").trim();
     }
 
+    public String getConfiguredPuckyApiToken() {
+        return prefs.getString(PUCKY_API_TOKEN, "").trim();
+    }
+
     public String getPuckyTurnAuthToken() {
-        String explicit = prefs.getString(PUCKY_API_TOKEN, "").trim();
+        String explicit = getConfiguredPuckyApiToken();
         if (!explicit.isEmpty()) {
             return explicit;
         }

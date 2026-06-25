@@ -460,7 +460,9 @@ public final class PuckyTurnSourceTest {
         assertTrue(source.contains("public void setPuckyTurnArrivalCueMode(String mode)"));
         assertTrue(source.contains("public void setPuckyTurnAcceptedChimeEnabled(boolean enabled)"));
         assertTrue(source.contains("public void setPuckyTurnReplyMode(String mode)"));
+        assertTrue(source.contains("public String getConfiguredPuckyApiToken()"));
         assertTrue(source.contains("public String getPuckyTurnAuthToken()"));
+        assertTrue(source.contains("String explicit = getConfiguredPuckyApiToken();"));
         assertTrue(source.contains("String brokerToken = getToken();"));
         assertTrue(source.contains("return getPuckyTurnAuthToken();"));
         assertTrue(source.contains("return \"dev-token\".equals(clean) ? \"\" : clean;"));

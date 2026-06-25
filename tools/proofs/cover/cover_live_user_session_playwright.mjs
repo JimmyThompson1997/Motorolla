@@ -31,7 +31,7 @@ const REQUIRED_HOME_ROUTES = [
   "notes",
   "tasks",
   "calendar",
-  "tags",
+  "projects",
   "contacts",
 ];
 const UNIVERSAL_FEED_TILE_ROUTES = [
@@ -40,7 +40,7 @@ const UNIVERSAL_FEED_TILE_ROUTES = [
   "meeting-notes",
   "reminders",
   "notes",
-  "tags",
+  "projects",
 ];
 const LIVE_CONNECT_REQUIRED_SLUGS = ["gmail", "googlecalendar"];
 const TASK_LINKS = [
@@ -60,8 +60,8 @@ const TASK_LINKS = [
   },
   {
     kind: "project",
-    label: "tag",
-    route: "tag-detail",
+    label: "project",
+    route: "project-detail",
     idKey: "projectId",
     titleKey: "projectTitle",
   },
@@ -753,7 +753,7 @@ async function runRouteTour(page, config, mode, seed) {
   await recorder.capture({
     route: "home",
     action: "Open launcher",
-    expected: "Launcher tiles for inbox, meetings, meeting notes, reminders, connect, settings, notes, tasks, calendar, tags, and contacts are visible.",
+    expected: "Launcher tiles for inbox, meetings, meeting notes, reminders, connect, settings, notes, tasks, calendar, projects, and contacts are visible.",
     confirmation: "Required launcher tiles are present.",
     observed: { tiles: homeTiles },
   });
@@ -975,7 +975,7 @@ async function runRouteTour(page, config, mode, seed) {
       await waitForRoute(page, link.route, config.timeoutMs);
       await waitForTextInBody(page, targetTitle, config.timeoutMs);
       const pageTitle = normalizeText(await page.locator(".light-page-title").last().textContent().catch(() => targetTitle));
-      if (link.route === "tag-detail" || link.route === "contact-detail") {
+      if (link.route === "project-detail" || link.route === "contact-detail") {
         await waitForTextInBody(page, seed.noteTitle, config.timeoutMs);
       }
       await recorder.capture({
@@ -1007,18 +1007,18 @@ async function runRouteTour(page, config, mode, seed) {
     });
   }
 
-  if (shouldRunRoute(config, "tags")) {
+  if (shouldRunRoute(config, "projects")) {
     await goHome(page, config);
-    await openRouteFromHome(page, "tags", config.timeoutMs);
+    await openRouteFromHome(page, "projects", config.timeoutMs);
     await waitForSeededProject(page, seed, config.timeoutMs);
     await page.locator(`.light-project-row[data-project-id="${seed.projectId}"]`).first().click();
-    await waitForRoute(page, "tag-detail", config.timeoutMs);
+    await waitForRoute(page, "project-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.projectTitle, config.timeoutMs);
     await recorder.capture({
-      route: "tag-detail",
-      action: "Open seeded tag detail",
-      expected: "The seeded tag opens from the Tags route.",
-      confirmation: "Seeded tag detail opened.",
+      route: "project-detail",
+      action: "Open seeded project detail",
+      expected: "The seeded project opens from the Projects route.",
+      confirmation: "Seeded project detail opened.",
       observed: { project_title: seed.projectTitle },
     });
   }

@@ -182,6 +182,38 @@ async function waitForReminderState(config, reminderId, predicate, description, 
   throw new Error(`Timed out waiting for reminder ${reminderId}: ${description}; last record ${JSON.stringify(lastRecord)}`);
 }
 
+async function openReminderDetail(page, reminderId, timeoutMs) {
+  const row = page.locator(`[data-reminder-id="${reminderId}"]`).first();
+  await row.waitFor({ state: "visible", timeout: timeoutMs });
+  await row.click({ force: true });
+  await waitForLightRoute(page, "reminder-detail", timeoutMs);
+}
+
+async function waitForLiveReminderActions(page, timeoutMs) {
+  await page.waitForFunction(() => {
+    return Boolean(document.querySelector('[data-reminder-action="dismiss"]'))
+      && Boolean(document.querySelector('[data-reminder-action="snooze"]'));
+  }, { timeout: timeoutMs });
+}
+
+async function assertNoReminderActionErrorToast(page) {
+  const text = String(await page.evaluate(() => document.body?.innerText || ""));
+  const lower = text.toLowerCase();
+  assert(!lower.includes("workspace_write_failed"), "Expected reminder action success path to avoid an error toast");
+  assert(!lower.includes("missing_phone_target"), "Expected reminder action success path to avoid leaking orphan target errors");
+  assert(!lower.includes("unknown_reminder_recipient"), "Expected reminder action success path to avoid orphan-recipient validation errors");
+}
+
+async function backToReminders(page, timeoutMs) {
+  const backButton = page.getByRole("button", { name: "Back" }).first();
+  if (await backButton.count()) {
+    await backButton.click({ timeout: timeoutMs });
+  } else {
+    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+  }
+  await waitForLightRoute(page, "reminders", timeoutMs);
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -194,36 +226,61 @@ async function main() {
     assertions: []
   };
 
-  const deliveryEnabled = shouldRunReminderDelivery(config);
-  const manageReminderId = `browser-proof-manage-${Date.now()}`;
-  const phoneReminderId = `browser-proof-phone-${Date.now()}`;
+  const orphanContactId = `browser-proof-orphan-contact-${Date.now()}`;
+  const orphanDismissReminderId = `browser-proof-orphan-dismiss-${Date.now()}`;
+  const orphanSnoozeReminderId = `browser-proof-orphan-snooze-${Date.now()}`;
+  const dormantDueAtMs = Date.now() + 30 * 60 * 1000;
   const baselineActive = await activeReminderCount(config);
 
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: manageReminderId,
-    title: "Browser Proof Manage Reminder",
-    summary: "Reminder detail should stay clean.",
-    status: "open",
-    due_at_ms: Date.now() + 30 * 60 * 1000,
+  await apiRequest(config, "POST", "/api/workspace/contacts", {
+    id: orphanContactId,
+    title: "Browser Proof Orphan Contact",
+    summary: "Temporary contact for orphaned reminder action verification.",
     metadata: {
-      recipients: [{ id: "self", kind: "self", label: "Me" }],
-      destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+      phone: "+14155550168",
     }
   });
-  let expectedActive = baselineActive + 1;
-  if (deliveryEnabled) {
-    await apiRequest(config, "POST", "/api/workspace/reminders", {
-      id: phoneReminderId,
-      title: "Browser Proof Phone Reminder",
-      summary: "Reminder should disappear after successful phone delivery.",
-      status: "open",
-      due_at_ms: Date.now() + 5_000,
+  await apiRequest(config, "POST", "/api/workspace/reminders", {
+    id: orphanDismissReminderId,
+    title: "Browser Proof Orphan Dismiss",
+    summary: "Dismiss should still work after the linked recipient contact is deleted.",
+    status: "open",
+    due_at_ms: dormantDueAtMs,
+    metadata: {
+      recipients: [
+        { id: "self", kind: "self", label: "Me" },
+        { id: orphanContactId, kind: "contact", contact_id: orphanContactId, label: "Browser Proof Orphan Contact" },
+      ],
+      destinations: [{ channel: "sms", recipient_ids: [orphanContactId] }],
+    }
+  });
+  await apiRequest(config, "POST", "/api/workspace/reminders", {
+    id: orphanSnoozeReminderId,
+    title: "Browser Proof Orphan Snooze",
+    summary: "Snooze should still work after the linked recipient contact is deleted.",
+    status: "open",
+    due_at_ms: dormantDueAtMs,
+    metadata: {
+      recipients: [
+        { id: "self", kind: "self", label: "Me" },
+        { id: orphanContactId, kind: "contact", contact_id: orphanContactId, label: "Browser Proof Orphan Contact" },
+      ],
+      destinations: [{ channel: "sms", recipient_ids: [orphanContactId] }],
+    }
+  });
+  let expectedActive = baselineActive + 2;
+  await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`);
+  for (const reminderId of [orphanDismissReminderId, orphanSnoozeReminderId]) {
+    await apiRequest(config, "PATCH", `/api/workspace/reminders/${reminderId}`, {
+      due_at_ms: Date.now() - 60_000,
       metadata: {
-        recipients: [{ id: "self", kind: "self", label: "Me" }],
-        destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }],
+        delivery_state: "pending",
+        last_fired_at_ms: 0,
+        last_fired_due_at_ms: 0,
+        last_delivery_error: "",
+        snoozed_until_ms: 0,
       }
     });
-    expectedActive += 1;
   }
 
   const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
@@ -234,133 +291,72 @@ async function main() {
     await waitForHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, expectedActive, config.timeoutMs);
     summary.screenshots.home = await saveScreenshot(page, config.reportDir, "home");
-
-    await openTile(page, "Contacts", "contacts", config.timeoutMs);
-    const firstContact = page.locator("button[data-contact-id]").first();
-    await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
-    const firstContactId = String(await firstContact.getAttribute("data-contact-id") || "");
-    assert(firstContactId === "contact-me", `Expected Me pinned first, saw ${firstContactId}`);
-    summary.screenshots.contacts = await saveScreenshot(page, config.reportDir, "contacts-list");
-    await page.locator('button[data-contact-id="contact-me"]').click();
-    await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-    await page.getByText("Me").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    summary.screenshots.me_detail = await saveScreenshot(page, config.reportDir, "contacts-me-detail");
-    assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to stay read-only");
-    await backToHome(page, config.theme, config.timeoutMs);
-
-    await waitForReminderBadge(page, expectedActive, config.timeoutMs);
     await openTile(page, "Reminders", "reminders", config.timeoutMs);
-    await page.locator(`[data-reminder-id="${manageReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.waitForFunction(() => {
-      const text = document.body.innerText || "";
-      return !text.includes("Sent") && !text.includes("Failed") && !text.includes("Done");
-    }, { timeout: config.timeoutMs });
-    const rowChipCount = await page.locator(`[data-reminder-id="${manageReminderId}"] .light-graph-chip-row`).count();
-    assert(rowChipCount === 0, `Expected no linked chips on reminder rows, saw ${rowChipCount}`);
-    summary.screenshots.reminders_list = await saveScreenshot(page, config.reportDir, "reminders-list");
+    await page.locator(`[data-reminder-id="${orphanDismissReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    await page.locator(`[data-reminder-id="${orphanSnoozeReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    summary.screenshots.reminders_list_before_actions = await saveScreenshot(page, config.reportDir, "reminders-list-before-actions");
 
-    await page.locator('[data-reminder-id^="demo-reminder-"]').first().click({ force: true });
-    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    await page.waitForFunction(() => Boolean(document.querySelector('[data-reminder-detail-feed="true"]')), { timeout: config.timeoutMs });
-    summary.screenshots.reminder_linked_detail = await saveScreenshot(page, config.reportDir, "reminder-linked-detail");
-    await backToHome(page, config.theme, config.timeoutMs);
-    await waitForReminderBadge(page, expectedActive, config.timeoutMs);
-    await openTile(page, "Reminders", "reminders", config.timeoutMs);
-    await page.locator(`[data-reminder-id="${manageReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-
-    await page.locator(`[data-reminder-id="${manageReminderId}"]`).click({ force: true });
-    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    await page.waitForFunction(() => {
-      const text = (document.body.innerText || "").toUpperCase();
-      const sectionTitles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim().toUpperCase());
-      return text.includes("STATUS:")
-        && text.includes("DELIVERY:")
-        && text.includes("DONE")
-        && text.includes("SNOOZE 10 MIN")
-        && text.includes("SNOOZE...")
-        && text.includes("ME")
-        && !text.includes("SELF")
-        && !sectionTitles.includes("SCHEDULE")
-        && !sectionTitles.includes("RECIPIENTS")
-        && !sectionTitles.includes("CHANNELS")
-        && !sectionTitles.includes("LINKED RECORDS")
-        && Boolean(document.querySelector('[data-reminder-action-row="true"]'))
-        && Boolean(document.querySelector('[data-reminder-detail-feed="true"]'))
-        && !document.querySelector(".light-reminder-detail-feed .light-chevron");
-    }, { timeout: config.timeoutMs });
-    await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
-    summary.screenshots.reminder_detail = await saveScreenshot(page, config.reportDir, "reminder-detail");
-
-    await page.locator('[data-reminder-action="snooze_10"]').click();
+    await openReminderDetail(page, orphanDismissReminderId, config.timeoutMs);
+    await waitForLiveReminderActions(page, config.timeoutMs);
+    summary.screenshots.orphan_dismiss_before = await saveScreenshot(page, config.reportDir, "orphan-dismiss-before");
+    await page.locator('[data-reminder-action="dismiss"]').click();
     await waitForReminderState(
       config,
-      manageReminderId,
-      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + (8 * 60 * 1000),
-      "manage reminder should quick-snooze",
+      orphanDismissReminderId,
+      reminder => String(reminder?.status || "").trim().toLowerCase() === "done",
+      "orphan dismiss reminder should mark done",
+      30_000
+    );
+    expectedActive -= 1;
+    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await page.waitForFunction((targetId) => !document.querySelector(`[data-reminder-id="${targetId}"]`), orphanDismissReminderId, { timeout: config.timeoutMs });
+    await assertNoReminderActionErrorToast(page);
+    summary.screenshots.orphan_dismiss_after = await saveScreenshot(page, config.reportDir, "orphan-dismiss-after");
+
+    await openReminderDetail(page, orphanSnoozeReminderId, config.timeoutMs);
+    await waitForLiveReminderActions(page, config.timeoutMs);
+    summary.screenshots.orphan_snooze_before = await saveScreenshot(page, config.reportDir, "orphan-snooze-before");
+    await page.locator('[data-reminder-action="snooze"]').click();
+    const snoozed = await waitForReminderState(
+      config,
+      orphanSnoozeReminderId,
+      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) > Date.now() + 60_000,
+      "orphan snooze reminder should move back into non-live state",
       30_000
     );
     expectedActive -= 1;
     await page.waitForFunction(() => {
-      const text = (document.body.innerText || "").toLowerCase();
-      return text.includes("delivery: snoozed") && text.includes("snoozed until");
+      const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
+      if (route !== "reminder-detail" && route !== "reminders") {
+        return false;
+      }
+      return !document.querySelector('[data-reminder-action="dismiss"]')
+        && !document.querySelector('[data-reminder-action="snooze"]');
     }, { timeout: config.timeoutMs });
-    summary.screenshots.reminder_snoozed = await saveScreenshot(page, config.reportDir, "reminder-snoozed");
+    if (await page.locator('.light-shell[data-light-route="reminder-detail"]').count()) {
+      summary.screenshots.orphan_snooze_after_detail = await saveScreenshot(page, config.reportDir, "orphan-snooze-after-detail");
+      await backToReminders(page, config.timeoutMs);
+    }
+    await page.locator(`[data-reminder-id="${orphanSnoozeReminderId}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+    const rowState = String(await page.locator(`[data-reminder-id="${orphanSnoozeReminderId}"]`).getAttribute("data-reminder-state") || "").trim().toLowerCase();
+    assert(rowState !== "live", `Expected snoozed orphan reminder to leave the live bucket, saw ${rowState || "(missing state)"}`);
+    assert(Number(snoozed?.metadata?.snoozed_until_ms || 0) === Number(snoozed?.due_at_ms || 0), "Expected snoozed orphan reminder to keep due_at_ms and snoozed_until_ms aligned");
+    await assertNoReminderActionErrorToast(page);
+    summary.screenshots.orphan_snooze_after = await saveScreenshot(page, config.reportDir, "orphan-snooze-after");
 
-    await page.locator('[data-reminder-action="snooze_selector"]').click();
-    await page.locator(".settings-selector-overlay.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.waitForFunction(() => {
-      const text = String(document.querySelector(".settings-selector-sheet")?.textContent || "").toLowerCase();
-      return text.includes("1 hour") && text.includes("this evening") && text.includes("tomorrow morning");
-    }, { timeout: config.timeoutMs });
-    summary.screenshots.reminder_snooze_selector = await saveScreenshot(page, config.reportDir, "reminder-snooze-selector");
-    await page.locator('[data-selector-value="1_hour"]').click();
-    await waitForReminderState(
-      config,
-      manageReminderId,
-      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + (55 * 60 * 1000),
-      "manage reminder should accept preset snooze",
-      30_000
-    );
-    await page.locator('[data-reminder-action="done"]').click();
-    await waitForReminderState(
-      config,
-      manageReminderId,
-      reminder => String(reminder?.status || "").trim().toLowerCase() === "done",
-      "manage reminder should mark done",
-      30_000
-    );
-    await waitForLightRoute(page, "reminders", config.timeoutMs);
-    await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
-    summary.screenshots.reminder_done = await saveScreenshot(page, config.reportDir, "reminder-done");
     await backToHome(page, config.theme, config.timeoutMs);
     await waitForReminderBadge(page, expectedActive, config.timeoutMs);
-    summary.screenshots.reminder_actions = await saveScreenshot(page, config.reportDir, "reminder-actions");
+    summary.screenshots.home_after_actions = await saveScreenshot(page, config.reportDir, "home-after-actions");
 
-    if (deliveryEnabled) {
-      await openTile(page, "Reminders", "reminders", config.timeoutMs);
-      const sentPhone = await waitForReminderState(
-        config,
-        phoneReminderId,
-        reminder => String(reminder?.metadata?.delivery_state || "").trim().toLowerCase() === "sent",
-        "phone reminder should send",
-        45_000
-      );
-      expectedActive -= 1;
-      await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), phoneReminderId, { timeout: config.timeoutMs });
-      summary.screenshots.reminder_phone_sent = await saveScreenshot(page, config.reportDir, "reminder-phone-sent");
-      await backToHome(page, config.theme, config.timeoutMs);
-      await waitForReminderBadge(page, expectedActive, config.timeoutMs);
-      summary.phone_delivery = sentPhone?.metadata?.last_delivery_results || [];
-    }
-
-    summary.assertions.push("Me is pinned first in Contacts and remains the default personal reminder target");
-    summary.assertions.push("Reminders regroup into Now/Upcoming/Snoozed, expose Done plus snooze actions, hide Channels, and collapse detail into one mixed connected feed without chevrons");
+    summary.assertions.push("Orphaned-recipient reminders still expose live reminder actions after the linked contact is deleted");
+    summary.assertions.push("Dismiss returns to the reminders list, removes the reminder from the active set, and avoids an error toast");
+    summary.assertions.push("Snooze updates due_at_ms plus snoozed_until_ms, removes live actions, and avoids an error toast");
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
   } finally {
     try {
       await browser.close();
     } catch {}
-    for (const reminderId of [manageReminderId, phoneReminderId]) {
+    for (const reminderId of [orphanDismissReminderId, orphanSnoozeReminderId]) {
       if (!reminderId) {
         continue;
       }
@@ -368,6 +364,9 @@ async function main() {
         await apiRequest(config, "DELETE", `/api/workspace/reminders/${reminderId}`, undefined);
       } catch {}
     }
+    try {
+      await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`, undefined);
+    } catch {}
   }
 }
 

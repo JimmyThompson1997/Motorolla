@@ -400,6 +400,9 @@ public final class MainActivityWebViewShellTest {
         assertTrue(source.contains("uiBundleController.status()"));
         assertTrue(source.contains("uiBundleController.installDownloaded"));
         assertTrue(source.contains("uiBundleController.refresh"));
+        assertTrue(source.contains("settings.getConfiguredPuckyApiToken()"));
+        assertTrue(source.contains("Json.put(out, \"api_token\", apiToken);"));
+        assertTrue(source.contains("Json.put(out, \"has_api_token\", !apiToken.trim().isEmpty());"));
         assertTrue(source.contains("settingsStore.setUiShellMode"));
         assertTrue(intentController.contains("Intent.CATEGORY_BROWSABLE"));
         assertTrue(intentController.contains("args.optBoolean(\"require_resolvable\", false)"));
@@ -460,6 +463,22 @@ public final class MainActivityWebViewShellTest {
                 Files.exists(Path.of("src/main/java/com/pucky/device/tunnel/TunnelController.java")));
         assertFalse("TlsSniProxy source should be deleted",
                 Files.exists(Path.of("src/main/java/com/pucky/device/tunnel/TlsSniProxy.java")));
+    }
+
+    @Test
+    public void hostedHtmlUiWebViewSupportsRealFileChooserForComposerAttachments() throws Exception {
+        String activity = read("src/main/java/com/pucky/device/MainActivity.java");
+
+        assertTrue(activity.contains("webShell.setWebChromeClient("));
+        assertTrue(activity.contains("onShowFileChooser("));
+        assertTrue(activity.contains("pendingWebFileChooserCallback"));
+        assertTrue(activity.contains("REQUEST_WEB_FILE_CHOOSER"));
+        assertTrue(activity.contains("Intent.EXTRA_ALLOW_MULTIPLE"));
+        assertTrue(activity.contains("startActivityForResult("));
+        assertTrue(activity.contains("onActivityResult("));
+        assertTrue(activity.contains("WebChromeClient.FileChooserParams.parseResult("));
+        assertTrue(activity.contains("callback.onReceiveValue(results);")
+                || activity.contains("pendingWebFileChooserCallback.onReceiveValue(results);"));
     }
 
     private static String read(String path) throws Exception {

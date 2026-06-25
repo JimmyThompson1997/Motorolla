@@ -54,15 +54,15 @@ const ROUTES = [
     },
   },
   {
-    surface: "Tags",
-    route: "tags",
+    surface: "Projects",
+    route: "projects",
     themes: ["light", "dark"],
     primarySelector: ".light-project-row",
     emptySelector: ".light-empty-state",
     viewportModes: ["mobile", "desktop"],
     detail: {
       openerSelector: ".light-project-row",
-      expectedRoute: "tag-detail",
+      expectedRoute: "project-detail",
     },
   },
   {
@@ -487,9 +487,11 @@ async function collectDetailMetrics(page) {
       reminderActionRows: document.querySelectorAll('[data-reminder-action-row="true"]').length,
       reminderDetailChevrons: document.querySelectorAll(".light-reminder-detail-feed .light-chevron").length,
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
-      calendarConnectedRows: calendarConnectedRows(),
+      detailHeroCount: document.querySelectorAll(".light-detail-hero").length,
+      chipCloudCount: document.querySelectorAll(".light-chip-cloud").length,
       detailShells: document.querySelectorAll(".detail-shell").length,
       detailPanels: document.querySelectorAll(`${detailSelector}.is-open, ${detailSelector}[aria-hidden="false"]`).length,
+      calendarConnectedRows: calendarConnectedRows(),
     };
   }, { detailSelector: DETAIL_SELECTOR });
 }
@@ -583,8 +585,8 @@ function assertRouteSpecificState(routeConfig, metrics) {
     }
     assert(metrics.selectorCounts.reminderChips === 0, "Reminders: chips should stay hidden");
   }
-  if (routeConfig.route === "tags") {
-    assert(metrics.selectorCounts.listRowPills === 0, "Tags: list rows should not render gray pills");
+  if (routeConfig.route === "projects") {
+    assert(metrics.selectorCounts.listRowPills === 0, "Projects: list rows should not render gray pills");
   }
   if (routeConfig.route === "inbox" && metrics.selectorCounts.primary > 0) {
     assert(metrics.selectorCounts.inboxCards > 0, "Inbox: canonical cards should render");
@@ -683,8 +685,10 @@ async function openDetailAndReturn(page, routeConfig, timeoutMs, routeDir, prefi
     assert(detailMetrics.reminderActionRows > 0, "Reminders: action row should render");
     assert(detailMetrics.reminderDetailChevrons === 0, "Reminders: mixed feed rows should drop trailing chevrons");
   }
-  if (routeConfig.route === "tags") {
-    assert(detailMetrics.projectGridCount > 0, "Tags: detail grid should render");
+  if (routeConfig.route === "projects") {
+    assert(detailMetrics.projectGridCount > 0, "Projects: detail grid should render");
+    assert(detailMetrics.detailHeroCount === 0, "Expected project detail hero card to be removed");
+    assert(detailMetrics.chipCloudCount === 0, "Expected project detail chip cloud to be removed");
   }
   const detailScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-detail-open.png`));
   const returned = await backToList(page, routeConfig, timeoutMs);
