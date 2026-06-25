@@ -716,6 +716,7 @@ class PuckyVoiceService:
             self.meeting_codex.start()
         ensure_broker_initialized()
         self._recover_stale_meeting_runtime_records()
+        self._sync_archived_meeting_feed_cards()
         if self._reminder_poll_thread is None or not self._reminder_poll_thread.is_alive():
             self._reminder_stop_event.clear()
             self._reminder_poll_thread = threading.Thread(
@@ -1029,6 +1030,49 @@ class PuckyVoiceService:
                     resolved_mime_type,
                     failure_stage="meeting_agent_timeout",
                     failure_reason="TimeoutError: Meeting processing exceeded the runtime recovery window.",
+                )
+
+    def _sync_meeting_feed_archive_state(self, record: dict[str, object]) -> bool:
+        if not bool(record.get("archived")):
+            return False
+        meeting_id = _safe_meeting_id(record.get("meeting_id"))
+        card_id = str(record.get("card_id") or "").strip()
+        if not card_id and meeting_id:
+            card_id = f"pucky_card_{meeting_id}"
+        if not card_id:
+            return False
+        item = self.feed.get_item(card_id)
+        if item is None:
+            return False
+        synced_item = dict(item)
+        if not bool(item.get("archived")):
+            try:
+                response = self.feed.apply_action(
+                    client_action_id=f"meeting_archive_sync:{meeting_id or card_id}",
+                    card_id=card_id,
+                    action="archive",
+                )
+            except (KeyError, ValueError):
+                return False
+            synced_item = dict(response.get("item") or {})
+        if not synced_item:
+            return False
+        record["card_id"] = str(synced_item.get("card_id") or card_id)
+        record["feed_item"] = synced_item
+        if isinstance(synced_item.get("card"), dict):
+            record["card"] = dict(synced_item.get("card") or {})
+        return True
+
+    def _sync_archived_meeting_feed_cards(self) -> None:
+        for item in self._load_meetings():
+            record = dict(item or {})
+            if not bool(record.get("archived")):
+                continue
+            if self._sync_meeting_feed_archive_state(record):
+                _run_staged_operation(
+                    "meeting_index_write",
+                    lambda record=record: self._upsert_meeting(record),
+                    sqlite_retry=True,
                 )
 
     def health(self) -> dict[str, object]:
@@ -3449,6 +3493,7 @@ class PuckyVoiceService:
                 updated["updated_at"] = _iso_time(time.time())
                 if client_action_id:
                     updated["last_action_id"] = str(client_action_id)
+                self._sync_meeting_feed_archive_state(updated)
                 self._upsert_meeting(updated)
                 return {
                     "schema": "pucky.meeting_action_result.v1",
@@ -4775,6 +4820,7 @@ class PuckyVoiceService:
             reconciled["meeting_state"] = "failed"
             reconciled["failure_stage"] = str(failed_card.get("failure_stage") or "")
             reconciled["origin"] = dict(failed_card.get("origin") or {})
+            reconciled["archived"] = bool(meeting.get("archived")) or bool(reconciled.get("archived"))
             return reconciled
 
         if state in {"completed", "completed_with_missing_result"}:
@@ -4784,7 +4830,7 @@ class PuckyVoiceService:
                 reconciled.setdefault("card_id", item.get("card_id"))
                 reconciled.setdefault("turn_id", item.get("turn_id"))
                 reconciled.setdefault("session_id", item.get("session_id"))
-                reconciled["archived"] = item.get("archived", reconciled.get("archived", False))
+                reconciled["archived"] = bool(meeting.get("archived")) or bool(item.get("archived", reconciled.get("archived", False)))
                 reconciled["read"] = item.get("read", reconciled.get("read", False))
                 reconciled["deleted"] = item.get("deleted", reconciled.get("deleted", False))
                 return reconciled

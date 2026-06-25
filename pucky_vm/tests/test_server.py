@@ -3289,7 +3289,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("transcript_result", detail["meeting"])
         self.assertGreaterEqual(len(detail["meeting"]["speaker_turns"]), 2)
 
-    def test_meeting_archive_hides_meeting_without_archiving_feed_card(self) -> None:
+    def test_meeting_archive_hides_meeting_and_archives_feed_card(self) -> None:
         audio = b"RIFFmeeting-audio"
         self.post_json(
             "/api/meetings",
@@ -3342,7 +3342,54 @@ class ServerTests(unittest.TestCase):
 
         feed_item = self.service.feed.get_item(card_id)
         self.assertIsNotNone(feed_item)
-        self.assertFalse(feed_item["archived"])
+        self.assertTrue(feed_item["archived"])
+
+    def test_startup_sync_archives_feed_card_for_archived_meeting(self) -> None:
+        audio = b"RIFFmeeting-audio"
+        meeting_id = "meeting-20260601-122500-device-archive-sync"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-01T12:25:00Z",
+                "stopped_at": "2026-06-01T12:25:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-1",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(audio).decode("ascii"),
+            },
+        )
+        meeting = {}
+        for _ in range(50):
+            meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
+            rows = meetings.get("meetings", [])
+            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
+            if meeting.get("state") == "completed":
+                break
+            time.sleep(0.1)
+
+        card_id = meeting["card_id"]
+        record = self.service._meeting_record_by_id(meeting_id)
+        self.assertIsNotNone(record)
+        archived_record = dict(record or {})
+        archived_record["archived"] = True
+        archived_record["feed_item"] = dict(archived_record.get("feed_item") or {})
+        archived_record["feed_item"]["archived"] = False
+        self.service._upsert_meeting(archived_record)
+
+        feed_item_before = self.service.feed.get_item(card_id)
+        self.assertIsNotNone(feed_item_before)
+        self.assertFalse(feed_item_before["archived"])
+
+        self.service._sync_archived_meeting_feed_cards()
+
+        feed_item_after = self.service.feed.get_item(card_id)
+        self.assertIsNotNone(feed_item_after)
+        self.assertTrue(feed_item_after["archived"])
+        synced_record = self.service._meeting_record_by_id(meeting_id)
+        self.assertIsNotNone(synced_record)
+        self.assertTrue(bool((synced_record or {}).get("feed_item", {}).get("archived")))
 
     def test_meeting_archive_missing_meeting_fails_with_not_found(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
