@@ -512,13 +512,29 @@ def test_workspace_api_rejects_unconfigured_reminder_destinations(tmp_path: Path
         server.shutdown()
 
 
-def test_workspace_api_preserves_me_contact_and_allows_updates(tmp_path: Path) -> None:
+def test_workspace_api_preserves_self_contact_and_allows_updates(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:
         me = request_json(base_url, "/api/workspace/contacts/contact-me")
         assert me["id"] == "contact-me"
-        assert me["title"] == "Me"
         assert me["metadata"]["is_self"] is True
+        assert me["metadata"]["avatar"] == "M"
+
+        renamed = request_json(
+            base_url,
+            "/api/workspace/contacts/contact-me",
+            method="PATCH",
+            token="test-token",
+            body={
+                "metadata": {
+                    "first_name": "Jordan",
+                    "last_name": "Taylor",
+                }
+            },
+        )
+        assert renamed["title"] == "Jordan Taylor"
+        assert renamed["metadata"]["display_name"] == "Jordan Taylor"
+        assert renamed["metadata"]["avatar"] == "JT"
 
         updated = request_json(
             base_url,

@@ -8,6 +8,7 @@
     "test:cover-default-audio-speed": "node ./proofs/cover/cover_default_audio_speed_playwright.mjs",
     "test:cover-canonical-native-light-theme": "node ./proofs/cover/cover_canonical_native_light_theme_playwright.mjs",
     "test:cover-live-user-session": "node ./proofs/cover/cover_live_user_session_playwright.mjs",
+    "test:cover-calendar": "node ./proofs/cover/cover_calendar_playwright.mjs",
     "test:cover-universal-feed-tiles": "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs",
     "test:cover-hosted-bug-hunt": "node ./proofs/cover/cover_hosted_bug_hunt_playwright.mjs",
     "test:cover-inbox-tile-audio-truth": "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",

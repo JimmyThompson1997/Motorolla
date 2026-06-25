@@ -138,7 +138,7 @@ def test_workspace_apps_browser_proof_captures_contacts_flat_list_contract() -> 
     assert "Contacts list should stay visually flat" in source
     assert "Contacts list should remove detached side padding" in source
     assert "Contacts list should keep divider separation between rows" in source
-    assert "Me contact should remain pinned first in Contacts" in source
+    assert "Expected Contacts baseline list to include contact-me" in source
 
 
 def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> None:
@@ -162,6 +162,7 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "contacts-search-empty" in source
     assert "contacts-search-cleared" in source
     assert "contacts-search-detail-from-filter" in source
+    assert 'getByRole("button", { name: "Edit contact" })' in source
     assert 'phone: "+1 (415) 555-0188"' in shared
     assert 'activity: ["Linked to live alpha"]' in shared
 
@@ -410,6 +411,56 @@ def test_contacts_search_browser_proof_task_runner_and_docs_are_first_class() ->
     assert "python -m tools.dev proof-live-contacts-search-browser" in readme
     assert "Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`" in docs_readme
     assert "Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`" in docs_readme
+
+
+def test_contact_detail_classic_edit_browser_proof_is_first_class() -> None:
+    source = read_source("cover_contact_detail_classic_edit_playwright.mjs")
+    dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+    assert 'const RESULT_SCHEMA = "pucky.contact_detail_classic_edit_browser_proof.v1";' in source
+    assert "const VIEWPORTS = Object.freeze({" in source
+    assert 'desktop: { width: 1440, height: 900' in source
+    assert 'iphone: { width: 390, height: 844' in source
+    assert 'android: { width: 412, height: 915' in source
+    assert "seedTaskProofWorkspace" in source
+    assert "cleanupTaskProofSeed" in source
+    assert "Edit contact" in source
+    assert "Done editing" in source
+    assert "First name" in source
+    assert "Last name" in source
+    assert "Description" in source
+    assert "Email" in source
+    assert "Phone" in source
+    assert "Remove photo" in source
+    assert "zero blur events while typing" in source
+    assert "input node was replaced during typing" in source
+    assert '"proof-local-contact-detail-classic-edit-browser": "Boot the local workspace proof server and run the Contacts classic-detail edit browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-contact-detail-classic-edit-browser": "Run the Contacts classic-detail edit browser proof against the hosted VM with manifest verification."' in dev_source
+    assert '"proof-live-contact-detail-classic-edit-emulator": "Run the Contacts classic-detail edit proof against the hosted VM in Android Chrome on the emulator."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-contact-detail-classic-edit-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contact-detail-classic-edit-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contact-detail-classic-edit-emulator").resolve())' in dev_source
+    assert 'return run_local_contact_detail_classic_edit_browser_proof(args.extra_args)' in dev_source
+    assert 'return run_live_contact_detail_classic_edit_browser_proof(args.extra_args)' in dev_source
+    assert 'return run_live_contact_detail_classic_edit_emulator_proof(args.extra_args)' in dev_source
+    assert "python -m tools.dev proof-local-contact-detail-classic-edit-browser" in readme
+    assert "python -m tools.dev proof-live-contact-detail-classic-edit-browser" in readme
+    assert "python -m tools.dev proof-live-contact-detail-classic-edit-emulator" in readme
+    assert "Contacts classic-detail edit browser proof (local): `python -m tools.dev proof-local-contact-detail-classic-edit-browser`" in docs_readme
+    assert "Contacts classic-detail edit browser proof (live): `python -m tools.dev proof-live-contact-detail-classic-edit-browser`" in docs_readme
+    assert "Contacts classic-detail edit emulator proof (live): `python -m tools.dev proof-live-contact-detail-classic-edit-emulator`" in docs_readme
+
+
+def test_contact_detail_classic_edit_emulator_proof_contract_exists() -> None:
+    source = (ROOT / "tools" / "proofs" / "phone" / "phone_contact_detail_classic_edit_emulator_proof.py").read_text(encoding="utf-8")
+
+    assert "mInputShown" in source
+    assert "dumpsys" in source
+    assert "focusout" in source
+    assert "summary.json" in source
+    assert "trace.json" in source
 
 
 def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:

@@ -1478,10 +1478,14 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     app = read("app.js")
     contacts_page = function_block(app, "lightContactsPage")
     contacts_search = function_block(app, "lightContactsSearchField")
+    contacts_list_items = function_block(app, "contactsListItems")
     contact_search_terms = function_block(app, "contactSearchTerms")
     contact_matches_search = function_block(app, "contactMatchesSearch")
     filtered_contacts = function_block(app, "filteredContactsListItems")
     contact_detail = function_block(app, "lightContactDetailPage")
+    update_contact_detail_draft = function_block(app, "updateContactDetailDraft")
+    bind_contact_detail_text_field = function_block(app, "bindContactDetailTextField")
+    sync_contact_detail_page = function_block(app, "syncContactDetailPage")
     styles = read("styles.css")
     contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
     contact_search_input = css_block(styles, ".light-contacts-search")
@@ -1491,6 +1495,8 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
+    assert "function initialContactDetailEditorState()" in app
+    assert "function syncContactDetailPage()" in app
     assert "function normalizeSearchDigits(value)" in app
     assert "function buildEditableContactEndpoints(existingEndpoints, emailValue, phoneValue)" not in app
     assert '"contact-edit"' not in app
@@ -1507,6 +1513,8 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert "state.contacts.search = nextValue;" in contacts_search
     assert "resetLightRouteScroll();" in contacts_search
     assert "queueContactsSearchFieldFocus(selectionStart, selectionEnd);" in contacts_search
+    assert "contactDisplayName(left).localeCompare(contactDisplayName(right))" in contacts_list_items
+    assert "SELF_CONTACT_ID" not in contacts_list_items
     assert "return contactsListItems().filter(contact => contactMatchesSearch(contact));" in filtered_contacts
     assert "meta.display_name" in contact_search_terms
     assert "meta.first_name" in contact_search_terms
@@ -1519,13 +1527,29 @@ def test_contacts_preserve_me_contact_without_frontend_edit_action() -> None:
     assert 'Clear the search field to see every contact again.' in contacts_page
     assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in contacts_page
     assert 'const row = el("button", "light-card light-contact-row");' not in contacts_page
-    assert 'const page = lightPage("Contact", { detail: true });' in contact_detail
+    assert 'const actionSlot = el("div", "light-nav-slot light-contact-detail-action-slot");' in contact_detail
+    assert 'const page = lightPage("Contact", {' in contact_detail
+    assert "detail: true," in contact_detail
+    assert "onBack: handleContactDetailBack," in contact_detail
+    assert "action: actionSlot," in contact_detail
+    assert 'const hero = el("section", "light-profile-card light-contact-detail-hero");' in contact_detail
+    assert "contactDetailPageNode = page;" in contact_detail
+    assert 'bindContactDetailTextField(firstNameInput, "firstName");' in contact_detail
+    assert 'bindContactDetailTextField(lastNameInput, "lastName");' in contact_detail
+    assert 'bindContactDetailTextField(summaryInput, "summary");' in contact_detail
+    assert 'const emailField = buildContactDetailFieldRow("mail", "connect", "Email", "email", "email");' in contact_detail
+    assert 'const phoneField = buildContactDetailFieldRow("phone", "contacts", "Phone", "phone", "tel");' in contact_detail
+    assert 'contactDetailPageRefs.actionSlot.replaceChildren(' in sync_contact_detail_page
+    assert 'lightCircleButton("edit", "Edit contact"' in app
+    assert 'lightCircleButton("check", "Done editing"' in app
+    assert 'lightInfoSection("Activity"' in contact_detail
+    assert "render();" not in update_contact_detail_draft
+    assert "render();" not in bind_contact_detail_text_field
     assert 'lightInfoSection("Endpoints"' not in contact_detail
     assert "meta.endpoints" not in contact_detail
     assert 'const notes = lightLinkedNotesSection(contact);' in contact_detail
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' in contact_detail
     assert "lightHtmlDocument(contact" not in contact_detail
-    assert 'action: lightCircleButton(' not in contact_detail
     assert "Reminder device" not in contact_detail
     assert "lightContactEditPage" not in app
     assert "display: flex;" in contact_search_wrap

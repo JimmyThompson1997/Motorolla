@@ -1069,16 +1069,33 @@ def test_seeded_demo_time_refresh_preserves_seeded_edits_skips_deleted_rows_and_
     assert rerun_task["due_at_ms"] == first_due_at_ms
 
 
-def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> None:
+def test_self_contact_is_seeded_editable_and_cannot_be_deleted(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
 
     contacts = store.list_records("contacts")
     assert contacts["items"]
-    assert contacts["items"][0]["id"] == SELF_CONTACT_ID
-    assert contacts["items"][0]["title"] == "Me"
-    assert contacts["items"][0]["html"] == ""
-    assert contacts["items"][0]["html_asset_id"] == ""
-    assert contacts["items"][0]["metadata"]["is_self"] is True
+    me = store.get_record("contacts", SELF_CONTACT_ID)
+    assert me is not None
+    assert me["id"] == SELF_CONTACT_ID
+    assert me["html"] == ""
+    assert me["html_asset_id"] == ""
+    assert me["metadata"]["is_self"] is True
+    assert me["metadata"]["avatar"] == "M"
+
+    updated = store.patch_record(
+        "contacts",
+        SELF_CONTACT_ID,
+        {
+            "metadata": {
+                "first_name": "Jordan",
+                "last_name": "Taylor",
+            }
+        },
+    )
+    assert updated is not None
+    assert updated["title"] == "Jordan Taylor"
+    assert updated["metadata"]["display_name"] == "Jordan Taylor"
+    assert updated["metadata"]["avatar"] == "JT"
 
     updated = store.patch_record(
         "contacts",

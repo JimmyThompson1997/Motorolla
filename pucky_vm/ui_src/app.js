@@ -232,7 +232,7 @@
     lastRenderedTurnVisualState: "",
     lastRenderedTurnId: "",
     waveHistory: new Map(),
-    contacts: { search: "" },
+    contacts: { search: "", detailEditor: initialContactDetailEditorState() },
     links: initialLinksState(),
     meetings: initialMeetingsState(),
     meetingRecording: initialMeetingRecordingStatus(),
@@ -245,9 +245,12 @@
   let seq = 0;
   let feedSyncIntervalId = 0;
   let audioProbeResetTimerId = 0;
+  let contactDetailSaveTimerId = 0;
   let sharedBrowserAudio = null;
   let activeArchiveReveal = null;
   let archiveRevealGestureSeq = 0;
+  let contactDetailPageNode = null;
+  let contactDetailPageRefs = null;
   const archiveRevealDebugTrace = [];
   const archiveRevealDebugState = {
     enabled: archiveRevealDebugEnabled(),
@@ -1262,6 +1265,29 @@
       loading: false,
       error: ""
     };
+  }
+
+  function replaceWorkspaceRecordInState(collection, record) {
+    const bucket = state.workspace[collection];
+    const nextRecord = record && typeof record === "object" ? record : null;
+    if (!bucket || !nextRecord) {
+      return null;
+    }
+    const recordId = String(nextRecord.id || nextRecord.record_id || "").trim();
+    if (!recordId) {
+      return null;
+    }
+    const currentItems = Array.isArray(bucket.items) ? bucket.items.slice() : [];
+    const index = currentItems.findIndex(item => String(item?.id || item?.record_id || "").trim() === recordId);
+    if (index >= 0) {
+      currentItems[index] = nextRecord;
+    } else {
+      currentItems.push(nextRecord);
+    }
+    bucket.items = currentItems;
+    bucket.loaded = true;
+    bucket.error = "";
+    return nextRecord;
   }
 
   function normalizeFeedSnapshot(payload, source = "vm") {
@@ -3132,6 +3158,21 @@
     };
   }
 
+  function initialContactDetailEditorState() {
+    return {
+      contactId: "",
+      draft: null,
+      editMode: false,
+      dirty: false,
+      saving: false,
+      saveQueued: false,
+      draftVersion: 0,
+      lastSavedAt: 0,
+      error: "",
+      lastSavePromise: null,
+    };
+  }
+
   function initialMapTrackerStatus() {
     return {
       schema: "pucky.location_tracker_status.v1",
@@ -3852,16 +3893,72 @@
     return String(contact?.id || contact?.record_id || "").trim() === SELF_CONTACT_ID || Boolean(metadata.is_self);
   }
 
+  function normalizeContactText(value) {
+    return String(value || "").trim();
+  }
+
+  function contactDisplayNameFromParts(firstName, lastName, fallbackTitle = "") {
+    const first = normalizeContactText(firstName);
+    const last = normalizeContactText(lastName);
+    const parts = [first, last].filter(Boolean);
+    if (parts.length) {
+      return parts.join(" ");
+    }
+    return normalizeContactText(fallbackTitle) || "Unnamed contact";
+  }
+
+  function contactInitialsFromParts(firstName, lastName, fallbackTitle = "") {
+    const first = normalizeContactText(firstName);
+    const last = normalizeContactText(lastName);
+    if (first && last) {
+      return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
+    }
+    if (first) {
+      return first.charAt(0).toUpperCase();
+    }
+    if (last) {
+      return last.charAt(0).toUpperCase();
+    }
+    const tokens = normalizeContactText(fallbackTitle).split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+      return `${tokens[0].charAt(0)}${tokens[tokens.length - 1].charAt(0)}`.toUpperCase();
+    }
+    if (tokens.length === 1) {
+      return tokens[0].charAt(0).toUpperCase();
+    }
+    return "?";
+  }
+
+  function contactTitleFallback(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return normalizeContactText(contact?.title || meta.display_name || "");
+  }
+
+  function contactDisplayName(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return contactDisplayNameFromParts(meta.first_name, meta.last_name, contactTitleFallback(contact));
+  }
+
+  function contactInitials(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return contactInitialsFromParts(meta.first_name, meta.last_name, contactDisplayName(contact));
+  }
+
   function contactsListItems() {
     return workspaceItems("contacts")
       .slice()
       .sort((left, right) => {
-        const leftSelf = contactIsSelf(left);
-        const rightSelf = contactIsSelf(right);
-        if (leftSelf !== rightSelf) {
-          return leftSelf ? -1 : 1;
+        const compare = contactDisplayName(left).localeCompare(contactDisplayName(right));
+        if (compare !== 0) {
+          return compare;
         }
-        return String(left?.title || "").localeCompare(String(right?.title || ""));
+        return String(left?.id || left?.record_id || "").localeCompare(String(right?.id || right?.record_id || ""));
       });
   }
 
@@ -3903,6 +4000,346 @@
 
   function filteredContactsListItems() {
     return contactsListItems().filter(contact => contactMatchesSearch(contact));
+  }
+
+  function contactDetailEditorState() {
+    if (!state.contacts.detailEditor || typeof state.contacts.detailEditor !== "object") {
+      state.contacts.detailEditor = initialContactDetailEditorState();
+    }
+    return state.contacts.detailEditor;
+  }
+
+  function cloneContactDetailDraft(draft) {
+    const current = draft && typeof draft === "object" ? draft : {};
+    return {
+      id: normalizeContactText(current.id),
+      originalTitle: normalizeContactText(current.originalTitle),
+      firstName: normalizeContactText(current.firstName),
+      lastName: normalizeContactText(current.lastName),
+      summary: normalizeContactText(current.summary),
+      email: normalizeContactText(current.email),
+      phone: normalizeContactText(current.phone),
+      photo: normalizeContactText(current.photo),
+      activity: Array.isArray(current.activity) ? current.activity.slice() : [],
+    };
+  }
+
+  function contactDetailDraftFromRecord(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return {
+      id: normalizeContactText(contact?.id || contact?.record_id || ""),
+      originalTitle: contactDisplayName(contact),
+      firstName: normalizeContactText(meta.first_name),
+      lastName: normalizeContactText(meta.last_name),
+      summary: normalizeContactText(contact?.summary),
+      email: normalizeContactText(meta.email),
+      phone: normalizeContactText(meta.phone),
+      photo: normalizeContactText(meta.photo),
+      activity: Array.isArray(meta.activity) ? meta.activity.map(item => normalizeContactText(item)).filter(Boolean) : [],
+    };
+  }
+
+  function contactDetailDraftTitle(draft) {
+    const current = draft && typeof draft === "object" ? draft : {};
+    return contactDisplayNameFromParts(current.firstName, current.lastName, current.originalTitle || "Unnamed contact");
+  }
+
+  function contactDetailDraftInitials(draft) {
+    const current = draft && typeof draft === "object" ? draft : {};
+    return contactInitialsFromParts(current.firstName, current.lastName, contactDetailDraftTitle(current));
+  }
+
+  function contactDetailPreviewRecord(contact, draft) {
+    const current = contact && typeof contact === "object" ? contact : {};
+    const meta = current.metadata && typeof current.metadata === "object" ? current.metadata : {};
+    const nextDraft = draft && typeof draft === "object" ? draft : contactDetailDraftFromRecord(current);
+    return {
+      ...current,
+      title: contactDetailDraftTitle(nextDraft),
+      summary: normalizeContactText(nextDraft.summary),
+      metadata: {
+        ...meta,
+        first_name: normalizeContactText(nextDraft.firstName),
+        last_name: normalizeContactText(nextDraft.lastName),
+        display_name: contactDetailDraftTitle(nextDraft),
+        avatar: contactDetailDraftInitials(nextDraft),
+        email: normalizeContactText(nextDraft.email),
+        phone: normalizeContactText(nextDraft.phone),
+        photo: normalizeContactText(nextDraft.photo),
+      },
+    };
+  }
+
+  function ensureContactDetailDraft(contact) {
+    const detail = contactDetailEditorState();
+    const contactId = normalizeContactText(contact?.id || contact?.record_id || "");
+    if (!contactId) {
+      detail.contactId = "";
+      detail.draft = null;
+      return null;
+    }
+    if (detail.contactId !== contactId || !detail.draft) {
+      Object.assign(detail, initialContactDetailEditorState(), {
+        contactId,
+        draft: contactDetailDraftFromRecord(contact),
+      });
+      return detail.draft;
+    }
+    if (!detail.dirty && !detail.saving) {
+      detail.draft = contactDetailDraftFromRecord(contact);
+    }
+    return detail.draft;
+  }
+
+  function clearContactDetailSaveTimer() {
+    if (!contactDetailSaveTimerId) {
+      return;
+    }
+    window.clearTimeout(contactDetailSaveTimerId);
+    contactDetailSaveTimerId = 0;
+  }
+
+  function contactDetailAutosaveLabel() {
+    const detail = contactDetailEditorState();
+    if (detail.error) {
+      return "Could not save the latest contact edits.";
+    }
+    if (detail.saving) {
+      return "Saving...";
+    }
+    if (detail.dirty) {
+      return "Waiting to save...";
+    }
+    if (detail.lastSavedAt > 0) {
+      return "Saved";
+    }
+    return "Edits autosave.";
+  }
+
+  function syncContactDetailTextControl(control, value) {
+    if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    const nextValue = String(value || "");
+    if (document.activeElement === control || control.value === nextValue) {
+      return;
+    }
+    control.value = nextValue;
+  }
+
+  function queueContactDetailSave() {
+    clearContactDetailSaveTimer();
+    contactDetailSaveTimerId = window.setTimeout(() => {
+      void flushContactDetailSave("debounce");
+    }, 350);
+  }
+
+  async function flushContactDetailSave(reason = "manual") {
+    const detail = contactDetailEditorState();
+    clearContactDetailSaveTimer();
+    if (!detail.draft || (!detail.dirty && !detail.saveQueued)) {
+      return detail.lastSavePromise || null;
+    }
+    if (detail.saving) {
+      detail.saveQueued = true;
+      return detail.lastSavePromise || null;
+    }
+    const record = workspaceRecordByKind("contact", detail.contactId) || selectedContact();
+    if (!record) {
+      return null;
+    }
+    const snapshot = cloneContactDetailDraft(detail.draft);
+    const saveVersion = detail.draftVersion;
+    const title = contactDetailDraftTitle(snapshot);
+    detail.saving = true;
+    detail.dirty = false;
+    detail.saveQueued = false;
+    detail.error = "";
+    syncContactDetailPage();
+    detail.lastSavePromise = patchWorkspaceRecord("contacts", detail.contactId, {
+      title,
+      summary: normalizeContactText(snapshot.summary),
+      metadata: {
+        first_name: normalizeContactText(snapshot.firstName),
+        last_name: normalizeContactText(snapshot.lastName),
+        display_name: title,
+        avatar: contactDetailDraftInitials(snapshot),
+        email: normalizeContactText(snapshot.email),
+        phone: normalizeContactText(snapshot.phone),
+        photo: normalizeContactText(snapshot.photo),
+      },
+    })
+      .then(saved => {
+        const nextRecord = saved && typeof saved === "object" ? saved : null;
+        if (nextRecord) {
+          replaceWorkspaceRecordInState("contacts", nextRecord);
+        }
+        const latest = contactDetailEditorState();
+        latest.lastSavedAt = Date.now();
+        latest.error = "";
+        if (latest.contactId === normalizeContactText(nextRecord?.id || nextRecord?.record_id || "")) {
+          if (latest.draftVersion === saveVersion) {
+            latest.draft = contactDetailDraftFromRecord(nextRecord);
+            latest.dirty = false;
+          } else {
+            latest.dirty = true;
+          }
+        }
+        syncContactDetailPage();
+        return nextRecord;
+      })
+      .catch(error => {
+        const latest = contactDetailEditorState();
+        latest.error = String(error && error.message || error || "Could not save contact.");
+        latest.dirty = true;
+        syncContactDetailPage();
+        return null;
+      })
+      .finally(() => {
+        const latest = contactDetailEditorState();
+        latest.saving = false;
+        const shouldFollowUp = latest.saveQueued || (latest.dirty && latest.draftVersion !== saveVersion);
+        latest.saveQueued = false;
+        syncContactDetailPage();
+        if (shouldFollowUp) {
+          void flushContactDetailSave(`${reason}:follow_up`);
+        }
+      });
+    return detail.lastSavePromise;
+  }
+
+  function syncContactDetailFieldRow(refs, value, editMode) {
+    if (!refs) {
+      return;
+    }
+    const text = normalizeContactText(value);
+    refs.row.dataset.contactFieldMode = editMode ? "edit" : "view";
+    refs.value.hidden = editMode;
+    refs.value.textContent = text;
+    refs.input.hidden = !editMode;
+    syncContactDetailTextControl(refs.input, text);
+  }
+
+  function updateContactDetailDraft(field, value, options = {}) {
+    const detail = contactDetailEditorState();
+    if (!detail.draft) {
+      return;
+    }
+    detail.draft[field] = String(value || "");
+    detail.dirty = true;
+    detail.error = "";
+    detail.draftVersion += 1;
+    syncContactDetailPage();
+    if (options.immediate) {
+      void flushContactDetailSave("immediate");
+      return;
+    }
+    queueContactDetailSave();
+  }
+
+  function bindContactDetailTextField(control, field) {
+    control.addEventListener("input", () => updateContactDetailDraft(field, control.value));
+    control.addEventListener("blur", () => {
+      void flushContactDetailSave("blur");
+    });
+  }
+
+  function buildContactDetailFieldRow(icon, accentKey, label, field, type = "text") {
+    const row = el("div", "light-info-row light-contact-detail-row");
+    row.dataset.contactField = field;
+    const body = el("div", "light-contact-detail-field-body");
+    const fieldLabel = el("strong", "light-contact-detail-field-label", label);
+    const value = el("span", "light-contact-detail-field-value", "");
+    const input = document.createElement("input");
+    input.className = "light-contact-detail-field-input";
+    input.type = type;
+    input.placeholder = label;
+    input.setAttribute("aria-label", label);
+    bindContactDetailTextField(input, field);
+    body.append(fieldLabel, value, input);
+    row.append(lightSmallIcon(icon, accentKey), body);
+    return { row, value, input };
+  }
+
+  async function handleContactPhotoSelection(event) {
+    const detail = contactDetailEditorState();
+    const input = event?.currentTarget;
+    if (!detail.draft || !(input instanceof HTMLInputElement) || !input.files || !input.files[0]) {
+      return;
+    }
+    const file = input.files[0];
+    try {
+      const photo = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Could not read the selected photo."));
+        reader.onload = () => {
+          const image = new Image();
+          image.onerror = () => reject(new Error("Could not load the selected photo."));
+          image.onload = () => {
+            const longestEdge = Math.max(1, Math.max(Number(image.width || 0), Number(image.height || 0)));
+            const scale = longestEdge > 512 ? 512 / longestEdge : 1;
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(image.width * scale));
+            canvas.height = Math.max(1, Math.round(image.height * scale));
+            const context = canvas.getContext("2d");
+            if (!context) {
+              reject(new Error("Could not prepare the selected photo."));
+              return;
+            }
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL("image/jpeg", 0.82));
+          };
+          image.src = String(reader.result || "");
+        };
+        reader.readAsDataURL(file);
+      });
+      updateContactDetailDraft("photo", String(photo || ""), { immediate: true });
+    } catch (error) {
+      const nextDetail = contactDetailEditorState();
+      nextDetail.error = String(error && error.message || error || "Could not load the selected photo.");
+      syncContactDetailPage();
+    } finally {
+      if (input instanceof HTMLInputElement) {
+        input.value = "";
+      }
+    }
+  }
+
+  function openContactDetailEditMode() {
+    const detail = contactDetailEditorState();
+    detail.editMode = true;
+    detail.error = "";
+    syncContactDetailPage();
+  }
+
+  function finishContactDetailEditMode() {
+    const detail = contactDetailEditorState();
+    detail.editMode = false;
+    syncContactDetailPage();
+    void flushContactDetailSave("done");
+  }
+
+  function handleContactDetailBack() {
+    const detail = contactDetailEditorState();
+    detail.editMode = false;
+    syncContactDetailPage();
+    void flushContactDetailSave("back");
+    lightBack();
+  }
+
+  function leaveContactDetailEditor(nextRoute, currentRoute = state.route) {
+    if (String(currentRoute || "").trim() !== "contact-detail" || String(nextRoute || "").trim() === "contact-detail") {
+      return;
+    }
+    const detail = contactDetailEditorState();
+    detail.editMode = false;
+    contactDetailPageNode = null;
+    contactDetailPageRefs = null;
+    if (detail.dirty) {
+      void flushContactDetailSave("route_leave");
+    }
   }
 
   function queueContactsSearchFieldFocus(selectionStart = null, selectionEnd = null) {
@@ -3992,33 +4429,159 @@
     if (!contact) {
       return lightPage("Contact", { subtitle: "Contact not found.", detail: true });
     }
+    ensureContactDetailDraft(contact);
     ensureLinkedCollections(contact);
-    const page = lightPage("Contact", { detail: true });
-    const hero = el("section", "light-profile-card");
-    hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
-    page.append(hero);
-    const meta = contact.metadata || {};
-    page.append(lightInfoSection("Contact", [
-      { icon: "mail", accentKey: "connect", label: "Email", value: meta.email || "" },
-      { icon: "phone", accentKey: "contacts", label: "Phone", value: meta.phone || "" },
-    ]));
-    if (Array.isArray(meta.activity) && meta.activity.length) {
-      page.append(lightInfoSection("Activity", meta.activity.map((item, index) => ({
-      icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",
-      accentKey: index === 0 ? "notes" : index === 1 ? "meetings" : "calendar",
-      label: index === 0 ? "Last interaction" : index === 1 ? "Last meeting" : "Upcoming",
-      value: item
-      }))));
+    if (!contactDetailPageNode || !contactDetailPageRefs || contactDetailPageRefs.contactId !== contact.id) {
+      const actionSlot = el("div", "light-nav-slot light-contact-detail-action-slot");
+      const page = lightPage("Contact", {
+        detail: true,
+        onBack: handleContactDetailBack,
+        action: actionSlot,
+      });
+      page.classList.add("light-contact-detail-page");
+      page.dataset.contactDetailId = contact.id;
+      const hero = el("section", "light-profile-card light-contact-detail-hero");
+      const avatarWell = el("div", "light-contact-detail-avatar-well");
+      const avatarMount = el("div", "light-contact-detail-avatar-mount");
+      const photoButton = el("button", "light-contact-detail-photo-button");
+      photoButton.type = "button";
+      photoButton.innerHTML = iconSvg("photo_camera");
+      photoButton.addEventListener("click", () => {
+        contactDetailPageRefs?.photoInput?.click();
+      });
+      const photoInput = document.createElement("input");
+      photoInput.className = "light-contact-detail-photo-input";
+      photoInput.type = "file";
+      photoInput.accept = "image/png,image/jpeg,image/webp";
+      photoInput.hidden = true;
+      photoInput.addEventListener("change", handleContactPhotoSelection);
+      const removePhoto = el("button", "light-contact-detail-photo-remove", "Remove photo");
+      removePhoto.type = "button";
+      removePhoto.addEventListener("click", () => updateContactDetailDraft("photo", "", { immediate: true }));
+      avatarWell.append(avatarMount, photoButton, photoInput, removePhoto);
+
+      const heroCopy = el("div", "light-contact-detail-hero-copy");
+      const titleView = el("h1", "light-contact-detail-title", "");
+      const nameEdit = el("div", "light-contact-detail-name-inputs");
+      const firstNameInput = document.createElement("input");
+      firstNameInput.className = "light-contact-detail-name-input";
+      firstNameInput.type = "text";
+      firstNameInput.placeholder = "First name";
+      firstNameInput.setAttribute("aria-label", "First name");
+      bindContactDetailTextField(firstNameInput, "firstName");
+      const lastNameInput = document.createElement("input");
+      lastNameInput.className = "light-contact-detail-name-input";
+      lastNameInput.type = "text";
+      lastNameInput.placeholder = "Last name";
+      lastNameInput.setAttribute("aria-label", "Last name");
+      bindContactDetailTextField(lastNameInput, "lastName");
+      nameEdit.append(firstNameInput, lastNameInput);
+
+      const summaryView = el("p", "light-contact-detail-summary", "");
+      const summaryInput = document.createElement("textarea");
+      summaryInput.className = "light-contact-detail-summary-input";
+      summaryInput.placeholder = "Description";
+      summaryInput.setAttribute("aria-label", "Description");
+      summaryInput.rows = 3;
+      bindContactDetailTextField(summaryInput, "summary");
+      const saveStatus = el("p", "light-contact-detail-save-status", "");
+      heroCopy.append(titleView, nameEdit, summaryView, summaryInput, saveStatus);
+      hero.append(avatarWell, heroCopy);
+
+      const contactSection = el("section", "light-info-section");
+      contactSection.append(lightSectionTitle("Contact"));
+      const contactCard = el("div", "light-card light-info-card");
+      const emailField = buildContactDetailFieldRow("mail", "connect", "Email", "email", "email");
+      const phoneField = buildContactDetailFieldRow("phone", "contacts", "Phone", "phone", "tel");
+      contactCard.append(emailField.row, phoneField.row);
+      contactSection.append(contactCard);
+      page.append(hero, contactSection);
+
+      const meta = contact.metadata || {};
+      if (Array.isArray(meta.activity) && meta.activity.length) {
+        page.append(lightInfoSection("Activity", meta.activity.map((item, index) => ({
+          icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",
+          accentKey: index === 0 ? "notes" : index === 1 ? "meetings" : "calendar",
+          label: index === 0 ? "Last interaction" : index === 1 ? "Last meeting" : "Upcoming",
+          value: item
+        }))));
+      }
+      const notes = lightLinkedNotesSection(contact);
+      if (notes) {
+        page.append(notes);
+      }
+      const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });
+      if (linkedRows.length) {
+        page.append(lightInfoSection("Linked records", linkedRows));
+      }
+      contactDetailPageNode = page;
+      contactDetailPageRefs = {
+        contactId: contact.id,
+        page,
+        actionSlot,
+        avatarMount,
+        photoButton,
+        photoInput,
+        removePhoto,
+        titleView,
+        nameEdit,
+        firstNameInput,
+        lastNameInput,
+        summaryView,
+        summaryInput,
+        saveStatus,
+        emailField,
+        phoneField,
+      };
     }
-    const notes = lightLinkedNotesSection(contact);
-    if (notes) {
-      page.append(notes);
+    syncContactDetailPage();
+    return contactDetailPageNode;
+  }
+
+  function syncContactDetailPage() {
+    if (!contactDetailPageNode || !contactDetailPageRefs) {
+      return;
     }
-    const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });
-    if (linkedRows.length) {
-      page.append(lightInfoSection("Linked records", linkedRows));
+    const contact = workspaceRecordByKind("contact", contactDetailPageRefs.contactId) || selectedContact();
+    const detail = contactDetailEditorState();
+    const draft = detail.draft || (contact ? contactDetailDraftFromRecord(contact) : null);
+    if (!contact || !draft) {
+      return;
     }
-    return page;
+    const preview = contactDetailPreviewRecord(contact, draft);
+    const editMode = detail.editMode === true;
+    contactDetailPageNode.dataset.contactDetailId = preview.id || contactDetailPageRefs.contactId;
+    contactDetailPageNode.dataset.contactDetailMode = editMode ? "edit" : "view";
+    contactDetailPageRefs.actionSlot.replaceChildren(
+      editMode
+        ? lightCircleButton("check", "Done editing", finishContactDetailEditMode, "light-contact-detail-done-button")
+        : lightCircleButton("edit", "Edit contact", openContactDetailEditMode, "light-contact-detail-edit-button")
+    );
+    contactDetailPageRefs.avatarMount.replaceChildren(lightAvatar(preview, "large"));
+    contactDetailPageRefs.photoButton.hidden = !editMode;
+    contactDetailPageRefs.photoButton.setAttribute("aria-label", preview.metadata?.photo ? "Change photo" : "Add photo");
+    contactDetailPageRefs.removePhoto.hidden = !editMode || !preview.metadata?.photo;
+    contactDetailPageRefs.titleView.hidden = editMode;
+    contactDetailPageRefs.titleView.textContent = contactDisplayName(preview);
+    contactDetailPageRefs.nameEdit.hidden = !editMode;
+    syncContactDetailTextControl(contactDetailPageRefs.firstNameInput, draft.firstName);
+    syncContactDetailTextControl(contactDetailPageRefs.lastNameInput, draft.lastName);
+    const summaryText = normalizeContactText(draft.summary);
+    contactDetailPageRefs.summaryView.hidden = editMode || !summaryText;
+    contactDetailPageRefs.summaryView.textContent = summaryText;
+    contactDetailPageRefs.summaryInput.hidden = !editMode;
+    syncContactDetailTextControl(contactDetailPageRefs.summaryInput, draft.summary);
+    contactDetailPageRefs.saveStatus.hidden = !editMode;
+    contactDetailPageRefs.saveStatus.dataset.contactSaveState = detail.error
+      ? "error"
+      : detail.saving
+        ? "saving"
+        : detail.dirty
+          ? "dirty"
+          : "saved";
+    contactDetailPageRefs.saveStatus.textContent = contactDetailAutosaveLabel();
+    syncContactDetailFieldRow(contactDetailPageRefs.emailField, draft.email, editMode);
+    syncContactDetailFieldRow(contactDetailPageRefs.phoneField, draft.phone, editMode);
   }
 
   function lightCalendarPage() {
@@ -7879,6 +8442,7 @@
       return false;
     }
     resetContactsSearchIfLeavingContacts(normalized.route);
+    leaveContactDetailEditor(normalized.route);
     LIGHT_HISTORY_SELECTED_KEYS.forEach(key => {
       state[key] = String(normalized[key] || "");
     });
@@ -7936,6 +8500,7 @@
     });
     const commitNavigation = (reason = "light_app_click") => {
       resetContactsSearchIfLeavingContacts(nextRoute);
+      leaveContactDetailEditor(nextRoute);
       applyLightRouteSelectionPatch(selectionPatch || {});
       state.route = nextRoute;
       state.lightReturnRoute = state.route === "home" ? "" : "home";
@@ -7989,6 +8554,7 @@
       ? "home"
       : detailParent || LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home";
     resetContactsSearchIfLeavingContacts(parent === state.route ? "home" : parent);
+    leaveContactDetailEditor(parent === state.route ? "home" : parent);
     state.route = parent === state.route ? "home" : parent;
     state.previousLightRoute = LIGHT_ROUTE_PARENTS[state.route] || "home";
     state.lightReturnRoute = state.route === "home" ? "" : "home";
@@ -8043,16 +8609,16 @@
   function lightContactCopy(contact) {
     const meta = contact.metadata || {};
     const activity = Array.isArray(meta.activity) && meta.activity.length ? meta.activity[0] : "";
-    return lightTextStack(contact.title, `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
+    return lightTextStack(contactDisplayName(contact), `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
   }
 
   function lightAvatar(contact, size = "") {
     const meta = contact.metadata || {};
     const photo = String(meta.photo || "");
-    const initials = String(meta.avatar || contact.title || "?").slice(0, 2).toUpperCase();
+    const initials = contactInitials(contact);
     const hasPhoto = Boolean(photo);
     const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : initials);
-    avatar.setAttribute("aria-label", contact.title);
+    avatar.setAttribute("aria-label", contactDisplayName(contact));
     avatar.dataset.contactId = contact.id;
     if (hasPhoto) {
       avatar.dataset.photo = photo;

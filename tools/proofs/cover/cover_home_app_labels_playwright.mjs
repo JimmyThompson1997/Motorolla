@@ -16,6 +16,7 @@ const repoRoot = path.resolve(__dirname, "../../..");
 const defaultReportDir = path.join(repoRoot, "artifacts", "cover-home-app-labels");
 const DEFAULT_BASE_URL = "https://pucky.fly.dev";
 const VIEWPORT = { width: 395, height: 786 };
+const THEMES = ["light", "dark"];
 const OVERLAP_EPSILON = 0.5;
 const CENTER_EPSILON = 2;
 
@@ -50,7 +51,7 @@ function assert(condition, message) {
   }
 }
 
-function buildPageUrl(config) {
+function buildPageUrl(config, theme = "light") {
   if (config.pageUrl) {
     return config.pageUrl;
   }
@@ -60,7 +61,7 @@ function buildPageUrl(config) {
   } else if (url.pathname.endsWith("/")) {
     url.pathname = `${url.pathname}index.html`;
   }
-  url.searchParams.set("theme", "light");
+  url.searchParams.set("theme", theme);
   url.searchParams.set("route", "home");
   url.searchParams.set("reset_nav", "1");
   if (config.refreshKey) {
@@ -85,20 +86,53 @@ async function collectHomeLabelMetrics(page) {
       };
     }
 
+    function rgbToHex(value) {
+      const match = String(value || "").trim().match(/^rgba?\(([^)]+)\)$/i);
+      if (!match) {
+        return String(value || "").trim();
+      }
+      const parts = match[1].split(",").map((part) => Number.parseFloat(part.trim()));
+      if (parts.length < 3 || parts.slice(0, 3).some((part) => !Number.isFinite(part))) {
+        return String(value || "").trim();
+      }
+      return `#${parts.slice(0, 3).map((part) => Math.max(0, Math.min(255, Math.round(part))).toString(16).padStart(2, "0")).join("")}`.toLowerCase();
+    }
+
+    const registry = window.PUCKY_UI_ICONS && typeof window.PUCKY_UI_ICONS === "object"
+      && window.PUCKY_UI_ICONS.SEMANTIC_ICON_REGISTRY && typeof window.PUCKY_UI_ICONS.SEMANTIC_ICON_REGISTRY === "object"
+      ? window.PUCKY_UI_ICONS.SEMANTIC_ICON_REGISTRY
+      : {};
+    const theme = String(
+      document.documentElement?.dataset?.theme
+      || document.body?.dataset?.theme
+      || new URL(window.location.href).searchParams.get("theme")
+      || "light"
+    ).trim().toLowerCase();
     const grid = document.querySelector(".light-app-grid");
     const gridStyle = grid ? window.getComputedStyle(grid) : null;
     const labels = Array.from(document.querySelectorAll(".light-app-tile")).map((tile, index) => {
       const icon = tile.querySelector(".light-app-icon");
       const label = tile.querySelector(".light-app-label");
       const tileStyle = window.getComputedStyle(tile);
+      const iconStyle = icon ? window.getComputedStyle(icon) : null;
       const labelStyle = label ? window.getComputedStyle(label) : null;
+      const semanticKey = String(tile.getAttribute("data-semantic-icon") || icon?.getAttribute("data-semantic-icon") || "").trim();
+      const registryEntry = semanticKey ? registry[semanticKey] || null : null;
       return {
         index,
         route: tile.getAttribute("data-route") || "",
+        semanticKey,
+        accentKey: String(icon?.dataset?.appAccent || "").trim(),
         text: tile.getAttribute("data-app-label") || label?.textContent?.trim() || "",
+        registryIcon: String(registryEntry?.icon || "").trim(),
+        registryColors: registryEntry && typeof registryEntry.colors === "object" ? registryEntry.colors : null,
         tile: domRect(tile),
         icon: icon ? domRect(icon) : null,
         label: label ? domRect(label) : null,
+        iconColor: iconStyle?.color || "",
+        iconColorHex: rgbToHex(iconStyle?.color || ""),
+        iconBackground: iconStyle?.backgroundColor || "",
+        iconAccentVar: String(iconStyle?.getPropertyValue("--icon-accent") || "").trim().toLowerCase(),
         tileStyle: {
           paddingTop: tileStyle.paddingTop,
           paddingRight: tileStyle.paddingRight,
@@ -119,6 +153,7 @@ async function collectHomeLabelMetrics(page) {
     return {
       schema: "pucky.home_app_labels_browser_proof.v1",
       location: window.location.href,
+      theme,
       viewport: {
         width: window.innerWidth,
         height: window.innerHeight,
@@ -178,6 +213,15 @@ function assertHomeLabelContract(metrics) {
     assert(labelDrift <= CENTER_EPSILON, `${item.text} label center drift ${labelDrift.toFixed(2)}px`);
     assert(item.label.left >= item.tile.left - OVERLAP_EPSILON, `${item.text} label bleeds left of tile`);
     assert(item.label.right <= item.tile.right + OVERLAP_EPSILON, `${item.text} label bleeds right of tile`);
+    assert(item.semanticKey, `${item.text} semantic key is missing`);
+    assert(item.registryIcon, `${item.text} registry icon is missing`);
+    assert(item.registryColors, `${item.text} registry colors are missing`);
+    assert(item.accentKey === item.semanticKey, `${item.text} accent key drifted from semantic key`);
+    const expectedColor = String(item.registryColors?.[metrics.theme] || item.registryColors?.dark || item.registryColors?.light || "").trim().toLowerCase();
+    assert(expectedColor, `${item.text} registry color is missing for ${metrics.theme}`);
+    assert(item.iconAccentVar === expectedColor, `${item.text} icon accent var expected ${expectedColor}, saw ${item.iconAccentVar}`);
+    assert(item.iconColorHex === expectedColor, `${item.text} icon color expected ${expectedColor}, saw ${item.iconColorHex}`);
+    assert(item.iconBackground && item.iconBackground !== "rgba(0, 0, 0, 0)" && item.iconBackground !== "transparent", `${item.text} icon background is transparent`);
   }
   assertNoSameRowLabelOverlap(metrics);
 }
@@ -185,7 +229,6 @@ function assertHomeLabelContract(metrics) {
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
-  const pageUrl = buildPageUrl(config);
   const consoleLogPath = path.join(config.reportDir, "console.log");
   const browser = await chromium.launch({
     executablePath: resolveChromePath(),
@@ -195,18 +238,25 @@ async function main() {
   const page = await context.newPage();
   attachPageLogging(page, consoleLogPath);
   try {
-    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-    await page.waitForSelector(".light-app-tile[data-route='meeting-notes'] .light-app-label", { timeout: config.timeoutMs });
-    await page.waitForLoadState("networkidle", { timeout: config.timeoutMs }).catch(() => {});
-    const metrics = await collectHomeLabelMetrics(page);
-    assertHomeLabelContract(metrics);
-    const screenshot = await saveScreenshot(page, config.reportDir, "home-app-labels");
     const summary = {
-      ...metrics,
+      schema: "pucky.home_app_labels_browser_proof.v1",
       ok: true,
-      pageUrl,
-      screenshot,
+      themes: {},
     };
+    for (const theme of THEMES) {
+      const pageUrl = buildPageUrl(config, theme);
+      await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+      await page.waitForSelector(".light-app-tile[data-route='meeting-notes'] .light-app-label", { timeout: config.timeoutMs });
+      await page.waitForLoadState("networkidle", { timeout: config.timeoutMs }).catch(() => {});
+      const metrics = await collectHomeLabelMetrics(page);
+      assertHomeLabelContract(metrics);
+      const screenshot = await saveScreenshot(page, config.reportDir, `home-app-labels-${theme}`);
+      summary.themes[theme] = {
+        ...metrics,
+        pageUrl,
+        screenshot,
+      };
+    }
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     await browser.close();
     return 0;
@@ -216,7 +266,6 @@ async function main() {
     writeJsonFile(path.join(config.reportDir, "summary.json"), {
       schema: "pucky.home_app_labels_browser_proof.v1",
       ok: false,
-      pageUrl,
       viewport: VIEWPORT,
       screenshot,
       error: error.message || String(error),

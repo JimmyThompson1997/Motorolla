@@ -1036,9 +1036,9 @@ async function runRouteTour(page, config, mode, seed) {
     const baselineSearchState = await readContactsSearchState(page);
     const baselineRowIds = baselineSearchState.row_ids.slice();
     assert(contactsListFlatness.route === "contacts", `${mode}: expected Contacts route before detail, got ${contactsListFlatness.route}`);
-    assert(contactsListFlatness.first_contact_id === "contact-me", `${mode}: Me contact should remain pinned first in Contacts (saw ${contactsListFlatness.first_contact_id || "none"})`);
     assert(baselineSearchState.search_visible, `${mode}: Contacts search should be visible once contacts load`);
     assert(baselineSearchState.query === "", `${mode}: Contacts search should start empty, got ${baselineSearchState.query}`);
+    assert(baselineRowIds.includes("contact-me"), `${mode}: Contacts baseline should include contact-me, got ${baselineRowIds.join(", ")}`);
     assert(contactsListFlatness.row_class_list.includes("is-flat-feed"), `${mode}: Contacts list should render flat-feed rows (${contactsListFlatness.row_class_list.join(" ")})`);
     assert(isTransparentColor(contactsListFlatness.row_background), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_background})`);
     assert(isNoShadow(contactsListFlatness.row_box_shadow), `${mode}: Contacts list should stay visually flat (${contactsListFlatness.row_box_shadow})`);
@@ -1061,7 +1061,7 @@ async function runRouteTour(page, config, mode, seed) {
       route: "contacts",
       action: "Inspect Contacts list",
       expected: "The Contacts list stays flat on the deployed hosted UI before opening detail.",
-      confirmation: "Contacts list stayed flat, exposed search, and kept Me first.",
+      confirmation: "Contacts list stayed flat, exposed search, and included contact-me without detached cards.",
       observed: {
         contact_title: seed.contactTitle,
         first_contact_id: contactsListFlatness.first_contact_id,
@@ -1091,11 +1091,10 @@ async function runRouteTour(page, config, mode, seed) {
         .filter(Boolean);
       return input instanceof HTMLInputElement
         && input.value === expectedQuery
-        && rowIds.includes("contact-me")
-        && rowIds[0] === "contact-me";
+        && rowIds.includes("contact-me");
     }, reminderQuery, { timeout: config.timeoutMs });
     const reminderSearchState = await readContactsSearchState(page);
-    assert(reminderSearchState.row_ids[0] === "contact-me", `${mode}: reminder query should keep Me first, got ${reminderSearchState.row_ids.join(", ")}`);
+    assert(reminderSearchState.row_ids.includes("contact-me"), `${mode}: reminder query should include contact-me, got ${reminderSearchState.row_ids.join(", ")}`);
 
     const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
     assert(emptySearchState.search_visible, `${mode}: Contacts search should remain visible when no results match`);
@@ -1112,7 +1111,6 @@ async function runRouteTour(page, config, mode, seed) {
     });
 
     const clearedSearchState = await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
-    assert(clearedSearchState.row_ids[0] === "contact-me", `${mode}: clearing Contacts search should restore Me first, got ${clearedSearchState.row_ids[0] || "none"}`);
     await recorder.capture({
       route: "contacts",
       action: "Clear Contacts search",
@@ -1125,6 +1123,7 @@ async function runRouteTour(page, config, mode, seed) {
     await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
+    await page.getByRole("button", { name: "Edit contact" }).waitFor({ state: "visible", timeout: config.timeoutMs });
     await recorder.capture({
       route: "contact-detail",
       action: "Open seeded contact detail from filtered list",

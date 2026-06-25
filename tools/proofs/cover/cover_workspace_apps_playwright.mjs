@@ -1548,11 +1548,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   const contactsListFlatness = await readContactsListFlatness(page);
   const baselineSearchState = await readContactsSearchState(page);
   const baselineRowIds = baselineSearchState.rowIds.slice();
-  assert(firstContactId === "contact-me", `Me contact should remain pinned first in Contacts (saw ${firstContactId || "none"})`);
   assert(contactsListFlatness.route === "contacts", `Expected contacts route before detail, got ${contactsListFlatness.route}`);
   assert(baselineSearchState.searchVisible, "Contacts search should be visible once contacts have loaded");
   assert(baselineSearchState.query === "", `Expected Contacts search to start empty, got ${baselineSearchState.query}`);
-  assert(baselineRowIds[0] === "contact-me", `Expected Contacts baseline list to keep Me first, got ${baselineRowIds[0] || "none"}`);
+  assert(baselineRowIds.includes("contact-me"), `Expected Contacts baseline list to include contact-me, got ${baselineRowIds.join(", ")}`);
   assert(contactsListFlatness.rowClassList.includes("is-flat-feed"), `Contacts list should render flat-feed rows (${contactsListFlatness.rowClassList.join(" ")})`);
   assert(isTransparentColor(contactsListFlatness.rowBackground), `Contacts list should stay visually flat (${contactsListFlatness.rowBackground})`);
   assert(isNoShadow(contactsListFlatness.rowBoxShadow), `Contacts list should stay visually flat (${contactsListFlatness.rowBoxShadow})`);
@@ -1574,10 +1573,9 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-baseline`);
   await page.locator('button[data-contact-id="contact-me"]').click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-  await waitForGraphText(page, "Me", config.timeoutMs);
   await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
   screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
-  assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
+  await page.getByRole("button", { name: "Edit contact" }).waitFor({ state: "visible", timeout: config.timeoutMs });
   await topBackToRoute(page, "contacts", "", config.timeoutMs);
   if (!seed.writeEnabled && !contacts.length) {
     await backHome(page, theme, config.timeoutMs);
@@ -1611,11 +1609,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
         .filter(Boolean);
       return input instanceof HTMLInputElement
         && input.value === expectedQuery
-        && rowIds.includes("contact-me")
-        && rowIds[0] === "contact-me";
+        && rowIds.includes("contact-me");
     }, reminderQuery, { timeout: config.timeoutMs });
     const reminderSearchState = await readContactsSearchState(page);
-    assert(reminderSearchState.rowIds[0] === "contact-me", `Expected reminder query to keep Me first, got ${reminderSearchState.rowIds.join(", ")}`);
+    assert(reminderSearchState.rowIds.includes("contact-me"), `Expected reminder query to include contact-me, got ${reminderSearchState.rowIds.join(", ")}`);
 
     const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
     assert(emptySearchState.searchVisible, "Contacts search should stay visible when there are no matching results");
@@ -1626,7 +1623,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     screenshots[`${theme}_contacts_search_empty`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-empty`);
 
     const clearedSearchState = await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
-    assert(clearedSearchState.rowIds[0] === "contact-me", `Expected clearing Contacts search to restore Me first, got ${clearedSearchState.rowIds[0] || "none"}`);
+    assert(
+      JSON.stringify(clearedSearchState.rowIds) === JSON.stringify(baselineRowIds),
+      `Expected clearing Contacts search to restore baseline order, got ${clearedSearchState.rowIds.join(", ")}`
+    );
     screenshots[`${theme}_contacts_search_cleared`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-cleared`);
 
     await expectContactsSearchRows(page, emailQuery, [proofContactId], config.timeoutMs);
@@ -1634,6 +1634,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
     await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail");
+    await page.getByRole("button", { name: "Edit contact" }).waitFor({ state: "visible", timeout: config.timeoutMs });
     const filteredDetailState = await readGraphDetailState(page);
     assert(filteredDetailState.route === "contact-detail", `Expected contact-detail route, got ${filteredDetailState.route}`);
     assert(!filteredDetailState.hasHtmlFrame, "Did not expect contact detail to render a generated HTML iframe");
@@ -1661,6 +1662,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
     await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail");
+    await page.getByRole("button", { name: "Edit contact" }).waitFor({ state: "visible", timeout: config.timeoutMs });
     screenshots[`${theme}_contacts_detail_reopened`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
     if (seed.writeEnabled) {
       await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
