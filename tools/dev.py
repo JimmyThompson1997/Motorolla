@@ -651,7 +651,8 @@ def run_live_contact_detail_classic_edit_emulator_proof(extra_args: list[str]) -
     return run_command(
         [
             PYTHON,
-            "tools/proofs/phone/phone_contact_detail_classic_edit_emulator_proof.py",
+            "-m",
+            "tools.proofs.phone.phone_contact_detail_classic_edit_emulator_proof",
             "--base-url",
             "https://pucky.fly.dev",
             "--refresh-key",

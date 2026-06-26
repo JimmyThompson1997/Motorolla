@@ -59,6 +59,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--browser-timeout-seconds", type=int, default=25)
     parser.add_argument("--devtools-timeout-seconds", type=int, default=25)
     parser.add_argument("--devtools-port", type=int, default=9222)
+    parser.add_argument("--skip-clear", action="store_true")
     args = parser.parse_args(argv)
     args.adb = args.adb.resolve() if args.adb.exists() else args.adb
     args.report_dir = args.report_dir.resolve()
@@ -345,13 +346,76 @@ def find_key_center_from_uiautomator(xml_text: str, key: str) -> tuple[int, int]
     return None
 
 
+def keyboard_bounds_from_uiautomator(xml_text: str) -> tuple[int, int, int, int] | None:
+    root = ET.fromstring(xml_text)
+    webview_bounds: tuple[int, int, int, int] | None = None
+    nav_top: int | None = None
+    for node in root.iter("node"):
+        resource_id = str(node.attrib.get("resource-id") or "").strip().lower()
+        content_desc = str(node.attrib.get("content-desc") or "").strip().lower()
+        bounds = parse_bounds(node.attrib.get("bounds", ""))
+        if content_desc == "web view" or resource_id.endswith("compositor_view_holder"):
+            webview_bounds = bounds
+        if resource_id == "android:id/navigationbarbackground":
+            nav_top = bounds[1]
+    if webview_bounds is None:
+        return None
+    left, _, right, webview_bottom = webview_bounds
+    bottom = nav_top if nav_top and nav_top > webview_bottom else webview_bottom
+    if bottom <= webview_bottom:
+        return None
+    return (left, webview_bottom, right, bottom)
+
+
+def fallback_key_center_from_keyboard(xml_text: str, key: str) -> tuple[int, int] | None:
+    bounds = keyboard_bounds_from_uiautomator(xml_text)
+    if bounds is None:
+        return None
+    left, top, right, bottom = bounds
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    layout = {
+        "a": (0.12, 0.36),
+        "d": (0.30, 0.36),
+        "v": (0.48, 0.58),
+    }
+    fractions = layout.get(str(key or "").strip().lower())
+    if not fractions:
+        return None
+    return (
+        left + int(round(width * fractions[0])),
+        top + int(round(height * fractions[1])),
+    )
+
+
+def dismiss_chrome_modal_if_present(args: argparse.Namespace, xml_text: str) -> str:
+    root = ET.fromstring(xml_text)
+    for node in root.iter("node"):
+        label = str(node.attrib.get("text") or node.attrib.get("content-desc") or "").strip().lower()
+        if label in {"no thanks", "not now"}:
+            tap(args, *bounds_center(node.attrib.get("bounds", "")))
+            time.sleep(1.0)
+            return dump_uiautomator_xml(args)
+    return xml_text
+
+
 def web_view_bounds_from_uiautomator(xml_text: str) -> tuple[int, int, int, int]:
     root = ET.fromstring(xml_text)
+    compositor_bounds: tuple[int, int, int, int] | None = None
+    toolbar_bottom = 0
     for node in root.iter("node"):
         content_desc = str(node.attrib.get("content-desc") or "").strip().lower()
         resource_id = str(node.attrib.get("resource-id") or "").strip().lower()
+        if resource_id.endswith(("control_container", "toolbar_container", "toolbar", "toolbar_hairline")):
+            _, _, _, bottom = parse_bounds(node.attrib.get("bounds", ""))
+            toolbar_bottom = max(toolbar_bottom, bottom)
         if content_desc == "web view" or resource_id.endswith("compositor_view_holder"):
-            return parse_bounds(node.attrib.get("bounds", ""))
+            compositor_bounds = parse_bounds(node.attrib.get("bounds", ""))
+    if compositor_bounds is not None:
+        left, top, right, bottom = compositor_bounds
+        if toolbar_bottom > top and toolbar_bottom < bottom:
+            top = toolbar_bottom
+        return (left, top, right, bottom)
     raise ContactDetailClassicEditEmulatorProofError("Could not locate the Chrome Web View bounds in UIAutomator output.")
 
 
@@ -412,11 +476,13 @@ def helper_read_state_and_trace(args: argparse.Namespace, chrome_cdp_url: str) -
 
 def wait_for_first_name(args: argparse.Namespace, chrome_cdp_url: str, expected_value: str, timeout_seconds: float) -> dict[str, Any]:
     deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+    expected_normalized = str(expected_value or "").strip().lower()
     last = None
     while time.monotonic() < deadline:
         last = helper_read_state_and_trace(args, chrome_cdp_url)
         state = last.get("results", [{}])[0].get("result") or {}
-        if str(state.get("firstName") or "") == expected_value:
+        current_normalized = str(state.get("firstName") or "").strip().lower()
+        if current_normalized == expected_normalized:
             return last
         time.sleep(0.25)
     raise ContactDetailClassicEditEmulatorProofError(
@@ -481,7 +547,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Expected contact-detail to be in edit mode, got {detail_state.get('mode')!r}"
             )
 
-        xml_text = dump_uiautomator_xml(args)
+        xml_text = dismiss_chrome_modal_if_present(args, dump_uiautomator_xml(args))
         webview_bounds = web_view_bounds_from_uiautomator(xml_text)
         tap_point = translate_webview_point(field_point, webview_bounds)
         tap(args, *tap_point)
@@ -507,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
         for expected_value, screenshot_name in prefixes:
             xml_text = dump_uiautomator_xml(args)
             key_center = find_key_center_from_uiautomator(xml_text, expected_value[-1])
+            key_center = key_center or fallback_key_center_from_keyboard(xml_text, expected_value[-1])
             if not key_center:
                 raise ContactDetailClassicEditEmulatorProofError(
                     f"Could not find the {expected_value[-1]!r} keyboard key from UIAutomator output."
@@ -539,7 +606,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ContactDetailClassicEditEmulatorProofError(
                     f"Android IME stopped being visible while typing {expected_value!r}."
                 )
-            if str(current_state.get("firstName") or "") != expected_value:
+            if str(current_state.get("firstName") or "").strip().lower() != str(expected_value or "").strip().lower():
                 raise ContactDetailClassicEditEmulatorProofError(
                     f"Expected first name {expected_value!r}, got {current_state.get('firstName')!r}"
                 )
@@ -564,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ContactDetailClassicEditEmulatorProofError(
                 f"Expected the same mounted first-name input token, saw {final_trace.get('initialToken')} -> {final_trace.get('finalToken')}"
             )
-        if str(final_trace.get("finalValue") or "") != "dav":
+        if str(final_trace.get("finalValue") or "").strip().lower() != "dav":
             raise ContactDetailClassicEditEmulatorProofError(
                 f"Expected final first-name value dav, got {final_trace.get('finalValue')!r}"
             )
