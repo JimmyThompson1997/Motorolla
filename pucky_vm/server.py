@@ -401,6 +401,8 @@ class Config:
     self_phone_number: str = ""
     public_base_url: str | None = None
     pucky_web_ui_token: str = ""
+    strict_browser_user_auth: bool = False
+    strict_composio_user_scoping: bool = False
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -466,6 +468,12 @@ class Config:
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
             public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
+            strict_browser_user_auth=(
+                os.environ.get("PUCKY_STRICT_BROWSER_USER_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
+            strict_composio_user_scoping=(
+                os.environ.get("PUCKY_STRICT_COMPOSIO_USER_SCOPING", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
         )
 
 
@@ -722,7 +730,14 @@ class PuckyVoiceService:
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
+            "pucky_web_ui_token": "present" if self.config.pucky_web_ui_token else "missing",
             "composio": "present" if self.config.composio_api_key else "missing",
+            "browser_user_read_mode": "strict_auth" if self.config.strict_browser_user_auth else "legacy_public",
+            "composio_read_scope_mode": (
+                "strict_workspace_token"
+                if self.config.strict_composio_user_scoping
+                else "legacy_default_user_fallback"
+            ),
         }
 
     def _reminder_poll_loop(self) -> None:
@@ -1782,6 +1797,12 @@ class PuckyVoiceService:
 
     def composio_user_id(self) -> str:
         return self.config.composio_default_user_id
+
+    def public_browser_reads_enabled(self) -> bool:
+        return not bool(self.config.strict_browser_user_auth)
+
+    def composio_default_user_read_enabled(self) -> bool:
+        return not bool(self.config.strict_composio_user_scoping)
 
     def composio_auth_mode(self, value: str | None = None) -> str:
         candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()

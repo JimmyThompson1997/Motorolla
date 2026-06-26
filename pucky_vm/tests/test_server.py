@@ -601,6 +601,16 @@ class FakeComposio:
         self.list_connected_calls += 1
         return {"connected_apps": list(self.connected), "user_id": user_id, "force": force}
 
+    def get_tool(self, tool_slug: str) -> dict[str, object]:
+        return {
+            "slug": str(tool_slug or "").strip(),
+            "input_parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        }
+
     def invalidate_connected_cache(self, user_id: str) -> None:
         self.invalidated.append(user_id)
 
@@ -942,6 +952,8 @@ class ServerTests(unittest.TestCase):
                 "PUCKY_WEB_UI_TOKEN": "browser-token",
                 "PUCKY_CONNECT_PORTAL_SECRET": "",
                 "PUCKY_MEETING_ARTIFACT_LINK_SECRET": "",
+                "PUCKY_STRICT_BROWSER_USER_AUTH": "1",
+                "PUCKY_STRICT_COMPOSIO_USER_SCOPING": "true",
             },
             clear=True,
         ):
@@ -951,6 +963,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(config.pucky_web_ui_token, "browser-token")
         self.assertEqual(config.connect_portal_secret, "")
         self.assertEqual(config.meeting_artifact_link_secret, "")
+        self.assertTrue(config.strict_browser_user_auth)
+        self.assertTrue(config.strict_composio_user_scoping)
 
     def test_links_portal_url_accepts_browser_user_token(self) -> None:
         payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer browser-secret"})
@@ -984,6 +998,30 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + f"/api/artifacts/{urllib.parse.quote(artifact_id, safe='')}", timeout=10) as response:
             self.assertEqual(response.status, 200)
             self.assertGreater(len(response.read()), 0)
+
+    def test_strict_browser_auth_mode_rejects_unauthenticated_browser_reads(self) -> None:
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": "meeting-20260601-130000-browser-proof-strict",
+                "started_at": "2026-06-01T13:00:00Z",
+                "duration_ms": 2000,
+                "device_id": "device-browser",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFbrowser-proof-audio").decode("ascii"),
+            },
+        )
+        for path in (
+            "/api/feed?limit=5",
+            "/api/meetings?compact=1",
+            "/api/workspace/notes",
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.get_json(path)
+            self.assertEqual(caught.exception.code, 401, msg=path)
+        payload = self.get_json("/api/feed?limit=5", headers={"Authorization": "Bearer browser-secret"})
+        self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
 
     def test_unknown_operator_token_still_does_not_authorize_protected_browser_routes(self) -> None:
         headers = {"Authorization": "Bearer test-operator-token"}
@@ -1164,6 +1202,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(details["slug"], "gmail")
         self.assertEqual(details["details"][0]["id"], "ca_gmail_active")
 
+    def test_links_read_endpoints_require_token_in_strict_composio_scope_mode(self) -> None:
+        self.service.config = replace(self.service.config, strict_composio_user_scoping=True)
+
+        for path in (
+            "/api/links/composio/my-apps",
+            "/api/links/composio/catalog",
+            "/api/links/composio/all-apps?offset=0&limit=20",
+            "/api/links/composio/app-details?slug=gmail",
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.get_json(path)
+            self.assertEqual(caught.exception.code, 401, msg=path)
+
+        token = self.issue_portal_token()
+        payload = self.get_json(f"/api/links/composio/my-apps?token={token}")
+        self.assertTrue(payload["ok"])
+
     def test_links_catalog_returns_cached_snapshot_headers_without_connected_overlay(self) -> None:
         token = self.issue_portal_token()
         payload, headers = self.get_json_response(f"/api/links/composio/catalog?token={token}")
@@ -1201,6 +1256,57 @@ class ServerTests(unittest.TestCase):
         slugs = [item["slug"] for item in all_apps["apps"]]
         self.assertIn("gmail", slugs)
         self.assertIn("googlecalendar", slugs)
+
+    def test_composio_execute_action_route_requires_auth(self) -> None:
+        request = urllib.request.Request(
+            self.base_url + "/api/links/composio/actions/execute",
+            data=json.dumps({"action_slug": "GMAIL_GET_PROFILE"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 401)
+
+    def test_composio_execute_action_route_runs_current_user_action(self) -> None:
+        self.composio.tool_results["GMAIL_GET_PROFILE"] = {"data": {"email": "jimmy@example.com"}}
+
+        payload = self.post_json(
+            "/api/links/composio/actions/execute",
+            {
+                "action_slug": "GMAIL_GET_PROFILE",
+                "parameters": {},
+            },
+            headers={"Authorization": "Bearer browser-secret"},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["action_slug"], "GMAIL_GET_PROFILE")
+        self.assertEqual(self.composio.tool_calls[-1]["tool_slug"], "GMAIL_GET_PROFILE")
+        self.assertEqual(self.composio.tool_calls[-1]["user_id"], "jimmythompson323")
+
+    def test_composio_execute_action_route_rejects_foreign_connected_account(self) -> None:
+        request = urllib.request.Request(
+            self.base_url + "/api/links/composio/actions/execute",
+            data=json.dumps(
+                {
+                    "action_slug": "GMAIL_GET_PROFILE",
+                    "parameters": {},
+                    "connected_account_id": "ca_missing",
+                }
+            ).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer secret",
+                "Content-Type": "application/json",
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 400)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "forbidden_connected_account")
 
     def test_links_all_apps_filters_search_and_hides_nonconnectable(self) -> None:
         token = self.issue_portal_token()
@@ -1735,6 +1841,15 @@ class ServerTests(unittest.TestCase):
             "/api/media/manifest?scope=meetings",
             headers={"Authorization": "Bearer secret"},
         )
+        for _ in range(20):
+            if manifest.get("items"):
+                break
+            time.sleep(0.1)
+            manifest = self.get_json(
+                "/api/media/manifest?scope=meetings",
+                headers={"Authorization": "Bearer secret"},
+            )
+        self.assertTrue(manifest.get("items"))
         media_url = manifest["items"][0]["url"]
         media_path = urllib.parse.urlsplit(media_url).path
         with urllib.request.urlopen(self.base_url + media_path, timeout=10) as response:

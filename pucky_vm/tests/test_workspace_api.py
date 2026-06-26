@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -75,9 +76,19 @@ def config(tmp_path: Path) -> Config:
     )
 
 
-def start_server(tmp_path: Path) -> tuple[ThreadingHTTPServer, str]:
+def start_server(
+    tmp_path: Path,
+    *,
+    strict_browser_user_auth: bool = False,
+    strict_composio_user_scoping: bool = False,
+) -> tuple[ThreadingHTTPServer, str]:
+    base_config = config(tmp_path)
     service = PuckyVoiceService(
-        config(tmp_path),
+        replace(
+            base_config,
+            strict_browser_user_auth=strict_browser_user_auth,
+            strict_composio_user_scoping=strict_composio_user_scoping,
+        ),
         stt=FakeSTT(),
         tts=FakeTTS(),
         codex=FakeCodex(),
@@ -124,6 +135,23 @@ def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(t
             raise AssertionError("unauthorized write succeeded")
         public_notes = request_json(base_url, "/api/workspace/notes", token="test-operator-token", method="GET")
         assert public_notes["count"] >= 1
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_rejects_unauthenticated_reads_in_strict_browser_auth_mode(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path, strict_browser_user_auth=True)
+    try:
+        notes = request_json(base_url, "/api/workspace/notes")
+        assert notes["count"] >= 1
+        try:
+            request_json(base_url, "/api/workspace/notes", token="", method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("unauthenticated strict-mode read succeeded")
+        browser_notes = request_json(base_url, "/api/workspace/notes", token=BROWSER_TEST_TOKEN, method="GET")
+        assert browser_notes["count"] >= 1
     finally:
         server.shutdown()
 
