@@ -1484,16 +1484,48 @@ def test_seeded_reminder_connected_graph_refresh_restores_seeded_reminder_links(
     assert meta["value"] == "1"
 
 
-def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> None:
+def test_self_contact_is_seeded_editable_and_cannot_be_deleted(tmp_path: Path) -> None:
     store = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
 
     contacts = store.list_records("contacts")
     assert contacts["items"]
-    assert contacts["items"][0]["id"] == SELF_CONTACT_ID
-    assert contacts["items"][0]["title"] == "Me"
-    assert contacts["items"][0]["html"] == ""
-    assert contacts["items"][0]["html_asset_id"] == ""
-    assert contacts["items"][0]["metadata"]["is_self"] is True
+    me = store.get_record("contacts", SELF_CONTACT_ID)
+    assert me is not None
+    assert me["id"] == SELF_CONTACT_ID
+    assert me["html"] == ""
+    assert me["html_asset_id"] == ""
+    assert me["metadata"]["is_self"] is True
+    assert me["metadata"]["avatar"] == "M"
+
+    updated = store.patch_record(
+        "contacts",
+        SELF_CONTACT_ID,
+        {
+            "metadata": {
+                "first_name": "Jordan",
+                "last_name": "Taylor",
+            }
+        },
+    )
+    assert updated is not None
+    assert updated["title"] == "Jordan Taylor"
+    assert updated["metadata"]["display_name"] == "Jordan Taylor"
+    assert updated["metadata"]["avatar"] == "JT"
+
+    updated = store.patch_record(
+        "contacts",
+        SELF_CONTACT_ID,
+        {
+            "metadata": {
+                "first_name": "Updated",
+                "last_name": "Proof Contact",
+            }
+        },
+    )
+    assert updated is not None
+    assert updated["title"] == "Updated Proof Contact"
+    assert updated["metadata"]["display_name"] == "Updated Proof Contact"
+    assert updated["metadata"]["avatar"] == "UC"
 
     updated = store.patch_record(
         "contacts",
@@ -1503,7 +1535,6 @@ def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> Non
                 "email": "me@example.com",
                 "phone": "+14155550123",
                 "notification_device_id": "phone-1",
-                "photo": "data:image/jpeg;base64,me-photo-proof",
             }
         },
     )
@@ -1511,21 +1542,14 @@ def test_me_contact_is_seeded_first_and_cannot_be_deleted(tmp_path: Path) -> Non
     assert updated["metadata"]["email"] == "me@example.com"
     assert updated["metadata"]["phone"] == "+14155550123"
     assert updated["metadata"]["notification_device_id"] == "phone-1"
-    assert updated["metadata"]["photo"] == "data:image/jpeg;base64,me-photo-proof"
 
-    store.close()
-    reopened = WorkspaceStore(str(tmp_path / "workspace.sqlite3"))
-    reopened_me = reopened.get_record("contacts", SELF_CONTACT_ID)
-    assert reopened_me is not None
-    assert reopened_me["metadata"]["photo"] == "data:image/jpeg;base64,me-photo-proof"
-
-    deleted = reopened.delete_record("contacts", SELF_CONTACT_ID)
+    deleted = store.delete_record("contacts", SELF_CONTACT_ID)
     assert deleted is not None
     assert deleted["id"] == SELF_CONTACT_ID
     assert deleted["archived"] is False
     assert deleted["deleted"] is False
 
-    preserved = reopened.patch_record("contacts", SELF_CONTACT_ID, {"archived": True, "deleted": True})
+    preserved = store.patch_record("contacts", SELF_CONTACT_ID, {"archived": True, "deleted": True})
     assert preserved is not None
     assert preserved["id"] == SELF_CONTACT_ID
     assert preserved["archived"] is False

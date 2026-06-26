@@ -1195,23 +1195,41 @@ async function traceContactsSearchTyping(page, query, timeoutMs) {
 async function readContactEditState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
-    const pageRoot = document.querySelector(".light-contact-edit-page");
-    const isVisible = node => Boolean(node) && !(node instanceof HTMLElement && (node.hidden || getComputedStyle(node).display === "none"));
+    const pageRoot = document.querySelector(".light-contact-detail-page");
+    const isVisible = node => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      if (node.hidden || node.closest("[hidden]")) {
+        return false;
+      }
+      const style = getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") {
+        return false;
+      }
+      return node.getClientRects().length > 0;
+    };
     const fieldValue = key => {
       const input = document.querySelector(`[data-contact-edit-field="${key}"]`);
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
-    const activityValues = Array.from(document.querySelectorAll("input[data-contact-activity-index]"))
-      .map(node => node instanceof HTMLInputElement ? node.value : "")
-      .filter(value => value.length || value === "");
+    const activityRows = Array.from(document.querySelectorAll(".light-contact-detail-activity-host .light-info-row"));
+    const activityValues = activityRows.map(row => {
+      const valueNode = row.querySelector(".light-text-stack span");
+      return String(valueNode?.textContent || row.textContent || "").replace(/\s+/g, " ").trim();
+    }).filter(Boolean);
     const status = document.querySelector("[data-contact-autosave-status]");
     const firstNameInput = document.querySelector('[data-contact-edit-field="first_name"]');
     const lastNameInput = document.querySelector('[data-contact-edit-field="last_name"]');
+    const actionButton = document.querySelector("[data-contact-detail-action]");
+    const summaryView = document.querySelector(".light-contact-detail-summary");
     return {
       route: shell?.getAttribute("data-light-route") || "",
       pageVisible: Boolean(pageRoot),
-      title: String(pageRoot?.querySelector(".light-contact-edit-photo-title")?.textContent || "").trim(),
-      avatarText: String(pageRoot?.querySelector(".light-contact-detail-avatar .light-avatar")?.textContent || "").trim(),
+      mode: String(pageRoot?.getAttribute("data-contact-detail-mode") || "").trim() || "view",
+      title: String(pageRoot?.querySelector(".light-contact-detail-title")?.textContent || "").trim(),
+      summaryViewText: String(summaryView?.textContent || "").replace(/\s+/g, " ").trim(),
+      avatarText: String(pageRoot?.querySelector(".light-contact-detail-avatar-mount .light-avatar")?.textContent || "").trim(),
       firstName: fieldValue("first_name"),
       lastName: fieldValue("last_name"),
       summary: fieldValue("summary"),
@@ -1220,9 +1238,13 @@ async function readContactEditState(page) {
       activityValues,
       firstNameVisible: isVisible(firstNameInput),
       lastNameVisible: isVisible(lastNameInput),
+      summaryVisible: isVisible(summaryView),
       hasConnectedSection: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
       hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
-      hasRedundantHero: Boolean(pageRoot?.querySelector(".light-profile-card")),
+      hasHeroTile: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
+      action: String(actionButton?.getAttribute("data-contact-detail-action") || "").trim(),
+      hasActivityInputs: Boolean(pageRoot?.querySelector("input[data-contact-activity-index]")),
+      hasActivityAddButton: Boolean(pageRoot?.querySelector('[data-contact-activity-add="true"]')),
       autosaveStatus: String(status?.getAttribute("data-contact-autosave-status") || "").trim(),
       autosaveLabel: String(status?.textContent || "").trim(),
     };
@@ -2087,10 +2109,13 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const baselineSearchState = await readContactsSearchState(page);
     const baselineRowIds = baselineSearchState.row_ids.slice();
     assert(contactsListFlatness.route === "contacts", `${mode}: expected Contacts route before detail, got ${contactsListFlatness.route}`);
-    assert(contactsListFlatness.first_contact_id === "contact-me", `${mode}: Me contact should remain pinned first in Contacts (saw ${contactsListFlatness.first_contact_id || "none"})`);
     assert(baselineSearchState.search_visible, `${mode}: Contacts search should be visible once contacts load`);
     assert(baselineSearchState.query === "", `${mode}: Contacts search should start empty, got ${baselineSearchState.query}`);
-    assert(baselineSearchState.row_avatar_texts["contact-me"] === "ME", `${mode}: Expected contact-me avatar to stay ME, got ${baselineSearchState.row_avatar_texts["contact-me"] || "<missing>"}`);
+    assert(
+      JSON.stringify(baselineSearchState.row_titles) === JSON.stringify(baselineSearchState.row_titles.slice().sort((left, right) => left.localeCompare(right))),
+      `${mode}: expected Contacts baseline list to stay alphabetical, got ${baselineSearchState.row_titles.join(", ")}`
+    );
+    assert(baselineSearchState.row_avatar_texts["contact-me"] === "M", `${mode}: Expected contact-me avatar to stay M, got ${baselineSearchState.row_avatar_texts["contact-me"] || "<missing>"}`);
     assert(baselineSearchState.row_avatar_texts[seed.davidContactId] === "D", `${mode}: Expected David avatar to render a single D initial, got ${baselineSearchState.row_avatar_texts[seed.davidContactId] || "<missing>"}`);
     assert(baselineSearchState.row_avatar_texts[seed.danielContactId] === "D", `${mode}: Expected Daniel avatar to render a single D initial, got ${baselineSearchState.row_avatar_texts[seed.danielContactId] || "<missing>"}`);
     assert(contactsListFlatness.row_class_list.includes("is-flat-feed"), `${mode}: Contacts list should render flat-feed rows (${contactsListFlatness.row_class_list.join(" ")})`);
@@ -2115,7 +2140,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       route: "contacts",
       action: "Inspect Contacts list",
       expected: "The Contacts list stays flat on the deployed hosted UI before opening detail.",
-      confirmation: "Contacts list stayed flat, exposed search, and kept Me first.",
+      confirmation: "Contacts list stayed flat, exposed search, and preserved the alphabetical baseline order.",
       observed: {
         contact_title: seed.contactTitle,
         first_contact_id: contactsListFlatness.first_contact_id,
@@ -2130,8 +2155,8 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     await recorder.capture({
       route: "contacts",
       action: "Inspect Contacts single-name initials",
-      expected: "Seeded one-token contacts render a single initial while Me stays ME.",
-      confirmation: "David and Daniel each rendered D, and contact-me stayed ME.",
+      expected: "Seeded one-token contacts render a single initial while the self contact stays on a single derived initial.",
+      confirmation: "David and Daniel each rendered D, and contact-me stayed on M.",
       observed: { query: initialsQuery, contacts_search: initialsSearchState },
     });
 
@@ -2180,11 +2205,10 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
         .filter(Boolean);
       return input instanceof HTMLInputElement
         && input.value === expectedQuery
-        && rowIds.includes("contact-me")
-        && rowIds[0] === "contact-me";
+        && rowIds.includes("contact-me");
     }, reminderQuery, { timeout: config.timeoutMs });
     const reminderSearchState = await readContactsSearchState(page);
-    assert(reminderSearchState.row_ids[0] === "contact-me", `${mode}: reminder query should keep Me first, got ${reminderSearchState.row_ids.join(", ")}`);
+    assert(reminderSearchState.row_ids.includes("contact-me"), `${mode}: reminder query should include contact-me, got ${reminderSearchState.row_ids.join(", ")}`);
 
     const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
     assert(emptySearchState.search_visible, `${mode}: Contacts search should remain visible when no results match`);
@@ -2201,7 +2225,10 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     });
 
     const clearedSearchState = await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
-    assert(clearedSearchState.row_ids[0] === "contact-me", `${mode}: clearing Contacts search should restore Me first, got ${clearedSearchState.row_ids[0] || "none"}`);
+    assert(
+      JSON.stringify(clearedSearchState.row_ids) === JSON.stringify(baselineRowIds),
+      `${mode}: clearing Contacts search should restore the baseline order, got ${clearedSearchState.row_ids.join(", ")}`
+    );
     await recorder.capture({
       route: "contacts",
       action: "Clear Contacts search",
@@ -2253,7 +2280,6 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const { updatedTitle, updatedSummary, updatedEmail, updatedPhone, modeLabel } = buildContactsEditProofValues(mode);
     const updatedFirstName = "Updated";
     const updatedLastName = "Live Contact";
-    const updatedActivity = `Follow up from ${modeLabel}`;
     const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
     const expectedInitials = "UC";
 
@@ -2264,17 +2290,39 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
     const editState = await readContactEditState(page);
-    assert(editState.pageVisible, `${mode}: expected Contacts detail editor to be visible`);
+    assert(editState.pageVisible, `${mode}: expected classic contact detail to be visible`);
     assert(editState.route === "contact-detail", `${mode}: expected contact-detail route, got ${editState.route}`);
-    assert(!editState.hasRedundantHero, `${mode}: Expected contact detail editor to remove the redundant hero`);
-    assert(editState.firstNameVisible && editState.lastNameVisible, `${mode}: expected editable first + last name inputs for the seeded contact`);
-    assert(editState.hasConnectedSection, `${mode}: expected Connected to remain visible on the editor detail`);
+    assert(editState.mode === "view", `${mode}: expected classic detail to open in view mode, got ${editState.mode}`);
+    assert(editState.action === "edit", `${mode}: expected classic detail to expose an edit action, got ${editState.action}`);
+    assert(editState.hasHeroTile, `${mode}: expected classic detail to keep the hero tile visible`);
+    assert(!editState.firstNameVisible && !editState.lastNameVisible, `${mode}: expected name inputs to stay hidden until edit mode`);
+    assert(!editState.hasActivityInputs && !editState.hasActivityAddButton, `${mode}: expected activity to remain read-only in classic detail`);
+    assert(editState.hasConnectedSection, `${mode}: expected Connected to remain visible on the detail`);
     await recorder.capture({
       route: "contact-detail",
-      action: "Open contact detail editor",
-      expected: "The contact detail opens as a single autosaving editor with no redundant hero tile and Connected still visible.",
-      confirmation: "The deployed contact detail opened as the in-place editor with the expected header and fields.",
+      action: "Open classic contact detail",
+      expected: "Clicking a contact opens the classic read-only contact profile with its hero tile still visible.",
+      confirmation: "The deployed contact detail opened in classic read-only mode with the expected hero tile and edit action.",
       observed: { contact_title: seed.contactTitle, contact_edit: editState },
+    });
+
+    await page.locator('[data-contact-detail-action="edit"]').first().click();
+    await page.waitForFunction(() => {
+      const pageRoot = document.querySelector(".light-contact-detail-page");
+      return pageRoot instanceof HTMLElement && pageRoot.getAttribute("data-contact-detail-mode") === "edit";
+    }, undefined, { timeout: config.timeoutMs });
+    const editModeState = await readContactEditState(page);
+    assert(editModeState.mode === "edit", `${mode}: expected detail to enter edit mode, got ${editModeState.mode}`);
+    assert(editModeState.action === "done", `${mode}: expected edit mode to expose a done action, got ${editModeState.action}`);
+    assert(editModeState.hasHeroTile, `${mode}: expected the same hero tile to stay visible in edit mode`);
+    assert(editModeState.firstNameVisible && editModeState.lastNameVisible, `${mode}: expected editable first + last name inputs in edit mode`);
+    assert(!editModeState.hasActivityInputs && !editModeState.hasActivityAddButton, `${mode}: expected activity to remain read-only in edit mode`);
+    await recorder.capture({
+      route: "contact-detail",
+      action: "Enter in-place contact edit mode",
+      expected: "The same contact-detail surface stays mounted and swaps relevant fields into editable inputs.",
+      confirmation: "The deployed contact detail entered in-place edit mode without replacing the hero tile or route.",
+      observed: { contact_title: seed.contactTitle, contact_edit: editModeState },
     });
 
     const typingTrace = await traceContactEditTyping(page, "first_name", updatedFirstName, config.timeoutMs);
@@ -2296,51 +2344,24 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       config.timeoutMs,
       `${mode}: Expected saved contact detail to show the updated title`
     );
-    await page.locator('[data-contact-activity-add="true"]').first().click();
-    await page.locator('[data-contact-activity-index="2"]').first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await page.locator('[data-contact-activity-index="2"]').first().fill(updatedActivity);
-    await waitForContactAutosaveSaved(page, config.timeoutMs);
-    updatedRecord = await waitForContactRecord(
-      config.baseUrl,
-      config.apiToken,
-      seed.contactId,
-      record => Array.isArray(record?.metadata?.activity)
-        && record.metadata.activity.includes(updatedActivity)
-        && record.metadata.activity.length === 3,
-      config.timeoutMs,
-      `${mode}: Expected activity add to persist on the contact record`
-    );
-    await page.locator('[data-contact-activity-remove="0"]').first().click();
-    await waitForContactAutosaveSaved(page, config.timeoutMs);
-    updatedRecord = await waitForContactRecord(
-      config.baseUrl,
-      config.apiToken,
-      seed.contactId,
-      record => Array.isArray(record?.metadata?.activity)
-        && record.metadata.activity.includes(updatedActivity)
-        && !record.metadata.activity.includes("Created by proof")
-        && record.metadata.activity.length === 2,
-      config.timeoutMs,
-      `${mode}: Expected activity removal to persist on the contact record`
-    );
     await recorder.capture({
       route: "contact-detail",
       action: "Autosave edited contact",
-      expected: "Typing contact fields autosaves name, description, email, phone, and activity changes without leaving the detail route.",
+      expected: "Typing contact fields autosaves name, description, email, and phone changes without leaving the detail route.",
       confirmation: `${modeLabel} edits autosaved in place and persisted through the Contacts API.`,
       observed: {
         updated_title: updatedTitle,
         updated_summary: updatedSummary,
         updated_email: updatedEmail,
         updated_phone: updatedPhone,
-        updated_activity: Array.isArray(updatedRecord.metadata?.activity) ? updatedRecord.metadata.activity.slice() : [],
+        read_only_activity: Array.isArray(updatedRecord.metadata?.activity) ? updatedRecord.metadata.activity.slice() : [],
         typing_trace: typingTrace,
       },
     });
 
     const photoInput = page.locator('input[type="file"][data-contact-photo-input="true"]').first();
     await photoInput.setInputFiles(photoPath);
-    await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-edit-page .light-avatar.has-photo img")), undefined, { timeout: config.timeoutMs });
+    await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-detail-page .light-avatar.has-photo img")), undefined, { timeout: config.timeoutMs });
     await waitForContactAutosaveSaved(page, config.timeoutMs);
     updatedRecord = await waitForContactRecord(
       config.baseUrl,
@@ -2352,7 +2373,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     );
     assert(String(updatedRecord.metadata?.photo || "").trim(), `${mode}: Expected contact edit to persist the uploaded photo`);
     await page.locator('[data-contact-photo-remove="true"]').first().click();
-    await page.waitForFunction(() => !document.querySelector(".light-contact-edit-page .light-avatar.has-photo img"), undefined, { timeout: config.timeoutMs });
+    await page.waitForFunction(() => !document.querySelector(".light-contact-detail-page .light-avatar.has-photo img"), undefined, { timeout: config.timeoutMs });
     await waitForContactAutosaveSaved(page, config.timeoutMs);
     updatedRecord = await waitForContactRecord(
       config.baseUrl,
@@ -2373,6 +2394,15 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       observed: { photo_fixture: photoPath, avatar_text_after_remove: photoRemovedState.avatarText },
     });
 
+    await page.locator('[data-contact-detail-action="done"]').first().click();
+    await page.waitForFunction(expectedTitle => {
+      const pageRoot = document.querySelector(".light-contact-detail-page");
+      const title = document.querySelector(".light-contact-detail-title");
+      return pageRoot instanceof HTMLElement
+        && pageRoot.getAttribute("data-contact-detail-mode") === "view"
+        && String(title?.textContent || "").trim() === expectedTitle;
+    }, updatedTitle, { timeout: config.timeoutMs });
+
     await clickBack(page, config.timeoutMs);
     await waitForRoute(page, "contacts", config.timeoutMs);
     await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -2382,23 +2412,32 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, updatedTitle, config.timeoutMs);
     const reopenedState = await readContactEditState(page);
+    assert(reopenedState.mode === "view", `${mode}: expected reopened detail to return in view mode, got ${reopenedState.mode}`);
+    assert(reopenedState.action === "edit", `${mode}: expected reopened detail to expose the edit action, got ${reopenedState.action}`);
     assert(reopenedState.firstName === updatedFirstName, `${mode}: expected reopened detail to preserve first name, got ${reopenedState.firstName}`);
     assert(reopenedState.lastName === updatedLastName, `${mode}: expected reopened detail to preserve last name, got ${reopenedState.lastName}`);
     assert(reopenedState.summary === updatedSummary, `${mode}: expected reopened detail to preserve summary, got ${reopenedState.summary}`);
     assert(reopenedState.email === updatedEmail, `${mode}: expected reopened detail to preserve email, got ${reopenedState.email}`);
     assert(reopenedState.phone === updatedPhone, `${mode}: expected reopened detail to preserve phone, got ${reopenedState.phone}`);
-    assert(JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Linked to live alpha", updatedActivity]), `${mode}: expected reopened detail to preserve activity edits, got ${JSON.stringify(reopenedState.activityValues)}`);
+    assert(
+      JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Created by proof", "Linked to live alpha"]),
+      `${mode}: expected reopened detail to preserve read-only activity, got ${JSON.stringify(reopenedState.activityValues)}`
+    );
     assert(!reopenedState.hasPhotoPreview, `${mode}: expected reopened detail to stay initials-only after photo removal`);
     await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, updatedTitle, config.timeoutMs);
     const reloadedState = await readContactEditState(page);
+    assert(reloadedState.mode === "view", `${mode}: expected reloaded detail to stay in view mode, got ${reloadedState.mode}`);
     assert(reloadedState.firstName === updatedFirstName, `${mode}: Expected contact detail reload to stay on the edited contact, got ${reloadedState.firstName}`);
     assert(reloadedState.lastName === updatedLastName, `${mode}: expected reloaded detail to preserve last name, got ${reloadedState.lastName}`);
     assert(reloadedState.summary === updatedSummary, `${mode}: expected reloaded detail to preserve summary, got ${reloadedState.summary}`);
     assert(reloadedState.email === updatedEmail, `${mode}: expected reloaded detail to preserve email, got ${reloadedState.email}`);
     assert(reloadedState.phone === updatedPhone, `${mode}: expected reloaded detail to preserve phone, got ${reloadedState.phone}`);
-    assert(JSON.stringify(reloadedState.activityValues) === JSON.stringify(["Linked to live alpha", updatedActivity]), `${mode}: expected reloaded detail to preserve activity edits, got ${JSON.stringify(reloadedState.activityValues)}`);
+    assert(
+      JSON.stringify(reloadedState.activityValues) === JSON.stringify(["Created by proof", "Linked to live alpha"]),
+      `${mode}: expected reloaded detail to preserve read-only activity, got ${JSON.stringify(reloadedState.activityValues)}`
+    );
     assert(!reloadedState.hasPhotoPreview, `${mode}: expected reloaded detail to stay initials-only after photo removal`);
     await recorder.capture({
       route: "contact-detail",

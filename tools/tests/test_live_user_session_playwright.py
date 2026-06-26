@@ -223,7 +223,8 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert "function buildContactsEditProofValues(mode) {" in source
     assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "iphone" ? "iPhone" : modeKey === "android" ? "Android" : "Proof";' in source
     assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "iphone" ? "0199" : modeKey === "android" ? "0209" : "0189";' in source
-    assert 'action: "Open contact detail editor"' in source
+    assert 'action: "Open classic contact detail"' in source
+    assert 'action: "Enter in-place contact edit mode"' in source
     assert 'action: "Autosave edited contact"' in source
     assert 'action: "Add and remove contact photo"' in source
     assert 'action: "Reload saved contact detail"' in source
@@ -235,7 +236,9 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert "Updated from ${modeKey} live proof edit flow" in source
     assert "updated.live.contact@example.com" in source
     assert "Expected saved contact detail to show the updated title" in source
-    assert "Expected contact detail editor to remove the redundant hero" in source
+    assert "expected classic detail to keep the hero tile visible" in source
+    assert "expected the same hero tile to stay visible in edit mode" in source
+    assert "expected activity to remain read-only in classic detail" in source
     assert "Expected contact edit typing to keep the same mounted input" in source
     assert "Expected photo removal to restore initials" in source
     assert "Expected contact detail reload to stay on the edited contact" in source

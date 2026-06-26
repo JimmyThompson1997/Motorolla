@@ -262,6 +262,7 @@
     waveHistory: new Map(),
     contacts: {
       search: "",
+      editMode: false,
       editDraft: null,
       editSaving: false,
       editQueued: false,
@@ -1064,8 +1065,6 @@
         return readySelector([".light-task-detail-surface", ".light-task-detail-page", ".light-task-detail-pane [data-task-detail-id]"]);
       case "contact-detail":
         return readySelector([".light-contact-detail-page"]);
-      case "contact-edit":
-        return readySelector([".light-contact-edit-page"]);
       case "project-detail":
         return readySelector([".light-project-detail-page"]);
       case "reminder-detail":
@@ -5386,8 +5385,6 @@
         return lightContactsPage();
       case "contact-detail":
         return lightContactDetailPage();
-      case "contact-edit":
-        return lightContactEditPage();
       case "calendar":
         return lightCalendarPage();
       case "meeting-detail":
@@ -5581,17 +5578,67 @@
     return String(contact?.id || contact?.record_id || "").trim() === SELF_CONTACT_ID || Boolean(metadata.is_self);
   }
 
+  function normalizeContactText(value) {
+    return String(value || "").trim();
+  }
+
+  function contactRecordId(contact) {
+    return String(contact?.id || contact?.record_id || "").trim();
+  }
+
+  function contactDisplayNameFromParts(firstName, lastName, fallbackTitle = "") {
+    const first = normalizeContactText(firstName);
+    const last = normalizeContactText(lastName);
+    const parts = [first, last].filter(Boolean);
+    if (parts.length) {
+      return parts.join(" ");
+    }
+    return normalizeContactText(fallbackTitle) || "Unnamed contact";
+  }
+
+  function contactInitialsFromParts(firstName, lastName, fallbackTitle = "") {
+    const displayName = contactDisplayNameFromParts(firstName, lastName, fallbackTitle);
+    const tokens = normalizeContactText(displayName).split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+      return `${tokens[0].charAt(0)}${tokens[tokens.length - 1].charAt(0)}`.toUpperCase();
+    }
+    if (tokens.length === 1) {
+      return tokens[0].charAt(0).toUpperCase();
+    }
+    return "?";
+  }
+
+  function contactTitleFallback(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return normalizeContactText(contact?.title || meta.display_name || "");
+  }
+
+  function contactDisplayName(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return contactDisplayNameFromParts(meta.first_name, meta.last_name, contactTitleFallback(contact));
+  }
+
+  function contactInitials(contact) {
+    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
+      ? contact.metadata
+      : {};
+    return contactInitialsFromParts(meta.first_name, meta.last_name, contactDisplayName(contact));
+  }
+
   function contactsListItems() {
     return workspaceItems("contacts")
       .filter(contact => contactRecordId(contact) !== "clinic-front-desk")
       .slice()
       .sort((left, right) => {
-        const leftSelf = contactIsSelf(left);
-        const rightSelf = contactIsSelf(right);
-        if (leftSelf !== rightSelf) {
-          return leftSelf ? -1 : 1;
+        const compare = contactDisplayName(left).localeCompare(contactDisplayName(right));
+        if (compare !== 0) {
+          return compare;
         }
-        return String(left?.title || "").localeCompare(String(right?.title || ""));
+        return contactRecordId(left).localeCompare(contactRecordId(right));
       });
   }
 
@@ -5635,20 +5682,16 @@
     return contactsListItems().filter(contact => contactMatchesSearch(contact));
   }
 
-  function contactRecordId(contact) {
-    return String(contact?.id || contact?.record_id || "").trim();
-  }
-
   function contactNameParts(contact) {
     const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
       ? contact.metadata
       : {};
-    const first = String(meta.first_name || "").trim();
-    const last = String(meta.last_name || "").trim();
+    const first = normalizeContactText(meta.first_name);
+    const last = normalizeContactText(meta.last_name);
     if (first || last) {
       return { first, last };
     }
-    const title = String(meta.display_name || contact?.title || "").trim();
+    const title = contactDisplayName(contact);
     if (!title) {
       return { first: "", last: "" };
     }
@@ -5663,77 +5706,27 @@
   }
 
   function contactDraftDisplayName(draft, fallbackContact = null) {
-    if (contactIsSelf(fallbackContact)) {
-      return "Me";
-    }
-    const first = String(draft?.firstName || "").trim();
-    const last = String(draft?.lastName || "").trim();
-    const fullName = [first, last].filter(Boolean).join(" ").trim();
-    if (fullName) {
-      return fullName;
-    }
-    if (first) {
-      return first;
-    }
-    if (last) {
-      return last;
-    }
-    return "Unnamed contact";
+    return contactDisplayNameFromParts(
+      draft?.firstName,
+      draft?.lastName,
+      contactTitleFallback(fallbackContact)
+    );
   }
 
   function contactDisplayTitle(contact) {
-    if (contactIsSelf(contact)) {
-      return "Me";
-    }
-    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
-      ? contact.metadata
-      : {};
-    const first = String(meta.first_name || "").trim();
-    const last = String(meta.last_name || "").trim();
-    const fullName = [first, last].filter(Boolean).join(" ").trim();
-    if (fullName) {
-      return fullName;
-    }
-    const displayName = String(meta.display_name || contact?.title || "").trim();
-    return displayName || "Unnamed contact";
-  }
-
-  function contactInitialsFromText(value, fallback = "CT") {
-    const letters = String(value || "")
-      .replace(/[^A-Za-z0-9]+/g, " ")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-    if (letters.length >= 2) {
-      return `${letters[0].charAt(0)}${letters[letters.length - 1].charAt(0)}`.toUpperCase();
-    }
-    if (letters.length === 1) {
-      return letters[0].charAt(0).toUpperCase();
-    }
-    return String(fallback || "CT").slice(0, 2).toUpperCase();
+    return contactDisplayName(contact);
   }
 
   function contactAvatarText(contact) {
-    if (contactIsSelf(contact)) {
-      return "ME";
-    }
-    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
-      ? contact.metadata
-      : {};
-    const displayTitle = contactDisplayTitle(contact);
-    return contactInitialsFromText(displayTitle, String(meta.avatar || displayTitle || "CT"));
+    return contactInitials(contact);
   }
 
   function contactDraftAvatar(draft, fallbackContact = null) {
-    if (contactIsSelf(fallbackContact)) {
-      return "ME";
-    }
-    const draftTitle = contactDraftDisplayName(draft, fallbackContact);
-    if (draftTitle && draftTitle !== "Unnamed contact") {
-      return contactInitialsFromText(draftTitle, String(fallbackContact?.metadata?.avatar || draftTitle || "CT"));
-    }
-    const fallbackTitle = contactDisplayTitle(fallbackContact);
-    return contactInitialsFromText(fallbackTitle, String(fallbackContact?.metadata?.avatar || fallbackTitle || "CT"));
+    return contactInitialsFromParts(
+      draft?.firstName,
+      draft?.lastName,
+      contactDraftDisplayName(draft, fallbackContact)
+    );
   }
 
   function buildContactEditDraft(contact) {
@@ -5774,6 +5767,7 @@
       return current;
     }
     const draft = buildContactEditDraft(contact);
+    state.contacts.editMode = false;
     state.contacts.editDraft = draft;
     state.contacts.editQueued = false;
     state.contacts.editStatus = "saved";
@@ -5791,6 +5785,7 @@
 
   function clearContactEditDraft() {
     clearContactDetailAutosaveTimer();
+    state.contacts.editMode = false;
     state.contacts.editDraft = null;
     state.contacts.editSaving = false;
     state.contacts.editQueued = false;
@@ -5831,11 +5826,11 @@
     const title = contactDraftDisplayName(draft, contact);
     return {
       ...contact,
-      title: contactIsSelf(contact) ? "Me" : title,
+      title,
       summary: String(draft?.summary || "").trim(),
       metadata: {
         ...(contact?.metadata || {}),
-        display_name: contactIsSelf(contact) ? "Me" : title,
+        display_name: title,
         first_name: String(draft?.firstName || "").trim(),
         last_name: String(draft?.lastName || "").trim(),
         email: String(draft?.email || "").trim(),
@@ -5952,27 +5947,22 @@
   }
 
   function contactEditPayload(contact, draft) {
-    const title = contactIsSelf(contact) ? "Me" : contactDraftDisplayName(draft, contact);
-    const meta = contact?.metadata || {};
+    const title = contactDraftDisplayName(draft, contact);
     const payload = {
       title,
       summary: String(draft?.summary || "").trim(),
       metadata: {
         display_name: title,
+        first_name: String(draft?.firstName || "").trim(),
+        last_name: String(draft?.lastName || "").trim(),
         email: String(draft?.email || "").trim(),
         phone: String(draft?.phone || "").trim(),
         avatar: contactDraftAvatar(draft, contact),
         photo: String(draft?.photo || "").trim(),
-        photo_asset_id: String(draft?.photo || "").trim() ? "" : "",
+        photo_asset_id: String(draft?.photoAssetId || "").trim(),
+        activity: contactDraftActivity(draft, contact),
       }
     };
-    if (!contactIsSelf(contact)) {
-      payload.metadata.first_name = String(draft?.firstName || "").trim();
-      payload.metadata.last_name = String(draft?.lastName || "").trim();
-      payload.metadata.activity = contactDraftActivity(draft, contact);
-    } else if (Array.isArray(meta.activity)) {
-      payload.metadata.activity = meta.activity.map(value => String(value || ""));
-    }
     return payload;
   }
 
@@ -6112,11 +6102,66 @@
     });
   }
 
+  function bindContactDetailTextField(control, field, blurReason) {
+    control.addEventListener("input", () => updateContactDetailDraftAndSchedule({ [field]: control.value }));
+    control.addEventListener("blur", () => {
+      void flushContactDetailAutosave({ reason: blurReason });
+    });
+  }
+
+  function syncContactDetailFieldRow(refs, value, editMode) {
+    if (!refs) {
+      return;
+    }
+    const text = normalizeContactText(value);
+    refs.row.dataset.contactFieldMode = editMode ? "edit" : "view";
+    refs.value.hidden = editMode;
+    refs.value.textContent = text;
+    refs.input.hidden = !editMode;
+    syncContactInputValue(refs.input, text);
+  }
+
+  function buildContactDetailFieldRow(icon, accentKey, label, field, type = "text") {
+    const row = el("div", "light-info-row light-contact-detail-row");
+    row.dataset.contactField = field;
+    const body = el("div", "light-contact-detail-field-body");
+    const fieldLabel = el("strong", "light-contact-detail-field-label", label);
+    const value = el("span", "light-contact-detail-field-value", "");
+    const input = document.createElement("input");
+    input.className = "light-contact-detail-field-input";
+    input.type = type;
+    input.placeholder = label;
+    input.setAttribute("aria-label", label);
+    input.dataset.contactEditField = field;
+    bindContactDetailTextField(input, field, `${field}_blur`);
+    body.append(fieldLabel, value, input);
+    row.append(lightSmallIcon(icon, accentKey), body);
+    return { row, value, input };
+  }
+
+  function openContactDetailEditMode() {
+    state.contacts.editMode = true;
+    state.contacts.editError = "";
+    syncContactDetailEditor();
+  }
+
+  function finishContactDetailEditMode() {
+    state.contacts.editMode = false;
+    syncContactDetailEditor();
+    void flushContactDetailAutosave({ reason: "done" });
+  }
+
+  function handleContactDetailBack() {
+    state.contacts.editMode = false;
+    syncContactDetailEditor();
+    lightBack();
+  }
+
   function syncContactDetailEditor() {
     if (!contactDetailPageRefs) {
       return;
     }
-    const contact = selectedContact();
+    const contact = workspaceRecordByKind("contact", contactDetailPageContactId) || selectedContact();
     if (!contact) {
       return;
     }
@@ -6124,41 +6169,69 @@
     const preview = contactEditPreviewRecord(contact, draft);
     const refs = contactDetailPageRefs;
     const contactId = contactRecordId(contact);
-    const avatarKey = JSON.stringify({
-      photo: String(preview?.metadata?.photo || ""),
-      initials: contactAvatarText(preview),
-    });
+    const editMode = Boolean(state.contacts.editMode);
+    const activity = contactDraftActivity(draft, contact).map(item => normalizeContactText(item)).filter(Boolean);
+    const activityKey = JSON.stringify(activity);
     refs.page.dataset.contactId = contactId;
-    if (refs.avatar.dataset.avatarKey !== avatarKey) {
-      refs.avatar.dataset.avatarKey = avatarKey;
-      refs.avatar.replaceChildren(lightAvatar(preview, "large"));
-    }
-    refs.title.textContent = contactDisplayTitle(preview);
-    refs.detail.textContent = contactIsSelf(contact)
-      ? "Edit your description, email, phone, and photo. Connected stays read-only."
-      : "Edits autosave. Connected stays read-only.";
-    refs.status.textContent = contactEditStatusLabel();
-    refs.status.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";
-    refs.nameGrid.hidden = contactIsSelf(contact);
-    refs.activitySection.hidden = contactIsSelf(contact);
+    refs.page.dataset.contactDetailId = contactId;
+    refs.page.dataset.contactDetailMode = editMode ? "edit" : "view";
+    const actionButton = editMode
+      ? lightCircleButton("check", "Done editing", finishContactDetailEditMode, "light-contact-detail-done-button")
+      : lightCircleButton("edit", "Edit contact", openContactDetailEditMode, "light-contact-detail-edit-button");
+    actionButton.dataset.contactDetailAction = editMode ? "done" : "edit";
+    refs.actionSlot.replaceChildren(actionButton);
+    refs.avatarMount.replaceChildren(lightAvatar(preview, "large"));
+    refs.photoButton.hidden = !editMode;
+    refs.photoButton.setAttribute("aria-label", preview?.metadata?.photo ? "Change photo" : "Add photo");
+    refs.removePhoto.hidden = !editMode || !preview?.metadata?.photo;
+    refs.titleView.hidden = editMode;
+    refs.titleView.textContent = contactDisplayTitle(preview);
+    refs.nameEdit.hidden = !editMode;
     syncContactInputValue(refs.firstNameInput, draft.firstName || "");
     syncContactInputValue(refs.lastNameInput, draft.lastName || "");
+    const summaryText = normalizeContactText(draft.summary);
+    refs.summaryView.hidden = editMode || !summaryText;
+    refs.summaryView.textContent = summaryText;
+    refs.summaryInput.hidden = !editMode;
     syncContactInputValue(refs.summaryInput, draft.summary || "");
-    syncContactInputValue(refs.emailInput, draft.email || "");
-    syncContactInputValue(refs.phoneInput, draft.phone || "");
-    syncContactActivityRows(refs, draft);
-    refs.changePhoto.textContent = draft.photo ? "Change photo" : "Add photo";
-    refs.removePhoto.hidden = !draft.photo;
-    if (refs.connected.dataset.contactId !== contactId) {
-      refs.connected.dataset.contactId = contactId;
-      refs.connected.replaceChildren(lightLinkedRecordSection(contact, {
-        title: "Connected",
-        showWhenEmpty: true,
-        showChips: false,
-        showChevron: false,
-        variant: "flat",
-        fromRoute: "contact-detail"
-      }));
+    refs.saveStatus.hidden = !editMode;
+    refs.saveStatus.textContent = contactEditStatusLabel();
+    refs.saveStatus.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";
+    refs.saveStatus.dataset.contactSaveState = state.contacts.editStatus || "idle";
+    syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);
+    syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);
+    if (refs.activityHost.dataset.activityKey !== activityKey) {
+      refs.activityHost.dataset.activityKey = activityKey;
+      if (!activity.length) {
+        refs.activityHost.replaceChildren();
+      } else {
+        refs.activityHost.replaceChildren(
+          lightInfoSection("Activity", activity.map(item => ({
+            icon: "chat",
+            accentKey: "notes",
+            label: "Activity",
+            value: item,
+          })))
+        );
+      }
+    }
+    if (refs.notesHost.dataset.contactId !== contactId) {
+      refs.notesHost.dataset.contactId = contactId;
+      const notes = lightLinkedNotesSection(contact);
+      refs.notesHost.replaceChildren(...(notes ? [notes] : []));
+    }
+    if (refs.connectedHost.dataset.contactId !== contactId) {
+      refs.connectedHost.dataset.contactId = contactId;
+      refs.connectedHost.replaceChildren(
+        lightLinkedRecordSection(contact, {
+          title: "Connected",
+          showWhenEmpty: true,
+          showChips: false,
+          showChevron: false,
+          variant: "flat",
+          fromRoute: "contact-detail"
+        })
+      );
     }
   }
 
@@ -6279,43 +6352,29 @@
     ensureLinkedCollections(contact);
     const contactId = contactRecordId(contact);
     if (!contactDetailPageNode || !contactDetailPageRefs || contactDetailPageContactId !== contactId) {
+      const actionSlot = el("div", "light-nav-slot light-contact-detail-action-slot");
       const page = lightPage("Contact", {
         detail: true,
+        onBack: handleContactDetailBack,
+        action: actionSlot,
       });
-      page.classList.add("light-contact-detail-page", "light-contact-edit-page");
-      const form = el("form", "light-contact-edit-form");
-      form.addEventListener("submit", event => event.preventDefault());
+      page.classList.add("light-contact-detail-page");
+      page.dataset.contactDetailId = contactId;
+      page.dataset.contactDetailShell = "classic";
 
-      const header = el("section", "light-contact-edit-photo-card");
-      const avatar = el("div", "light-contact-detail-avatar");
-      const photoCopy = el("div", "light-contact-edit-photo-copy");
-      const title = el("h2", "light-contact-edit-photo-title", "");
-      const detail = el("p", "light-contact-edit-photo-detail", "");
-      const status = el("p", "light-contact-detail-status", "Saved");
-      status.dataset.contactAutosaveStatus = "idle";
-      photoCopy.append(title, detail, status);
-      const photoActions = el("div", "light-contact-edit-photo-actions");
-      const changePhoto = el("button", "light-reminder-action-button", "Add photo");
-      changePhoto.type = "button";
-      const removePhoto = el("button", "light-reminder-action-button", "Remove photo");
-      removePhoto.type = "button";
-      removePhoto.dataset.contactPhotoRemove = "true";
-      const photoInput = el("input", "light-contact-edit-photo-input");
+      const hero = el("section", "light-profile-card light-contact-detail-hero");
+      const avatarWell = el("div", "light-contact-detail-avatar-well");
+      const avatarMount = el("div", "light-contact-detail-avatar-mount");
+      const photoButton = el("button", "light-contact-detail-photo-button");
+      photoButton.type = "button";
+      photoButton.innerHTML = iconSvg("photo_camera");
+      const photoInput = document.createElement("input");
+      photoInput.className = "light-contact-detail-photo-input";
       photoInput.type = "file";
       photoInput.accept = "image/png,image/jpeg,image/webp";
-      photoInput.hidden = true;
       photoInput.dataset.contactPhotoInput = "true";
-      changePhoto.addEventListener("click", event => {
-        event.preventDefault();
-        photoInput.click();
-      });
-      removePhoto.addEventListener("click", event => {
-        event.preventDefault();
-        updateContactDetailDraftAndSchedule({
-          photo: "",
-          photoAssetId: "",
-        }, { immediate: true, reason: "photo_remove" });
-      });
+      photoInput.hidden = true;
+      photoButton.addEventListener("click", () => photoInput.click());
       photoInput.addEventListener("change", async () => {
         const file = photoInput.files && photoInput.files[0] ? photoInput.files[0] : null;
         if (!file) {
@@ -6329,105 +6388,83 @@
           photoInput.value = "";
         }
       });
-      photoActions.append(changePhoto, removePhoto);
-      header.append(avatar, photoCopy, photoActions, photoInput);
+      const removePhoto = el("button", "light-contact-detail-photo-remove", "Remove photo");
+      removePhoto.type = "button";
+      removePhoto.dataset.contactPhotoRemove = "true";
+      removePhoto.addEventListener("click", () => {
+        updateContactDetailDraftAndSchedule({
+          photo: "",
+          photoAssetId: "",
+        }, { immediate: true, reason: "photo_remove" });
+      });
+      avatarWell.append(avatarMount, photoButton, photoInput, removePhoto);
 
-      const nameGrid = el("div", "light-contact-edit-name-grid");
-      const firstNameInput = el("input", "light-project-input light-contact-edit-input");
+      const heroCopy = el("div", "light-contact-detail-hero-copy");
+      const titleView = el("h1", "light-contact-detail-title", "");
+      const nameEdit = el("div", "light-contact-detail-name-inputs");
+      const firstNameInput = document.createElement("input");
+      firstNameInput.className = "light-contact-detail-name-input";
       firstNameInput.type = "text";
       firstNameInput.placeholder = "First name";
       firstNameInput.autocomplete = "given-name";
+      firstNameInput.setAttribute("aria-label", "First name");
       firstNameInput.dataset.contactEditField = "first_name";
-      firstNameInput.addEventListener("input", () => updateContactDetailDraftAndSchedule({ firstName: firstNameInput.value }));
-      firstNameInput.addEventListener("blur", () => {
-        void flushContactDetailAutosave({ reason: "first_name_blur" });
-      });
-      const lastNameInput = el("input", "light-project-input light-contact-edit-input");
+      bindContactDetailTextField(firstNameInput, "firstName", "first_name_blur");
+      const lastNameInput = document.createElement("input");
+      lastNameInput.className = "light-contact-detail-name-input";
       lastNameInput.type = "text";
       lastNameInput.placeholder = "Last name";
       lastNameInput.autocomplete = "family-name";
+      lastNameInput.setAttribute("aria-label", "Last name");
       lastNameInput.dataset.contactEditField = "last_name";
-      lastNameInput.addEventListener("input", () => updateContactDetailDraftAndSchedule({ lastName: lastNameInput.value }));
-      lastNameInput.addEventListener("blur", () => {
-        void flushContactDetailAutosave({ reason: "last_name_blur" });
-      });
-      nameGrid.append(
-        lightContactEditField("First name", firstNameInput),
-        lightContactEditField("Last name", lastNameInput),
-      );
+      bindContactDetailTextField(lastNameInput, "lastName", "last_name_blur");
+      nameEdit.append(firstNameInput, lastNameInput);
 
-      const summaryInput = el("textarea", "light-project-input light-contact-edit-input light-contact-edit-textarea");
+      const summaryView = el("p", "light-contact-detail-summary", "");
+      const summaryInput = document.createElement("textarea");
+      summaryInput.className = "light-contact-detail-summary-input";
       summaryInput.placeholder = "Description";
-      summaryInput.rows = 4;
+      summaryInput.setAttribute("aria-label", "Description");
       summaryInput.dataset.contactEditField = "summary";
-      summaryInput.addEventListener("input", () => updateContactDetailDraftAndSchedule({ summary: summaryInput.value }));
-      summaryInput.addEventListener("blur", () => {
-        void flushContactDetailAutosave({ reason: "summary_blur" });
-      });
+      summaryInput.rows = 3;
+      bindContactDetailTextField(summaryInput, "summary", "summary_blur");
+      const saveStatus = el("p", "light-contact-detail-save-status", "Saved");
+      saveStatus.dataset.contactAutosaveStatus = "idle";
+      saveStatus.dataset.contactSaveState = "idle";
+      heroCopy.append(titleView, nameEdit, summaryView, summaryInput, saveStatus);
+      hero.append(avatarWell, heroCopy);
 
-      const emailInput = el("input", "light-project-input light-contact-edit-input");
-      emailInput.type = "email";
-      emailInput.placeholder = "Email";
-      emailInput.autocomplete = "email";
-      emailInput.dataset.contactEditField = "email";
-      emailInput.addEventListener("input", () => updateContactDetailDraftAndSchedule({ email: emailInput.value }));
-      emailInput.addEventListener("blur", () => {
-        void flushContactDetailAutosave({ reason: "email_blur" });
-      });
+      const contactSection = el("section", "light-info-section");
+      contactSection.append(lightSectionTitle("Contact"));
+      const contactCard = el("div", "light-card light-info-card");
+      const emailField = buildContactDetailFieldRow("mail", "connect", "Email", "email", "email");
+      const phoneField = buildContactDetailFieldRow("phone", "contacts", "Phone", "phone", "tel");
+      contactCard.append(emailField.row, phoneField.row);
+      contactSection.append(contactCard);
 
-      const phoneInput = el("input", "light-project-input light-contact-edit-input");
-      phoneInput.type = "tel";
-      phoneInput.placeholder = "Phone";
-      phoneInput.autocomplete = "tel";
-      phoneInput.dataset.contactEditField = "phone";
-      phoneInput.addEventListener("input", () => updateContactDetailDraftAndSchedule({ phone: phoneInput.value }));
-      phoneInput.addEventListener("blur", () => {
-        void flushContactDetailAutosave({ reason: "phone_blur" });
-      });
-
-      const activitySection = el("section", "light-contact-activity-section");
-      activitySection.append(lightSectionTitle("Activity"));
-      const activityRows = el("div", "light-contact-activity-rows");
-      const activityActions = el("div", "light-contact-activity-actions");
-      const addActivity = el("button", "light-reminder-action-button", "Add activity");
-      addActivity.type = "button";
-      addActivity.dataset.contactActivityAdd = "true";
-      addActivity.addEventListener("click", event => {
-        event.preventDefault();
-        addContactDetailActivityRow();
-      });
-      activityActions.append(addActivity);
-      activitySection.append(activityRows, activityActions);
-
-      const connected = el("div", "light-contact-detail-connected");
-      form.append(
-        header,
-        nameGrid,
-        lightContactEditField("Description", summaryInput),
-        lightContactEditField("Email", emailInput),
-        lightContactEditField("Phone", phoneInput),
-        activitySection,
-      );
-      page.append(form, connected);
+      const activityHost = el("div", "light-contact-detail-activity-host");
+      const notesHost = el("div", "light-contact-detail-notes-host");
+      const connectedHost = el("div", "light-contact-detail-connected");
+      page.append(hero, contactSection, activityHost, notesHost, connectedHost);
       contactDetailPageRefs = {
         page,
-        form,
-        avatar,
-        title,
-        detail,
-        status,
-        changePhoto,
-        removePhoto,
+        actionSlot,
+        avatarMount,
+        photoButton,
         photoInput,
-        nameGrid,
+        removePhoto,
+        titleView,
+        nameEdit,
         firstNameInput,
         lastNameInput,
+        summaryView,
         summaryInput,
-        emailInput,
-        phoneInput,
-        activitySection,
-        activityRows,
-        connected,
+        saveStatus,
+        emailField,
+        phoneField,
+        activityHost,
+        notesHost,
+        connectedHost,
       };
       contactDetailPageNode = page;
       contactDetailPageContactId = contactId;
@@ -6435,17 +6472,6 @@
     ensureContactEditDraft(contact);
     syncContactDetailEditor();
     return contactDetailPageNode;
-  }
-
-  function lightContactEditField(label, control) {
-    const field = el("label", "light-contact-edit-field");
-    field.append(el("span", "light-contact-edit-label", label));
-    field.append(control);
-    return field;
-  }
-
-  function lightContactEditPage() {
-    return lightContactDetailPage();
   }
 
   function lightCalendarPage() {
@@ -10891,8 +10917,7 @@
       "note-detail": "selectedNoteId",
       "task-detail": "selectedTaskId",
       "project-detail": "selectedProjectId",
-      "contact-detail": "selectedContactId",
-      "contact-edit": "selectedContactId"
+      "contact-detail": "selectedContactId"
     })[String(route || "")] || "";
   }
 
@@ -10905,8 +10930,7 @@
       "note-detail": "notes",
       "task-detail": "tasks",
       "project-detail": "projects",
-      "contact-detail": "contacts",
-      "contact-edit": "contacts"
+      "contact-detail": "contacts"
     })[String(route || "")] || "";
   }
 
@@ -11061,7 +11085,7 @@
 
   function isContactsSurfaceRoute(route) {
     const value = String(route || "").trim();
-    return value === "contacts" || value === "contact-detail" || value === "contact-edit";
+    return value === "contacts" || value === "contact-detail";
   }
 
   function resetContactsSearchIfLeavingContacts(nextRoute, currentRoute = state.route) {
@@ -11073,7 +11097,7 @@
 
   function isContactDetailEditorRoute(route = state.route) {
     const value = String(route || "").trim();
-    return value === "contact-detail" || value === "contact-edit";
+    return value === "contact-detail";
   }
 
   function runAfterContactDetailFlush(nextRoute, selectionPatch, callback) {
@@ -11093,11 +11117,9 @@
       return true;
     }
     void flushContactDetailAutosave({ reason: "route_change" }).then(result => {
-      if (result === false) {
-        syncContactDetailEditor();
-        return;
+      if (result !== false) {
+        clearContactEditDraft();
       }
-      clearContactEditDraft();
       callback();
     });
     return false;
@@ -11340,16 +11362,16 @@
   function lightContactCopy(contact) {
     const meta = contact.metadata || {};
     const activity = Array.isArray(meta.activity) && meta.activity.length ? meta.activity[0] : "";
-    return lightTextStack(contactDisplayTitle(contact), `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
+    return lightTextStack(contactDisplayName(contact), `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
   }
 
   function lightAvatar(contact, size = "") {
     const meta = contact.metadata || {};
     const photo = String(meta.photo || "");
-    const initials = contactAvatarText(contact);
+    const initials = contactInitials(contact);
     const hasPhoto = Boolean(photo);
     const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : initials);
-    avatar.setAttribute("aria-label", contactDisplayTitle(contact));
+    avatar.setAttribute("aria-label", contactDisplayName(contact));
     avatar.dataset.contactId = contact.id;
     if (hasPhoto) {
       avatar.dataset.photo = photo;
@@ -12024,8 +12046,7 @@
       "note-detail",
       "task-detail",
       "project-detail",
-      "contact-detail",
-      "contact-edit"
+      "contact-detail"
     ].includes(String(route || ""));
   }
 
