@@ -582,8 +582,17 @@ async function startCalendarMotionProbe(page, scenario) {
       const first = samples[0];
       const end = samples[samples.length - 1];
       const distinctScrollLeft = [...new Set(samples.map(sample => sample.scrollLeft))];
-      const motionStart = samples.find(sample => sample.scrollLeft !== first.scrollLeft) || first;
-      const motionEnd = [...samples].reverse().find(sample => sample.scrollLeft !== motionStart.scrollLeft) || end;
+      const afterTrigger = samples[1] || first;
+      const postTriggerSamples = samples.slice(2);
+      const positionedStart = postTriggerSamples.find(sample => sample.scrollLeft !== afterTrigger.scrollLeft) || afterTrigger;
+      const motionStart = positionedStart;
+      let motionEnd = end;
+      const lastNonFinalIndex = samples.reduce((lastIndex, sample, index) => (
+        sample.scrollLeft !== end.scrollLeft ? index : lastIndex
+      ), -1);
+      if (lastNonFinalIndex >= 0 && lastNonFinalIndex + 1 < samples.length) {
+        motionEnd = samples[lastNonFinalIndex + 1];
+      }
       return {
         action_kind: actionKind,
         target_day: String(targetDay || "").trim(),
