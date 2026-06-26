@@ -559,6 +559,8 @@ def run_local_thread_compose_browser_proof(extra_args: list[str]) -> int:
         [
             "--page-url",
             "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+            "--api-token",
+            "proof-token",
             "--report-dir",
             str((ROOT / ".tmp" / "proof-local-thread-compose-browser").resolve()),
             "--timeout-ms",

@@ -863,6 +863,7 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     thread_composer_state = function_block(app, "threadComposerStateForCard")
     send_thread_composer_turn = function_block(app, "sendThreadComposerTurn")
     pending_outbound_messages = function_block(app, "pendingOutboundMessages")
+    feed_display_cards = function_block(app, "feedDisplayCards")
     refresh_open_transcript_detail = function_block(app, "refreshOpenTranscriptDetail")
 
     assert "threadComposerDrafts: {}," in app
@@ -875,6 +876,8 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     assert "refreshOpenTranscriptDetail();" in render_fn
     assert "if (shouldPollHostedTurnStatus()) {" in load_turn_status
     assert 'snapshot = await loadHostedTurnStatus(turnId);' in load_turn_status
+    assert "composer_managed: true," in load_turn_status
+    assert "pending_user_attachments: Array.isArray(snapshot?.pending_user_attachments) && snapshot.pending_user_attachments.length" in load_turn_status
     assert "const content = renderTranscriptDetailContent(card);" in show_transcript
     assert "const messages = transcriptDetailMessages(card);" in render_transcript_detail_content
     assert "const composer = renderThreadComposer(card);" in render_transcript_detail_content
@@ -895,6 +898,8 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     assert 'form.append("files", queued.file, queued.name);' in send_thread_composer_turn
     assert 'body: { text: draft.text,' in send_thread_composer_turn
     assert "await refreshCardsFromVmSnapshot({ reason: \"thread_composer_send\", render: false });" in send_thread_composer_turn
+    assert "const pendingThreadId = cardThreadId(pendingCard);" in feed_display_cards
+    assert "if (pendingThreadId && cardThreadId(card) === pendingThreadId) {" in feed_display_cards
     assert "existing.replaceWith(next);" in refresh_open_transcript_detail
     assert "attachments: normalizedAttachments(card?.pending_user_attachments)" in pending_outbound_messages
     assert ".thread-composer {" in styles

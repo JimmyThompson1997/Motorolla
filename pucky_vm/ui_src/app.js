@@ -1452,10 +1452,22 @@
 
   async function loadTurnStatus(options = {}) {
     try {
+      const currentTurn = normalizeTurnStatus(state.turn);
       const turnId = turnStatusTurnId(state.turn);
       let snapshot;
       if (shouldPollHostedTurnStatus()) {
         snapshot = await loadHostedTurnStatus(turnId);
+        snapshot = {
+          ...snapshot,
+          composer_managed: true,
+          configured: snapshot?.configured ?? currentTurn.configured,
+          user_transcript: String(snapshot?.user_transcript || currentTurn.user_transcript || ""),
+          requested_thread_id: String(snapshot?.requested_thread_id || currentTurn.requested_thread_id || ""),
+          requested_thread_mode: String(snapshot?.requested_thread_mode || currentTurn.requested_thread_mode || ""),
+          pending_user_attachments: Array.isArray(snapshot?.pending_user_attachments) && snapshot.pending_user_attachments.length
+            ? snapshot.pending_user_attachments
+            : currentTurn.pending_user_attachments,
+        };
       } else {
         snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
       }
@@ -9821,12 +9833,6 @@
     if (!active && !failed) {
       return null;
     }
-    const hasPersistedCard = (Array.isArray(cards) ? cards : []).some(card =>
-      cardSessionId(card) === turnId || String(card?.card_id || "").trim() === turnId
-    );
-    if (hasPersistedCard) {
-      return null;
-    }
     const requestedThreadId = turnRequestedThreadId(normalized);
     const timestamp = turnStatusTimestamp(normalized) || new Date().toISOString();
     const pendingState = pendingTurnState(normalized);
@@ -9856,7 +9862,21 @@
   function feedDisplayCards(cards = state.cards) {
     const base = Array.isArray(cards) ? cards.filter(Boolean) : [];
     const pendingCard = pendingTurnCard(state.turn, base);
-    return pendingCard ? [pendingCard, ...base] : base;
+    if (!pendingCard) {
+      return base;
+    }
+    const pendingSessionId = cardSessionId(pendingCard);
+    const pendingThreadId = cardThreadId(pendingCard);
+    const visibleBase = base.filter(card => {
+      if (cardSessionId(card) === pendingSessionId || String(card?.card_id || "").trim() === pendingSessionId) {
+        return false;
+      }
+      if (pendingThreadId && cardThreadId(card) === pendingThreadId) {
+        return false;
+      }
+      return true;
+    });
+    return [pendingCard, ...visibleBase];
   }
 
   function filteredFeedCards(cards) {
