@@ -165,9 +165,18 @@ def test_projects_pin_browser_proof_covers_section_toggle_and_detail_contract() 
     assert "unpinning into a collapsed recent section should auto-expand it" in source
     assert "pin button click should not leave the projects route" in source
     assert "project copy overlaps pin button" in source
+    assert "gridTemplateColumns" in source
+    assert "copyWidth" in source
+    assert "rowWidth" in source
+    assert "titleScrollWidth" in source
+    assert "titleClientWidth" in source
+    assert "project copy lane collapsed toward icon width" in source
+    assert "proof title should not truncate" in source
     assert "rollback should restore the pinned section collapse state" in source
     assert "project detail did not open from project copy tap" in source
     assert "baseline-projects-list.png" in source
+    assert "baseline-projects-first-three-rows.png" in source
+    assert "baseline-projects-first-row.png" in source
     assert "after-pin.png" in source
     assert "after-unpin.png" in source
     assert "failure-rollback.png" in source

@@ -1512,6 +1512,7 @@ def test_projects_pin_rows_clone_notes_section_toggle_and_right_side_pin_contrac
     project_time_block = css_block(styles, ".light-project-row-time")
     project_pin_button_block = css_block(styles, ".light-project-pin-button")
     project_pin_icon_block = css_block(styles, ".light-project-pin-button .material-icon")
+    project_flat_row_block = css_block(styles, ".light-project-row.is-flat-feed")
 
     assert "projectsSectionsExpanded: { pinned: true, recent: true }," in app
     assert "projectPinPending: {}," in app
@@ -1560,8 +1561,10 @@ def test_projects_pin_rows_clone_notes_section_toggle_and_right_side_pin_contrac
     assert "flex-direction: column;" in projects_feed_block
     assert "width: 100%;" in projects_section_header_block
     assert "justify-content: space-between;" in projects_section_header_block
+    assert ".light-project-row {\n  min-height: 92px;\n  grid-template-columns: 48px minmax(0, 1fr);" not in styles
     assert "grid-template-columns: minmax(0, 1fr) auto;" in project_row_block
     assert "padding: 12px 0;" in project_row_block
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in project_flat_row_block
     assert "display: flex;" in project_meta_block
     assert "gap: 10px;" in project_meta_block
     assert "overflow: hidden;" in project_summary_block

@@ -188,6 +188,34 @@ async function saveScreenshot(page, dir, name) {
   return target;
 }
 
+async function saveRowCropScreenshot(page, dir, name, rowIds, options = {}) {
+  const target = path.join(dir, name);
+  const clip = await page.evaluate(({ ids, padding }) => {
+    const rows = ids
+      .map(id => document.querySelector(`.light-project-row[data-project-id="${id}"]`))
+      .filter(Boolean);
+    if (!rows.length) {
+      return null;
+    }
+    const rects = rows.map(row => row.getBoundingClientRect());
+    const left = Math.max(0, Math.min(...rects.map(rect => rect.left)) - padding);
+    const top = Math.max(0, Math.min(...rects.map(rect => rect.top)) - padding);
+    const right = Math.min(window.innerWidth, Math.max(...rects.map(rect => rect.right)) + padding);
+    const bottom = Math.min(window.innerHeight, Math.max(...rects.map(rect => rect.bottom)) + padding);
+    return {
+      x: Math.floor(left),
+      y: Math.floor(top),
+      width: Math.max(1, Math.ceil(right - left)),
+      height: Math.max(1, Math.ceil(bottom - top))
+    };
+  }, { ids: rowIds, padding: options.padding ?? 8 });
+  if (!clip) {
+    throw new Error(`Unable to capture ${name}: rows not found`);
+  }
+  await page.screenshot({ path: target, clip });
+  return target;
+}
+
 async function waitForProofRows(page, runId, timeoutMs) {
   const selector = `.light-project-row[data-project-id^="${runId}-"]`;
   await page.locator(selector).first().waitFor({ state: "visible", timeout: timeoutMs });
@@ -224,23 +252,32 @@ async function readProjectsView(page, runId) {
       };
     });
     const rows = [...document.querySelectorAll(".light-project-row")].map(row => {
+      const title = row.querySelector("strong");
       const copy = row.querySelector(".light-project-feed-copy");
       const pin = row.querySelector(".light-project-pin-button");
       const summary = row.querySelector(".light-project-row-summary");
       const time = row.querySelector(".light-project-row-time");
+      const rowRect = row.getBoundingClientRect();
+      const titleRect = title?.getBoundingClientRect();
       const copyRect = copy?.getBoundingClientRect();
       const pinRect = pin?.getBoundingClientRect();
       const pinStyle = pin ? window.getComputedStyle(pin) : null;
       return {
         id: String(row.getAttribute("data-project-id") || ""),
-        title: String(row.querySelector("strong")?.textContent || "").trim(),
+        title: String(title?.textContent || "").trim(),
         pinned: String(row.getAttribute("data-project-pinned") || ""),
         summary: String(summary?.textContent || "").trim(),
         time: String(time?.textContent || "").trim(),
+        rowWidth: rowRect ? Math.round(rowRect.width) : 0,
+        titleWidth: titleRect ? Math.round(titleRect.width) : 0,
+        titleClientWidth: title ? Math.round(title.clientWidth) : 0,
+        titleScrollWidth: title ? Math.round(title.scrollWidth) : 0,
+        copyWidth: copyRect ? Math.round(copyRect.width) : 0,
         copyRight: copyRect ? copyRect.right : 0,
         pinLeft: pinRect ? pinRect.left : 0,
         pinWidth: pinRect ? Math.round(pinRect.width) : 0,
         pinHeight: pinRect ? Math.round(pinRect.height) : 0,
+        gridTemplateColumns: window.getComputedStyle(row).gridTemplateColumns || "",
         pinBackground: pinStyle ? pinStyle.backgroundColor : "",
         pinBorderWidth: pinStyle ? pinStyle.borderTopWidth : "",
         pinBorderRadius: pinStyle ? pinStyle.borderTopLeftRadius : "",
@@ -304,6 +341,9 @@ async function runViewportScenario(browser, config, runId, viewport, theme) {
     assert.deepEqual(baseline.proofGroups.pinned, [seed.pinned.title], `${viewport.label}/${theme}: pinned proof rows did not start in the pinned section`);
     assert.deepEqual(baseline.proofGroups.recent, [seed.failure.title, seed.recent.title], `${viewport.label}/${theme}: recent proof rows did not start in updated order`);
     assert(baseline.proofRows.every(row => row.leadingIcons === 0), `${viewport.label}/${theme}: leading folder icon regression detected`);
+    assert(baseline.proofRows.every(row => !String(row.gridTemplateColumns || "").trim().startsWith("48px")), `${viewport.label}/${theme}: project row still computes an icon-column grid (${baseline.proofRows.map(row => row.gridTemplateColumns).join(", ")})`);
+    assert(baseline.proofRows.every(row => row.copyWidth >= Math.round(row.rowWidth * 0.45)), `${viewport.label}/${theme}: project copy lane collapsed toward icon width`);
+    assert(baseline.proofRows.every(row => row.titleScrollWidth <= row.titleClientWidth + 1), `${viewport.label}/${theme}: proof title should not truncate`);
     assert(baseline.proofRows.every(row => row.copyRight < row.pinLeft), `${viewport.label}/${theme}: project copy overlaps pin button`);
     assert(baseline.proofRows.every(row => row.pinWidth === 36 && row.pinHeight === 36), `${viewport.label}/${theme}: expected 36px project pin buttons`);
     assert(baseline.proofRows.every(row => row.pinBackground === "rgba(0, 0, 0, 0)"), `${viewport.label}/${theme}: expected transparent project pin buttons`);
@@ -311,6 +351,14 @@ async function runViewportScenario(browser, config, runId, viewport, theme) {
     assert(baseline.proofRows.every(row => row.pinBorderRadius === "0px"), `${viewport.label}/${theme}: expected uncapsuled project pin buttons`);
     assert(baseline.proofRows.every(row => row.pinBoxShadow === "none"), `${viewport.label}/${theme}: expected project pin buttons without shadow chrome`);
     result.screenshots.baseline = await saveScreenshot(page, scenarioDir, "baseline-projects-list.png");
+    result.screenshots.baselineFirstThreeRows = await saveRowCropScreenshot(page, scenarioDir, "baseline-projects-first-three-rows.png", [
+      seed.pinned.id,
+      seed.failure.id,
+      seed.recent.id,
+    ]);
+    result.screenshots.baselineFirstRow = await saveRowCropScreenshot(page, scenarioDir, "baseline-projects-first-row.png", [
+      seed.pinned.id,
+    ]);
 
     await page.locator('.light-projects-section-header[data-projects-section="pinned"]').click();
     const pinnedCollapsed = await readProjectsView(page, runId);

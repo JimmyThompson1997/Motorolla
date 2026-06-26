@@ -6577,12 +6577,6 @@ button {
   gap: 8px;
 }
 
-.light-project-row {
-  min-height: 92px;
-  grid-template-columns: 48px minmax(0, 1fr);
-  align-items: center;
-}
-
 .light-feed-surface.is-flat-feed {
   gap: 0;
 }
@@ -6637,6 +6631,8 @@ button {
 
 .light-project-row.is-flat-feed {
   min-height: 88px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
