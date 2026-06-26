@@ -56,6 +56,7 @@
   const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
   const CALENDAR_CLUSTER_WINDOW_MS = 15 * 60 * 1000;
   const CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX = 180;
+  const CALENDAR_DAY_RAIL_SELECTION_MOTION_MS = 180;
   const TURN_UI_TIMELINE_MAX_EVENTS = 64;
   const SETTINGS_SURFACE_RELOAD_KEY = "pucky.cover.settings_surface_reload.v1";
   const DEFAULT_LINKS_API_BASE = "https://pucky.fly.dev";
@@ -185,6 +186,8 @@
     selectedCalendarDate: calendarTodayDateKey(resolveCalendarTimeZone(initialCalendarTimeZonePreference)),
     calendarDayRailStartMonth: "",
     calendarDayRailEndMonth: "",
+    pendingCalendarDayRailSelectionMotion: null,
+    calendarDayRailSelectionAnimation: null,
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
     taskMutationPending: {},
@@ -6512,11 +6515,18 @@
     input.value = selectedCalendarDateKey();
     input.setAttribute("aria-label", "Calendar date");
     input.addEventListener("change", () => {
-      state.selectedCalendarDate = normalizeCalendarDateKey(input.value) || calendarTodayDateKey();
-      render();
+      selectCalendarDate(input.value, { source: "date-input" });
     });
     field.append(input);
     controls.append(field);
+    if (selectedCalendarDateKey() !== calendarTodayDateKey()) {
+      const today = el("button", "light-calendar-today-button", "Today");
+      today.type = "button";
+      today.addEventListener("click", () => {
+        selectCalendarDate(calendarTodayDateKey(), { source: "today-button" });
+      });
+      controls.append(today);
+    }
     top.append(el("h2", "light-date-picker-title", calendarMonthHeading()), controls);
     const strip = el("div", "light-calendar-day-strip");
     strip.setAttribute("aria-label", "Calendar days");
@@ -6526,17 +6536,124 @@
     return picker;
   }
 
-  function buildCalendarDayRail(strip, dayKey) {
+  function prefersReducedMotion() {
+    try {
+      return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function compareCalendarDateKeys(left, right) {
+    const normalizedLeft = normalizeCalendarDateKey(left);
+    const normalizedRight = normalizeCalendarDateKey(right);
+    if (!normalizedLeft && !normalizedRight) {
+      return 0;
+    }
+    if (!normalizedLeft) {
+      return -1;
+    }
+    if (!normalizedRight) {
+      return 1;
+    }
+    return normalizedLeft.localeCompare(normalizedRight);
+  }
+
+  function calendarDayRailCurrentStrip() {
+    return document.querySelector('.light-shell[data-light-route="calendar"] .light-calendar-day-strip');
+  }
+
+  function calendarDayRailTargetLeft(strip, dayKey, alignment = "center") {
+    if (!(strip instanceof HTMLElement)) {
+      return 0;
+    }
+    const normalized = normalizeCalendarDateKey(dayKey) || selectedCalendarDateKey();
+    const chip = strip.querySelector(`.light-calendar-day-chip[data-day="${normalized}"]`);
+    if (!(chip instanceof HTMLElement)) {
+      return Math.max(0, Number(strip.scrollLeft || 0));
+    }
+    const maxLeft = Math.max(0, strip.scrollWidth - strip.clientWidth);
+    const currentLeft = Number(strip.scrollLeft || 0);
+    const stripRect = strip.getBoundingClientRect();
+    const chipRect = chip.getBoundingClientRect();
+    const unclamped = alignment === "start"
+      ? currentLeft + (chipRect.left - stripRect.left) - 12
+      : alignment === "end"
+        ? currentLeft + (chipRect.right - stripRect.right) + 12
+        : currentLeft + ((chipRect.left + (chipRect.width / 2)) - (stripRect.left + (stripRect.width / 2)));
+    return Math.max(0, Math.min(maxLeft, unclamped));
+  }
+
+  function clearCalendarDayRailSelectionAnimation() {
+    const active = state.calendarDayRailSelectionAnimation;
+    if (active && active.rafId) {
+      cancelAnimationFrame(active.rafId);
+    }
+    state.calendarDayRailSelectionAnimation = null;
+  }
+
+  function captureCalendarDayRailSelectionMotion(normalized, options = {}) {
+    const current = selectedCalendarDateKey();
+    if (prefersReducedMotion()) {
+      return {
+        source: String(options.source || "selection").trim() || "selection",
+        animate: false,
+        fromDayKey: current,
+        toDayKey: normalized,
+        direction: compareCalendarDateKeys(normalized, current),
+      };
+    }
+    const strip = calendarDayRailCurrentStrip();
+    if (!(strip instanceof HTMLElement)) {
+      return null;
+    }
+    return {
+      source: String(options.source || "selection").trim() || "selection",
+      animate: true,
+      fromDayKey: current,
+      toDayKey: normalized,
+      previousScrollLeft: Number(strip.scrollLeft || 0),
+      direction: compareCalendarDateKeys(normalized, current),
+    };
+  }
+
+  function selectCalendarDate(dayKey, options = {}) {
+    const normalized = normalizeCalendarDateKey(dayKey) || calendarTodayDateKey();
+    if (normalized === selectedCalendarDateKey()) {
+      return false;
+    }
+    clearCalendarDayRailSelectionAnimation();
+    const motion = captureCalendarDayRailSelectionMotion(normalized, options);
+    state.pendingCalendarDayRailSelectionMotion = motion;
+    state.selectedCalendarDate = normalized;
+    render();
+    return true;
+  }
+
+  function buildCalendarDayRail(strip, dayKey = selectedCalendarDateKey()) {
     if (!(strip instanceof HTMLElement)) {
       return;
     }
+    clearCalendarDayRailSelectionAnimation();
     const targetDayKey = normalizeCalendarDateKey(dayKey) || selectedCalendarDateKey();
     const monthKeys = calendarDayRailMonthKeys(targetDayKey);
     strip.replaceChildren();
     state.calendarDayRailStartMonth = "";
     state.calendarDayRailEndMonth = "";
     monthKeys.forEach(monthKey => appendCalendarDayRailMonth(strip, monthKey));
-    queueCalendarDayStripCenter(strip, targetDayKey);
+    const motion = state.pendingCalendarDayRailSelectionMotion
+      && state.pendingCalendarDayRailSelectionMotion.toDayKey === targetDayKey
+      ? state.pendingCalendarDayRailSelectionMotion
+      : null;
+    state.pendingCalendarDayRailSelectionMotion = null;
+    if (motion) {
+      strip.dataset.selectionMotionSource = String(motion.source || "selection").trim() || "selection";
+      queueCalendarDayStripSelectionMotion(strip, targetDayKey, motion);
+    } else {
+      delete strip.dataset.selectionMotionSource;
+      queueCalendarDayStripCenter(strip, targetDayKey);
+    }
+    queueCalendarDayRailContinuation(strip);
   }
 
   function appendCalendarDayRailMonth(strip, monthKey) {
@@ -6574,7 +6691,7 @@
   }
 
   function queueCalendarDayRailContinuation(strip) {
-    if (!(strip instanceof HTMLElement) || strip.dataset.railContinuationQueued === "1") {
+    if (!(strip instanceof HTMLElement) || strip.dataset.railContinuationQueued === "1" || strip.dataset.selectionMotionActive === "1") {
       return;
     }
     strip.dataset.railContinuationQueued = "1";
@@ -6611,16 +6728,88 @@
     requestAnimationFrame(() => centerCalendarDayStrip(strip, dayKey));
   }
 
+  function queueCalendarDayStripSelectionMotion(strip, dayKey = selectedCalendarDateKey(), motion = null) {
+    const run = () => {
+      if (!(strip instanceof HTMLElement)) {
+        return;
+      }
+      const normalized = normalizeCalendarDateKey(dayKey) || selectedCalendarDateKey();
+      const targetLeft = calendarDayRailTargetLeft(strip, normalized, "center");
+      const previousDayKey = normalizeCalendarDateKey(motion?.fromDayKey);
+      let startLeft = targetLeft;
+      if (previousDayKey && strip.querySelector(`.light-calendar-day-chip[data-day="${previousDayKey}"]`)) {
+        startLeft = calendarDayRailTargetLeft(strip, previousDayKey, "center");
+      } else {
+        const direction = Number(motion?.direction || compareCalendarDateKeys(normalized, previousDayKey));
+        if (direction > 0) {
+          startLeft = calendarDayRailTargetLeft(strip, normalized, "start");
+        } else if (direction < 0) {
+          startLeft = calendarDayRailTargetLeft(strip, normalized, "end");
+        }
+      }
+      if (!motion || motion.animate === false || typeof requestAnimationFrame !== "function") {
+        delete strip.dataset.selectionMotionActive;
+        animateCalendarDayRailSelection(strip, startLeft, targetLeft, { animate: false });
+        return;
+      }
+      strip.dataset.selectionMotionActive = "1";
+      strip.scrollLeft = startLeft;
+      requestAnimationFrame(() => animateCalendarDayRailSelection(strip, startLeft, targetLeft, motion));
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      run();
+      return;
+    }
+    requestAnimationFrame(run);
+  }
+
   function centerCalendarDayStrip(strip, dayKey = selectedCalendarDateKey()) {
     if (!(strip instanceof HTMLElement)) {
       return;
     }
-    const chip = strip.querySelector(`.light-calendar-day-chip[data-day="${dayKey}"]`);
-    if (!(chip instanceof HTMLElement)) {
+    strip.scrollLeft = calendarDayRailTargetLeft(strip, dayKey, "center");
+  }
+
+  function animateCalendarDayRailSelection(strip, startLeft, targetLeft, motion) {
+    if (!(strip instanceof HTMLElement)) {
       return;
     }
-    const left = chip.offsetLeft - Math.max(0, (strip.clientWidth - chip.offsetWidth) / 2);
-    strip.scrollTo({ left: Math.max(0, left), behavior: "auto" });
+    const fromLeft = Math.max(0, Number(startLeft || 0));
+    const finalLeft = Math.max(0, Number(targetLeft || 0));
+    clearCalendarDayRailSelectionAnimation();
+    const previousScrollSnapType = strip.style.scrollSnapType;
+    strip.style.scrollSnapType = "none";
+    strip.scrollLeft = fromLeft;
+    if (!motion?.animate || Math.abs(finalLeft - fromLeft) < 1) {
+      strip.style.scrollSnapType = previousScrollSnapType;
+      delete strip.dataset.selectionMotionActive;
+      strip.scrollLeft = finalLeft;
+      queueCalendarDayRailContinuation(strip);
+      return;
+    }
+    const easeOutCubic = value => 1 - Math.pow(1 - value, 3);
+    const startedAt = performance.now();
+    const animation = { strip, rafId: 0 };
+    state.calendarDayRailSelectionAnimation = animation;
+    const step = now => {
+      if (state.calendarDayRailSelectionAnimation !== animation) {
+        return;
+      }
+      const elapsed = Math.min(1, (now - startedAt) / CALENDAR_DAY_RAIL_SELECTION_MOTION_MS);
+      strip.scrollLeft = fromLeft + (finalLeft - fromLeft) * easeOutCubic(elapsed);
+      if (elapsed < 1) {
+        animation.rafId = requestAnimationFrame(step);
+        return;
+      }
+      strip.scrollLeft = finalLeft;
+      if (state.calendarDayRailSelectionAnimation === animation) {
+        state.calendarDayRailSelectionAnimation = null;
+      }
+      strip.style.scrollSnapType = previousScrollSnapType;
+      delete strip.dataset.selectionMotionActive;
+      queueCalendarDayRailContinuation(strip);
+    };
+    animation.rafId = requestAnimationFrame(step);
   }
 
   function lightCalendarAgendaHeading() {
@@ -6675,8 +6864,7 @@
     chip.dataset.day = dayKey;
     chip.dataset.month = calendarMonthKey(dayKey);
     chip.addEventListener("click", () => {
-      state.selectedCalendarDate = dayKey;
-      render();
+      selectCalendarDate(dayKey, { source: "day-chip" });
     });
     const dots = el("span", "light-calendar-day-dots");
     calendarDayMarkers(dayKey).forEach(tone => dots.append(el("span", `light-calendar-day-dot ${tone}`, "")));

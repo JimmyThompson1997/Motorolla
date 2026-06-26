@@ -568,17 +568,27 @@ def run_local_calendar_proof(extra_args: list[str]) -> int:
 
 def run_live_calendar_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    live_root = (ROOT / ".tmp" / "proof-live-calendar").resolve()
+    base_url = append_refresh_param("https://pucky.fly.dev", refresh_seed)
     return run_node_proofs(
         node_binary,
         [
-            (
-                "tools/proofs/cover/cover_calendar_playwright.mjs",
-                [
-                    "--report-dir",
-                    str((ROOT / ".tmp" / "proof-live-calendar").resolve()),
-                    *extra_args,
-                ],
-            ),
+            *[
+                (
+                    "tools/proofs/cover/cover_calendar_playwright.mjs",
+                    [
+                        "--browser",
+                        browser_name,
+                        "--base-url",
+                        base_url,
+                        "--report-dir",
+                        str((live_root / browser_name).resolve()),
+                        *extra_args,
+                    ],
+                )
+                for browser_name in ("chromium", "webkit")
+            ],
         ],
         env=proof_env(),
     )

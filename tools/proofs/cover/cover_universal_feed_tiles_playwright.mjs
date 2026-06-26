@@ -505,7 +505,7 @@ async function collectDetailMetrics(page) {
     }
     const detail = document.querySelector(detailSelector);
     const reminderCard = document.querySelector('[data-reminder-detail-card="true"]');
-    const reminderShell = document.querySelector(".light-shell");
+    const reminderDetailTextSource = detail || reminderCard || document.querySelector(".light-shell");
     return {
       currentRoute: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       detailVisible: Boolean(detail && (!detail.hasAttribute("aria-hidden") || detail.getAttribute("aria-hidden") === "false" || detail.classList.contains("is-open"))),
@@ -518,8 +518,8 @@ async function collectDetailMetrics(page) {
       reminderConnectedRows: document.querySelectorAll('[data-reminder-detail-feed="true"] [data-reminder-detail-tile]').length,
       reminderActionRows: document.querySelectorAll('[data-reminder-action-row="true"]').length,
       reminderDetailChevrons: document.querySelectorAll(".light-reminder-detail-feed .light-chevron").length,
-      reminderHasStatusText: String(reminderShell?.textContent || "").includes("Status:"),
-      reminderHasDeliveryText: String(reminderShell?.textContent || "").includes("Delivery:"),
+      reminderHasStatusText: String(reminderDetailTextSource?.textContent || "").includes("Status:"),
+      reminderHasDeliveryText: String(reminderDetailTextSource?.textContent || "").includes("Delivery:"),
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
       connectedLinkedRecordSections: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"]').length,
       detailHeroCount: document.querySelectorAll(".light-detail-hero").length,

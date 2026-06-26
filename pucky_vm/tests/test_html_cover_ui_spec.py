@@ -503,6 +503,31 @@ def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() 
     assert "calendarEventDayLabel(related)" not in project_connected_detail
 
 
+def test_calendar_day_rail_selection_motion_contracts() -> None:
+    app = read("app.js")
+
+    light_date_picker = function_block(app, "lightDatePicker")
+    light_calendar_day_chip = function_block(app, "lightCalendarDayChip")
+    build_calendar_day_rail = function_block(app, "buildCalendarDayRail")
+    continue_calendar_day_rail = function_block(app, "continueCalendarDayRail")
+    center_calendar_day_strip = function_block(app, "centerCalendarDayStrip")
+    select_calendar_date = function_block(app, "selectCalendarDate")
+    capture_motion = function_block(app, "captureCalendarDayRailSelectionMotion")
+
+    assert "function prefersReducedMotion() {" in app
+    assert 'selectCalendarDate(input.value, { source: "date-input" });' in light_date_picker
+    assert 'selectCalendarDate(calendarTodayDateKey(), { source: "today-button" });' in light_date_picker
+    assert 'selectCalendarDate(dayKey, { source: "day-chip" });' in light_calendar_day_chip
+    assert "captureCalendarDayRailSelectionMotion(normalized, options)" in select_calendar_date
+    assert "state.pendingCalendarDayRailSelectionMotion = motion;" in select_calendar_date
+    assert 'strip.dataset.selectionMotionSource = String(motion.source || "selection").trim() || "selection";' in build_calendar_day_rail
+    assert "queueCalendarDayStripSelectionMotion(strip, targetDayKey, motion);" in build_calendar_day_rail
+    assert "animateCalendarDayRailSelection(strip, startLeft, targetLeft, motion)" in app
+    assert "if (prefersReducedMotion()) {" in capture_motion
+    assert 'behavior: "auto"' not in center_calendar_day_strip
+    assert "state.selectedCalendarDate" not in continue_calendar_day_rail
+
+
 def test_calendar_day_rail_styles_and_contracts_follow_continuous_month_model() -> None:
     app = read("app.js")
     styles = read("styles.css")
@@ -682,13 +707,13 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'if (bucket.loaded && !workspaceItems(collection).length) {' in light_workspace_status
     assert 'headerChrome: lightDatePicker()' in light_calendar_page
     assert 'page.append(lightDatePicker())' not in light_calendar_page
-    assert 'const today = el("button", "light-calendar-today-button", "Today");' not in light_date_picker
+    assert 'const today = el("button", "light-calendar-today-button", "Today");' in light_date_picker
     assert 'action: lightIconButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' in light_calendar_page
     assert 'action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")' not in light_calendar_page
     assert "if (options.headerChrome)" in light_header
     assert 'if (bucket.error) {' in light_calendar_page
     assert 'if (!bucket.loaded) {' in light_calendar_page
-    assert ".light-calendar-today-button" not in styles
+    assert ".light-calendar-today-button" in styles
     calendar_settings_button = css_block(styles, ".light-calendar-settings-button")
     assert "background: transparent;" in calendar_settings_button
     assert "border: none;" in calendar_settings_button
@@ -715,8 +740,8 @@ def test_calendar_uses_one_full_collection_for_day_rail_and_selected_day() -> No
     assert 'reason: "calendar_day_change"' not in light_date_picker
     assert 'void loadWorkspaceForRoute("calendar", {' not in light_calendar_day_chip
     assert 'reason: "calendar_day_click"' not in light_calendar_day_chip
-    assert 'state.selectedCalendarDate = dayKey;' in light_calendar_day_chip
-    assert 'render();' in light_calendar_day_chip
+    assert 'state.selectedCalendarDate = dayKey;' not in light_calendar_day_chip
+    assert 'selectCalendarDate(dayKey, { source: "day-chip" });' in light_calendar_day_chip
 
 
 def test_perf_debug_contract_exposes_route_ready_render_bridge_and_poll_metrics() -> None:
