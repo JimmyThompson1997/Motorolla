@@ -127,6 +127,114 @@ def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(t
         server.shutdown()
 
 
+def test_workspace_api_app_badges_tracks_seen_state_and_reminder_activity(tmp_path: Path) -> None:
+    server, base_url = start_server(tmp_path)
+    try:
+        baseline = request_json(base_url, "/api/app-badges", token="test-token")
+        baseline_badges = baseline["badges"]
+
+        meeting_note = request_json(
+            base_url,
+            "/api/workspace/meeting-notes",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "proof-meeting-note-badge",
+                "title": "Proof Meeting Note Badge",
+                "summary": "Unread until opened from detail.",
+                "date": "2026-06-26",
+                "start_at_ms": 1782462000000,
+                "end_at_ms": 1782465600000,
+            },
+        )
+        task = request_json(
+            base_url,
+            "/api/workspace/tasks",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "proof-task-badge",
+                "title": "Proof Task Badge",
+                "summary": "Unread task badge proof.",
+                "status": "todo",
+                "due_at_ms": 1782469200000,
+            },
+        )
+        request_json(
+            base_url,
+            "/api/workspace/reminders",
+            method="POST",
+            token="test-token",
+            body={
+                "id": "proof-reminder-badge",
+                "title": "Proof Reminder Badge",
+                "summary": "Live reminder badge proof.",
+                "status": "open",
+                "due_at_ms": 1782469800000,
+            },
+        )
+
+        after_create = request_json(base_url, "/api/app-badges", token="test-token")
+        created_badges = after_create["badges"]
+        assert created_badges["meeting-notes"]["count"] == baseline_badges["meeting-notes"]["count"] + 1
+        assert created_badges["tasks"]["count"] == baseline_badges["tasks"]["count"] + 1
+        assert created_badges["reminders"]["count"] == baseline_badges["reminders"]["count"] + 1
+        assert created_badges["inbox"]["kind"] == "unread"
+        assert created_badges["reminders"]["kind"] == "active"
+
+        task_seen = request_json(
+            base_url,
+            "/api/workspace/tasks/proof-task-badge",
+            method="PATCH",
+            token="test-token",
+            body={"metadata": {"seen_at_ms": task["content_updated_at_ms"]}},
+        )
+        note_seen = request_json(
+            base_url,
+            "/api/workspace/meeting-notes/proof-meeting-note-badge",
+            method="PATCH",
+            token="test-token",
+            body={"metadata": {"seen_at_ms": meeting_note["content_updated_at_ms"]}},
+        )
+        assert task_seen["metadata"]["seen_at_ms"] == task["content_updated_at_ms"]
+        assert task_seen["content_updated_at_ms"] == task["content_updated_at_ms"]
+        assert note_seen["metadata"]["seen_at_ms"] == meeting_note["content_updated_at_ms"]
+        assert note_seen["content_updated_at_ms"] == meeting_note["content_updated_at_ms"]
+
+        after_seen = request_json(base_url, "/api/app-badges", token="test-token")
+        seen_badges = after_seen["badges"]
+        assert seen_badges["meeting-notes"]["count"] == baseline_badges["meeting-notes"]["count"]
+        assert seen_badges["tasks"]["count"] == baseline_badges["tasks"]["count"]
+        assert seen_badges["reminders"]["count"] == baseline_badges["reminders"]["count"] + 1
+
+        task_updated = request_json(
+            base_url,
+            "/api/workspace/tasks/proof-task-badge",
+            method="PATCH",
+            token="test-token",
+            body={"summary": "Task changed after being seen."},
+        )
+        note_updated = request_json(
+            base_url,
+            "/api/workspace/meeting-notes/proof-meeting-note-badge",
+            method="PATCH",
+            token="test-token",
+            body={"summary": "Meeting note changed after being seen."},
+        )
+        assert task_updated["content_updated_at_ms"] > task_seen["metadata"]["seen_at_ms"]
+        assert note_updated["content_updated_at_ms"] > note_seen["metadata"]["seen_at_ms"]
+
+        after_update = request_json(base_url, "/api/app-badges", token="test-token")
+        updated_badges = after_update["badges"]
+        assert updated_badges["meeting-notes"]["count"] == baseline_badges["meeting-notes"]["count"] + 1
+        assert updated_badges["tasks"]["count"] == baseline_badges["tasks"]["count"] + 1
+        assert updated_badges["reminders"]["count"] == baseline_badges["reminders"]["count"] + 1
+        assert after_update["schema"] == "pucky.app_badges.v1"
+        assert int(after_update["generated_at_ms"]) > 0
+    finally:
+        server.shutdown()
+
+
 def test_workspace_api_allows_same_origin_public_task_status_and_archive_patch_only(tmp_path: Path) -> None:
     server, base_url = start_server(tmp_path)
     try:

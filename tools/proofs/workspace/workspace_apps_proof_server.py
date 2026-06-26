@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import tempfile
 import threading
@@ -27,9 +28,122 @@ class FakeTTS:
 
 class FakeCodex:
     ready = True
+    thread_id = "proof-thread-1"
+
+    def __init__(self) -> None:
+        self.turns: list[str] = []
+        self.output_schemas: list[dict[str, object] | None] = []
+        self.developer_instructions: list[str] = []
+        self.renamed_titles: list[str] = []
 
     def start(self) -> None:
         return None
+
+    def _derived_thread_id(self, text: str, thread_id: str | None) -> str:
+        explicit = str(thread_id or "").strip()
+        if explicit:
+            return explicit
+        for line in text.splitlines():
+            if line.strip().startswith("- meeting_id:"):
+                meeting_id = line.split(":", 1)[-1].strip()
+                if meeting_id:
+                    return f"proof-thread-{meeting_id}"
+        return f"proof-thread-{len(self.turns) + 1}"
+
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        output_schema: dict[str, object] | None = None,
+        developer_instructions: str | None = None,
+        **_kwargs,
+    ):
+        self.turns.append(text)
+        self.output_schemas.append(output_schema)
+        self.developer_instructions.append(str(developer_instructions or ""))
+        used_thread_id = self._derived_thread_id(text, thread_id)
+        self.thread_id = used_thread_id
+        if "Meeting Mode Agent Handoff" in text:
+            transcript_text = "[00:00-00:02] Jimmy: Call the client.\n[00:02-00:05] Jack: I will prepare the notes."
+            reply_text = json.dumps(
+                {
+                    "reply_text": "Meeting processed for the workspace proof server.",
+                    "card_title": "Meeting Notes",
+                    "card_icon": "mic",
+                    "recording_title": "Workspace Proof Meeting",
+                    "attachments": [
+                        {
+                            "title": "Meeting Transcript",
+                            "mime_type": "text/plain",
+                            "kind": "text",
+                            "text": transcript_text,
+                        }
+                    ],
+                    "graph_records": [
+                        {
+                            "record_key": "meeting_note",
+                            "kind": "note",
+                            "payload": {
+                                "id": "workspace-proof-meeting-note",
+                                "title": "Workspace Proof Meeting",
+                                "summary": "Workspace proof meeting note.",
+                                "html": "<h1>Workspace Proof Meeting</h1><p>Workspace proof meeting note.</p>",
+                            },
+                        }
+                    ],
+                    "graph_links": [],
+                    "connected_records": [
+                        {"record_key": "meeting_note"}
+                    ],
+                    "transcript_text": transcript_text,
+                }
+            )
+        else:
+            reply_text = json.dumps(
+                {
+                    "reply_text": "Workspace proof reply.",
+                    "card_title": "Workspace Proof",
+                    "card_icon": "bolt",
+                    "recording_title": "",
+                    "attachments": [],
+                    "graph_records": [],
+                    "graph_links": [],
+                    "connected_records": [],
+                }
+            )
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": reply_text,
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": str(thread_id or "").strip(),
+                "thread_mode": "existing" if thread_id else "new",
+                "reused_existing_thread": bool(thread_id),
+                "fallback_reason": "",
+            },
+        )()
+
+    def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None:
+        self.renamed_titles.append(str(title or "").strip())
+        if thread_id:
+            self.thread_id = str(thread_id)
+
+    def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        del retries, delay
+        return {
+            "runtime": "codex",
+            "thread_id": str(thread_id or self.thread_id or "proof-thread-1"),
+            "thread_title": self.renamed_titles[-1] if self.renamed_titles else "proof-thread-1",
+            "rollout_path": "",
+            "source": "workspace-proof-server",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+        }
 
     def runtime_call(self, method: str, params: dict[str, object] | None = None, *, timeout: float | None = None) -> dict[str, object]:
         return {"method": method, "params": params or {}}

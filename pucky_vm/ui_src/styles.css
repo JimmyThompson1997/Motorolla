@@ -3746,9 +3746,14 @@ button {
   grid-template-columns: minmax(0, 1fr);
   justify-items: center;
   gap: 9px;
-  position: relative;
   color: var(--home-shell-text);
   text-align: center;
+}
+
+.light-app-icon-badge-anchor {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
 }
 
 .light-app-icon {
@@ -3791,8 +3796,8 @@ button {
 
 .light-app-badge {
   position: absolute;
-  top: -4px;
-  right: 6px;
+  top: -11px;
+  right: -11px;
   min-width: 22px;
   height: 22px;
   border-radius: 999px;

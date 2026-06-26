@@ -128,6 +128,75 @@ def test_semantic_icon_registry_drives_home_tiles_and_reverse_lookup() -> None:
     assert '{ route: "inbox", label: "Inbox", semantic: "inbox", kind: "real" }' in routes
 
 
+def test_home_app_badges_use_registry_and_icon_anchored_layout() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    light_home_page = function_block(app, "lightHomePage")
+    light_app_tile = function_block(app, "lightAppTile")
+    light_app_badge = function_block(app, "lightAppBadge")
+    light_app_badge_descriptor = function_block(app, "lightAppBadgeDescriptor")
+
+    assert 'const HOME_APP_BADGE_REGISTRY = Object.freeze({' in app
+    assert 'inbox: { kind: "unread" }' in app
+    assert 'meetings: { kind: "unread" }' in app
+    assert '"meeting-notes": { kind: "unread" }' in app
+    assert 'tasks: { kind: "unread" }' in app
+    assert 'reminders: { kind: "active" }' in app
+    assert 'appBadges: { items: {}, loaded: false, loading: false, error: "", lastRefreshAt: 0 },' in app
+    assert 'if (!state.appBadges.loaded && !state.appBadges.loading) {' in light_home_page
+    assert 'void loadAppBadges({ render: true });' in light_home_page
+    assert 'const iconAnchor = el("span", "light-app-icon-badge-anchor");' in light_app_tile
+    assert "iconAnchor.append(icon);" in light_app_tile
+    assert "if (badge) {" in light_app_tile
+    assert "iconAnchor.append(badge);" in light_app_tile
+    assert 'tile.append(iconAnchor, el("span", "light-app-label", app.label));' in light_app_tile
+    assert 'const descriptor = lightAppBadgeDescriptor(app);' in light_app_badge
+    assert 'const count = lightAppBadgeCount(descriptor);' in light_app_badge
+    assert 'badge.setAttribute("aria-label", `${app.label} ${descriptor.kind} count ${count}`);' in light_app_badge
+    assert 'return HOME_APP_BADGE_REGISTRY[String(app?.route || "").trim().toLowerCase()] || null;' in light_app_badge_descriptor
+    assert ".light-app-icon-badge-anchor {" in styles
+    assert ".light-app-badge {" in styles
+    assert "position: relative;" in css_block(styles, ".light-app-icon-badge-anchor")
+    app_badge_styles = css_block(styles, ".light-app-badge")
+    assert "position: absolute;" in app_badge_styles
+    assert "top:" in app_badge_styles
+    assert "right:" in app_badge_styles
+
+
+def test_task_and_meeting_note_details_mark_records_seen_through_detail_open_flows() -> None:
+    app = read("app.js")
+    meeting_note_detail = function_block(app, "lightMeetingNoteDetailPage")
+    task_workspace_page = function_block(app, "lightTaskWorkspacePage")
+    task_detail_page = function_block(app, "lightTaskDetailPage")
+    ensure_seen = function_block(app, "ensureWorkspaceRecordSeen")
+
+    assert "function ensureWorkspaceRecordSeen(collection, record) {" in app
+    assert 'const normalizedCollection = String(collection || "").trim();' in ensure_seen
+    assert 'const contentUpdatedAtMs = workspaceRecordContentUpdatedAtMs(record);' in ensure_seen
+    assert 'const seenAtMs = workspaceRecordSeenAtMs(record);' in ensure_seen
+    assert "applyWorkspaceSeenMutation(normalizedCollection, normalizedRecordId, record, contentUpdatedAtMs);" in ensure_seen
+    assert 'void ensureWorkspaceRecordSeen("meeting-notes", meeting);' in meeting_note_detail
+    assert 'void ensureWorkspaceRecordSeen("tasks", task);' in task_workspace_page
+    assert 'void ensureWorkspaceRecordSeen("tasks", task);' in task_detail_page
+    assert "function applyWorkspaceSeenMutation(collection, recordId, record, seenAtMs) {" in app
+
+
+def test_meeting_cards_preserve_feed_read_identity_and_reminders_stay_active_count_based() -> None:
+    app = read("app.js")
+    meeting_card = function_block(app, "meetingCardFromRecord")
+    mark_card_read = function_block(app, "markCardRead")
+
+    assert 'const feedItem = card.feed_item && typeof card.feed_item === "object" ? card.feed_item : {};' in meeting_card
+    assert 'card_id: String(card.card_id || feedItem.card_id || ""),' in meeting_card
+    assert 'read: typeof card.read === "boolean" ? card.read : Boolean(feedItem.read),' in meeting_card
+    assert "meeting_record: card" in meeting_card
+    assert "syncMeetingReadStateFromCard(card, true);" in mark_card_read
+    assert "syncLocalAppBadgeState();" in mark_card_read
+    assert "function lightAppBadgeCount(descriptor) {" in app
+    assert 'if (descriptor.kind === "active") {' in app
+    assert "const count = activeReminderCount();" in app
+
+
 def test_contacts_and_calendar_routes_apply_semantic_shell_accents() -> None:
     app = read("app.js")
     canonical_view = function_block(app, "homeShellCanonicalView")

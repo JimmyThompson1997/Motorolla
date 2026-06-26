@@ -347,6 +347,36 @@ class FeedStore:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM feed_cards").fetchone()
             return int(row["count"]) if row is not None else 0
 
+    def unread_group_count(self, *, include_archived: bool = False) -> int:
+        with self._lock:
+            archived_clause = "" if include_archived else "AND archived = 0"
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM feed_cards
+                WHERE deleted = 0
+                  {archived_clause}
+                ORDER BY updated_at_ms DESC, card_id ASC
+                """,
+                (),
+            ).fetchall()
+            seen_group_keys: set[str] = set()
+            count = 0
+            for row in rows:
+                try:
+                    origin = json.loads(str(row["origin_json"] or "") or "{}")
+                except Exception:
+                    origin = {}
+                if not isinstance(origin, dict):
+                    origin = {}
+                group_key = self._thread_group_key(origin, str(row["card_id"]))
+                if group_key in seen_group_keys:
+                    continue
+                seen_group_keys.add(group_key)
+                if not bool(int(row["read"])):
+                    count += 1
+            return count
+
     def apply_action(self, *, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
         clean_client_action_id = str(client_action_id or "").strip()
         clean_card_id = str(card_id or "").strip()

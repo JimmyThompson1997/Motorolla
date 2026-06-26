@@ -466,16 +466,37 @@ def _normalize_task_metadata(metadata: dict[str, Any], payload: dict[str, object
         normalized["description"] = description
     checklist = payload.get("checklist") if "checklist" in payload else normalized.get("checklist")
     normalized["checklist"] = _normalize_task_checklist(checklist)
+    seen_at_ms = _int_or_zero(payload.get("seen_at_ms") or normalized.get("seen_at_ms"))
+    if seen_at_ms > 0:
+        normalized["seen_at_ms"] = seen_at_ms
+    else:
+        normalized.pop("seen_at_ms", None)
+    content_updated_at_ms = _int_or_zero(payload.get("content_updated_at_ms") or normalized.get("content_updated_at_ms"))
+    if content_updated_at_ms > 0:
+        normalized["content_updated_at_ms"] = content_updated_at_ms
+    else:
+        normalized.pop("content_updated_at_ms", None)
     normalized["status"] = normalize_task_status(payload.get("status") or normalized.get("status") or "")
     return normalized
 
 
-def _normalize_meeting_note_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+def _normalize_meeting_note_metadata(metadata: dict[str, Any], payload: dict[str, object] | None = None) -> dict[str, Any]:
     normalized = dict(metadata or {})
+    payload = payload or {}
     source = str(normalized.get("source") or "").strip()
     if source and not str(normalized.get("source_id") or "").strip():
         normalized["source_id"] = source
     normalized.pop("source", None)
+    seen_at_ms = _int_or_zero(payload.get("seen_at_ms") or normalized.get("seen_at_ms"))
+    if seen_at_ms > 0:
+        normalized["seen_at_ms"] = seen_at_ms
+    else:
+        normalized.pop("seen_at_ms", None)
+    content_updated_at_ms = _int_or_zero(payload.get("content_updated_at_ms") or normalized.get("content_updated_at_ms"))
+    if content_updated_at_ms > 0:
+        normalized["content_updated_at_ms"] = content_updated_at_ms
+    else:
+        normalized.pop("content_updated_at_ms", None)
     return normalized
 
 
@@ -607,6 +628,9 @@ class WorkspaceStore:
         normalized = self._normalize_record(kind, record_id, payload, now_ms=now)
         if kind == "task":
             self._apply_task_completion_timestamp(normalized, existing_record, payload, now_ms=now)
+            self._apply_record_content_timestamp(normalized, existing_record, now_ms=now)
+        if kind == "meeting_note":
+            self._apply_record_content_timestamp(normalized, existing_record, now_ms=now)
         if kind == "note":
             self._apply_note_content_timestamp(normalized, existing_record, now_ms=now)
         created_at_ms = int(existing_record["created_at_ms"]) if existing_record else now
@@ -648,6 +672,16 @@ class WorkspaceStore:
         return _int_or_zero(record.get("content_updated_at_ms"))
 
     @staticmethod
+    def _record_seen_at_ms(record: dict[str, object] | None) -> int:
+        if not isinstance(record, dict):
+            return 0
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        value = _int_or_zero(metadata.get("seen_at_ms")) if isinstance(metadata, dict) else 0
+        if value > 0:
+            return value
+        return _int_or_zero(record.get("seen_at_ms"))
+
+    @staticmethod
     def _task_completed_at_ms(record: dict[str, object] | None) -> int:
         if not isinstance(record, dict):
             return 0
@@ -669,6 +703,29 @@ class WorkspaceStore:
             str(current.get("title") or "") != str(record.get("title") or "")
             or str(current.get("summary") or "") != str(record.get("summary") or "")
             or str(current.get("html") or "") != str(record.get("html") or "")
+            or current_metadata != next_metadata
+        )
+
+    @classmethod
+    def _record_content_changed(cls, current: dict[str, object] | None, record: dict[str, object]) -> bool:
+        if current is None:
+            return True
+        current_metadata = dict(current.get("metadata") or {})
+        next_metadata = dict(record.get("metadata") or {})
+        for metadata in (current_metadata, next_metadata):
+            metadata.pop("seen_at_ms", None)
+            metadata.pop("content_updated_at_ms", None)
+            metadata.pop("completed_at_ms", None)
+        return (
+            str(current.get("title") or "") != str(record.get("title") or "")
+            or str(current.get("summary") or "") != str(record.get("summary") or "")
+            or str(current.get("status") or "") != str(record.get("status") or "")
+            or _int_or_zero(current.get("start_at_ms")) != _int_or_zero(record.get("start_at_ms"))
+            or _int_or_zero(current.get("end_at_ms")) != _int_or_zero(record.get("end_at_ms"))
+            or _int_or_zero(current.get("due_at_ms")) != _int_or_zero(record.get("due_at_ms"))
+            or _int_or_zero(current.get("event_at_ms")) != _int_or_zero(record.get("event_at_ms"))
+            or bool(current.get("archived")) != bool(record.get("archived"))
+            or bool(current.get("deleted")) != bool(record.get("deleted"))
             or current_metadata != next_metadata
         )
 
@@ -696,6 +753,31 @@ class WorkspaceStore:
                 resolved = now_ms
             else:
                 resolved = previous or now_ms
+        metadata["content_updated_at_ms"] = resolved
+        record["metadata"] = metadata
+        record["content_updated_at_ms"] = resolved
+
+    @classmethod
+    def _apply_record_content_timestamp(
+        cls,
+        record: dict[str, object],
+        current: dict[str, object] | None,
+        *,
+        now_ms: int,
+    ) -> None:
+        metadata = dict(record.get("metadata") or {})
+        previous = cls._note_content_updated_at_ms(current)
+        explicit = _int_or_zero(record.get("content_updated_at_ms") or metadata.get("content_updated_at_ms"))
+        if explicit > 0 and explicit != previous:
+            resolved = explicit
+        elif current is None:
+            resolved = _int_or_zero(record.get("updated_at_ms") or record.get("created_at_ms")) or now_ms
+        elif cls._record_content_changed(current, record):
+            resolved = now_ms
+        else:
+            resolved = previous or _int_or_zero(current.get("created_at_ms")) or now_ms
+        if resolved <= 0:
+            resolved = previous or now_ms
         metadata["content_updated_at_ms"] = resolved
         record["metadata"] = metadata
         record["content_updated_at_ms"] = resolved
@@ -1699,7 +1781,7 @@ class WorkspaceStore:
             status = status or "open"
             metadata = _normalize_reminder_metadata(metadata, status=status)
         if kind == "meeting_note":
-            metadata = _normalize_meeting_note_metadata(metadata)
+            metadata = _normalize_meeting_note_metadata(metadata, payload)
         if kind == "note":
             metadata = _normalize_note_metadata(metadata)
         if kind == "project":
@@ -1845,7 +1927,14 @@ class WorkspaceStore:
             completed_at_ms = _int_or_zero(metadata.get("completed_at_ms"))
             if completed_at_ms > 0:
                 record["completed_at_ms"] = completed_at_ms
+            content_updated_at_ms = self._note_content_updated_at_ms(record) or int(row["created_at_ms"] or 0) or int(row["updated_at_ms"] or 0)
+            if content_updated_at_ms > 0:
+                record["content_updated_at_ms"] = content_updated_at_ms
             record["derived_group"] = derive_task_group(record, self.now_ms())
+        if row["kind"] == "meeting_note":
+            content_updated_at_ms = self._note_content_updated_at_ms(record) or int(row["created_at_ms"] or 0) or int(row["updated_at_ms"] or 0)
+            if content_updated_at_ms > 0:
+                record["content_updated_at_ms"] = content_updated_at_ms
         if row["kind"] == "note":
             record["content_updated_at_ms"] = self._note_content_updated_at_ms(record) or int(row["created_at_ms"] or 0) or int(row["updated_at_ms"] or 0)
         record["links"] = self.linked_records(str(row["kind"]), str(row["record_id"]))

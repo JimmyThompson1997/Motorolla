@@ -27,6 +27,7 @@ def has_source(name: str) -> bool:
 def test_browser_facing_proofs_drop_legacy_web_ui_token_precedence() -> None:
     script_names = [
         "cover_calendar_playwright.mjs",
+        "cover_home_app_badges_playwright.mjs",
         "cover_links_scroll_probe.mjs",
         "cover_notes_feed_centering_real_vm_playwright.mjs",
         "cover_notes_detail_flash_playwright.mjs",
@@ -102,6 +103,45 @@ def test_workspace_apps_browser_proof_loads_directly_without_browser_unlock() ->
     assert LEGACY_UNLOCK_LABEL not in source
     assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
     assert LEGACY_BROWSER_TOKEN_KEY not in source
+
+
+def test_home_app_labels_browser_proof_captures_badge_geometry_contract() -> None:
+    source = read_source("cover_home_app_labels_playwright.mjs")
+
+    assert 'const BADGE_CENTER_EPSILON = 3;' in source
+    assert 'const badge = tile.querySelector(".light-app-badge");' in source
+    assert 'badge: badge ? domRect(badge) : null,' in source
+    assert 'badgeCount: badge ? String(badge.textContent || "").trim() : "",' in source
+    assert "const badgeCenterX = item.badge.left + item.badge.width / 2;" in source
+    assert "const badgeCenterY = item.badge.top + item.badge.height / 2;" in source
+    assert "const expectedCenterX = item.icon.right;" in source
+    assert "const expectedCenterY = item.icon.top;" in source
+    assert "assert(badgeDriftX <= BADGE_CENTER_EPSILON" in source
+    assert "assert(badgeDriftY <= BADGE_CENTER_EPSILON" in source
+
+
+def test_home_app_badges_browser_proof_covers_cross_app_unread_semantics() -> None:
+    source = read_source("cover_home_app_badges_playwright.mjs")
+
+    assert "PUCKY_API_TOKEN" in source
+    assert '"/api/app-badges"' in source
+    assert '"/api/meetings"' in source
+    assert '"/api/workspace/meeting-notes"' in source
+    assert '"/api/workspace/tasks"' in source
+    assert '"/api/workspace/reminders"' in source
+    assert '"Inbox"' in source
+    assert '"Meetings"' in source
+    assert '"Meeting Notes"' in source
+    assert '"Tasks"' in source
+    assert '"Reminders"' in source
+    assert '"Connect"' in source
+    assert '"Calendar"' in source
+    assert '"Projects"' in source
+    assert '".light-app-icon-badge-anchor"' in source
+    assert "metadata.seen_at_ms" in source
+    assert "content_updated_at_ms" in source
+    assert "badge geometry" in source.lower()
+    assert "read/open the reminder detail without acting" in source.lower()
 
 
 def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:

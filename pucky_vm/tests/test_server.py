@@ -2767,6 +2767,95 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(item["origin"]["failure_stage"], "meeting_agent_call")
         self.assertIn("database is locked", item["summary"])
 
+    def test_meeting_compact_list_preserves_feed_read_identity(self) -> None:
+        meeting_id = "meeting-20260626-120000-device-badges"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-26T12:00:00Z",
+                "stopped_at": "2026-06-26T12:00:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-badges",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting_badges.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-badges").decode("ascii"),
+            },
+        )
+
+        compact = {}
+        for _ in range(20):
+            meetings = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            compact = next((item for item in meetings if item.get("meeting_id") == meeting_id), {})
+            if compact:
+                break
+            time.sleep(0.05)
+
+        self.assertEqual(compact["meeting_id"], meeting_id)
+        self.assertEqual(compact["card_id"], f"pucky_card_{meeting_id}")
+        self.assertFalse(compact["read"])
+
+        mark_read = self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "meeting_badge_mark_read",
+                "card_id": compact["card_id"],
+                "action": "mark_read",
+            },
+        )
+        self.assertTrue(mark_read["ok"])
+        self.assertTrue(mark_read["item"]["read"])
+
+        updated = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"})
+        refreshed = next(item for item in updated["meetings"] if item["meeting_id"] == meeting_id)
+        self.assertTrue(refreshed["read"])
+
+        detail = self.get_json(f"/api/meetings/{meeting_id}", headers={"Authorization": "Bearer secret"})
+        self.assertTrue(detail["meeting"]["feed_item"]["read"])
+
+    def test_app_badges_share_meeting_feed_read_state_between_inbox_and_meetings(self) -> None:
+        baseline = self.get_json("/api/app-badges", headers={"Authorization": "Bearer secret"})
+        baseline_inbox = baseline["badges"]["inbox"]["count"]
+        baseline_meetings = baseline["badges"]["meetings"]["count"]
+        meeting_id = "meeting-20260626-120500-device-badge-counts"
+        self.post_json(
+            "/api/meetings",
+            {
+                "meeting_id": meeting_id,
+                "started_at": "2026-06-26T12:05:00Z",
+                "stopped_at": "2026-06-26T12:05:05Z",
+                "duration_ms": 5000,
+                "device_id": "device-badge-counts",
+                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting_badge_counts.m4a",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFmeeting-badge-counts").decode("ascii"),
+            },
+        )
+
+        compact = {}
+        for _ in range(20):
+            meetings = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"}).get("meetings", [])
+            compact = next((item for item in meetings if item.get("meeting_id") == meeting_id), {})
+            if compact:
+                break
+            time.sleep(0.05)
+
+        created = self.get_json("/api/app-badges", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(created["badges"]["inbox"]["count"], baseline_inbox + 1)
+        self.assertEqual(created["badges"]["meetings"]["count"], baseline_meetings + 1)
+
+        self.post_json(
+            "/api/feed/actions",
+            {
+                "client_action_id": "meeting_badge_counts_mark_read",
+                "card_id": compact["card_id"],
+                "action": "mark_read",
+            },
+        )
+        after_read = self.get_json("/api/app-badges", headers={"Authorization": "Bearer secret"})
+        self.assertEqual(after_read["badges"]["inbox"]["count"], baseline_inbox)
+        self.assertEqual(after_read["badges"]["meetings"]["count"], baseline_meetings)
+
     def test_failed_meeting_detail_synthesizes_missing_failed_card_metadata(self) -> None:
         meeting_id = "meeting-20260602-092000-device-real-failure"
         stale_record = {

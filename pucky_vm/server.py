@@ -3466,6 +3466,19 @@ class PuckyVoiceService:
             "meetings": meetings,
         }
 
+    def app_badges(self) -> dict[str, object]:
+        return {
+            "schema": "pucky.app_badges.v1",
+            "generated_at_ms": round(time.time() * 1000),
+            "badges": {
+                "inbox": {"count": self.feed.unread_group_count(include_archived=False), "kind": "unread"},
+                "meetings": {"count": self._unread_meeting_badge_count(), "kind": "unread"},
+                "meeting-notes": {"count": self._workspace_unread_badge_count("meeting-notes"), "kind": "unread"},
+                "tasks": {"count": self._workspace_unread_badge_count("tasks", exclude_done=True), "kind": "unread"},
+                "reminders": {"count": self._active_reminder_badge_count(), "kind": "active"},
+            },
+        }
+
     def meeting_detail(self, meeting_id: str) -> dict[str, object]:
         clean_id = _safe_meeting_id(meeting_id)
         if not clean_id:
@@ -3478,6 +3491,41 @@ class PuckyVoiceService:
                     "meeting": self._normalize_meeting_for_client(meeting, compact=False),
                 }
         raise KeyError(meeting_id)
+
+    def _workspace_unread_badge_count(self, collection: str, *, exclude_done: bool = False) -> int:
+        payload = self.workspace.list_records(collection, include_archived=False, include_deleted=False)
+        items = payload.get("items") if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return 0
+        count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if exclude_done and str(item.get("status") or "").strip() == "done":
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            seen_at_ms = int(metadata.get("seen_at_ms") or 0)
+            content_updated_at_ms = int(item.get("content_updated_at_ms") or metadata.get("content_updated_at_ms") or 0)
+            if content_updated_at_ms > seen_at_ms:
+                count += 1
+        return count
+
+    def _active_reminder_badge_count(self) -> int:
+        payload = self.workspace.list_records("reminders", include_archived=False, include_deleted=False)
+        items = payload.get("items") if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return 0
+        return sum(1 for item in items if isinstance(item, dict) and str(item.get("status") or "").strip() != "done")
+
+    def _unread_meeting_badge_count(self) -> int:
+        count = 0
+        for meeting in self._load_meetings():
+            if bool(meeting.get("archived")):
+                continue
+            feed_item = self._meeting_feed_item_for_client(meeting)
+            if isinstance(feed_item, dict) and not bool(feed_item.get("read")):
+                count += 1
+        return count
 
     def meeting_action(self, client_action_id: str, meeting_id: str, action: str) -> dict[str, object]:
         clean_action = str(action or "").strip().lower()
@@ -4644,6 +4692,71 @@ class PuckyVoiceService:
                 return dict(meeting)
         return None
 
+    def _meeting_feed_item_for_client(self, meeting: dict[str, object]) -> dict[str, object] | None:
+        card_id = str(meeting.get("card_id") or "").strip()
+        meeting_id = str(meeting.get("meeting_id") or "").strip()
+        if not card_id and meeting_id:
+            card_id = f"pucky_card_{meeting_id}"
+        persisted = meeting.get("feed_item") if isinstance(meeting.get("feed_item"), dict) else None
+        reconciled: dict[str, object] | None = None
+        if card_id:
+            current_item = self.feed.get_item(card_id)
+            if isinstance(current_item, dict):
+                reconciled = dict(self._reconcile_meeting_feed_item(current_item))
+                self._decorate_feed_item(reconciled)
+        if isinstance(persisted, dict) and isinstance(reconciled, dict):
+            merged = dict(persisted)
+            for key in (
+                "card_id",
+                "title",
+                "summary",
+                "icon",
+                "archived",
+                "read",
+                "deleted",
+                "card_kind",
+                "meeting_state",
+                "failure_stage",
+                "failure_reason",
+            ):
+                if key in reconciled:
+                    merged[key] = reconciled[key]
+            if isinstance(merged.get("card"), dict) or isinstance(reconciled.get("card"), dict):
+                merged_card = dict(merged.get("card") or {})
+                live_card = dict(reconciled.get("card") or {})
+                for key in (
+                    "title",
+                    "summary",
+                    "icon",
+                    "accent",
+                    "archived",
+                    "read",
+                    "deleted",
+                    "card_kind",
+                    "meeting_state",
+                    "failure_stage",
+                ):
+                    if key in live_card:
+                        merged_card[key] = live_card[key]
+                merged["card"] = merged_card
+            if isinstance(reconciled.get("origin"), dict):
+                merged_origin = dict(merged.get("origin") or {})
+                for key in ("card_kind", "meeting_state", "failure_stage"):
+                    if key in reconciled["origin"]:
+                        merged_origin[key] = reconciled["origin"][key]
+                merged["origin"] = merged_origin
+            self._decorate_feed_item(merged)
+            return merged
+        if isinstance(reconciled, dict):
+            return reconciled
+        if isinstance(persisted, dict):
+            reconciled = dict(persisted)
+            if card_id:
+                reconciled.setdefault("card_id", card_id)
+            self._decorate_feed_item(reconciled)
+            return reconciled
+        return None
+
     def _meeting_failed_card_payload(self, meeting: dict[str, object]) -> dict[str, object]:
         meeting_id = str(meeting.get("meeting_id") or "")
         reason = str(meeting.get("failure_reason") or "unknown error").strip()
@@ -4709,6 +4822,19 @@ class PuckyVoiceService:
                     patched_origin.pop("failure_stage", None)
                 patched_feed["origin"] = patched_origin
                 normalized["feed_item"] = patched_feed
+        feed_item = self._meeting_feed_item_for_client(normalized)
+        if isinstance(feed_item, dict):
+            normalized["feed_item"] = feed_item
+            normalized["card_id"] = str(feed_item.get("card_id") or normalized.get("card_id") or "")
+            normalized["read"] = bool(feed_item.get("read"))
+            if isinstance(feed_item.get("card"), dict):
+                normalized["card"] = dict(feed_item.get("card") or {})
+        elif "read" not in normalized:
+            normalized["read"] = bool(
+                normalized.get("feed_item", {}).get("read")
+                if isinstance(normalized.get("feed_item"), dict)
+                else False
+            )
         return self._compact_meeting(normalized) if compact else normalized
 
     @staticmethod
@@ -4740,6 +4866,7 @@ class PuckyVoiceService:
             "diarization_status",
             "agent",
             "card_id",
+            "read",
             "card",
             "connected_records",
             "failure_stage",

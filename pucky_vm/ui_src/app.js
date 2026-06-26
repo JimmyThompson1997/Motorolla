@@ -149,6 +149,14 @@
     "selectedProjectId",
     "selectedFeedId"
   ];
+  const HOME_APP_BADGE_REGISTRY = Object.freeze({
+    inbox: { kind: "unread" },
+    meetings: { kind: "unread" },
+    "meeting-notes": { kind: "unread" },
+    tasks: { kind: "unread" },
+    reminders: { kind: "active" }
+  });
+  const APP_BADGE_STALE_MS = 15000;
   let nativeProtectedAuthorization = "";
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
@@ -215,6 +223,7 @@
       "meeting-notes": initialWorkspaceBucketState(),
       reminders: initialWorkspaceBucketState()
     },
+    appBadges: { items: {}, loaded: false, loading: false, error: "", lastRefreshAt: 0 },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
@@ -2287,6 +2296,7 @@
         bucket.loaded = true;
         bucket.lastRefreshAt = refreshedAt;
         bucket.dirty = false;
+        syncLocalAppBadgeState();
       }
       recordPerfRouteDataEnd(`workspace:${collection}`);
     } catch (error) {
@@ -2337,6 +2347,263 @@
     };
   }
 
+  function meetingRecordCardId(record) {
+    return String(record?.card_id || record?.feed_item?.card_id || "").trim();
+  }
+
+  function meetingRecordRead(record) {
+    const read = typeof record?.read === "boolean"
+      ? record.read
+      : Boolean(record?.feed_item?.read);
+    const override = readOverrideForCard({
+      card_id: meetingRecordCardId(record),
+      session_id: String(record?.meeting_id || record?.session_id || "").trim(),
+      read
+    });
+    if (override !== null) {
+      return override;
+    }
+    return read;
+  }
+
+  function unreadInboxBadgeCountLocal() {
+    return state.cards.filter(card => !Boolean(card?.archived) && !Boolean(card?.deleted) && !isCardRead(card)).length;
+  }
+
+  function unreadMeetingsBadgeCountLocal() {
+    return visibleMeetingRecords().filter(meeting => !meetingRecordRead(meeting)).length;
+  }
+
+  function workspaceRecordContentUpdatedAtMs(record) {
+    const candidates = [
+      record?.content_updated_at_ms,
+      record?.metadata?.content_updated_at_ms,
+      record?.updated_at_ms,
+      record?.created_at_ms,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  function workspaceRecordSeenAtMs(record) {
+    const candidates = [
+      record?.metadata?.seen_at_ms,
+      record?.seen_at_ms,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  function workspaceRecordIsUnread(record) {
+    const contentUpdatedAtMs = workspaceRecordContentUpdatedAtMs(record);
+    if (!contentUpdatedAtMs) {
+      return false;
+    }
+    return contentUpdatedAtMs > workspaceRecordSeenAtMs(record);
+  }
+
+  function unreadMeetingNotesBadgeCountLocal() {
+    return workspaceItems("meeting-notes").filter(record => !Boolean(record?.archived) && !Boolean(record?.deleted) && workspaceRecordIsUnread(record)).length;
+  }
+
+  function unreadTasksBadgeCountLocal() {
+    return workspaceItems("tasks").filter(task =>
+      !Boolean(task?.archived)
+      && !Boolean(task?.deleted)
+      && String(task?.status || "").trim() !== "done"
+      && workspaceRecordIsUnread(task)
+    ).length;
+  }
+
+  function syncLocalAppBadgeState() {
+    const nextItems = state.appBadges.items && typeof state.appBadges.items === "object"
+      ? { ...state.appBadges.items }
+      : {};
+    let changed = false;
+    const applyLocalCount = (route, kind, count) => {
+      const key = String(route || "").trim();
+      if (!key) {
+        return;
+      }
+      const previous = nextItems[key] && typeof nextItems[key] === "object" ? nextItems[key] : {};
+      const normalizedCount = Math.max(0, Number(count || 0) || 0);
+      if (safeNumber(previous.count) === normalizedCount && String(previous.kind || "") === String(kind || "")) {
+        return;
+      }
+      nextItems[key] = { ...previous, kind: String(kind || ""), count: normalizedCount };
+      changed = true;
+    };
+    if (state.feedLastAppliedAt > 0) {
+      applyLocalCount("inbox", "unread", unreadInboxBadgeCountLocal());
+    }
+    if (state.meetings.loaded) {
+      applyLocalCount("meetings", "unread", unreadMeetingsBadgeCountLocal());
+    }
+    if (workspaceBucket("meeting-notes").loaded) {
+      applyLocalCount("meeting-notes", "unread", unreadMeetingNotesBadgeCountLocal());
+    }
+    if (workspaceBucket("tasks").loaded) {
+      applyLocalCount("tasks", "unread", unreadTasksBadgeCountLocal());
+    }
+    if (workspaceBucket("reminders").loaded) {
+      applyLocalCount("reminders", "active", activeReminderCount());
+    }
+    if (changed) {
+      state.appBadges.items = nextItems;
+    }
+    return changed;
+  }
+
+  function mergeWorkspaceRecordMetadata(record, metadataPatch) {
+    const metadata = record?.metadata && typeof record.metadata === "object"
+      ? { ...record.metadata }
+      : {};
+    return {
+      ...(record && typeof record === "object" ? record : {}),
+      metadata: {
+        ...metadata,
+        ...(metadataPatch && typeof metadataPatch === "object" ? metadataPatch : {})
+      }
+    };
+  }
+
+  function replaceWorkspaceRecordLocal(collection, recordId, nextRecord) {
+    const bucket = state.workspace[collection];
+    const normalizedRecordId = String(recordId || nextRecord?.id || nextRecord?.record_id || "").trim();
+    if (!bucket || !normalizedRecordId || !nextRecord || typeof nextRecord !== "object") {
+      return false;
+    }
+    let changed = false;
+    if (Array.isArray(bucket.items) && bucket.items.length) {
+      const nextItems = bucket.items.map(item => {
+        const itemId = String(item?.id || item?.record_id || "").trim();
+        if (itemId !== normalizedRecordId) {
+          return item;
+        }
+        changed = stableJsonFingerprint(item) !== stableJsonFingerprint(nextRecord);
+        return changed ? nextRecord : item;
+      });
+      if (changed) {
+        bucket.items = nextItems;
+        bucket.fingerprint = stableJsonFingerprint(nextItems);
+      }
+    }
+    rememberWorkspaceRecord(bucket, nextRecord, Date.now());
+    if (bucket.queryCache && typeof bucket.queryCache === "object") {
+      const nextCache = { ...bucket.queryCache };
+      Object.keys(nextCache).forEach(key => {
+        const entry = nextCache[key];
+        if (!entry || !Array.isArray(entry.items)) {
+          return;
+        }
+        let entryChanged = false;
+        const nextItems = entry.items.map(item => {
+          const itemId = String(item?.id || item?.record_id || "").trim();
+          if (itemId !== normalizedRecordId) {
+            return item;
+          }
+          entryChanged = stableJsonFingerprint(item) !== stableJsonFingerprint(nextRecord);
+          return entryChanged ? nextRecord : item;
+        });
+        if (!entryChanged) {
+          return;
+        }
+        nextCache[key] = {
+          ...entry,
+          items: nextItems,
+          fingerprint: stableJsonFingerprint(nextItems),
+          lastRefreshAt: Date.now()
+        };
+        changed = true;
+      });
+      bucket.queryCache = nextCache;
+    }
+    return changed;
+  }
+
+  function ensureWorkspaceRecordSeen(collection, record) {
+    const normalizedCollection = String(collection || "").trim();
+    const normalizedRecordId = String(record?.id || record?.record_id || "").trim();
+    if (!normalizedCollection || !normalizedRecordId || !record || typeof record !== "object") {
+      return;
+    }
+    const contentUpdatedAtMs = workspaceRecordContentUpdatedAtMs(record);
+    const seenAtMs = workspaceRecordSeenAtMs(record);
+    if (!contentUpdatedAtMs || contentUpdatedAtMs <= seenAtMs) {
+      return;
+    }
+    applyWorkspaceSeenMutation(normalizedCollection, normalizedRecordId, record, contentUpdatedAtMs);
+  }
+
+  function applyWorkspaceSeenMutation(collection, recordId, record, seenAtMs) {
+    const normalizedCollection = String(collection || "").trim();
+    const normalizedRecordId = String(recordId || "").trim();
+    const normalizedSeenAtMs = Math.max(0, Number(seenAtMs || 0) || 0);
+    if (!normalizedCollection || !normalizedRecordId || !normalizedSeenAtMs) {
+      return;
+    }
+    const previousRecord = workspaceRecordById(normalizedCollection, normalizedRecordId, record) || record;
+    const previousSeenAtMs = workspaceRecordSeenAtMs(previousRecord);
+    if (previousSeenAtMs >= normalizedSeenAtMs) {
+      return;
+    }
+    const optimisticRecord = mergeWorkspaceRecordMetadata(previousRecord, { seen_at_ms: normalizedSeenAtMs });
+    replaceWorkspaceRecordLocal(normalizedCollection, normalizedRecordId, optimisticRecord);
+    syncLocalAppBadgeState();
+    requestRender(`workspace-seen:${normalizedCollection}:${normalizedRecordId}:optimistic`);
+    void patchWorkspaceRecord(normalizedCollection, normalizedRecordId, {
+      metadata: { seen_at_ms: normalizedSeenAtMs }
+    }).then(updated => {
+      if (updated && typeof updated === "object") {
+        replaceWorkspaceRecordLocal(normalizedCollection, normalizedRecordId, updated);
+        syncLocalAppBadgeState();
+        requestRender(`workspace-seen:${normalizedCollection}:${normalizedRecordId}:confirmed`);
+      }
+    }).catch(error => {
+      replaceWorkspaceRecordLocal(normalizedCollection, normalizedRecordId, previousRecord);
+      syncLocalAppBadgeState();
+      requestRender(`workspace-seen:${normalizedCollection}:${normalizedRecordId}:rollback`);
+      showToast(String(error && error.message || error || "Unable to mark item seen"));
+    });
+  }
+
+  function syncMeetingReadStateFromCard(card, read) {
+    const normalizedCardId = String(card?.card_id || "").trim();
+    const normalizedSessionId = String(card?.session_id || "").trim();
+    if (!normalizedCardId && !normalizedSessionId) {
+      return;
+    }
+    state.meetings.records = state.meetings.records.map(item => {
+      const itemCardId = meetingRecordCardId(item);
+      const itemMeetingId = String(item?.meeting_id || "").trim();
+      if (normalizedCardId && itemCardId === normalizedCardId || normalizedSessionId && itemMeetingId === normalizedSessionId) {
+        const nextFeedItem = item?.feed_item && typeof item.feed_item === "object"
+          ? { ...item.feed_item, read: Boolean(read) }
+          : item?.feed_item;
+        const nextCard = item?.card && typeof item.card === "object"
+          ? { ...item.card, read: Boolean(read) }
+          : item?.card;
+        return {
+          ...item,
+          read: Boolean(read),
+          ...(nextFeedItem ? { feed_item: nextFeedItem } : {}),
+          ...(nextCard ? { card: nextCard } : {}),
+        };
+      }
+      return item;
+    });
+  }
+
   function normalizeFeedSnapshot(payload, source = "vm") {
     const cards = Array.isArray(payload?.items)
       ? payload.items
@@ -2362,6 +2629,7 @@
     reconcileReadOverrides();
     reconcileFocusedCardSelection();
     clearMissingFeedIconFilter();
+    syncLocalAppBadgeState();
     if (options.render !== false) {
       render();
     }
@@ -3944,6 +4212,7 @@
       }
       state.meetings.loaded = true;
       state.meetings.lastRefreshAt = Date.now();
+      syncLocalAppBadgeState();
       recordPerfRouteDataEnd("meetings:list");
     } catch (error) {
       state.meetings.error = meetingsApiErrorMessage(error, "Unable to load meetings");
@@ -3968,6 +4237,40 @@
       String(item && item.meeting_id || "") === meetingId ? { ...item, ...detail } : item
     );
     return detail;
+  }
+
+  async function loadAppBadges(options = {}) {
+    if (state.appBadges.loading) {
+      return;
+    }
+    const hadError = Boolean(state.appBadges.error);
+    state.appBadges.loading = true;
+    state.appBadges.error = "";
+    let changed = !state.appBadges.loaded || hadError;
+    try {
+      const payload = await linksApiRequest("/api/app-badges", {
+        cache: "no-store",
+        metricKey: "links:app_badges"
+      });
+      const nextItems = payload && typeof payload.badges === "object" ? payload.badges : {};
+      const nextFingerprint = stableJsonFingerprint(nextItems);
+      if (nextFingerprint !== stableJsonFingerprint(state.appBadges.items || {})) {
+        state.appBadges.items = nextItems;
+        changed = true;
+      }
+      state.appBadges.loaded = true;
+      state.appBadges.lastRefreshAt = Date.now();
+      syncLocalAppBadgeState();
+    } catch (error) {
+      state.appBadges.error = String(error && error.message || error || "App badge request failed");
+      changed = true;
+    } finally {
+      state.appBadges.loading = false;
+      if (options.render && changed) {
+        requestRender(`app-badges:${String(options.reason || "refresh")}`);
+      }
+    }
+    return changed;
   }
 
   function meetingsApiErrorMessage(error, fallback = "Meetings request failed") {
@@ -5436,6 +5739,11 @@
     if (!reminderBucket.loaded && !reminderBucket.loading) {
       void loadWorkspaceCollection("reminders", { render: true });
     }
+    if (!state.appBadges.loaded && !state.appBadges.loading) {
+      void loadAppBadges({ render: true });
+    } else if (!state.appBadges.loading && (Date.now() - safeNumber(state.appBadges.lastRefreshAt)) >= APP_BADGE_STALE_MS) {
+      void loadAppBadges({ render: false, reason: "stale_home" });
+    }
     const page = el("section", "light-home");
     const grid = el("div", "light-app-grid");
     grid.append(...LIGHT_APPS.map(lightAppTile));
@@ -5453,29 +5761,50 @@
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => openLightApp(app.route));
     const icon = lightAppIcon(app);
+    const iconAnchor = el("span", "light-app-icon-badge-anchor");
+    iconAnchor.append(icon);
     const badge = lightAppBadge(app);
-    tile.append(icon, el("span", "light-app-label", app.label));
     if (badge) {
-      tile.append(badge);
+      iconAnchor.append(badge);
     }
+    tile.append(iconAnchor, el("span", "light-app-label", app.label));
     return tile;
   }
 
   function lightAppBadge(app) {
-    const value = lightAppBadgeValue(app);
-    if (!value) {
+    const descriptor = lightAppBadgeDescriptor(app);
+    if (!descriptor) {
       return null;
     }
-    const badge = el("span", "light-app-badge", value);
-    badge.setAttribute("aria-label", `${app.label} active count ${value}`);
+    const count = lightAppBadgeCount(descriptor);
+    if (!count) {
+      return null;
+    }
+    const badge = el("span", "light-app-badge", count);
+    badge.setAttribute("aria-label", `${app.label} ${descriptor.kind} count ${count}`);
     return badge;
   }
 
-  function lightAppBadgeValue(app) {
-    if (String(app?.route || "") !== "reminders") {
+  function lightAppBadgeDescriptor(app) {
+    return HOME_APP_BADGE_REGISTRY[String(app?.route || "").trim().toLowerCase()] || null;
+  }
+
+  function lightAppBadgeCount(descriptor) {
+    if (!descriptor) {
       return "";
     }
-    const count = activeReminderCount();
+    if (descriptor.kind === "active") {
+      const count = activeReminderCount();
+      if (!count) {
+        return "";
+      }
+      return count > 99 ? "99+" : String(count);
+    }
+    const route = Object.keys(HOME_APP_BADGE_REGISTRY).find(key => HOME_APP_BADGE_REGISTRY[key] === descriptor) || "";
+    const badge = state.appBadges.items && typeof state.appBadges.items === "object"
+      ? state.appBadges.items[route]
+      : null;
+    const count = Math.max(0, Number(badge?.count || 0) || 0);
     if (!count) {
       return "";
     }
@@ -7725,6 +8054,7 @@
     if (!meeting) {
       return lightPage("Meeting Note", { subtitle: "Meeting note not found.", detail: true });
     }
+    void ensureWorkspaceRecordSeen("meeting-notes", meeting);
     ensureMeetingNoteSupportingCollections(meeting);
     const page = lightPage(meeting.title || "Meeting Note", { detail: true });
     page.classList.add("light-document-page", "light-meeting-note-detail-page");
@@ -10776,6 +11106,7 @@
     if (taskSelectionModeActive()) {
       detailPane.append(lightEmptyState("archive", "Select tasks", "Choose one or more tasks to archive from the list."));
     } else if (task) {
+      void ensureWorkspaceRecordSeen("tasks", task);
       ensureLinkedCollections(task);
       detailPane.append(lightTaskDetailSurface(task));
     } else {
@@ -10794,6 +11125,7 @@
     if (!task) {
       return lightPage("Task", { subtitle: "Task not found.", detail: true });
     }
+    void ensureWorkspaceRecordSeen("tasks", task);
     ensureLinkedCollections(task);
     const page = lightPage(task.title || "Task", { detail: true });
     page.classList.add("light-task-detail-page");
@@ -13973,6 +14305,9 @@
     state.audioCard = null;
     const panel = document.getElementById("detail");
     const detailCard = meetingCardFromRecord(meeting);
+    if (!options.restoring) {
+      markCardRead(detailCard);
+    }
     const content = meetingRuntimeDetailContent(meeting);
     applyDetailDataAttributes(panel, "meeting_runtime", detailCard, { viewer: "meeting_runtime" });
     openSideDetail(panel, meetingTitle(meeting), content, dismissDetail);
@@ -14047,14 +14382,20 @@
 
   function meetingCardFromRecord(meeting) {
     const card = meeting && typeof meeting === "object" ? meeting : {};
-    const agentCard = card.card && typeof card.card === "object" ? card.card : {};
+    const feedItem = card.feed_item && typeof card.feed_item === "object" ? card.feed_item : {};
+    const agentCard = card.card && typeof card.card === "object"
+      ? card.card
+      : feedItem.card && typeof feedItem.card === "object"
+        ? feedItem.card
+        : {};
     const attachments = meetingRecordAttachments(card);
     return {
       session_id: String(card.meeting_id || agentCard.session_id || ""),
+      card_id: String(card.card_id || feedItem.card_id || ""),
       title: meetingTitle(card),
       icon: "mic",
       accent: "#72c2ff",
-      read: true,
+      read: typeof card.read === "boolean" ? card.read : Boolean(feedItem.read),
       created_at: String(card.started_at || card.created_at || ""),
       updated_at: String(card.updated_at || card.stopped_at || ""),
       summary: String(agentCard.summary || card.transcript_text || (meetingState(card) === "processing" ? "Processing..." : "")),
@@ -20273,9 +20614,13 @@
       state.cards = result && result.ok === false
         ? state.cards
         : applyLocalFeedAction(state.cards, card, action);
+      if (action === "mark_read") {
+        syncMeetingReadStateFromCard(card, true);
+      }
       reconcileFocusedCardSelection();
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
+      syncLocalAppBadgeState();
       render();
       if (result && result.ok === false && !options.silent) {
         showToast(result.error || "Feed refreshed");
@@ -20304,6 +20649,8 @@
       return;
     }
     setCardReadOverride(card, true);
+    syncMeetingReadStateFromCard(card, true);
+    syncLocalAppBadgeState();
     render();
     requestMarkRead(card);
   }
@@ -20314,6 +20661,8 @@
     }
     if (isCardRead(card)) {
       setCardReadOverride(card, false);
+      syncMeetingReadStateFromCard(card, false);
+      syncLocalAppBadgeState();
       render();
       return;
     }

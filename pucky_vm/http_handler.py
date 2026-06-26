@@ -279,6 +279,12 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     return
                 self._json(HTTPStatus.OK, service.meetings_list(include_archived=include_archived, compact=compact))
                 return
+            if path == "/api/app-badges":
+                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                    self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                    return
+                self._json(HTTPStatus.OK, service.app_badges())
+                return
             if path.startswith("/api/shared/meetings/") and path.endswith("/audio"):
                 query = parse_qs(parsed.query)
                 meeting_id = unquote(path.removeprefix("/api/shared/meetings/").removesuffix("/audio")).strip()
@@ -947,6 +953,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
         def _allows_public_browser_user_read(self, path: str) -> bool:
             value = str(path or "").strip()
             if value in {
+                "/api/app-badges",
                 "/api/feed",
                 "/api/meetings",
                 "/api/links/composio/my-apps",

@@ -1,7 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
+import { createRequire } from "node:module";
 
-import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -14,11 +15,40 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
 const defaultReportDir = path.join(repoRoot, "artifacts", "cover-home-app-labels");
+const require = createRequire(import.meta.url);
 const DEFAULT_BASE_URL = "https://pucky.fly.dev";
 const VIEWPORT = { width: 395, height: 786 };
 const THEMES = ["light", "dark"];
 const OVERLAP_EPSILON = 0.5;
 const CENTER_EPSILON = 2;
+const BADGE_CENTER_EPSILON = 3;
+
+function loadPlaywrightCore() {
+  const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
+  const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
+  const bundledPlaywright = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright");
+  const candidates = [
+    () => require("playwright-core"),
+    () => require("playwright"),
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
+    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright")) : null,
+    () => require(bundledPlaywright),
+    () => require(bundled),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const resolved = candidate();
+      if (resolved) {
+        return resolved;
+      }
+    } catch {
+      // Try the next resolution path.
+    }
+  }
+  throw new Error("Could not resolve playwright-core from local tools or bundled runtime");
+}
+
+const { chromium } = loadPlaywrightCore();
 
 function parseArgs(argv) {
   const config = {
@@ -115,6 +145,7 @@ async function collectHomeLabelMetrics(page) {
     const labels = Array.from(document.querySelectorAll(".light-app-tile")).map((tile, index) => {
       const icon = tile.querySelector(".light-app-icon");
       const label = tile.querySelector(".light-app-label");
+      const badge = tile.querySelector(".light-app-badge");
       const tileStyle = window.getComputedStyle(tile);
       const iconStyle = icon ? window.getComputedStyle(icon) : null;
       const labelStyle = label ? window.getComputedStyle(label) : null;
@@ -126,6 +157,8 @@ async function collectHomeLabelMetrics(page) {
         semanticKey,
         accentKey: String(icon?.dataset?.appAccent || "").trim(),
         text: tile.getAttribute("data-app-label") || label?.textContent?.trim() || "",
+        badge: badge ? domRect(badge) : null,
+        badgeCount: badge ? String(badge.textContent || "").trim() : "",
         registryIcon: String(registryEntry?.icon || "").trim(),
         registryColors: registryEntry && typeof registryEntry.colors === "object" ? registryEntry.colors : null,
         tile: domRect(tile),
@@ -224,6 +257,17 @@ function assertHomeLabelContract(metrics) {
     assert(item.iconAccentVar === expectedColor, `${item.text} icon accent var expected ${expectedColor}, saw ${item.iconAccentVar}`);
     assert(item.iconColorHex === expectedColor, `${item.text} icon color expected ${expectedColor}, saw ${item.iconColorHex}`);
     assert(item.iconBackground && item.iconBackground !== "rgba(0, 0, 0, 0)" && item.iconBackground !== "transparent", `${item.text} icon background is transparent`);
+    if (item.badge) {
+      const badgeCenterX = item.badge.left + item.badge.width / 2;
+      const badgeCenterY = item.badge.top + item.badge.height / 2;
+      const expectedCenterX = item.icon.right;
+      const expectedCenterY = item.icon.top;
+      const badgeDriftX = Math.abs(badgeCenterX - expectedCenterX);
+      const badgeDriftY = Math.abs(badgeCenterY - expectedCenterY);
+      assert(item.badgeCount, `${item.text} badge is missing visible text`);
+      assert(badgeDriftX <= BADGE_CENTER_EPSILON, `${item.text} badge geometry drifted horizontally by ${badgeDriftX.toFixed(2)}px`);
+      assert(badgeDriftY <= BADGE_CENTER_EPSILON, `${item.text} badge geometry drifted vertically by ${badgeDriftY.toFixed(2)}px`);
+    }
   }
   assertNoSameRowLabelOverlap(metrics);
 }
