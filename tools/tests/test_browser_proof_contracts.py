@@ -220,8 +220,8 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "Expected calendar settings button to drop the circular shell border" in source
     assert "Expected calendar settings button to drop the circular shell fill" in source
     assert "Expected calendar settings button to drop the circular shell shadow" in source
-    assert "Expected off-today calendar header to stay free of Today CTA" in source
-    assert "Expected mobile off-today calendar header to stay free of Today CTA" in source
+    assert "Expected Today chip to appear once the selected day moves off today." in source
+    assert "Expected mobile Today chip to appear once the selected day moves off today." in source
     assert "Expected Connected rows to omit linked-record chips on desktop detail" in source
     assert "Expected mobile Connected rows to omit linked-record chips" in source
     assert "Expected Connected section to render inside one shared flat-feed shell on desktop detail" in source
@@ -237,6 +237,39 @@ def test_calendar_browser_proof_checks_header_chrome_geometry_and_scrolling() ->
     assert "scrollDayStripToDay(page, firstDayKey, \"start\")" in source
     assert "continueDayStripBeyondEdge(page, \"left\")" in source
     assert "continueDayStripBeyondEdge(page, \"right\")" in source
+
+
+def test_calendar_browser_proof_captures_selection_motion_evidence_contract() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert 'import { chromium, webkit } from "playwright-core";' in source
+    assert "const CALENDAR_SELECTION_MOTION_DURATION_MS = 180;" in source
+    assert "const CALENDAR_SELECTION_MOTION_MIN_MS = 120;" in source
+    assert "const CALENDAR_SELECTION_MOTION_MAX_MS = 280;" in source
+    assert "async function startCalendarMotionProbe(page, scenario) {" in source
+    assert "async function finishCalendarMotionProbe(page, timeoutMs = 2000) {" in source
+    assert "async function runCalendarMotionScenario(page, networkLog, reportDir, summary, laneKey, scenario) {" in source
+    assert "async function runCalendarMotionChecks(page, networkLog, reportDir, summary, laneKey, seed, options = {}) {" in source
+    assert 'const motionPath = path.join(scenarioDir, "motion.json");' in source
+    assert 'const beforeShot = path.join(scenarioDir, "before.png");' in source
+    assert 'const midShot = path.join(scenarioDir, "mid.png");' in source
+    assert 'const afterShot = path.join(scenarioDir, "after.png");' in source
+    assert 'id: "date-input-short"' in source
+    assert 'id: "date-input-long"' in source
+    assert 'id: "day-chip-short"' in source
+    assert 'id: "today-button-return"' in source
+    assert 'id: "reduced-motion-short"' in source
+    assert "request_delta" in source
+    assert "intermediate_scroll_values" in source
+    assert "reached_target" in source
+    assert "end_input_value" in source
+    assert "final_center_delta" in source
+    assert "expected no extra calendar API requests" in source
+    assert "expected at least four distinct scrollLeft values" in source
+    assert "summary.motion_assertions" in source
+    assert "trace_path" in source
+    assert "video_path" in source
+    assert "browser_name: config.browserName" in source
 
 
 def test_calendar_browser_proof_covers_dot_stability_without_date_scoped_reloads() -> None:

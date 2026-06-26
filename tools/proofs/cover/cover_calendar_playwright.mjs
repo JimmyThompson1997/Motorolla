@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -14,6 +14,10 @@ const DEFAULT_BASE_URL = process.env.PUCKY_CALENDAR_PROOF_BASE_URL || "https://p
 const PROOF_RUN_ID = "proof-calendar";
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const CALENDAR_SELECTION_MOTION_DURATION_MS = 180;
+const CALENDAR_SELECTION_MOTION_MIN_MS = 120;
+const CALENDAR_SELECTION_MOTION_MAX_MS = 280;
+const CALENDAR_SELECTION_MOTION_MID_CAPTURE_MS = 80;
 const LOCATOR_SHOT_ATTEMPTS = 4;
 const LOCATOR_SHOT_RETRY_MS = 150;
 const MANIFEST_FETCH_ATTEMPTS = 4;
@@ -35,7 +39,8 @@ function parseArgs(argv) {
     baseUrl: DEFAULT_BASE_URL,
     apiToken: resolveApiToken(),
     reportDir: path.resolve("artifacts", "calendar-proof", new Date().toISOString().replace(/[:.]/g, "-")),
-    timeoutMs: 30000
+    timeoutMs: 30000,
+    browserName: "chromium"
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -47,6 +52,9 @@ function parseArgs(argv) {
       config.reportDir = path.resolve(String(argv[++index] || config.reportDir));
     } else if (arg === "--timeout-ms" && argv[index + 1]) {
       config.timeoutMs = Math.max(1000, Number(argv[++index] || config.timeoutMs) || config.timeoutMs);
+    } else if (arg === "--browser" && argv[index + 1]) {
+      const browserName = String(argv[++index] || config.browserName).trim().toLowerCase();
+      config.browserName = browserName === "webkit" ? "webkit" : "chromium";
     }
   }
   return config;
@@ -86,10 +94,12 @@ function dayAt(offsetDays, hour, minute = 0) {
 }
 
 function pageUrl(baseUrl, apiToken = "", theme = "light") {
-  const url = new URL(`${baseUrl.replace(/\/+$/, "")}/ui/pucky/latest/index.html`);
+  const root = new URL(baseUrl);
+  const refreshValue = root.searchParams.get("_pucky_refresh");
+  const url = new URL("/ui/pucky/latest/index.html", root);
   url.searchParams.set("theme", theme);
   url.searchParams.set("reset_nav", "1");
-  url.searchParams.set("_pucky_refresh", String(Date.now()));
+  url.searchParams.set("_pucky_refresh", String(refreshValue || Date.now()));
   void apiToken;
   return url.toString();
 }
@@ -99,7 +109,7 @@ async function apiRequest(config, method, apiPath, body = undefined) {
   if (config.apiToken) {
     headers.Authorization = `Bearer ${config.apiToken}`;
   }
-  const response = await fetch(`${config.baseUrl}${apiPath}`, {
+  const response = await fetch(new URL(apiPath, config.baseUrl), {
     method,
     headers: {
       ...headers,
@@ -474,6 +484,282 @@ async function setCalendarDate(page, value) {
     input.value = nextValue;
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }, value);
+}
+
+function calendarApiRequestCount(networkLog) {
+  return networkLog.filter(entry => entry.type === "request" && entry.url.includes("/api/workspace/calendar-events")).length;
+}
+
+async function setReducedMotion(page, enabled) {
+  await page.emulateMedia({ reducedMotion: enabled ? "reduce" : "no-preference" });
+}
+
+async function waitForCalendarSelectionSettle(page, waitMs = CALENDAR_SELECTION_MOTION_DURATION_MS + 80) {
+  await page.waitForTimeout(Math.max(60, waitMs));
+}
+
+async function startCalendarMotionProbe(page, scenario) {
+  await page.evaluate(({ actionKind, targetDay }) => {
+    const probeKey = `calendar-motion-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    window.__PUCKY_CALENDAR_MOTION_RESULT__ = null;
+    window.__PUCKY_CALENDAR_MOTION_ERROR__ = "";
+    window.__PUCKY_CALENDAR_MOTION_KEY__ = probeKey;
+    const read = label => {
+      const strip = document.querySelector(".light-calendar-day-strip");
+      const input = document.querySelector(".light-date-input");
+      const selected = document.querySelector(".light-calendar-day-chip.is-selected");
+      const chip = selected instanceof HTMLElement ? selected : null;
+      const stripNode = strip instanceof HTMLElement ? strip : null;
+      let centerDelta = 0;
+      if (stripNode && chip) {
+        const stripRect = stripNode.getBoundingClientRect();
+        const chipRect = chip.getBoundingClientRect();
+        centerDelta = Math.round(((chipRect.left + (chipRect.width / 2)) - (stripRect.left + (stripRect.width / 2))) * 100) / 100;
+      }
+      return {
+        label,
+        t: Math.round(performance.now() * 100) / 100,
+        scrollLeft: Math.round(Number(stripNode?.scrollLeft || 0)),
+        selectedDay: String(chip?.getAttribute("data-day") || "").trim(),
+        inputValue: String(input instanceof HTMLInputElement ? input.value : "").trim(),
+        centerDelta,
+      };
+    };
+    const run = async () => {
+      const samples = [read("before")];
+      const input = document.querySelector(".light-date-input");
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error("Calendar date input not found");
+      }
+      if (actionKind === "input") {
+        input.value = String(targetDay || "").trim();
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      } else if (actionKind === "today") {
+        const button = document.querySelector(".light-calendar-today-button");
+        if (!(button instanceof HTMLElement)) {
+          throw new Error("Calendar Today button not found");
+        }
+        button.click();
+      } else if (actionKind === "chip") {
+        const chip = document.querySelector(`.light-calendar-day-chip[data-day="${String(targetDay || "").trim()}"]`);
+        if (!(chip instanceof HTMLElement)) {
+          throw new Error(`Calendar day chip ${targetDay} not found`);
+        }
+        chip.click();
+      } else {
+        throw new Error(`Unknown calendar motion action ${actionKind}`);
+      }
+      samples.push(read("after-trigger"));
+      let stableFrames = 0;
+      let last = samples[samples.length - 1];
+      let timedOut = false;
+      const startedAt = performance.now();
+      await new Promise(resolve => {
+        const step = () => {
+          const current = read(`frame-${samples.length - 1}`);
+          samples.push(current);
+          const changed = current.scrollLeft !== last.scrollLeft
+            || current.selectedDay !== last.selectedDay
+            || current.inputValue !== last.inputValue;
+          stableFrames = changed ? 0 : stableFrames + 1;
+          last = current;
+          const reachedTarget = current.selectedDay === String(targetDay || "").trim()
+            && current.inputValue === String(targetDay || "").trim();
+          if (reachedTarget && stableFrames >= 3) {
+            resolve();
+            return;
+          }
+          if ((performance.now() - startedAt) >= 1200) {
+            timedOut = true;
+            resolve();
+            return;
+          }
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      });
+      samples.push(read("settled"));
+      const first = samples[0];
+      const end = samples[samples.length - 1];
+      const distinctScrollLeft = [...new Set(samples.map(sample => sample.scrollLeft))];
+      const motionStart = samples.find(sample => sample.scrollLeft !== first.scrollLeft) || first;
+      const motionEnd = [...samples].reverse().find(sample => sample.scrollLeft !== motionStart.scrollLeft) || end;
+      return {
+        action_kind: actionKind,
+        target_day: String(targetDay || "").trim(),
+        start_day: first.selectedDay,
+        end_day: end.selectedDay,
+        start_input_value: first.inputValue,
+        end_input_value: end.inputValue,
+        start_scroll_left: first.scrollLeft,
+        end_scroll_left: end.scrollLeft,
+        total_distance: Math.abs(end.scrollLeft - first.scrollLeft),
+        total_duration_ms: Math.max(0, Math.round((motionEnd.t - motionStart.t) * 100) / 100),
+        sample_count: samples.length,
+        distinct_scroll_left_count: distinctScrollLeft.length,
+        intermediate_scroll_values: distinctScrollLeft.filter(value => value !== first.scrollLeft && value !== end.scrollLeft),
+        final_center_delta: end.centerDelta,
+        reduced_motion: Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
+        reached_target: end.selectedDay === String(targetDay || "").trim() && end.inputValue === String(targetDay || "").trim(),
+        timed_out: timedOut,
+        samples,
+      };
+    };
+    void run()
+      .then(result => {
+        if (window.__PUCKY_CALENDAR_MOTION_KEY__ === probeKey) {
+          window.__PUCKY_CALENDAR_MOTION_RESULT__ = result;
+        }
+      })
+      .catch(error => {
+        if (window.__PUCKY_CALENDAR_MOTION_KEY__ === probeKey) {
+          window.__PUCKY_CALENDAR_MOTION_ERROR__ = String(error?.stack || error?.message || error);
+        }
+      });
+  }, scenario);
+}
+
+async function finishCalendarMotionProbe(page, timeoutMs = 2000) {
+  await page.waitForFunction(() => Boolean(window.__PUCKY_CALENDAR_MOTION_RESULT__ || window.__PUCKY_CALENDAR_MOTION_ERROR__), undefined, {
+    timeout: timeoutMs,
+  });
+  const error = await page.evaluate(() => String(window.__PUCKY_CALENDAR_MOTION_ERROR__ || "").trim());
+  if (error) {
+    throw new Error(error);
+  }
+  return page.evaluate(() => window.__PUCKY_CALENDAR_MOTION_RESULT__);
+}
+
+async function runCalendarMotionScenario(page, networkLog, reportDir, summary, laneKey, scenario) {
+  const scenarioDir = path.join(reportDir, "motion", scenario.id);
+  ensureDir(scenarioDir);
+  await setReducedMotion(page, Boolean(scenario.reducedMotion));
+  await setCalendarDate(page, scenario.fromDay);
+  await waitForCalendarSelectionSettle(page);
+  const beforeRequestCount = calendarApiRequestCount(networkLog);
+  const beforeShot = path.join(scenarioDir, "before.png");
+  await page.screenshot({ path: beforeShot, fullPage: false });
+  await startCalendarMotionProbe(page, { actionKind: scenario.actionKind, targetDay: scenario.targetDay });
+  await page.waitForTimeout(scenario.reducedMotion ? 20 : CALENDAR_SELECTION_MOTION_MID_CAPTURE_MS);
+  const midShot = path.join(scenarioDir, "mid.png");
+  await page.screenshot({ path: midShot, fullPage: false });
+  const motion = await finishCalendarMotionProbe(page, 2500);
+  const afterRequestCount = calendarApiRequestCount(networkLog);
+  const afterShot = path.join(scenarioDir, "after.png");
+  await page.screenshot({ path: afterShot, fullPage: false });
+  motion.id = scenario.id;
+  motion.label = scenario.label;
+  motion.from_day = scenario.fromDay;
+  motion.request_delta = afterRequestCount - beforeRequestCount;
+  motion.before_screenshot = beforeShot;
+  motion.mid_screenshot = midShot;
+  motion.after_screenshot = afterShot;
+  const motionPath = path.join(scenarioDir, "motion.json");
+  writeJsonFile(motionPath, motion);
+  summary.motion_scenarios = summary.motion_scenarios || {};
+  summary.motion_scenarios[laneKey] = summary.motion_scenarios[laneKey] || {};
+  summary.motion_scenarios[laneKey][scenario.id] = {
+    id: scenario.id,
+    label: scenario.label,
+    action_kind: scenario.actionKind,
+    target_day: scenario.targetDay,
+    reduced_motion: Boolean(scenario.reducedMotion),
+    motion_path: motionPath,
+    before_screenshot: beforeShot,
+    mid_screenshot: midShot,
+    after_screenshot: afterShot,
+    total_duration_ms: motion.total_duration_ms,
+    total_distance: motion.total_distance,
+    distinct_scroll_left_count: motion.distinct_scroll_left_count,
+    request_delta: motion.request_delta,
+  };
+  return motion;
+}
+
+function assertAnimatedCalendarMotion(motion, label) {
+  assert(motion.reached_target, `${label}: expected motion to reach ${motion.target_day}, got ${motion.end_day}/${motion.end_input_value}`);
+  assert(!motion.timed_out, `${label}: expected motion to settle before timeout.`);
+  assert(motion.request_delta === 0, `${label}: expected no extra calendar API requests, got ${motion.request_delta}.`);
+  assert(motion.total_distance > 0, `${label}: expected positive scroll distance, got ${motion.total_distance}.`);
+  assert(motion.total_duration_ms >= CALENDAR_SELECTION_MOTION_MIN_MS, `${label}: expected duration >= ${CALENDAR_SELECTION_MOTION_MIN_MS}ms, got ${motion.total_duration_ms}ms.`);
+  assert(motion.total_duration_ms <= CALENDAR_SELECTION_MOTION_MAX_MS, `${label}: expected duration <= ${CALENDAR_SELECTION_MOTION_MAX_MS}ms, got ${motion.total_duration_ms}ms.`);
+  assert(motion.distinct_scroll_left_count >= 4, `${label}: expected at least four distinct scrollLeft values, got ${motion.distinct_scroll_left_count}.`);
+  assert(motion.intermediate_scroll_values.length >= 2, `${label}: expected multiple intermediate scroll values, got ${JSON.stringify(motion.intermediate_scroll_values)}.`);
+  assert(Math.abs(Number(motion.final_center_delta || 0)) <= 12, `${label}: expected the selected chip to settle near center, got ${motion.final_center_delta}px.`);
+}
+
+function assertReducedMotionCalendarSelection(motion, label) {
+  assert(motion.reached_target, `${label}: expected reduced-motion selection to reach ${motion.target_day}, got ${motion.end_day}/${motion.end_input_value}`);
+  assert(!motion.timed_out, `${label}: expected reduced-motion selection to settle before timeout.`);
+  assert(motion.request_delta === 0, `${label}: expected no extra calendar API requests, got ${motion.request_delta}.`);
+  assert(motion.total_distance >= 0, `${label}: expected a valid reduced-motion distance, got ${motion.total_distance}.`);
+  assert(motion.total_duration_ms <= 90, `${label}: expected reduced-motion selection to settle quickly, got ${motion.total_duration_ms}ms.`);
+  assert(Math.abs(Number(motion.final_center_delta || 0)) <= 12, `${label}: expected the reduced-motion selected chip to settle near center, got ${motion.final_center_delta}px.`);
+}
+
+async function runCalendarMotionChecks(page, networkLog, reportDir, summary, laneKey, seed, options = {}) {
+  const shortFromDay = shiftDayKey(seed.today, -2);
+  const shortTarget = shiftDayKey(seed.today, -1);
+  const longTarget = shiftDayKey(seed.today, 70);
+  const scenarios = [
+    {
+      id: "date-input-short",
+      label: "Date input short jump",
+      actionKind: "input",
+      fromDay: shortFromDay,
+      targetDay: shortTarget,
+      reducedMotion: false,
+    },
+    {
+      id: "date-input-long",
+      label: "Date input long jump",
+      actionKind: "input",
+      fromDay: shortFromDay,
+      targetDay: longTarget,
+      reducedMotion: false,
+    },
+    {
+      id: "day-chip-short",
+      label: "Day chip short jump",
+      actionKind: "chip",
+      fromDay: shortFromDay,
+      targetDay: shortTarget,
+      reducedMotion: false,
+    },
+    {
+      id: "today-button-return",
+      label: "Today button return",
+      actionKind: "today",
+      fromDay: shortFromDay,
+      targetDay: seed.today,
+      reducedMotion: false,
+    },
+  ];
+  const motions = {};
+  for (const scenario of scenarios) {
+    motions[scenario.id] = await runCalendarMotionScenario(page, networkLog, reportDir, summary, laneKey, scenario);
+    assertAnimatedCalendarMotion(motions[scenario.id], `${laneKey}: ${scenario.label}`);
+  }
+  assert(
+    motions["date-input-long"].total_distance > motions["date-input-short"].total_distance,
+    `${laneKey}: expected the long date-input jump to travel farther than the short jump, got ${motions["date-input-long"].total_distance} <= ${motions["date-input-short"].total_distance}.`
+  );
+  if (options.includeReducedMotion) {
+    const reducedMotion = await runCalendarMotionScenario(page, networkLog, reportDir, summary, laneKey, {
+      id: "reduced-motion-short",
+      label: "Reduced motion short jump",
+      actionKind: "input",
+      fromDay: shortFromDay,
+      targetDay: shortTarget,
+      reducedMotion: true,
+    });
+    assertReducedMotionCalendarSelection(reducedMotion, `${laneKey}: Reduced motion short jump`);
+    motions["reduced-motion-short"] = reducedMotion;
+    await setReducedMotion(page, false);
+  }
+  await setCalendarDate(page, seed.today);
+  await waitForCalendarSelectionSettle(page);
+  return motions;
 }
 
 async function visibleCalendarTitles(page) {
@@ -1212,6 +1498,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
   });
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   const page = await context.newPage();
+  const video = page.video();
+  const laneKey = `desktop_${theme}_${config.browserName}`;
   attachPageLogging(page, consoleLog);
   page.on("request", request => {
     if (request.url().includes("/api/workspace/")) {
@@ -1224,6 +1512,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     }
   });
   try {
+    await setReducedMotion(page, false);
     await openCalendarProofRoot(page, config, theme);
     await openHomeCalendar(page);
 
@@ -1326,7 +1615,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await waitForCalendarTitle(page, "Proof freelance review call");
     await setCalendarDate(page, seed.tomorrow);
     assert(await page.locator(".light-date-input").inputValue() === seed.tomorrow, `Expected desktop off-today selection to land on ${seed.tomorrow}, got ${await page.locator(".light-date-input").inputValue()}.`);
-    assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected off-today calendar header to stay free of Today CTA.");
+    assert(await page.locator(".light-calendar-today-button").count() === 1, "Expected Today chip to appear once the selected day moves off today.");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-off-today.png`, summary);
     await setCalendarDate(page, seed.today);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, `Expected desktop calendar to return to ${seed.today}, got ${await page.locator(".light-date-input").inputValue()}.`);
@@ -1357,6 +1646,17 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveLocatorShot(page.locator(".light-calendar-settings-button"), reportDir, `calendar-desktop-${theme}-settings-button.png`, summary);
     await saveLocatorShot(page.locator(eventSelector).first(), reportDir, `calendar-desktop-${theme}-agenda-tile.png`, summary);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-today.png`, summary);
+    const desktopMotion = await runCalendarMotionChecks(page, networkLog, reportDir, summary, laneKey, seed, {
+      includeReducedMotion: theme === "light",
+    });
+    summary.assertions.push(`desktop ${theme} ${config.browserName} rail selection motion stayed inside the fixed duration band`);
+    summary.motion_assertions = summary.motion_assertions || {};
+    summary.motion_assertions[laneKey] = {
+      short_jump_duration_ms: desktopMotion["date-input-short"].total_duration_ms,
+      long_jump_duration_ms: desktopMotion["date-input-long"].total_duration_ms,
+      short_jump_distance: desktopMotion["date-input-short"].total_distance,
+      long_jump_distance: desktopMotion["date-input-long"].total_distance,
+    };
     await scrollDayStripToDay(page, firstDayKey, "start");
     const selectedMonthLeft = await calendarStripMetrics(page);
     assert(selectedMonthLeft.visible_day_keys.includes(firstDayKey), `Expected the selected month to expose day 1 on the rail, got ${JSON.stringify(selectedMonthLeft.visible_day_keys)}.`);
@@ -1625,8 +1925,15 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-timezone-shift.png`, summary);
     summary.assertions.push(`desktop ${theme} timezone switch changed calendar grouping and times`);
   } finally {
-    await context.tracing.stop({ path: path.join(reportDir, `trace-desktop-${theme}.zip`) });
+    const tracePath = path.join(reportDir, `trace-desktop-${theme}.zip`);
+    await context.tracing.stop({ path: tracePath });
     await context.close();
+    const videoPath = video ? await video.path().catch(() => "") : "";
+    summary.artifacts = summary.artifacts || {};
+    summary.artifacts[laneKey] = {
+      trace_path: tracePath,
+      video_path: videoPath,
+    };
   }
 }
 
@@ -1639,6 +1946,8 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
   });
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   const page = await context.newPage();
+  const video = page.video();
+  const laneKey = `mobile_${theme}_${config.browserName}`;
   attachPageLogging(page, consoleLog);
   page.on("request", request => {
     if (request.url().includes("/api/workspace/")) {
@@ -1651,6 +1960,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     }
   });
   try {
+    await setReducedMotion(page, false);
     await openCalendarProofRoot(page, config, theme);
     await openHomeCalendar(page);
     const chromeText = await calendarChromeText(page);
@@ -1745,7 +2055,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await waitForCalendarTitle(page, "Proof freelance review call");
     await setCalendarDate(page, seed.tomorrow);
     assert(await page.locator(".light-date-input").inputValue() === seed.tomorrow, `Expected mobile off-today selection to land on ${seed.tomorrow}, got ${await page.locator(".light-date-input").inputValue()}.`);
-    assert(await page.locator(".light-calendar-today-button").count() === 0, "Expected mobile off-today calendar header to stay free of Today CTA.");
+    assert(await page.locator(".light-calendar-today-button").count() === 1, "Expected mobile Today chip to appear once the selected day moves off today.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-off-today.png`, summary);
     await setCalendarDate(page, seed.today);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, `Expected mobile calendar to return to ${seed.today}, got ${await page.locator(".light-date-input").inputValue()}.`);
@@ -1773,6 +2083,17 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveLocatorShot(page.locator(".light-calendar-settings-button"), reportDir, `calendar-mobile-${theme}-settings-button.png`, summary);
     await saveLocatorShot(page.locator(eventSelector).first(), reportDir, `calendar-mobile-${theme}-agenda-tile.png`, summary);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-top.png`, summary);
+    const mobileMotion = await runCalendarMotionChecks(page, networkLog, reportDir, summary, laneKey, seed, {
+      includeReducedMotion: theme === "light",
+    });
+    summary.assertions.push(`mobile ${theme} ${config.browserName} rail selection motion stayed inside the fixed duration band`);
+    summary.motion_assertions = summary.motion_assertions || {};
+    summary.motion_assertions[laneKey] = {
+      short_jump_duration_ms: mobileMotion["date-input-short"].total_duration_ms,
+      long_jump_duration_ms: mobileMotion["date-input-long"].total_duration_ms,
+      short_jump_distance: mobileMotion["date-input-short"].total_distance,
+      long_jump_distance: mobileMotion["date-input-long"].total_distance,
+    };
     await scrollDayStripToDay(page, firstDayKey, "start");
     const selectedMonthLeft = await calendarStripMetrics(page);
     assert(selectedMonthLeft.visible_day_keys.includes(firstDayKey), `Expected the selected month to expose day 1 on the rail, got ${JSON.stringify(selectedMonthLeft.visible_day_keys)}.`);
@@ -2003,8 +2324,15 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveShot(page, reportDir, `calendar-mobile-${theme}-connected-empty.png`, summary);
     summary.assertions.push(`mobile ${theme} sticky header, meeting-detail section toggles, and empty Connected shells stayed readable`);
   } finally {
-    await context.tracing.stop({ path: path.join(reportDir, `trace-mobile-${theme}.zip`) });
+    const tracePath = path.join(reportDir, `trace-mobile-${theme}.zip`);
+    await context.tracing.stop({ path: tracePath });
     await context.close();
+    const videoPath = video ? await video.path().catch(() => "") : "";
+    summary.artifacts = summary.artifacts || {};
+    summary.artifacts[laneKey] = {
+      trace_path: tracePath,
+      video_path: videoPath,
+    };
   }
 }
 
@@ -2012,7 +2340,13 @@ async function readManifest(config) {
   let lastError = null;
   for (let attempt = 1; attempt <= MANIFEST_FETCH_ATTEMPTS; attempt += 1) {
     try {
-      const response = await fetch(`${config.baseUrl}/ui/pucky/latest/manifest.json?cb=${Date.now()}`, {
+      const manifestUrl = new URL("/ui/pucky/latest/manifest.json", config.baseUrl);
+      const refreshValue = new URL(config.baseUrl).searchParams.get("_pucky_refresh");
+      if (refreshValue) {
+        manifestUrl.searchParams.set("_pucky_refresh", String(refreshValue));
+      }
+      manifestUrl.searchParams.set("cb", String(Date.now()));
+      const response = await fetch(manifestUrl, {
         headers: { Accept: "application/json" }
       });
       if (!response.ok) {
@@ -2034,6 +2368,17 @@ async function readManifest(config) {
   throw lastError || new Error(`Manifest fetch failed after ${MANIFEST_FETCH_ATTEMPTS} attempts.`);
 }
 
+async function launchProofBrowser(config) {
+  const browserName = String(config.browserName || "chromium").trim().toLowerCase();
+  if (browserName === "webkit") {
+    return webkit.launch({ headless: true });
+  }
+  return chromium.launch({
+    executablePath: resolveChromePath(),
+    headless: true
+  });
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -2043,6 +2388,7 @@ async function main() {
   const summary = {
     schema: "pucky.calendar_browser_proof.v1",
     base_url: config.baseUrl,
+    browser_name: config.browserName,
     report_dir: config.reportDir,
     started_at: new Date().toISOString(),
     screenshots: {},
@@ -2056,10 +2402,7 @@ async function main() {
     summary.manifest_fetch_attempts = Number(summary.manifest?._proof_fetch_attempt || 0) || 1;
     seed = await seedCalendar(config, `${PROOF_RUN_ID}-${Date.now()}`);
     summary.seed = seed;
-    browser = await chromium.launch({
-      executablePath: resolveChromePath(),
-      headless: true
-    });
+    browser = await launchProofBrowser(config);
     await runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog, "light");
     await runDesktopScenario(browser, config, seed, summary, consoleLog, networkLog, "dark");
     await runMobileScenario(browser, config, seed, summary, consoleLog, networkLog, "light");
