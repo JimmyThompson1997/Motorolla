@@ -207,6 +207,11 @@ async function setContactsSearchQuery(client, query) {
 
 async function openContactDetail(client, contactId) {
   const normalizedId = String(contactId || "").trim();
+  await client.waitFor(
+    `(() => document.querySelector(${JSON.stringify(`.light-contact-row[data-contact-id="${normalizedId}"]`)}) instanceof HTMLButtonElement)()`,
+    15000,
+    `Contact row never appeared for ${normalizedId}`
+  );
   await client.evaluate(`(() => {
     const row = document.querySelector(\`.light-contact-row[data-contact-id="${normalizedId}"]\`);
     if (!(row instanceof HTMLButtonElement)) {
@@ -351,7 +356,7 @@ async function readContactDetailState(client) {
     const shell = document.querySelector(".light-shell");
     const pageRoot = document.querySelector(".light-contact-detail-page");
     const fieldValue = key => {
-      const input = document.querySelector(\`[data-contact-edit-field="${key}"]\`);
+      const input = document.querySelector(\`[data-contact-edit-field="\${key}"]\`);
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
     const activityValues = Array.from(document.querySelectorAll(".light-contact-detail-activity-host .light-info-row"))
