@@ -229,6 +229,8 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert 'action: "Add and remove contact photo"' in source
     assert 'action: "Reload saved contact detail"' in source
     assert 'action: "Return to edited Contacts list"' in source
+    assert "contact-detail-identity-view" in source
+    assert "contact-detail-identity-edit" in source
     assert "readContactEditState" in source
     assert "traceContactEditTyping" in source
     assert "data-contact-autosave-status" in source
@@ -236,8 +238,11 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert "Updated from ${modeKey} live proof edit flow" in source
     assert "updated.live.contact@example.com" in source
     assert "Expected saved contact detail to show the updated title" in source
-    assert "expected classic detail to keep the hero tile visible" in source
-    assert "expected the same hero tile to stay visible in edit mode" in source
+    assert "expected classic detail to drop the hero container chrome" in source
+    assert "expected classic detail to keep a frameless identity header" in source
+    assert "expected classic detail title font size to stay large" in source
+    assert "expected edit mode to keep the frameless identity header" in source
+    assert "expected edit mode to keep the identity header chrome-free" in source
     assert "expected activity to remain read-only in classic detail" in source
     assert "Expected contact edit typing to keep the same mounted input" in source
     assert "Expected photo removal to restore initials" in source

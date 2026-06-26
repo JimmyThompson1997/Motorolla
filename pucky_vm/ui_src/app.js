@@ -6364,7 +6364,7 @@
       page.dataset.contactDetailId = contactId;
       page.dataset.contactDetailShell = "classic";
 
-      const hero = el("section", "light-profile-card light-contact-detail-hero");
+      const identity = el("section", "light-contact-detail-identity");
       const avatarWell = el("div", "light-contact-detail-avatar-well");
       const avatarMount = el("div", "light-contact-detail-avatar-mount");
       const photoButton = el("button", "light-contact-detail-photo-button");
@@ -6434,7 +6434,7 @@
       saveStatus.dataset.contactAutosaveStatus = "idle";
       saveStatus.dataset.contactSaveState = "idle";
       heroCopy.append(titleView, nameEdit, summaryView, summaryInput, saveStatus);
-      hero.append(avatarWell, heroCopy);
+      identity.append(avatarWell, heroCopy);
 
       const contactSection = el("section", "light-info-section");
       contactSection.append(lightSectionTitle("Contact"));
@@ -6447,7 +6447,7 @@
       const activityHost = el("div", "light-contact-detail-activity-host");
       const notesHost = el("div", "light-contact-detail-notes-host");
       const connectedHost = el("div", "light-contact-detail-connected");
-      page.append(hero, contactSection, activityHost, notesHost, connectedHost);
+      page.append(identity, contactSection, activityHost, notesHost, connectedHost);
       contactDetailPageRefs = {
         page,
         actionSlot,

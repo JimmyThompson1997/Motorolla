@@ -414,11 +414,18 @@ def test_workspace_apps_browser_proof_checks_flat_contact_header_contract() -> N
     source = read_source("cover_workspace_apps_playwright.mjs")
 
     assert "readContactEditState" in source
-    assert "hasHeroTile" in source
-    assert "Expected classic detail to keep the hero tile visible" in source
+    assert "hasHeroContainer" in source
+    assert "hasIdentityHeader" in source
+    assert "identityHasCardChrome" in source
+    assert "titleFontSizePx" in source
+    assert "Expected classic detail to drop the hero container chrome" in source
+    assert "Expected classic detail to keep a frameless identity header" in source
+    assert "Expected classic detail title font size to stay large" in source
     assert "Expected detail to enter edit mode" in source
     assert "Expected name inputs to stay hidden until edit mode is entered" in source
     assert "Expected edit mode to expose first and last name inputs" in source
+    assert "Expected edit mode to keep the frameless identity header" in source
+    assert "Expected edit mode to keep the identity header chrome-free" in source
     assert "Expected classic detail to keep Connected visible" in source
 
 
@@ -497,6 +504,8 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "contact-edit-photo-removed" in source
     assert "contact-edit-reload" in source
     assert "contact-edit-updated-list" in source
+    assert "contact-edit-identity-view" in source
+    assert "contact-edit-identity-edit" in source
     assert "Updated Proof Contact" in source
     assert "Updated from local proof edit flow" in source
     assert "updated.proof.one@example.com" in source
