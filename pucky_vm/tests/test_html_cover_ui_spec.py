@@ -2283,10 +2283,11 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     contact_search_input = css_block(styles, ".light-contacts-search")
     contact_list = css_block(styles, ".light-contact-list")
     contact_row = css_block(styles, ".light-contact-row")
-    contact_detail_hero = css_block(styles, ".light-contact-detail-hero")
+    contact_detail_identity = css_block(styles, ".light-contact-detail-identity")
     contact_detail_photo_button = css_block(styles, ".light-contact-detail-photo-button")
     contact_detail_save_status = css_block(styles, ".light-contact-detail-save-status")
     contact_detail_name_inputs = css_block(styles, ".light-contact-detail-name-inputs")
+    contact_detail_title = css_block(styles, ".light-contact-detail-title")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
@@ -2362,7 +2363,8 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "onBack: handleContactDetailBack," in contact_detail
     assert "action: actionSlot," in contact_detail
     assert 'page.classList.add("light-contact-detail-page");' in contact_detail
-    assert 'const hero = el("section", "light-profile-card light-contact-detail-hero");' in contact_detail
+    assert 'const identity = el("section", "light-contact-detail-identity");' in contact_detail
+    assert 'const hero = el("section", "light-profile-card light-contact-detail-hero");' not in contact_detail
     assert 'photoInput.accept = "image/png,image/jpeg,image/webp";' in contact_detail
     assert 'bindContactDetailTextField(firstNameInput, "firstName", "first_name_blur");' in contact_detail
     assert 'bindContactDetailTextField(lastNameInput, "lastName", "last_name_blur");' in contact_detail
@@ -2375,7 +2377,7 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert 'photoInput.dataset.contactPhotoInput = "true";' in contact_detail
     assert 'removePhoto.dataset.contactPhotoRemove = "true";' in contact_detail
     assert 'saveStatus.dataset.contactAutosaveStatus = "idle";' in contact_detail
-    assert 'page.append(hero, contactSection, activityHost, notesHost, connectedHost);' in contact_detail
+    assert 'page.append(identity, contactSection, activityHost, notesHost, connectedHost);' in contact_detail
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
     assert 'lightNavigate("contact-edit", { from: "contact-detail" });' not in contact_detail
     assert 'Add activity' not in contact_detail
@@ -2415,12 +2417,20 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert ".light-contact-row .light-avatar {" not in styles
     assert ".light-contact-row .light-text-stack strong {" not in styles
     assert ".light-contact-row .light-text-stack span {" not in styles
-    assert "width: 100%;" in contact_detail_hero
+    assert "width: 100%;" in contact_detail_identity
+    assert "justify-items: center;" in contact_detail_identity
+    assert "background:" not in contact_detail_identity
+    assert "border:" not in contact_detail_identity
+    assert "border-radius:" not in contact_detail_identity
+    assert "box-shadow:" not in contact_detail_identity
     assert "position: absolute;" in contact_detail_photo_button
     assert "font-size:" in contact_detail_save_status
     assert "color:" in contact_detail_save_status
     assert "display: grid;" in contact_detail_name_inputs
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in contact_detail_name_inputs
+    assert "font-size: clamp(28px, 5vw, 36px);" in contact_detail_title
+    assert "line-height: 1;" in contact_detail_title
+    assert "text-align: center;" in contact_detail_title
 
 
 def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:

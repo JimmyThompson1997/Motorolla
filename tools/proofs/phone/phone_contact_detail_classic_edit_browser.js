@@ -355,6 +355,10 @@ async function readContactDetailState(client) {
   return client.evaluate(`(() => {
     const shell = document.querySelector(".light-shell");
     const pageRoot = document.querySelector(".light-contact-detail-page");
+    const identity = pageRoot?.querySelector(".light-contact-detail-identity");
+    const titleNode = pageRoot?.querySelector(".light-contact-detail-title");
+    const identityStyle = identity ? getComputedStyle(identity) : null;
+    const titleStyle = titleNode ? getComputedStyle(titleNode) : null;
     const fieldValue = key => {
       const input = document.querySelector(\`[data-contact-edit-field="\${key}"]\`);
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
@@ -362,12 +366,33 @@ async function readContactDetailState(client) {
     const activityValues = Array.from(document.querySelectorAll(".light-contact-detail-activity-host .light-info-row"))
       .map(row => String(row.querySelector(".light-text-stack span")?.textContent || row.textContent || "").replace(/\\s+/g, " ").trim())
       .filter(Boolean);
+    const identityRect = identity instanceof HTMLElement
+      ? (() => {
+          const rect = identity.getBoundingClientRect();
+          return {
+            top: Number(rect.top || 0),
+            left: Number(rect.left || 0),
+            width: Number(rect.width || 0),
+            height: Number(rect.height || 0),
+          };
+        })()
+      : null;
+    const backgroundColor = String(identityStyle?.backgroundColor || "").trim().toLowerCase();
+    const hasTransparentBackground = !backgroundColor || backgroundColor === "rgba(0, 0, 0, 0)" || backgroundColor === "transparent";
+    const borderWidth = [
+      Number.parseFloat(identityStyle?.borderTopWidth || "0"),
+      Number.parseFloat(identityStyle?.borderRightWidth || "0"),
+      Number.parseFloat(identityStyle?.borderBottomWidth || "0"),
+      Number.parseFloat(identityStyle?.borderLeftWidth || "0"),
+    ].some(value => Number.isFinite(value) && value > 0);
+    const borderRadius = Number.parseFloat(identityStyle?.borderRadius || "0");
     return {
       route: shell?.getAttribute("data-light-route") || "",
       detailId: pageRoot?.getAttribute("data-contact-detail-id") || "",
       mode: pageRoot?.getAttribute("data-contact-detail-mode") || "view",
       action: document.querySelector("[data-contact-detail-action]")?.getAttribute("data-contact-detail-action") || "",
       title: String(pageRoot?.querySelector(".light-contact-detail-title")?.textContent || "").trim(),
+      titleFontSizePx: Number.parseFloat(titleStyle?.fontSize || "0") || 0,
       firstName: fieldValue("first_name"),
       lastName: fieldValue("last_name"),
       summary: fieldValue("summary"),
@@ -376,6 +401,10 @@ async function readContactDetailState(client) {
       activityValues,
       activeField: document.activeElement?.getAttribute?.("data-contact-edit-field") || "",
       hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
+      hasHeroContainer: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
+      hasIdentityHeader: Boolean(identity),
+      identityHasCardChrome: Boolean(identityStyle && (!hasTransparentBackground || identityStyle.boxShadow !== "none" || borderWidth || (Number.isFinite(borderRadius) && borderRadius > 0))),
+      identityRect,
       viewport: {
         width: Number(window.innerWidth || 0),
         height: Number(window.innerHeight || 0),

@@ -4749,12 +4749,15 @@ button {
 }
 
 .light-contact-detail-page {
-  gap: 12px;
+  gap: 10px;
 }
 
-.light-contact-detail-hero {
+.light-contact-detail-identity {
   width: 100%;
-  gap: 14px;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 2px 0 0;
 }
 
 .light-contact-detail-avatar-well {
@@ -4800,22 +4803,27 @@ button {
 }
 
 .light-contact-detail-hero-copy {
-  width: min(100%, 520px);
+  width: min(100%, 560px);
   display: grid;
   gap: 10px;
 }
 
-.light-contact-detail-title,
+.light-contact-detail-title {
+  margin: 0;
+  color: var(--home-shell-text);
+  text-align: center;
+  font-size: clamp(28px, 5vw, 36px);
+  line-height: 1;
+  font-weight: 860;
+  letter-spacing: -0.03em;
+}
+
 .light-contact-detail-summary,
 .light-contact-detail-save-status {
   margin: 0;
   text-align: center;
   color: var(--home-shell-muted);
   font-size: 12px;
-}
-
-.light-contact-detail-title {
-  color: var(--home-shell-text);
 }
 
 .light-contact-detail-name-inputs {

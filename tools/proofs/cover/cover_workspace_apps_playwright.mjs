@@ -2085,6 +2085,10 @@ async function readContactEditState(page) {
   return page.evaluate(() => {
     const shell = document.querySelector(".light-shell");
     const pageRoot = document.querySelector(".light-contact-detail-page");
+    const identity = pageRoot?.querySelector(".light-contact-detail-identity");
+    const titleNode = pageRoot?.querySelector(".light-contact-detail-title");
+    const identityStyle = identity ? getComputedStyle(identity) : null;
+    const titleStyle = titleNode ? getComputedStyle(titleNode) : null;
     const isVisible = node => {
       if (!(node instanceof HTMLElement)) {
         return false;
@@ -2112,11 +2116,32 @@ async function readContactEditState(page) {
     const lastNameInput = document.querySelector('[data-contact-edit-field="last_name"]');
     const actionButton = document.querySelector("[data-contact-detail-action]");
     const summaryView = document.querySelector(".light-contact-detail-summary");
+    const identityRect = identity instanceof HTMLElement
+      ? (() => {
+          const rect = identity.getBoundingClientRect();
+          return {
+            top: Number(rect.top || 0),
+            left: Number(rect.left || 0),
+            width: Number(rect.width || 0),
+            height: Number(rect.height || 0),
+          };
+        })()
+      : null;
+    const backgroundColor = String(identityStyle?.backgroundColor || "").trim().toLowerCase();
+    const hasTransparentBackground = !backgroundColor || backgroundColor === "rgba(0, 0, 0, 0)" || backgroundColor === "transparent";
+    const borderWidth = [
+      Number.parseFloat(identityStyle?.borderTopWidth || "0"),
+      Number.parseFloat(identityStyle?.borderRightWidth || "0"),
+      Number.parseFloat(identityStyle?.borderBottomWidth || "0"),
+      Number.parseFloat(identityStyle?.borderLeftWidth || "0"),
+    ].some(value => Number.isFinite(value) && value > 0);
+    const borderRadius = Number.parseFloat(identityStyle?.borderRadius || "0");
     return {
       route: shell?.getAttribute("data-light-route") || "",
       pageVisible: Boolean(pageRoot),
       mode: String(pageRoot?.getAttribute("data-contact-detail-mode") || "").trim() || "view",
       title: String(pageRoot?.querySelector(".light-contact-detail-title")?.textContent || "").trim(),
+      titleFontSizePx: Number.parseFloat(titleStyle?.fontSize || "0") || 0,
       summaryViewText: String(summaryView?.textContent || "").replace(/\s+/g, " ").trim(),
       avatarText: String(pageRoot?.querySelector(".light-contact-detail-avatar-mount .light-avatar")?.textContent || "").trim(),
       firstName: fieldValue("first_name"),
@@ -2130,7 +2155,10 @@ async function readContactEditState(page) {
       summaryVisible: isVisible(summaryView),
       hasConnectedSection: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
       hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
-      hasHeroTile: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
+      hasHeroContainer: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
+      hasIdentityHeader: Boolean(identity),
+      identityHasCardChrome: Boolean(identityStyle && (!hasTransparentBackground || identityStyle.boxShadow !== "none" || borderWidth || (Number.isFinite(borderRadius) && borderRadius > 0))),
+      identityRect,
       action: String(actionButton?.getAttribute("data-contact-detail-action") || "").trim(),
       hasActivityInputs: Boolean(pageRoot?.querySelector("input[data-contact-activity-index]")),
       hasActivityAddButton: Boolean(pageRoot?.querySelector('[data-contact-activity-add="true"]')),
@@ -2138,6 +2166,18 @@ async function readContactEditState(page) {
       autosaveLabel: String(status?.textContent || "").trim(),
     };
   });
+}
+
+async function saveContactDetailIdentityScreenshot(page, reportDir, name) {
+  const target = path.join(reportDir, `${name}.png`);
+  const identity = page.locator(".light-contact-detail-identity").first();
+  await identity.waitFor({ state: "visible", timeout: 30000 });
+  await identity.screenshot({
+    path: target,
+    animations: "disabled",
+    timeout: 30000,
+  });
+  return target;
 }
 
 async function setContactsSearchQuery(page, query, timeoutMs) {
@@ -2418,7 +2458,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     const contactEditState = await readContactEditState(page);
     assert(contactEditState.pageVisible, "Expected contact detail page to be visible");
     assert(contactEditState.mode === "view", `Expected contact detail to open in view mode, got ${contactEditState.mode}`);
-    assert(contactEditState.hasHeroTile, "Expected contact detail to keep the classic hero tile visible");
+    assert(!contactEditState.hasHeroContainer, "Expected contact detail to drop the hero container chrome");
+    assert(contactEditState.hasIdentityHeader, "Expected contact detail to keep a frameless identity header");
+    assert(!contactEditState.identityHasCardChrome, "Expected contact detail identity header to stay chrome-free");
+    assert(contactEditState.titleFontSizePx >= 28, `Expected contact detail title font size to stay large, got ${contactEditState.titleFontSizePx}`);
     assert(contactEditState.action === "edit", `Expected contact detail to expose an edit action, got ${contactEditState.action}`);
     assert(!contactEditState.firstNameVisible && !contactEditState.lastNameVisible, "Expected name inputs to stay hidden until edit mode is entered");
     assert(contactEditState.hasConnectedSection, "Expected contact detail to keep Connected visible");
@@ -2506,7 +2549,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   const contactEditState = await readContactEditState(page);
   assert(contactEditState.pageVisible, `Expected ${firstVisibleContact.title} detail to be visible`);
   assert(contactEditState.mode === "view", `Expected ${firstVisibleContact.title} detail to open in view mode, got ${contactEditState.mode}`);
-  assert(contactEditState.hasHeroTile, "Expected classic contact detail to keep the hero tile visible");
+  assert(!contactEditState.hasHeroContainer, "Expected classic detail to drop the hero container chrome");
+  assert(contactEditState.hasIdentityHeader, "Expected classic detail to keep a frameless identity header");
+  assert(!contactEditState.identityHasCardChrome, "Expected classic detail identity header to stay chrome-free");
+  assert(contactEditState.titleFontSizePx >= 28, `Expected classic detail title font size to stay large, got ${contactEditState.titleFontSizePx}`);
   await assertNoContactEndpoints(page, config, firstVisibleContact.id, `${firstVisibleContact.title} detail`);
   await assertNoContactHtmlDocument(page, config, firstVisibleContact.id, `${firstVisibleContact.title} detail`);
   summary.contactProfileCards.push({ theme, contact: firstVisibleContact.id, editor: contactEditState });
@@ -2544,11 +2590,15 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(initialEditState.route === "contact-detail", `Expected contact-detail route, got ${initialEditState.route}`);
   assert(initialEditState.mode === "view", `Expected classic detail to open in view mode, got ${initialEditState.mode}`);
   assert(initialEditState.action === "edit", `Expected classic detail to expose an edit action, got ${initialEditState.action}`);
-  assert(initialEditState.hasHeroTile, "Expected classic detail to keep the hero tile visible");
+  assert(!initialEditState.hasHeroContainer, "Expected classic detail to drop the hero container chrome");
+  assert(initialEditState.hasIdentityHeader, "Expected classic detail to keep a frameless identity header");
+  assert(!initialEditState.identityHasCardChrome, "Expected classic detail identity header to stay chrome-free");
+  assert(initialEditState.titleFontSizePx >= 28, `Expected classic detail title font size to stay large, got ${initialEditState.titleFontSizePx}`);
   assert(!initialEditState.firstNameVisible && !initialEditState.lastNameVisible, "Expected name inputs to stay hidden until edit mode is entered");
   assert(!initialEditState.hasActivityInputs && !initialEditState.hasActivityAddButton, "Expected activity to stay read-only in the classic detail editor");
   assert(initialEditState.hasConnectedSection, "Expected classic detail to keep Connected visible");
   screenshots[`${theme}_contact_edit_baseline`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-baseline`);
+  screenshots[`${theme}_contact_edit_identity_view`] = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${theme}-contact-edit-identity-view`);
 
   await page.locator('[data-contact-detail-action="edit"]').first().click();
   await page.waitForFunction(() => {
@@ -2558,10 +2608,13 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   const editModeState = await readContactEditState(page);
   assert(editModeState.mode === "edit", `Expected detail to enter edit mode, got ${editModeState.mode}`);
   assert(editModeState.action === "done", `Expected edit mode to expose a done action, got ${editModeState.action}`);
-  assert(editModeState.hasHeroTile, "Expected the same hero tile to remain visible in edit mode");
+  assert(!editModeState.hasHeroContainer, "Expected edit mode to keep the hero container removed");
+  assert(editModeState.hasIdentityHeader, "Expected edit mode to keep the frameless identity header");
+  assert(!editModeState.identityHasCardChrome, "Expected edit mode to keep the identity header chrome-free");
   assert(editModeState.firstNameVisible && editModeState.lastNameVisible, "Expected edit mode to expose first and last name inputs");
   assert(!editModeState.hasActivityInputs && !editModeState.hasActivityAddButton, "Expected activity to remain read-only in edit mode");
   screenshots[`${theme}_contact_edit_mode`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-mode`);
+  screenshots[`${theme}_contact_edit_identity_edit`] = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${theme}-contact-edit-identity-edit`);
 
   const typingTrace = await traceContactEditTyping(page, "first_name", updatedFirstName, config.timeoutMs);
   assert((typingTrace.eventCounts.blur || 0) === 0 && (typingTrace.eventCounts.focusout || 0) === 0, "Expected contact edit typing to avoid blur/focusout while editing");
