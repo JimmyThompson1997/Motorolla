@@ -1842,11 +1842,11 @@ class PuckyVoiceService:
         label = str(recipient.get("label") or "").strip()
         if label:
             return label
-        if str(recipient.get("kind") or "").strip().lower() == "self":
-            return "Me"
         contact = self._reminder_contact_record(recipient)
         if isinstance(contact, dict):
             return str(contact.get("title") or contact.get("display_name") or recipient.get("id") or "Contact").strip()
+        if str(recipient.get("kind") or "").strip().lower() == "self":
+            return "Me"
         return str(recipient.get("id") or "Contact").strip() or "Contact"
 
     def _reminder_human_due_label(self, reminder: dict[str, object]) -> str:

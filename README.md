@@ -26,12 +26,13 @@ python -m tools.dev test-fast
 python -m tools.dev test-full
 python -m tools.dev proof-local-notes-flash-browser
 python -m tools.dev proof-local-contacts-search-browser
-python -m tools.dev proof-local-contact-edit-browser
+python -m tools.dev proof-local-contact-detail-classic-edit-browser
 python -m tools.dev proof-local-web
 python -m tools.dev proof-live-notes-flash-browser
 python -m tools.dev proof-live-contacts-search-browser
 python -m tools.dev proof-live-contacts-search-emulator
-python -m tools.dev proof-live-contact-edit-browser
+python -m tools.dev proof-live-contact-detail-classic-edit-browser
+python -m tools.dev proof-live-contact-detail-classic-edit-emulator
 python -m tools.dev proof-live-web
 python -m tools.dev release-hosted-web
 python -m tools.dev deploy-vm
@@ -49,7 +50,7 @@ Generated inputs:
 - Notes detail transition or flash work: also run `python -m tools.dev proof-local-notes-flash-browser`, then rerun it against the deployed VM with `python -m tools.dev proof-live-notes-flash-browser`.
 - Contacts search changes: also run `python -m tools.dev proof-local-contacts-search-browser`, then rerun it against the deployed VM with `python -m tools.dev proof-live-contacts-search-browser`.
 - Contacts search keyboard-stability changes on Android: also run `python -m tools.dev proof-live-contacts-search-emulator` against the deployed VM URL.
-- Contacts edit changes: also run `python -m tools.dev proof-local-contact-edit-browser`, then rerun it against the deployed VM with `python -m tools.dev proof-live-contact-edit-browser`.
+- Contacts detail classic-edit changes: also run `python -m tools.dev proof-local-contact-detail-classic-edit-browser`, then rerun it against the deployed VM with `python -m tools.dev proof-live-contact-detail-classic-edit-browser` and `python -m tools.dev proof-live-contact-detail-classic-edit-emulator`.
 - Behavior-adjacent VM or hosted UI changes: also run `python -m tools.dev proof-local-web`.
 - Live behavior changes: after merge onto clean `master`, use `python -m tools.dev release-hosted-web` as the default lane. It runs parser checks, targeted hosted tests, deploys the VM, verifies the served manifest, and then runs the live hosted proof stack.
 - `python -m tools.dev deploy-vm` remains available as the lower-level deploy-only step when you intentionally want to separate deploy from proof.

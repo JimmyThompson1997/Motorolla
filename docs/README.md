@@ -19,8 +19,9 @@ This folder is the retained documentation set. Treat this file as the top-level 
 - Contacts search browser proof (local): `python -m tools.dev proof-local-contacts-search-browser`
 - Contacts search browser proof (live): `python -m tools.dev proof-live-contacts-search-browser`
 - Contacts search emulator proof (live): `python -m tools.dev proof-live-contacts-search-emulator`
-- Contact detail editor browser proof (local): `python -m tools.dev proof-local-contact-edit-browser`
-- Contact detail editor browser proof (live): `python -m tools.dev proof-live-contact-edit-browser`
+- Classic contact detail edit browser proof (local): `python -m tools.dev proof-local-contact-detail-classic-edit-browser`
+- Classic contact detail edit browser proof (live): `python -m tools.dev proof-live-contact-detail-classic-edit-browser`
+- Classic contact detail edit emulator proof (live): `python -m tools.dev proof-live-contact-detail-classic-edit-emulator`
 - Local proof: `python -m tools.dev proof-local-web`
 - Live proof: `python -m tools.dev proof-live-web`
 - Hosted release lane: `python -m tools.dev release-hosted-web`

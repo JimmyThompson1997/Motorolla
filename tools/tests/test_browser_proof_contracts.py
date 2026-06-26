@@ -406,18 +406,20 @@ def test_workspace_apps_browser_proof_captures_contacts_flat_list_contract() -> 
     assert "Contacts list should stay visually flat" in source
     assert "Contacts list should remove detached side padding" in source
     assert "Contacts list should keep divider separation between rows" in source
-    assert "Me contact should remain pinned first in Contacts" in source
+    assert "Expected Contacts baseline list to stay alphabetical" in source
+    assert "Expected contact-me avatar to stay M" in source
 
 
 def test_workspace_apps_browser_proof_checks_flat_contact_header_contract() -> None:
     source = read_source("cover_workspace_apps_playwright.mjs")
 
     assert "readContactEditState" in source
-    assert "hasRedundantHero" in source
-    assert "Expected contact detail editor to remove the redundant hero" in source
-    assert "Expected self contact detail to stay name-locked as Me" in source
-    assert "Expected normal contact detail to expose editable first and last name fields" in source
-    assert "Expected contact detail editor to keep Connected visible" in source
+    assert "hasHeroTile" in source
+    assert "Expected classic detail to keep the hero tile visible" in source
+    assert "Expected detail to enter edit mode" in source
+    assert "Expected name inputs to stay hidden until edit mode is entered" in source
+    assert "Expected edit mode to expose first and last name inputs" in source
+    assert "Expected classic detail to keep Connected visible" in source
 
 
 def test_workspace_apps_browser_proof_checks_contact_photo_thumbnail_contract() -> None:
@@ -489,8 +491,8 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "readContactEditState" in source
     assert "traceContactEditTyping" in source
     assert "contact-edit-baseline" in source
-    assert "contact-edit-name" in source
-    assert "contact-edit-activity" in source
+    assert "contact-edit-mode" in source
+    assert "contact-edit-fields" in source
     assert "contact-edit-photo-added" in source
     assert "contact-edit-photo-removed" in source
     assert "contact-edit-reload" in source
@@ -504,6 +506,8 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "Expected contact edit to remove the uploaded photo" in source
     assert "Expected photo removal to restore derived initials" in source
     assert "Expected contact detail reload to stay on the edited contact" in source
+    assert "Expected activity to stay read-only in the classic detail editor" in source
+    assert "Expected activity to remain read-only in edit mode" in source
     assert 'input[type="file"][data-contact-photo-input="true"]' in source
 
 
@@ -1011,15 +1015,22 @@ def test_contacts_edit_browser_proof_task_runner_and_docs_are_first_class() -> N
 
     assert '"proof-local-contact-edit-browser": "Boot the local workspace proof server and run the Contacts detail editor browser proof against the current local bundle."' in dev_source
     assert '"proof-live-contact-edit-browser": "Run the Contacts detail editor browser proof against the hosted VM with manifest verification."' in dev_source
-    assert 'str((ROOT / ".tmp" / "proof-local-contact-edit-browser").resolve())' in dev_source
-    assert 'str((ROOT / ".tmp" / "proof-live-contact-edit-browser").resolve())' in dev_source
+    assert '"proof-local-contact-detail-classic-edit-browser": "Boot the local workspace proof server and run the classic Contacts detail edit browser proof against the current local bundle."' in dev_source
+    assert '"proof-live-contact-detail-classic-edit-browser": "Run the classic Contacts detail edit browser proof against the hosted VM with manifest verification."' in dev_source
+    assert '"proof-live-contact-detail-classic-edit-emulator": "Run the Android-emulator classic Contacts detail edit proof against the hosted VM with IME and trace verification."' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-local-contact-detail-classic-edit-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contact-detail-classic-edit-browser").resolve())' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-contact-detail-classic-edit-emulator").resolve())' in dev_source
     assert '"contact-edit",' in dev_source
-    assert 'return run_local_contact_edit_browser_proof(args.extra_args)' in dev_source
-    assert 'return run_live_contact_edit_browser_proof(args.extra_args)' in dev_source
-    assert "python -m tools.dev proof-local-contact-edit-browser" in readme
-    assert "python -m tools.dev proof-live-contact-edit-browser" in readme
-    assert "Contact detail editor browser proof (local): `python -m tools.dev proof-local-contact-edit-browser`" in docs_readme
-    assert "Contact detail editor browser proof (live): `python -m tools.dev proof-live-contact-edit-browser`" in docs_readme
+    assert "return run_local_contact_detail_classic_edit_browser_proof(extra_args)" in dev_source
+    assert "return run_live_contact_detail_classic_edit_browser_proof(extra_args)" in dev_source
+    assert "return run_live_contact_detail_classic_edit_emulator_proof(args.extra_args)" in dev_source
+    assert "python -m tools.dev proof-local-contact-detail-classic-edit-browser" in readme
+    assert "python -m tools.dev proof-live-contact-detail-classic-edit-browser" in readme
+    assert "python -m tools.dev proof-live-contact-detail-classic-edit-emulator" in readme
+    assert "Classic contact detail edit browser proof (local): `python -m tools.dev proof-local-contact-detail-classic-edit-browser`" in docs_readme
+    assert "Classic contact detail edit browser proof (live): `python -m tools.dev proof-live-contact-detail-classic-edit-browser`" in docs_readme
+    assert "Classic contact detail edit emulator proof (live): `python -m tools.dev proof-live-contact-detail-classic-edit-emulator`" in docs_readme
 def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     source = read_source("cover_universal_feed_tiles_playwright.mjs")
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))

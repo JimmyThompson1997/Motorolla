@@ -110,12 +110,36 @@ def _int_or_zero(value: object) -> int:
         return 0
 
 
+def _contact_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _contact_display_name(metadata: dict[str, Any], fallback_title: object = "") -> str:
+    first = _contact_text(metadata.get("first_name"))
+    last = _contact_text(metadata.get("last_name"))
+    parts = [part for part in (first, last) if part]
+    if parts:
+        return " ".join(parts)
+    fallback = _contact_text(metadata.get("display_name") or fallback_title)
+    return fallback or "Unnamed contact"
+
+
+def _contact_initials(metadata: dict[str, Any], fallback_title: object = "") -> str:
+    display_name = _contact_display_name(metadata, fallback_title)
+    tokens = [token for token in _contact_text(display_name).split() if token]
+    if len(tokens) >= 2:
+        return f"{tokens[0][:1]}{tokens[-1][:1]}".upper()
+    if len(tokens) == 1:
+        return tokens[0][:1].upper()
+    return "?"
+
+
 def _self_contact_record() -> dict[str, object]:
     return {
         "id": SELF_CONTACT_ID,
         "title": SELF_CONTACT_TITLE,
         "summary": SELF_CONTACT_SUMMARY,
-        "pinned": True,
+        "pinned": False,
         "html": _personal_html(
             SELF_CONTACT_TITLE,
             "Keep your own reminder delivery email and phone current so Gmail and SMS can route cleanly.",
@@ -123,7 +147,8 @@ def _self_contact_record() -> dict[str, object]:
         ),
         "metadata": {
             "is_self": True,
-            "avatar": "ME",
+            "display_name": SELF_CONTACT_TITLE,
+            "avatar": "M",
             "email": "",
             "phone": "",
             "notification_device_id": "",
@@ -534,7 +559,7 @@ class WorkspaceStore:
         elif kind == "project":
             order = "ORDER BY pinned DESC, updated_at_ms DESC, record_id ASC"
         elif kind == "contact":
-            order = f"ORDER BY record_id = '{SELF_CONTACT_ID}' DESC, title COLLATE NOCASE ASC"
+            order = "ORDER BY title COLLATE NOCASE ASC, record_id ASC"
         elif kind == "message":
             order = "ORDER BY event_at_ms DESC, updated_at_ms DESC"
         elif kind == "meeting_note":
@@ -604,9 +629,6 @@ class WorkspaceStore:
         if self.kind_for_collection(collection) == "contact" and str(record_id or "").strip() == SELF_CONTACT_ID:
             merged["id"] = SELF_CONTACT_ID
             merged["record_id"] = SELF_CONTACT_ID
-            merged["title"] = str(merged.get("title") or current.get("title") or SELF_CONTACT_TITLE).strip() or SELF_CONTACT_TITLE
-            merged["summary"] = str(merged.get("summary") or SELF_CONTACT_SUMMARY).strip() or SELF_CONTACT_SUMMARY
-            merged["pinned"] = True
             merged["archived"] = False
             merged["deleted"] = False
             merged["metadata"] = {
@@ -927,11 +949,12 @@ class WorkspaceStore:
         metadata = _contact_metadata_without_endpoints(current.get("metadata") if isinstance(current.get("metadata"), dict) else {})
         metadata.pop("html", None)
         metadata.pop("html_asset_id", None)
+        title = _contact_display_name(metadata, current.get("title") or SELF_CONTACT_TITLE)
         payload = {
             "id": SELF_CONTACT_ID,
-            "title": str(current.get("title") or SELF_CONTACT_TITLE).strip() or SELF_CONTACT_TITLE,
+            "title": title,
             "summary": str(current.get("summary") or SELF_CONTACT_SUMMARY).strip() or SELF_CONTACT_SUMMARY,
-            "pinned": True,
+            "pinned": bool(current.get("pinned")),
             "archived": False,
             "deleted": False,
             "html": str(current.get("html") or "") or _self_contact_record()["html"],
@@ -939,11 +962,15 @@ class WorkspaceStore:
             "metadata": {
                 **metadata,
                 "is_self": True,
-                "avatar": str(metadata.get("avatar") or "ME").strip() or "ME",
-                "email": str(metadata.get("email") or "").strip(),
-                "phone": str(metadata.get("phone") or "").strip(),
-                "notification_device_id": str(metadata.get("notification_device_id") or "").strip(),
-                "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
+                "display_name": title,
+                "avatar": _contact_initials(metadata, title),
+                "first_name": _contact_text(metadata.get("first_name")),
+                "last_name": _contact_text(metadata.get("last_name")),
+                "email": _contact_text(metadata.get("email")),
+                "phone": _contact_text(metadata.get("phone")),
+                "photo": _contact_text(metadata.get("photo")),
+                "notification_device_id": _contact_text(metadata.get("notification_device_id")),
+                "preferred_reminder_device_id": _contact_text(metadata.get("preferred_reminder_device_id")),
                 "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
             },
         }
@@ -1680,20 +1707,26 @@ class WorkspaceStore:
         if kind == "contact":
             metadata = _contact_metadata_without_endpoints(metadata)
             is_self = record_id == SELF_CONTACT_ID or bool(metadata.get("is_self"))
+            title = _contact_display_name(metadata, title or record_id)
+            metadata = {
+                **metadata,
+                "display_name": title,
+                "avatar": _contact_initials(metadata, title),
+                "first_name": _contact_text(metadata.get("first_name")),
+                "last_name": _contact_text(metadata.get("last_name")),
+                "email": _contact_text(metadata.get("email")),
+                "phone": _contact_text(metadata.get("phone")),
+                "photo": _contact_text(metadata.get("photo")),
+                "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else [],
+            }
             if is_self:
                 metadata = {
                     **metadata,
                     "is_self": True,
-                    "avatar": str(metadata.get("avatar") or "ME").strip() or "ME",
-                    "email": str(metadata.get("email") or "").strip(),
-                    "phone": str(metadata.get("phone") or "").strip(),
-                    "notification_device_id": str(metadata.get("notification_device_id") or "").strip(),
-                    "preferred_reminder_device_id": str(metadata.get("preferred_reminder_device_id") or "").strip(),
+                    "notification_device_id": _contact_text(metadata.get("notification_device_id")),
+                    "preferred_reminder_device_id": _contact_text(metadata.get("preferred_reminder_device_id")),
                     "activity": list(metadata.get("activity") or []) if isinstance(metadata.get("activity"), list) else ["Reminder delivery profile"],
                 }
-                title = title or SELF_CONTACT_TITLE
-                summary = summary or SELF_CONTACT_SUMMARY
-                pinned = True
                 archived = False
                 deleted = False
         if kind == "calendar_event" and not date_key and start_at_ms:

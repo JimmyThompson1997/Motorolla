@@ -194,7 +194,7 @@ def test_render_feed_only_uses_modern_home_shell_paths() -> None:
     assert 'view.dataset.homeShellKind = "mock";' in home_shell_mock_view
     assert 'view.append(page);' in home_shell_mock_view
     assert 'return lightContactDetailPage();' in light_mock_route_page
-    assert 'return lightContactEditPage();' in light_mock_route_page
+    assert 'return lightContactEditPage();' not in light_mock_route_page
     assert "settingsPageView()" not in render_feed
     assert "linksPageView()" not in render_feed
     assert "meetingsPageView()" not in render_feed
@@ -1621,8 +1621,8 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'if (isInteractive && showChevron) {' in linked_feed_row
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
-    assert 'const connected = el("div", "light-contact-detail-connected");' in contact_detail
-    assert "refs.connected.replaceChildren(lightLinkedRecordSection(contact, {" in contact_detail_sync
+    assert 'const connectedHost = el("div", "light-contact-detail-connected");' in contact_detail
+    assert "refs.connectedHost.replaceChildren(" in contact_detail_sync
     assert 'title: "Connected"' in contact_detail_sync
     assert "showWhenEmpty: true" in contact_detail_sync
     assert 'showChips: false,' in contact_detail_sync
@@ -2341,58 +2341,57 @@ def test_meetings_titles_stay_explicitly_left_anchored() -> None:
     assert "width: 100%;" in meeting_copy
     assert "text-align: left;" in meeting_copy
 
-def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
+def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> None:
     app = read("app.js")
     styles = read("styles.css")
+    routes = read("pucky-routes.js")
     contacts_page = function_block(app, "lightContactsPage")
     contacts_search = function_block(app, "lightContactsSearchField")
+    contacts_list_items = function_block(app, "contactsListItems")
     sync_contacts_page = function_block(app, "syncContactsPage")
     sync_contacts_search_input = function_block(app, "syncContactsSearchInput")
     contact_search_terms = function_block(app, "contactSearchTerms")
     contact_matches_search = function_block(app, "contactMatchesSearch")
     filtered_contacts = function_block(app, "filteredContactsListItems")
-    contact_initials_from_text = function_block(app, "contactInitialsFromText")
-    contact_avatar_text = function_block(app, "contactAvatarText")
-    contact_draft_avatar = function_block(app, "contactDraftAvatar")
-    build_contact_edit_draft = function_block(app, "buildContactEditDraft")
-    contact_edit_snapshot = function_block(app, "contactEditDraftSnapshot")
+    bind_contact_detail_text_field = function_block(app, "bindContactDetailTextField")
+    build_contact_detail_field_row = function_block(app, "buildContactDetailFieldRow")
+    update_contact_detail_draft = function_block(app, "updateContactDetailDraftAndSchedule")
     schedule_contact_detail_autosave = function_block(app, "scheduleContactDetailAutosave")
     run_after_contact_detail_flush = function_block(app, "runAfterContactDetailFlush")
     flush_contact_detail_autosave = function_block(app, "flushContactDetailAutosave")
     sync_contact_detail_editor = function_block(app, "syncContactDetailEditor")
-    light_view = function_block(app, "lightView")
-    light_mock_route_page = function_block(app, "lightMockRoutePage")
     prepare_contact_photo_draft = function_block(app, "prepareContactPhotoDraft")
     light_avatar = function_block(app, "lightAvatar")
     contact_detail = function_block(app, "lightContactDetailPage")
-    contact_edit = function_block(app, "lightContactEditPage")
     contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
     contact_search_input = css_block(styles, ".light-contacts-search")
     contact_list = css_block(styles, ".light-contact-list")
     contact_row = css_block(styles, ".light-contact-row")
-    contact_detail_form = css_block(styles, ".light-contact-detail-page .light-contact-edit-form")
-    contact_detail_header = css_block(styles, ".light-contact-detail-page .light-contact-edit-photo-card")
-    contact_detail_status = css_block(styles, ".light-contact-detail-status")
-    contact_activity_row = css_block(styles, ".light-contact-activity-row")
+    contact_detail_hero = css_block(styles, ".light-contact-detail-hero")
+    contact_detail_photo_button = css_block(styles, ".light-contact-detail-photo-button")
+    contact_detail_save_status = css_block(styles, ".light-contact-detail-save-status")
+    contact_detail_name_inputs = css_block(styles, ".light-contact-detail-name-inputs")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "function contactIsSelf(contact)" in app
     assert "function contactsListItems()" in app
-    assert "function normalizeSearchDigits(value)" in app
+    assert "function contactDisplayNameFromParts(firstName, lastName, fallbackTitle = \"\")" in app
+    assert "function contactInitialsFromParts(firstName, lastName, fallbackTitle = \"\")" in app
     assert "let contactsPageNode = null;" in app
     assert "let contactsPageRefs = null;" in app
     assert "let contactDetailPageNode = null;" in app
     assert "let contactDetailPageRefs = null;" in app
     assert 'let contactDetailPageContactId = "";' in app
-    assert '"contact-edit"' in app
+    assert '"contact-edit"' not in app
+    assert '"contact-edit"' not in routes
     assert "function syncContactsPage()" in app
     assert "function syncContactsSearchInput(refs)" in app
     assert "function syncContactDetailEditor() {" in app
-    assert "function lightMockRoutePage(route = state.route) {" in app
+    assert "function openContactDetailEditMode() {" in app
+    assert "function finishContactDetailEditMode() {" in app
+    assert "function handleContactDetailBack() {" in app
     assert "function scheduleContactDetailAutosave() {" in app
     assert "async function flushContactDetailAutosave(options = {}) {" in app
-    assert 'function contactInitialsFromText(value, fallback = "CT") {' in app
-    assert "function contactAvatarText(contact) {" in app
     assert "const searchWrap = lightContactsSearchField();" in contacts_page
     assert "if (!contactsPageNode) {" in contacts_page
     assert "contactsPageRefs = {" in contacts_page
@@ -2408,6 +2407,8 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert "syncContactsPage();" in contacts_search
     assert "render();" not in contacts_search
     assert "queueContactsSearchFieldFocus(" not in app
+    assert "contactDisplayName(left).localeCompare(contactDisplayName(right))" in contacts_list_items
+    assert "SELF_CONTACT_ID" not in contacts_list_items
     assert 'if (document.activeElement !== refs.search && refs.search.value !== state.contacts.search) {' in sync_contacts_search_input
     assert "const contacts = filteredContactsListItems();" in sync_contacts_page
     assert 'refs.list.replaceChildren(fragment);' in sync_contacts_page
@@ -2425,14 +2426,6 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert 'Clear the search field to see every contact again.' in sync_contacts_page
     assert 'const row = el("button", "light-contact-row light-feed-row is-flat-feed");' in sync_contacts_page
     assert 'const row = el("button", "light-card light-contact-row");' not in sync_contacts_page
-    assert 'return letters[0].charAt(0).toUpperCase();' in contact_initials_from_text
-    assert 'return letters[0].slice(0, 2).toUpperCase();' not in contact_initials_from_text
-    assert 'if (contactIsSelf(contact)) {' in contact_avatar_text
-    assert 'return "ME";' in contact_avatar_text
-    assert "contactInitialsFromText(" in contact_draft_avatar
-    assert 'return letters[0].slice(0, 2).toUpperCase();' not in contact_draft_avatar
-    assert 'activity: Array.isArray(meta.activity) ? meta.activity.map(value => String(value || "")) : [],' in build_contact_edit_draft
-    assert 'activity: Array.isArray(draft?.activity) ? draft.activity.map(value => String(value || "")) : [],' in contact_edit_snapshot
     assert "window.setTimeout(() => {" in schedule_contact_detail_autosave
     assert "350" in schedule_contact_detail_autosave
     assert "render();" not in schedule_contact_detail_autosave
@@ -2441,52 +2434,51 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert "if (!state.contacts.editSaving && !contactEditHasUnsavedChanges()) {" in run_after_contact_detail_flush
     assert "clearContactEditDraft();" in run_after_contact_detail_flush
     assert "callback();" in run_after_contact_detail_flush
-    assert "callback();\n      return true;" not in run_after_contact_detail_flush
     assert 'const updated = await patchWorkspaceRecord("contacts", contactId, payload);' in flush_contact_detail_autosave
     assert "render();" not in flush_contact_detail_autosave
     assert "createWorkspaceAsset(" not in flush_contact_detail_autosave
     assert 'canvas.toDataURL("image/jpeg", 0.82);' in prepare_contact_photo_draft
     assert "pendingPhotoBase64" not in prepare_contact_photo_draft
-    assert "const initials = contactAvatarText(contact);" in light_avatar
+    assert "const initials = contactInitials(contact);" in light_avatar
     assert 'meta.avatar || contact.title || "?"' not in light_avatar
     assert 'const page = lightPage("Contact", {' in contact_detail
     assert "detail: true," in contact_detail
-    assert 'page.classList.add("light-contact-detail-page", "light-contact-edit-page");' in contact_detail
-    assert 'const form = el("form", "light-contact-edit-form");' in contact_detail
-    assert 'const header = el("section", "light-contact-edit-photo-card");' in contact_detail
+    assert "onBack: handleContactDetailBack," in contact_detail
+    assert "action: actionSlot," in contact_detail
+    assert 'page.classList.add("light-contact-detail-page");' in contact_detail
+    assert 'const hero = el("section", "light-profile-card light-contact-detail-hero");' in contact_detail
     assert 'photoInput.accept = "image/png,image/jpeg,image/webp";' in contact_detail
+    assert 'bindContactDetailTextField(firstNameInput, "firstName", "first_name_blur");' in contact_detail
+    assert 'bindContactDetailTextField(lastNameInput, "lastName", "last_name_blur");' in contact_detail
+    assert 'bindContactDetailTextField(summaryInput, "summary", "summary_blur");' in contact_detail
+    assert 'firstNameInput.dataset.contactEditField = "first_name";' in contact_detail
+    assert 'lastNameInput.dataset.contactEditField = "last_name";' in contact_detail
     assert 'summaryInput.dataset.contactEditField = "summary";' in contact_detail
-    assert 'emailInput.dataset.contactEditField = "email";' in contact_detail
-    assert 'phoneInput.dataset.contactEditField = "phone";' in contact_detail
+    assert 'const emailField = buildContactDetailFieldRow("mail", "connect", "Email", "email", "email");' in contact_detail
+    assert 'const phoneField = buildContactDetailFieldRow("phone", "contacts", "Phone", "phone", "tel");' in contact_detail
+    assert 'photoInput.dataset.contactPhotoInput = "true";' in contact_detail
     assert 'removePhoto.dataset.contactPhotoRemove = "true";' in contact_detail
-    assert 'lightContactEditField("Description", summaryInput),' in contact_detail
-    assert 'const hero = el("section", "light-profile-card");' not in contact_detail
-    assert 'lightInfoSection("Endpoints"' not in contact_detail
-    assert "meta.endpoints" not in contact_detail
+    assert 'saveStatus.dataset.contactAutosaveStatus = "idle";' in contact_detail
+    assert 'page.append(hero, contactSection, activityHost, notesHost, connectedHost);' in contact_detail
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
-    assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
-    assert 'lightIconButton("edit", contactIsSelf(contact) ? "Edit me" : "Edit contact"' not in contact_detail
     assert 'lightNavigate("contact-edit", { from: "contact-detail" });' not in contact_detail
-    assert '"Last interaction"' not in contact_detail
-    assert '"Last meeting"' not in contact_detail
-    assert '"Upcoming"' not in contact_detail
+    assert 'Add activity' not in contact_detail
     assert "lightHtmlDocument(contact" not in contact_detail
     assert "Reminder device" not in contact_detail
-    assert 'refs.nameGrid.hidden = contactIsSelf(contact);' in sync_contact_detail_editor
-    assert 'refs.activitySection.hidden = contactIsSelf(contact);' in sync_contact_detail_editor
-    assert 'refs.connected.replaceChildren(lightLinkedRecordSection(contact, {' in sync_contact_detail_editor
-    assert 'refs.status.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";' in sync_contact_detail_editor
-    assert 'changePhoto.textContent = draft.photo ? "Change photo" : "Add photo";' in sync_contact_detail_editor
-    assert 'removePhoto.hidden = !draft.photo;' in sync_contact_detail_editor
-    assert 'const mockPage = lightMockRoutePage(route);' in light_view
-    assert 'return homeShellMockView(route, page);' in light_view
-    assert 'return lightContactsPage();' in light_mock_route_page
-    assert 'return lightContactDetailPage();' in light_mock_route_page
-    assert 'return lightContactEditPage();' in light_mock_route_page
-    assert "function lightContactEditPage()" in app
-    assert "return lightContactDetailPage();" in contact_edit
-    assert "saveButton" not in contact_edit
-    assert "lightLinkedRecordSection(contact, {" not in contact_edit
+    assert 'refs.page.dataset.contactDetailMode = editMode ? "edit" : "view";' in sync_contact_detail_editor
+    assert "refs.actionSlot.replaceChildren(" in sync_contact_detail_editor
+    assert 'actionButton.dataset.contactDetailAction = editMode ? "done" : "edit";' in sync_contact_detail_editor
+    assert "refs.titleView.hidden = editMode;" in sync_contact_detail_editor
+    assert "refs.nameEdit.hidden = !editMode;" in sync_contact_detail_editor
+    assert "refs.summaryInput.hidden = !editMode;" in sync_contact_detail_editor
+    assert "refs.saveStatus.hidden = !editMode;" in sync_contact_detail_editor
+    assert 'refs.saveStatus.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";' in sync_contact_detail_editor
+    assert 'syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);' in sync_contact_detail_editor
+    assert 'syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);' in sync_contact_detail_editor
+    assert 'refs.connectedHost.replaceChildren(' in sync_contact_detail_editor
+    assert "render();" not in bind_contact_detail_text_field
+    assert "render();" not in update_contact_detail_draft
+    assert 'input.dataset.contactEditField = field;' in build_contact_detail_field_row
     assert "display: flex;" in contact_search_wrap
     assert "padding: 0;" in contact_search_wrap
     assert "border-bottom:" in contact_search_wrap
@@ -2507,16 +2499,12 @@ def test_contacts_preserve_me_contact_with_frontend_edit_flow() -> None:
     assert ".light-contact-row .light-avatar {" not in styles
     assert ".light-contact-row .light-text-stack strong {" not in styles
     assert ".light-contact-row .light-text-stack span {" not in styles
-    assert "display: grid;" in contact_detail_form
-    assert "padding: 0 0 84px;" in contact_detail_form
-    assert "background: transparent;" in contact_detail_header
-    assert "border: 0;" in contact_detail_header
-    assert "box-shadow: none;" in contact_detail_header
-    assert "padding: 0;" in contact_detail_header
-    assert "font-size:" in contact_detail_status
-    assert "color:" in contact_detail_status
-    assert "display: grid;" in contact_activity_row
-    assert "grid-template-columns:" in contact_activity_row
+    assert "width: 100%;" in contact_detail_hero
+    assert "position: absolute;" in contact_detail_photo_button
+    assert "font-size:" in contact_detail_save_status
+    assert "color:" in contact_detail_save_status
+    assert "display: grid;" in contact_detail_name_inputs
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in contact_detail_name_inputs
 
 
 def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:
@@ -2528,7 +2516,7 @@ def test_contacts_search_resets_only_when_leaving_contacts_surface() -> None:
     light_back = function_block(app, "lightBack")
 
     assert "function isContactsSurfaceRoute(route) {" in app
-    assert 'return value === "contacts" || value === "contact-detail" || value === "contact-edit";' in is_contacts_surface_route
+    assert 'return value === "contacts" || value === "contact-detail";' in is_contacts_surface_route
     assert "if (!isContactsSurfaceRoute(currentRoute) || isContactsSurfaceRoute(nextRoute)) {" in reset_contacts_search
     assert 'state.contacts.search = "";' in reset_contacts_search
     assert "resetContactsSearchIfLeavingContacts(normalized.route);" in restore_light_route_snapshot

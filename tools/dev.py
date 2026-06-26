@@ -73,6 +73,9 @@ TASK_HELP = {
     "proof-local-contacts-search-browser": "Boot the local workspace proof server and run the Contacts search browser proof against the current local bundle.",
     "proof-live-contacts-search-browser": "Run the Contacts search browser proof against the hosted VM with manifest verification.",
     "proof-live-contacts-search-emulator": "Run the Android-emulator Contacts search stability proof against the hosted VM with IME and trace verification.",
+    "proof-local-contact-detail-classic-edit-browser": "Boot the local workspace proof server and run the classic Contacts detail edit browser proof against the current local bundle.",
+    "proof-live-contact-detail-classic-edit-browser": "Run the classic Contacts detail edit browser proof against the hosted VM with manifest verification.",
+    "proof-live-contact-detail-classic-edit-emulator": "Run the Android-emulator classic Contacts detail edit proof against the hosted VM with IME and trace verification.",
     "proof-local-contact-edit-browser": "Boot the local workspace proof server and run the Contacts detail editor browser proof against the current local bundle.",
     "proof-live-contact-edit-browser": "Run the Contacts detail editor browser proof against the hosted VM with manifest verification.",
     "proof-local-contacts-edit-browser": "Alias for proof-local-contact-edit-browser.",
@@ -495,7 +498,7 @@ def run_local_contacts_search_browser_proof(extra_args: list[str]) -> int:
     )
 
 
-def run_local_contact_edit_browser_proof(extra_args: list[str]) -> int:
+def run_local_contact_detail_classic_edit_browser_proof(extra_args: list[str]) -> int:
     port = find_free_localhost_port()
     base_url = f"http://127.0.0.1:{port}"
     return run_local_workspace_proof(
@@ -508,15 +511,19 @@ def run_local_contact_edit_browser_proof(extra_args: list[str]) -> int:
             "--sections",
             "contact-edit",
             "--report-dir",
-            str((ROOT / ".tmp" / "proof-local-contact-edit-browser").resolve()),
+            str((ROOT / ".tmp" / "proof-local-contact-detail-classic-edit-browser").resolve()),
         ],
         extra_args,
         server_command=build_local_workspace_proof_server_command(
             port,
-            state_dir=ROOT / ".tmp" / "proof-local-contact-edit-browser-state",
+            state_dir=ROOT / ".tmp" / "proof-local-contact-detail-classic-edit-browser-state",
         ),
         health_url=f"{base_url}/healthz",
     )
+
+
+def run_local_contact_edit_browser_proof(extra_args: list[str]) -> int:
+    return run_local_contact_detail_classic_edit_browser_proof(extra_args)
 
 
 def run_live_notes_flash_browser_proof(extra_args: list[str]) -> int:
@@ -615,7 +622,7 @@ def run_live_contacts_search_emulator_proof(extra_args: list[str]) -> int:
     )
 
 
-def run_live_contact_edit_browser_proof(extra_args: list[str]) -> int:
+def run_live_contact_detail_classic_edit_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     return run_node_proofs(
         node_binary,
@@ -626,10 +633,32 @@ def run_live_contact_edit_browser_proof(extra_args: list[str]) -> int:
                     "--routes",
                     "contact-edit",
                     "--report-dir",
-                    str((ROOT / ".tmp" / "proof-live-contact-edit-browser").resolve()),
+                    str((ROOT / ".tmp" / "proof-live-contact-detail-classic-edit-browser").resolve()),
                     *extra_args,
                 ],
             ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_contact_edit_browser_proof(extra_args: list[str]) -> int:
+    return run_live_contact_detail_classic_edit_browser_proof(extra_args)
+
+
+def run_live_contact_detail_classic_edit_emulator_proof(extra_args: list[str]) -> int:
+    refresh_seed = current_git_head() or str(int(time.time()))
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/phone/phone_contact_detail_classic_edit_emulator_proof.py",
+            "--base-url",
+            "https://pucky.fly.dev",
+            "--refresh-key",
+            refresh_seed,
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-live-contact-detail-classic-edit-emulator").resolve()),
+            *extra_args,
         ],
         env=proof_env(),
     )
@@ -1044,6 +1073,12 @@ def main(argv: list[str] | None = None) -> int:
         return run_live_contacts_search_browser_proof(args.extra_args)
     if args.task == "proof-live-contacts-search-emulator":
         return run_live_contacts_search_emulator_proof(args.extra_args)
+    if args.task == "proof-local-contact-detail-classic-edit-browser":
+        return run_local_contact_detail_classic_edit_browser_proof(args.extra_args)
+    if args.task == "proof-live-contact-detail-classic-edit-browser":
+        return run_live_contact_detail_classic_edit_browser_proof(args.extra_args)
+    if args.task == "proof-live-contact-detail-classic-edit-emulator":
+        return run_live_contact_detail_classic_edit_emulator_proof(args.extra_args)
     if args.task in ("proof-local-contact-edit-browser", "proof-local-contacts-edit-browser"):
         return run_local_contact_edit_browser_proof(args.extra_args)
     if args.task in ("proof-live-contact-edit-browser", "proof-live-contacts-edit-browser"):
