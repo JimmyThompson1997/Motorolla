@@ -218,6 +218,14 @@ def test_browser_helper_source_uses_cdp_and_thread_scope_dom_hooks() -> None:
     assert 'chromium.connectOverCDP' in source
     assert "PuckyUiDebug.describe" in source
     assert 'op.kind === "focus_card"' in source
+    assert 'op.kind === "wait_for_turn_request_count"' in source
+    assert 'op.kind === "wait_for_thread_compose_ready"' in source
+    assert 'op.kind === "wait_for_thread_compose_thread_id"' in source
+    assert "turnRequestCount() >= minimum" in source
+    assert "rawTurnRequestCount(client)" in source
+    assert "attachment_labels: attachmentLabels" in source
+    assert "Thread composer did not become ready" in source
+    assert "Thread composer did not resolve a thread id" in source
     assert 'op.kind === "clear_focus"' in source
     assert '[data-route="feed"]' in source
     assert '[data-card-action="' in source

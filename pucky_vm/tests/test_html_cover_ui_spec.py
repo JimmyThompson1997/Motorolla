@@ -514,7 +514,7 @@ def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flo
 
     assert "webPreviewSettingsCard" not in app
     assert "openBrowserUnlockSheet" not in app
-    assert 'cards.push(phoneRoleSettingsCard(), advancedSettingsCard());' in settings_page
+    assert 'cards.push(phoneRoleSettingsCard(), authSessionSettingsCard(), advancedSettingsCard());' in settings_page
     assert 'hostedConnectReadOnlyMode() && !String(state.links.apiToken || state.links.token || "").trim()' in create_links_row
     assert 'state.links.message = "Add PUCKY_WEB_UI_TOKEN to open app auth flows in browser.";' in create_links_row
     assert "hostedConnectReadOnlyMode()" in hydrate_links_session
@@ -528,6 +528,23 @@ def test_hosted_connect_and_phone_role_stay_read_only_without_browser_unlock_flo
     assert 'state.phoneRole = unavailableBrowserPhoneRoleStatus("preview_unavailable", {' in load_phone_role_status
     assert "Hosted web keeps phone-role state read-only. Open the APK on your phone to view or change it." in phone_role_settings_detail
     assert "Hosted web does not expose phone-role state. Open the APK on your phone to view it." in phone_role_settings_detail
+
+
+def test_account_settings_card_redirects_unauthorized_sessions_back_to_sign_in() -> None:
+    app = read("app.js")
+    auth_session_settings = function_block(app, "authSessionSettingsCard")
+    perform_session_sign_out = function_block(app, "performSessionSignOut")
+    maybe_redirect = function_block(app, "maybeRedirectToSignInOnUnauthorized")
+
+    assert 'settingId: "auth-session"' in auth_session_settings
+    assert 'title: "Account"' in auth_session_settings
+    assert 'detail: "End this signed-in browser session and return to the auth gate."' in auth_session_settings
+    assert 'actionLabel: "Sign out"' in auth_session_settings
+    assert "action: performSessionSignOut" in auth_session_settings
+    assert 'await fetch("/api/auth/logout", {' in perform_session_sign_out
+    assert 'window.location.assign("/sign-in");' in perform_session_sign_out
+    assert "if (!response || response.status !== 401 || state.links.apiToken) {" in maybe_redirect
+    assert 'window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);' in maybe_redirect
 
 
 def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
@@ -597,6 +614,11 @@ def test_connect_native_config_waits_for_bridge_request_before_declaring_missing
     assert 'if (!(window.Pucky && typeof window.Pucky.request === "function")) {' in request_native_config
     assert 'await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));' in request_native_config
     assert 'return await Pucky.request({ command: "pucky.config.get", args: {} });' in request_native_config
+    assert "const previewApiBase = String(" in ensure_links_api_config
+    assert "const previewApiToken = resolveBrowserPreviewApiToken();" in ensure_links_api_config
+    assert "if (previewApiBase && previewApiToken) {" in ensure_links_api_config
+    assert "state.links.apiBaseUrl = previewApiBase;" in ensure_links_api_config
+    assert "state.links.apiToken = previewApiToken;" in ensure_links_api_config
     assert 'const config = await requestNativeLinksConfig();' in ensure_links_api_config
 
 
@@ -632,6 +654,10 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     describe_audio_source = function_block(app, "describeAudioSourceForCard")
     audio_tile_status = function_block(app, "audioTileStatus")
     confirm_playback = function_block(app, "confirmAudioProbePlaybackStart")
+    queue_same_card_toggle = function_block(app, "queueSameCardToggle")
+    clear_queued_same_card_toggle = function_block(app, "clearQueuedSameCardToggle")
+    should_replay_queued_same_card_toggle = function_block(app, "shouldReplayQueuedSameCardToggle")
+    set_audio_probe_terminal_by_key = function_block(app, "setAudioProbeTerminalByKey")
     tile_audio_label = function_block(app, "tileAudioLabel")
     tile_audio_meta = function_block(app, "tileAudioMeta")
     current_player_position = function_block(app, "currentPlayerPositionMs")
@@ -641,6 +667,7 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     is_same_audio_card = function_block(app, "isSameAudioCard")
 
     assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
+    assert 'queuedAudioToggleKey: "",' in app
     assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
     assert 'const title = el("button", "card-title-trigger title", card.title || "Pucky");' in card_view
     assert 'applyCardActionData(title, "transcript_title", card, "reply");' in card_view
@@ -656,13 +683,23 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'if (prefersHostedDirectAudio(card)) {' in toggle_audio
     assert "await toggleHostedBrowserAudio(card, busyKey);" in toggle_audio
     assert 'recordAudioProbeEvent("click_received"' in toggle_audio
+    assert 'if (state.audioToggleBusyKey === busyKey && phaseBefore !== "pause_pending") {' in toggle_audio
+    assert 'queueSameCardToggle(busyKey, phaseBefore);' in toggle_audio
     assert 'setAudioProbePhase(card, "starting"' in toggle_audio
     assert 'setAudioProbePhase(card, "pause_pending"' in toggle_audio
     assert 'setAudioProbeTerminal(card, "start_failed"' in toggle_audio
     assert 'recordAudioProbeEvent("play_request_start"' in toggle_audio
     assert 'recordAudioProbeEvent("play_request_end"' in toggle_audio
     assert "confirmAudioProbePlaybackStart(busyKey, state.player);" in toggle_audio
+    assert 'const replayQueuedSameCardToggle = shouldReplayQueuedSameCardToggle(card, busyKey);' in toggle_audio
+    assert 'recordAudioProbeEvent("busy_same_card_toggle_replayed"' in toggle_audio
     assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
+    assert 'state.queuedAudioToggleKey = targetKey;' in queue_same_card_toggle
+    assert 'recordAudioProbeEvent("busy_same_card_toggle_queued"' in queue_same_card_toggle
+    assert 'state.queuedAudioToggleKey = "";' in clear_queued_same_card_toggle
+    assert 'return samePath(state.queuedAudioToggleKey, targetKey)' in should_replay_queued_same_card_toggle
+    assert '&& currentTileAudioPhase(card) === "playing_confirmed"' in should_replay_queued_same_card_toggle
+    assert "clearQueuedSameCardToggle(targetKey);" in set_audio_probe_terminal_by_key
     assert "const current = currentBrowserPlayerState();" in toggle_hosted_audio
     assert 'const audioUrl = String(card?.audio_url || "").trim();' in toggle_hosted_audio
     assert "const controlKey = audioControlKey(card) || audioUrl;" in toggle_hosted_audio
@@ -862,6 +899,8 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     render_thread_composer = function_block(app, "renderThreadComposer")
     thread_composer_state = function_block(app, "threadComposerStateForCard")
     send_thread_composer_turn = function_block(app, "sendThreadComposerTurn")
+    schedule_thread_composer_thinking_fallback = function_block(app, "scheduleComposerTurnThinkingFallback")
+    apply_voice_state = function_block(app, "applyVoiceState")
     pending_outbound_messages = function_block(app, "pendingOutboundMessages")
     feed_display_cards = function_block(app, "feedDisplayCards")
     refresh_open_transcript_detail = function_block(app, "refreshOpenTranscriptDetail")
@@ -872,13 +911,23 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     assert "function renderThreadComposer(card) {" in app
     assert "function threadComposerStateForCard(card) {" in app
     assert "function sendThreadComposerTurn(card) {" in app
+    assert "function scheduleComposerTurnThinkingFallback(turnId) {" in app
     assert "function refreshOpenTranscriptDetail() {" in app
     assert "refreshOpenTranscriptDetail();" in render_fn
     assert "if (shouldPollHostedTurnStatus()) {" in load_turn_status
     assert 'snapshot = await loadHostedTurnStatus(turnId);' in load_turn_status
     assert "composer_managed: true," in load_turn_status
+    assert "client_started_at_ms: Number(snapshot?.client_started_at_ms || currentTurn.client_started_at_ms || 0)," in load_turn_status
     assert "pending_user_attachments: Array.isArray(snapshot?.pending_user_attachments) && snapshot.pending_user_attachments.length" in load_turn_status
+    assert "const current = normalizeTurnStatus(state.turn);" in apply_voice_state
+    assert "const incoming = normalizeTurnStatus(input);" in apply_voice_state
+    assert "if (current.composer_managed && isTurnActive(current) && !turnStatusTurnId(incoming) && !turnFailed(incoming)) {" in apply_voice_state
+    assert "return;" in apply_voice_state
     assert "const content = renderTranscriptDetailContent(card);" in show_transcript
+    assert 'const pendingNewThreadDetail = isPendingOutboundCard(card) && turnRequestedThreadMode(state.turn) === "new" && !cardThreadId(card);' in show_transcript
+    assert 'const detailType = pendingNewThreadDetail ? "transcript_new" : "transcript";' in show_transcript
+    assert "applyDetailDataAttributes(panel, detailType, card);" in show_transcript
+    assert "rememberNavDetail(detailType, card, options);" in show_transcript
     assert "const messages = transcriptDetailMessages(card);" in render_transcript_detail_content
     assert "const composer = renderThreadComposer(card);" in render_transcript_detail_content
     assert "content.append(stack, composer);" in render_transcript_detail_content
@@ -888,16 +937,46 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     assert 'const input = document.createElement("input");' in render_thread_composer
     assert 'input.type = "file";' in render_thread_composer
     assert "input.multiple = true;" in render_thread_composer
+    assert 'input.className = "thread-composer-file-input";' in render_thread_composer
+    assert 'input.setAttribute("aria-label", "Attach files");' in render_thread_composer
+    assert 'const attach = el("label", "thread-composer-attach", "Attach");' in render_thread_composer
+    assert "attach.append(input);" in render_thread_composer
+    assert 'attach.addEventListener("click"' not in render_thread_composer
+    assert "input.click();" not in render_thread_composer
+    assert "queueNativeThreadComposerFiles" not in render_thread_composer
+    assert "const syncComposerUi = () => {" in render_thread_composer
+    assert "const nextState = threadComposerStateForCard(card);" in render_thread_composer
+    assert "send.disabled = !nextState.sendEnabled;" in render_thread_composer
+    assert 'status.textContent = nextState.disabledReason || "Ready to send."; ' not in render_thread_composer
+    assert 'status.textContent = nextState.disabledReason || "Ready to send.";' in render_thread_composer
+    assert "composer.append(textarea);" in render_thread_composer
+    assert "composer.append(input, textarea);" not in render_thread_composer
     assert 'const send = el("button", "thread-composer-send", "Send");' in render_thread_composer
     assert "void sendThreadComposerTurn(card);" in render_thread_composer
-    assert 'mode: "existing_thread",' in thread_composer_state
+    assert "syncComposerUi();" in render_thread_composer
+    assert 'mode: isNewThreadComposerCard(card) ? "new_thread" : "existing_thread",' in thread_composer_state
     assert "apiTokenPresent: Boolean(String(state.links.apiToken || \"\").trim())," in thread_composer_state
-    assert "inFlight: isTurnActive(state.turn) && turnRequestedThreadId(state.turn) === threadId," in thread_composer_state
+    assert "inFlight: composerTurnMatchesCard(card, threadId)," in thread_composer_state
     assert "const proofReplyDelayMs = composerProofReplyDelayMs();" in send_thread_composer_turn
+    assert 'const threadMode = composerState.mode === "new_thread" ? "new" : "existing";' in send_thread_composer_turn
     assert "const form = new FormData();" in send_thread_composer_turn
+    assert 'form.append("thread_mode", threadMode);' in send_thread_composer_turn
+    assert 'if (composerState.threadId) {' in send_thread_composer_turn
     assert 'form.append("files", queued.file, queued.name);' in send_thread_composer_turn
-    assert 'body: { text: draft.text,' in send_thread_composer_turn
+    assert "const body = {" in send_thread_composer_turn
+    assert 'thread_mode: threadMode,' in send_thread_composer_turn
+    assert "const responseThreadId = String(" in send_thread_composer_turn
+    assert "migrateThreadComposerDraftKey(composerState.draftKey, `thread:${responseThreadId}`);" in send_thread_composer_turn
     assert "await refreshCardsFromVmSnapshot({ reason: \"thread_composer_send\", render: false });" in send_thread_composer_turn
+    assert "scheduleComposerTurnThinkingFallback(turnId);" in send_thread_composer_turn
+    assert "client_started_at_ms: Date.now()," in app
+    assert "const startedAtMs = Number(normalized.client_started_at_ms || 0);" in app
+    assert "if (normalized.composer_managed && isTurnActive(normalized) && startedAtMs > 0) {" in app
+    assert "if ((Date.now() - startedAtMs) < 1200) {" in app
+    assert 'if (turnStatusTurnId(current) !== scheduledTurnId || !current.composer_managed) {' in schedule_thread_composer_thinking_fallback
+    assert 'if (!isTurnActive(current) || turnFailed(current) || pendingTurnState(current) !== "sending") {' in schedule_thread_composer_thinking_fallback
+    assert 'stage: "codex_running",' in schedule_thread_composer_thinking_fallback
+    assert 'visual_state: "thinking",' in schedule_thread_composer_thinking_fallback
     assert "const pendingThreadId = cardThreadId(pendingCard);" in feed_display_cards
     assert "if (pendingThreadId && cardThreadId(card) === pendingThreadId) {" in feed_display_cards
     assert "existing.replaceWith(next);" in refresh_open_transcript_detail
@@ -906,7 +985,44 @@ def test_inbox_transcript_detail_grows_real_thread_composer_and_hosted_turn_poll
     assert ".thread-composer-shell {" in styles
     assert ".thread-composer-input {" in styles
     assert ".thread-composer-queued {" in styles
+    assert ".thread-composer-file-input {" in styles
     assert ".thread-composer-send:disabled {" in styles
+
+
+def test_inbox_header_compose_path_and_new_thread_detail_are_first_class() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    light_inbox_page = function_block(app, "lightInboxPage")
+    inbox_header_action_cluster = function_block(app, "inboxHeaderActionCluster")
+    show_new_inbox_thread_composer = function_block(app, "showNewInboxThreadComposer")
+    messages_for_card = function_block(app, "messagesForCard")
+    normalize_nav_detail = function_block(app, "normalizeNavDetail")
+    resolve_nav_detail_card = function_block(app, "resolveNavDetailCard")
+    refresh_open_transcript_detail = function_block(app, "refreshOpenTranscriptDetail")
+    sync_open_thread_detail_after_cards = function_block(app, "syncOpenThreadDetailAfterCards")
+
+    assert "function inboxHeaderActionCluster() {" in app
+    assert "function inboxNewThreadComposerCard() {" in app
+    assert "function isNewThreadComposerCard(card) {" in app
+    assert "function showNewInboxThreadComposer(options = {}) {" in app
+    assert "function migrateThreadComposerDraftKey(fromKey, toKey) {" in app
+    assert "function composerTurnMatchesCard(card, threadId = \"\") {" in app
+    assert "action: inboxHeaderActionCluster()," in light_inbox_page
+    assert 'lightCircleButton(state.showArchivedFeed ? "mail" : "archive_folder"' in inbox_header_action_cluster
+    assert 'lightCircleButton("checklist", "Manage Inbox"' in inbox_header_action_cluster
+    assert 'lightCircleButton("mail", "Compose new chat"' in inbox_header_action_cluster
+    assert "showNewInboxThreadComposer();" in inbox_header_action_cluster
+    assert 'openSideDetail(panel, card.title || "New chat", content, dismissDetail);' in show_new_inbox_thread_composer
+    assert 'rememberNavDetail("transcript_new", card, options);' in show_new_inbox_thread_composer
+    assert "if (isNewThreadComposerCard(card)) {" in messages_for_card
+    assert "return [];" in messages_for_card
+    assert '"transcript_new"' in normalize_nav_detail
+    assert 'if (detail.type === "transcript_new") {' in resolve_nav_detail_card
+    assert "return inboxNewThreadComposerCard();" in resolve_nav_detail_card
+    assert 'if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {' in refresh_open_transcript_detail
+    assert 'if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {' in sync_open_thread_detail_after_cards
+    assert ".light-header-actions {" in styles
+    assert ".light-header-actions .light-circle-button {" in styles
 
 
 def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> None:

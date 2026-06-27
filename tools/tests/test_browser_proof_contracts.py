@@ -341,6 +341,11 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
 
     assert '"--skip-canonical-check"' in source
+    assert '"--preferred-session-id"' in source
+    assert '"--viewport-width"' in source
+    assert '"--viewport-height"' in source
+    assert '"--immediate-second-tap-delay-ms"' in source
+    assert '"--immediate-second-tap-attempts"' in source
     assert 'import { chromium, webkit } from "playwright-core";' in source
     assert "isLocalProofUrl" in source
     assert "isLocalProof" in source
@@ -348,15 +353,19 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     assert 'config.browserName = browserName === "webkit" ? "webkit" : "chromium";' in source
     assert 'if (browserName === "webkit") {' in source
     assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
-    assert 'recordVideo: { dir: videoDir, size: VIEWPORT }' in source
+    assert 'recordVideo: { dir: videoDir, size: viewport }' in source
     assert 'writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);' in source
     assert 'writeJsonFile(path.join(config.reportDir, "console.json"), consoleMessages);' in source
     assert 'fs.writeFileSync(path.join(config.reportDir, "final-dom.html"), await page.content(), "utf8");' in source
+    assert "pickCards(audioCards, config.preferredSessionId, config.preferredTitle)" in source
+    assert "runImmediateRetapScenario(page, config, targets.primary, config.reportDir)" in source
     assert 'immediate_feedback: immediateFeedbackResult(startStop),' in source
     assert 'playing_stability: playingStabilityResult(startStop),' in source
+    assert 'immediate_retap: immediateRetapResult(immediateRetap),' in source
     assert 'cross_card: crossCard ? crossCardResult(crossCard) : { pass: false, reason: "No secondary audio card found." },' in source
     assert 'assert(summary.results.immediate_feedback.pass' in source
     assert 'assert(summary.results.playing_stability.pass' in source
+    assert 'assert(summary.results.immediate_retap.pass' in source
     assert 'assert(summary.results.cross_card.pass' in source
     assert 'assert(summary.results.injected_failure.pass' in source
     assert 'assert(summary.results.injected_early_stop.pass' in source
@@ -402,6 +411,14 @@ def test_thread_compose_browser_and_emulator_proofs_require_real_send_state_evid
     emulator_source = read_source("phone_inbox_thread_compose_emulator_proof.py")
 
     assert "THREAD-COMPOSE-" in browser_source
+    assert "new_chat_smoke" in browser_source
+    assert "continuation_smoke" in browser_source
+    assert "header_compose" in browser_source
+    assert "new_thread_created" in browser_source
+    assert "existing_thread_reused" in browser_source
+    assert "waitForThreadDetailThreadId" in browser_source
+    assert "summary.new_chat_smoke.final.thread_id === createdThreadId" in browser_source
+    assert "summary.continuation_smoke.turn_response.requested_thread_id === createdThreadId" in browser_source
     assert "proof_reply_delay_ms" in browser_source
     assert "Sending" in browser_source
     assert "Thinking..." in browser_source
@@ -414,13 +431,25 @@ def test_thread_compose_browser_and_emulator_proofs_require_real_send_state_evid
     assert "trace.zip" in browser_source or "tracing.stop" in browser_source
     assert "video_path" in browser_source
 
+    assert "adb" in emulator_source.lower()
+    assert "subprocess" in emulator_source
+    assert "devtools" in emulator_source.lower()
+    assert "screencap" in emulator_source.lower()
+    assert "WebView" in emulator_source
     assert "THREAD-COMPOSE-" in emulator_source
     assert "proof_reply_delay_ms" in emulator_source
     assert "thread-compose-note.txt" in emulator_source
     assert "thread-compose-proof.png" in emulator_source
     assert "chooser" in emulator_source.lower()
+    assert "select_file_from_chooser" in emulator_source
+    assert "chooser_return" in emulator_source
+    assert '"wait_for_turn_request_count"' in emulator_source
+    assert '"wait_for_thread_compose_ready"' in emulator_source
     assert "thinking" in emulator_source.lower()
     assert "request_count" in emulator_source
+    assert "new_thread_created" in emulator_source
+    assert "existing_thread_reused" in emulator_source
+    assert '"set_input_files"' not in emulator_source
 
 
 def test_inbox_media_proof_server_uses_fixtures_without_mock_rewrite() -> None:

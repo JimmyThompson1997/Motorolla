@@ -223,6 +223,7 @@
     scrubPreviewByPath: new Map(),
     scrubbingAudioKey: "",
     audioToggleBusyKey: "",
+    queuedAudioToggleKey: "",
     timestampTap: null,
     threadComposerDrafts: {},
     audioCard: null,
@@ -1210,6 +1211,16 @@
     return `/api/feed?${params.toString()}`;
   }
 
+  function maybeRedirectToSignInOnUnauthorized(response) {
+    if (!response || response.status !== 401 || state.links.apiToken) {
+      return;
+    }
+    if (window.location.pathname === "/sign-in") {
+      return;
+    }
+    window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  }
+
   async function feedApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
@@ -1226,6 +1237,7 @@
       init.body = JSON.stringify(options.body);
     }
     const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
+    maybeRedirectToSignInOnUnauthorized(response);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
@@ -1250,6 +1262,7 @@
       init.body = JSON.stringify(options.body || {});
     }
     const response = await fetch(`${linksApiBaseUrl()}/api/turn/text`, init);
+    maybeRedirectToSignInOnUnauthorized(response);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(String(payload && (payload.detail || payload.error) || `Text turn failed (${response.status})`));
@@ -1273,6 +1286,7 @@
       init.body = JSON.stringify(options.body);
     }
     const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+    maybeRedirectToSignInOnUnauthorized(response);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
@@ -1391,7 +1405,8 @@
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
     try {
-      const snapshot = await fetchVmFeedSnapshot({ includeArchived: false });
+      const includeArchived = options.includeArchived ?? state.showArchivedFeed;
+      const snapshot = await fetchVmFeedSnapshot({ includeArchived: Boolean(includeArchived) });
       const applied = applyFeedSnapshot(snapshot, { render: options.render !== false });
       await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
       return applied;
@@ -1460,6 +1475,7 @@
         snapshot = {
           ...snapshot,
           composer_managed: true,
+          client_started_at_ms: Number(snapshot?.client_started_at_ms || currentTurn.client_started_at_ms || 0),
           configured: snapshot?.configured ?? currentTurn.configured,
           user_transcript: String(snapshot?.user_transcript || currentTurn.user_transcript || ""),
           requested_thread_id: String(snapshot?.requested_thread_id || currentTurn.requested_thread_id || ""),
@@ -2482,6 +2498,18 @@
   }
 
   async function ensureLinksApiConfig() {
+    const previewApiBase = String(
+      window.location && /^https?:$/i.test(window.location.protocol || "")
+        ? (window.location.origin || "")
+        : ""
+    ).replace(/\/$/, "");
+    const previewApiToken = resolveBrowserPreviewApiToken();
+    if (previewApiBase && previewApiToken) {
+      state.links.apiBaseUrl = previewApiBase;
+      state.links.apiToken = previewApiToken;
+      state.links.deviceId = resolveBrowserPreviewDeviceId();
+      return;
+    }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
       state.links.apiToken = resolveBrowserPreviewApiToken();
@@ -3583,6 +3611,11 @@
 
   function applyVoiceState(input) {
     if (input && typeof input === "object" && input.schema === "pucky.turn_status.v1") {
+      const current = normalizeTurnStatus(state.turn);
+      const incoming = normalizeTurnStatus(input);
+      if (current.composer_managed && isTurnActive(current) && !turnStatusTurnId(incoming) && !turnFailed(incoming)) {
+        return;
+      }
       applyTurnStatus(input);
       return;
     }
@@ -3795,6 +3828,12 @@
       return "failed";
     }
     const normalized = normalizeTurnStatus(status);
+    const startedAtMs = Number(normalized.client_started_at_ms || 0);
+    if (normalized.composer_managed && isTurnActive(normalized) && startedAtMs > 0) {
+      if ((Date.now() - startedAtMs) < 1200) {
+        return "sending";
+      }
+    }
     const stage = String(normalized.stage || "").trim().toLowerCase();
     const visualState = turnVisualState(normalized);
     if (visualState === "thinking" || stage === "codex_running" || stage === "tts_running") {
@@ -8190,7 +8229,8 @@
       title: "Inbox",
       surface: "inbox",
       createPage: () => {
-        const page = lightPage("Inbox");
+        const pageOptions = { action: inboxHeaderActionCluster(), };
+        const page = lightPage("Inbox", pageOptions);
         page.classList.add("light-canonical-port-page", "light-inbox-page");
         return page;
       },
@@ -8198,6 +8238,44 @@
       surfaceClassName: "light-canonical-port-surface light-inbox-surface",
       sections: [lightInboxSection()]
     });
+  }
+
+  function inboxHeaderActionCluster() {
+    const wrap = el("div", "light-header-actions inbox-header-actions");
+    const archive = lightCircleButton(state.showArchivedFeed ? "mail" : "archive_folder", state.showArchivedFeed ? "Show active Inbox" : "Show archived Inbox", () => {
+      void toggleInboxArchivedFeed();
+    }, "inbox-header-action inbox-header-archive");
+    archive.setAttribute("aria-pressed", state.showArchivedFeed ? "true" : "false");
+    const manage = lightCircleButton("checklist", "Manage Inbox", () => {
+      showToast("Inbox manage mode is preserved on master and will be carried through release reconciliation.");
+    }, "inbox-header-action inbox-header-manage");
+    const compose = lightCircleButton("mail", "Compose new chat", () => {
+      showNewInboxThreadComposer();
+    }, "inbox-header-action inbox-header-compose");
+    wrap.append(archive, manage, compose);
+    return wrap;
+  }
+
+  async function toggleInboxArchivedFeed() {
+    const targetArchived = !state.showArchivedFeed;
+    const previousArchived = Boolean(state.showArchivedFeed);
+    state.showArchivedFeed = targetArchived;
+    render();
+    try {
+      await syncFeedCards({
+        reason: targetArchived ? "show_archived_inbox" : "show_active_inbox",
+        includeArchived: targetArchived,
+        silent: false,
+        render: false
+      });
+      state.showArchivedFeed = targetArchived;
+      persistNavState();
+      render();
+    } catch (error) {
+      state.showArchivedFeed = previousArchived;
+      render();
+      showToast(error instanceof Error ? error.message : String(error || "Feed unavailable"));
+    }
   }
 
   function lightMeetingsPage() {
@@ -8320,6 +8398,9 @@
         : "light-page-title";
     const heading = el(options.detail || options.large ? "h1" : "h2", titleClass, title);
     const right = options.action || el("div", "light-nav-slot");
+    if (options.action) {
+      header.classList.add("has-action");
+    }
     header.append(left, heading, right);
     shell.append(header);
     return shell;
@@ -10018,9 +10099,35 @@
       modelSettingsCard(),
       reasoningEffortSettingsCard()
     ];
-    cards.push(phoneRoleSettingsCard(), advancedSettingsCard());
+    cards.push(phoneRoleSettingsCard(), authSessionSettingsCard(), advancedSettingsCard());
     page.append(...cards);
     return page;
+  }
+
+  function authSessionSettingsCard() {
+    return settingsSelectorCard({
+      settingId: "auth-session",
+      accent: "#0f766e",
+      icon: "person",
+      title: "Account",
+      detail: "End this signed-in browser session and return to the auth gate.",
+      valueLabel: "Signed in",
+      onOpen: () => Promise.resolve(),
+      actionLabel: "Sign out",
+      action: performSessionSignOut
+    });
+  }
+
+  async function performSessionSignOut() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { Accept: "application/json" }
+      });
+    } catch (_error) {
+      // Redirect even when the logout request fails so the auth gate stays reachable.
+    }
+    window.location.assign("/sign-in");
   }
 
   function appearanceSettingsCard() {
@@ -11804,8 +11911,15 @@
   async function toggleAudio(card) {
     const busyKey = audioStateKey(card);
     const phaseBefore = currentTileAudioPhase(card);
-    if (state.audioToggleBusyKey === busyKey || ["starting", "pause_pending"].includes(phaseBefore)) {
+    if (state.audioToggleBusyKey === busyKey && phaseBefore !== "pause_pending") {
+      queueSameCardToggle(busyKey, phaseBefore);
       return;
+    }
+    if (["starting", "pause_pending"].includes(phaseBefore)) {
+      return;
+    }
+    if (state.queuedAudioToggleKey && !samePath(state.queuedAudioToggleKey, busyKey)) {
+      clearQueuedSameCardToggle(state.queuedAudioToggleKey);
     }
     recordAudioProbeEvent("click_received", {
       target_key: busyKey,
@@ -11979,11 +12093,23 @@
       showToast(message);
       render();
     } finally {
+      const replayQueuedSameCardToggle = shouldReplayQueuedSameCardToggle(card, busyKey);
       if (state.audioToggleBusyKey === busyKey) {
         state.audioToggleBusyKey = "";
         recordAudioProbeEvent("busy_end", { target_key: busyKey });
       }
+      if (!replayQueuedSameCardToggle) {
+        clearQueuedSameCardToggle(busyKey);
+      }
       render();
+      if (replayQueuedSameCardToggle) {
+        clearQueuedSameCardToggle(busyKey);
+        recordAudioProbeEvent("busy_same_card_toggle_replayed", {
+          target_key: busyKey,
+          phase_before_replay: currentTileAudioPhase(card)
+        });
+        await toggleAudio(card);
+      }
     }
   }
 
@@ -11998,11 +12124,34 @@
     }
     const panel = document.getElementById("detail");
     const content = renderTranscriptDetailContent(card);
-    applyDetailDataAttributes(panel, "transcript", card);
+    const pendingNewThreadDetail = isPendingOutboundCard(card) && turnRequestedThreadMode(state.turn) === "new" && !cardThreadId(card);
+    const detailType = pendingNewThreadDetail ? "transcript_new" : "transcript";
+    applyDetailDataAttributes(panel, detailType, card);
     openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });
-    rememberNavDetail("transcript", card, options);
+    rememberNavDetail(detailType, card, options);
     installDetailScrollPersistence(content, "transcript");
     void syncVoiceThreadScope({ reason: "show_transcript", render: true });
+    if (options.restoring) {
+      restoreScrollPosition(content, options.scrollTop);
+    } else {
+      scrollTranscriptToLatest(content);
+    }
+  }
+
+  function showNewInboxThreadComposer(options = {}) {
+    state.audioCard = null;
+    renderFeed();
+    if (options.restoring) {
+      restoreFeedScroll();
+    }
+    const panel = document.getElementById("detail");
+    const card = inboxNewThreadComposerCard();
+    const content = renderTranscriptDetailContent(card);
+    applyDetailDataAttributes(panel, "transcript_new", card);
+    openSideDetail(panel, card.title || "New chat", content, dismissDetail);
+    rememberNavDetail("transcript_new", card, options);
+    installDetailScrollPersistence(content, "transcript");
+    void syncVoiceThreadScope({ reason: "show_new_inbox_thread_composer", render: true });
     if (options.restoring) {
       restoreScrollPosition(content, options.scrollTop);
     } else {
@@ -13219,6 +13368,7 @@
       headers.Authorization = `Bearer ${state.links.apiToken}`;
     }
     const response = await fetch(apiUrl, { cache: "no-store", headers });
+    maybeRedirectToSignInOnUnauthorized(response);
     if (!response.ok) {
       throw new Error(`${label} unavailable: HTTP ${response.status}`);
     }
@@ -15211,6 +15361,9 @@
   }
 
   function messagesForCard(card) {
+    if (isNewThreadComposerCard(card)) {
+      return [];
+    }
     if (isPendingOutboundCard(card)) {
       return pendingOutboundMessages(card);
     }
@@ -15286,6 +15439,9 @@
   }
 
   function threadComposerDraftKeyForCard(card) {
+    if (isNewThreadComposerCard(card)) {
+      return "thread:new";
+    }
     const threadId = String(cardThreadId(card) || "").trim();
     if (threadId) {
       return `thread:${threadId}`;
@@ -15296,6 +15452,58 @@
     }
     const cardId = String(card?.card_id || "").trim();
     return cardId ? `card:${cardId}` : "";
+  }
+
+  function migrateThreadComposerDraftKey(fromKey, toKey) {
+    const sourceKey = String(fromKey || "").trim();
+    const targetKey = String(toKey || "").trim();
+    if (!sourceKey || !targetKey || sourceKey === targetKey) {
+      return;
+    }
+    const sourceDraft = threadComposerDraft(sourceKey);
+    const targetDraft = threadComposerDraft(targetKey);
+    const hasSourceDraft = Boolean(String(sourceDraft.text || "").trim()) || sourceDraft.files.length > 0;
+    if (!hasSourceDraft) {
+      delete state.threadComposerDrafts[sourceKey];
+      return;
+    }
+    setThreadComposerDraft(targetKey, {
+      text: String(targetDraft.text || "").trim() ? targetDraft.text : sourceDraft.text,
+      files: targetDraft.files.length ? targetDraft.files : sourceDraft.files
+    });
+    if (state.threadComposerDrafts && typeof state.threadComposerDrafts === "object") {
+      delete state.threadComposerDrafts[sourceKey];
+    }
+  }
+
+  function inboxNewThreadComposerCard() {
+    return {
+      card_id: "inbox:new_thread_composer",
+      session_id: "inbox:new_thread_composer",
+      local_session_id: "inbox:new_thread_composer",
+      title: "New chat",
+      summary: "",
+      transcript: "",
+      transcript_messages: [],
+      synthetic_new_thread: true,
+      origin: {
+        thread_id: ""
+      }
+    };
+  }
+
+  function isNewThreadComposerCard(card) {
+    return Boolean(card?.synthetic_new_thread) || String(card?.card_id || "").trim() === "inbox:new_thread_composer";
+  }
+
+  function composerTurnMatchesCard(card, threadId = "") {
+    if (!isTurnActive(state.turn)) {
+      return false;
+    }
+    if (isNewThreadComposerCard(card)) {
+      return turnRequestedThreadMode(state.turn) === "new";
+    }
+    return turnRequestedThreadId(state.turn) === String(threadId || "").trim();
   }
 
   function threadComposerAttachmentKind(mimeType, name = "") {
@@ -15378,17 +15586,18 @@
     }
   }
 
-  function optimisticComposerTurnStatus({ turnId, threadId, transcript, attachments = [] }) {
+  function optimisticComposerTurnStatus({ turnId, threadId, transcript, attachments = [], threadMode = "existing" }) {
     return {
       schema: "pucky.turn_status.v1",
       turn_id: turnId,
       stage: "upload_received",
       status: "running",
-      requested_thread_mode: "existing",
+      requested_thread_mode: threadMode,
       requested_thread_id: String(threadId || ""),
       thread_scope_source: "thread_transcript",
       user_transcript: String(transcript || ""),
       pending_user_attachments: attachments,
+      client_started_at_ms: Date.now(),
       composer_managed: true,
       configured: Boolean(String(state.links.apiToken || "").trim()),
       indicator: {
@@ -15407,6 +15616,42 @@
         active: true
       }
     };
+  }
+
+  function scheduleComposerTurnThinkingFallback(turnId) {
+    const scheduledTurnId = String(turnId || "").trim();
+    if (!scheduledTurnId) {
+      return;
+    }
+    window.setTimeout(() => {
+      const current = normalizeTurnStatus(state.turn);
+      if (turnStatusTurnId(current) !== scheduledTurnId || !current.composer_managed) {
+        return;
+      }
+      if (!isTurnActive(current) || turnFailed(current) || pendingTurnState(current) !== "sending") {
+        return;
+      }
+      const indicator = turnIndicatorFromStatus(current);
+      applyTurnStatus({
+        ...current,
+        stage: "codex_running",
+        status: "running",
+        indicator: {
+          ...indicator,
+          state: "thinking",
+          visual_state: "thinking",
+          uploading: false,
+          stt_running: false,
+          codex_running: true,
+          tts_running: false,
+          speaking: false,
+          failed: false,
+          active: true,
+          remote_stage: "codex_running"
+        }
+      });
+      render();
+    }, 900);
   }
 
   function transcriptDetailMessages(card) {
@@ -15435,18 +15680,18 @@
   }
 
   function threadComposerStateForCard(card) {
-    const threadScope = threadScopeForCard(card, "thread_transcript");
+    const threadScope = isNewThreadComposerCard(card) ? null : threadScopeForCard(card, "thread_transcript");
     const threadId = String(threadScope?.thread_id || "").trim();
     const draftKey = threadComposerDraftKeyForCard(card);
     const draft = threadComposerDraft(draftKey);
     const apiBaseUrl = String(state.links.apiBaseUrl || linksApiBaseUrl() || "").trim();
     const apiTokenPresent = Boolean(String(state.links.apiToken || "").trim());
-    const inFlight = isTurnActive(state.turn) && turnRequestedThreadId(state.turn) === threadId;
+    const inFlight = composerTurnMatchesCard(card, threadId);
     const hasDraftContent = Boolean(String(draft.text || "").trim()) || draft.files.length > 0;
     let disabledReason = "";
     if (String(state.route || "").trim() !== "inbox") {
       disabledReason = "Inbox chat replies are only enabled from the Inbox feed.";
-    } else if (!threadId) {
+    } else if (!threadId && !isNewThreadComposerCard(card)) {
       disabledReason = "Draft only until this transcript is backed by a live thread.";
     } else if (!apiBaseUrl || !apiTokenPresent) {
       disabledReason = "Draft only until this browser session has an authenticated live lane.";
@@ -15456,7 +15701,7 @@
       disabledReason = "Write a message or attach a file to send.";
     }
     return {
-      mode: "existing_thread",
+      mode: isNewThreadComposerCard(card) ? "new_thread" : "existing_thread",
       threadId,
       thread_id: threadId,
       draftKey,
@@ -15464,7 +15709,7 @@
       apiBaseUrl,
       apiBaseUrlPresent: Boolean(apiBaseUrl),
       apiTokenPresent: Boolean(String(state.links.apiToken || "").trim()),
-      inFlight: isTurnActive(state.turn) && turnRequestedThreadId(state.turn) === threadId,
+      inFlight: composerTurnMatchesCard(card, threadId),
       sendEnabled: !disabledReason && hasDraftContent,
       disabledReason,
       hasDraftContent
@@ -15479,19 +15724,34 @@
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.hidden = true;
+    input.className = "thread-composer-file-input";
+    input.setAttribute("aria-label", "Attach files");
     textarea.className = "thread-composer-input";
     textarea.placeholder = "Type a reply";
     textarea.value = composerState.draft.text;
     textarea.rows = 1;
     textarea.setAttribute("aria-label", "Thread reply");
     textarea.disabled = false;
+    const queued = el("div", "thread-composer-queued");
+    const controls = el("div", "thread-composer-controls");
+    const attach = el("label", "thread-composer-attach", "Attach");
+    attach.append(input);
+    const status = el("div", "thread-composer-status", composerState.disabledReason || "Ready to send.");
+    const send = el("button", "thread-composer-send", "Send");
+    send.type = "button";
+    send.disabled = !composerState.sendEnabled;
+    const syncComposerUi = () => {
+      const nextState = threadComposerStateForCard(card);
+      send.disabled = !nextState.sendEnabled;
+      status.textContent = nextState.disabledReason || "Ready to send.";
+    };
     textarea.addEventListener("input", () => {
       setThreadComposerDraft(composerState.draftKey, {
         text: textarea.value,
         files: threadComposerDraft(composerState.draftKey).files
       });
       autoSizeComposerTextarea(textarea);
+      syncComposerUi();
     });
     textarea.addEventListener("keydown", event => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -15509,9 +15769,9 @@
       const nextFiles = current.files.concat(await Promise.all(selected.map(file => queuedThreadComposerFile(file))));
       setThreadComposerDraft(composerState.draftKey, { text: current.text, files: nextFiles });
       input.value = "";
+      syncComposerUi();
       refreshOpenTranscriptDetail();
     });
-    const queued = el("div", "thread-composer-queued");
     composerState.draft.files.forEach(file => {
       const chip = el("div", "thread-composer-chip");
       chip.append(el("span", "thread-composer-chip-label", file.name || "Attachment"));
@@ -15529,28 +15789,18 @@
       chip.append(remove);
       queued.append(chip);
     });
-    const controls = el("div", "thread-composer-controls");
-    const attach = el("button", "thread-composer-attach", "Attach");
-    attach.type = "button";
-    attach.addEventListener("click", event => {
-      event.preventDefault();
-      input.click();
-    });
-    const status = el("div", "thread-composer-status", composerState.disabledReason || "Ready to send.");
-    const send = el("button", "thread-composer-send", "Send");
-    send.type = "button";
-    send.disabled = !composerState.sendEnabled;
     send.addEventListener("click", () => {
       void sendThreadComposerTurn(card);
     });
     controls.append(attach, status, send);
-    composer.append(input, textarea);
+    composer.append(textarea);
     if (queued.childElementCount) {
       composer.append(queued);
     }
     composer.append(controls);
     shell.append(composer);
     requestAnimationFrame(() => autoSizeComposerTextarea(textarea));
+    syncComposerUi();
     return shell;
   }
 
@@ -15622,21 +15872,27 @@
     const pendingUserAttachments = draft.files
       .map(file => queuedThreadComposerAttachment(file))
       .filter(Boolean);
+    const threadMode = composerState.mode === "new_thread" ? "new" : "existing";
     applyTurnStatus(optimisticComposerTurnStatus({
       turnId,
       threadId: composerState.threadId,
       transcript: draft.text,
-      attachments: pendingUserAttachments
+      attachments: pendingUserAttachments,
+      threadMode
     }));
     render();
+    scheduleComposerTurnThinkingFallback(turnId);
     try {
       const proofReplyDelayMs = composerProofReplyDelayMs();
+      let response;
       if (draft.files.length) {
         const form = new FormData();
         form.append("text", draft.text);
         form.append("turn_id", turnId);
-        form.append("thread_mode", "existing");
-        form.append("thread_id", composerState.threadId);
+        form.append("thread_mode", threadMode);
+        if (composerState.threadId) {
+          form.append("thread_id", composerState.threadId);
+        }
         form.append("thread_scope_source", "thread_transcript");
         form.append("thread_card_id", String(card?.card_id || ""));
         if (proofReplyDelayMs > 0) {
@@ -15645,16 +15901,47 @@
         draft.files.forEach(queued => {
           form.append("files", queued.file, queued.name);
         });
-        await turnTextApiRequest({ formData: form });
+        response = await turnTextApiRequest({ formData: form });
       } else {
-        await turnTextApiRequest({
-          body: { text: draft.text, turn_id: turnId, thread_mode: "existing", thread_id: composerState.threadId, thread_scope_source: "thread_transcript", thread_card_id: String(card?.card_id || ""), proof_reply_delay_ms: proofReplyDelayMs }
+        const body = {
+          text: draft.text,
+          turn_id: turnId,
+          thread_mode: threadMode,
+          thread_scope_source: "thread_transcript",
+          thread_card_id: String(card?.card_id || ""),
+          proof_reply_delay_ms: proofReplyDelayMs
+        };
+        if (composerState.threadId) {
+          body.thread_id = composerState.threadId;
+        }
+        response = await turnTextApiRequest({
+          body
         });
+      }
+      const responseThreadId = String(
+        response?.origin?.thread_id
+        || response?.card?.origin?.thread_id
+        || response?.telemetry?.origin_thread_id
+        || ""
+      ).trim();
+      if (responseThreadId && composerState.mode === "new_thread") {
+        migrateThreadComposerDraftKey(composerState.draftKey, `thread:${responseThreadId}`);
+        const detail = normalizeNavDetail(state.navDetail);
+        if (detail && detail.type === "transcript_new") {
+          state.navDetail = normalizeNavDetail({
+            ...detail,
+            thread_id: responseThreadId,
+          });
+          persistNavState();
+        }
       }
       applyTurnStatus({
         ...state.turn,
         stage: "completed",
         status: "ok",
+        origin_thread_id: responseThreadId,
+        requested_thread_mode: threadMode,
+        requested_thread_id: composerState.threadId,
         indicator: {
           ...normalizeTurnStatus(state.turn).indicator,
           state: "idle",
@@ -15709,7 +15996,7 @@
 
   function refreshOpenTranscriptDetail() {
     const detail = normalizeNavDetail(state.navDetail);
-    if (!detail || detail.type !== "transcript") {
+    if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {
       return false;
     }
     const panel = document.getElementById("detail");
@@ -15770,14 +16057,40 @@
       return null;
     }
     const detail = normalizeNavDetail(state.navDetail);
-    if (!detail || detail.type !== "transcript") {
+    if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {
       return null;
     }
     const panel = document.getElementById("detail");
     if (!panel || !panel.classList.contains("is-open")) {
       return null;
     }
-    const nextCard = resolveNavDetailCard(detail);
+    if (detail.type === "transcript_new") {
+      const createdCard = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;
+      if (!createdCard) {
+        return null;
+      }
+      const content = panel.querySelector(".detail-content");
+      captureCurrentDetailScroll();
+      const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(content);
+      showTranscript(createdCard, shouldStickToLatest
+        ? {}
+        : { restoring: true, scrollTop: state.navDetail?.scroll_top });
+      recordTurnUiEvent("thread_detail_rebound", {
+        turn_id: turnStatusTurnId(state.turn),
+        detail_type: detail.type,
+        thread_id: cardThreadId(createdCard),
+        session_id: cardSessionId(createdCard),
+        stick_to_latest: shouldStickToLatest
+      });
+      return { type: "transcript", thread_id: cardThreadId(createdCard), session_id: cardSessionId(createdCard) };
+    }
+    let nextCard = resolveNavDetailCard(detail);
+    if (!nextCard && !detail.thread_id) {
+      const originThreadId = String(state.turn?.origin_thread_id || state.turn?.telemetry?.origin_thread_id || "").trim();
+      if (originThreadId) {
+        nextCard = findCardByThreadId(originThreadId);
+      }
+    }
     const nextSessionId = cardSessionId(nextCard);
     if (!nextCard || !nextSessionId || nextSessionId === detail.session_id) {
       return null;
@@ -16478,6 +16791,7 @@
       return false;
     }
     clearAudioProbeResetTimer();
+    clearQueuedSameCardToggle(targetKey);
     const now = Date.now();
     const value = String(outcome || "").trim() || "idle";
     const phase = ["start_failed", "ended_immediately"].includes(value) ? value : "idle";
@@ -16507,6 +16821,42 @@
       scheduleAudioProbeReset(extra.reset_delay_ms || AUDIO_TERMINAL_RESET_MS);
     }
     return true;
+  }
+
+  function queueSameCardToggle(targetKey, phase) {
+    if (!samePath(state.audioToggleBusyKey, targetKey)) {
+      return false;
+    }
+    if (!["starting", "playing_confirmed"].includes(String(phase || ""))) {
+      return false;
+    }
+    if (samePath(state.queuedAudioToggleKey, targetKey)) {
+      return false;
+    }
+    state.queuedAudioToggleKey = targetKey;
+    recordAudioProbeEvent("busy_same_card_toggle_queued", {
+      target_key: targetKey,
+      phase_before: String(phase || "")
+    });
+    return true;
+  }
+
+  function clearQueuedSameCardToggle(targetKey = "") {
+    if (targetKey && !samePath(state.queuedAudioToggleKey, targetKey)) {
+      return false;
+    }
+    if (!state.queuedAudioToggleKey) {
+      return false;
+    }
+    state.queuedAudioToggleKey = "";
+    return true;
+  }
+
+  function shouldReplayQueuedSameCardToggle(card, targetKey) {
+    return samePath(state.queuedAudioToggleKey, targetKey)
+      && currentTileAudioPhase(card) === "playing_confirmed"
+      && activePlayerMatchesCard(card)
+      && Boolean(state.player?.is_playing);
   }
 
   function prefersHostedDirectAudio(card) {
@@ -17265,7 +17615,7 @@
       return null;
     }
     const type = String(detail.type || "");
-    if (!["audio", "transcript", "page", "images", "attachment"].includes(type)) {
+    if (!["audio", "transcript", "transcript_new", "page", "images", "attachment"].includes(type)) {
       return null;
     }
     const sessionId = String(detail.session_id || "");
@@ -17298,6 +17648,9 @@
   function resolveNavDetailCard(detail) {
     if (!detail) {
       return null;
+    }
+    if (detail.type === "transcript_new") {
+      return inboxNewThreadComposerCard();
     }
     const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;
     if (byThread) {
@@ -17821,6 +18174,10 @@
     }
     if (detail.type === "transcript") {
       showTranscript(card, { restoring: true, scrollTop: detail.scroll_top });
+      return;
+    }
+    if (detail.type === "transcript_new") {
+      showNewInboxThreadComposer({ restoring: true, scrollTop: detail.scroll_top });
       return;
     }
     if (detail.type === "page" && hasRichPage(card)) {
