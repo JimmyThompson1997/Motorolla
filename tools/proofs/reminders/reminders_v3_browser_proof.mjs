@@ -177,7 +177,17 @@ async function openTile(page, label, route, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      await page.locator(selector).first().click({ timeout: 5_000 });
+      await page.waitForFunction((targetSelector) => {
+        const button = document.querySelector(targetSelector);
+        return button instanceof HTMLButtonElement && !button.disabled;
+      }, selector, { timeout: 5_000 });
+      await page.evaluate((targetSelector) => {
+        const button = document.querySelector(targetSelector);
+        if (!(button instanceof HTMLButtonElement)) {
+          throw new Error(`Missing tile ${targetSelector}`);
+        }
+        button.click();
+      }, selector);
       await waitForLightRoute(page, route, 5_000);
       return;
     } catch (error) {
