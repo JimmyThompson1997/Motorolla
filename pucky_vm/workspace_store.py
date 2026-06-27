@@ -965,6 +965,7 @@ class WorkspaceStore:
             task_sweep_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_task_sweep_v1'").fetchone()
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             task_proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'task_proof_cleanup_v1'").fetchone()
+            project_connected_repair_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_project_connected_repair_v1'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
             contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
@@ -1021,6 +1022,8 @@ class WorkspaceStore:
             self._cleanup_proof_artifacts(now)
         if not task_proof_cleanup_seeded:
             self._cleanup_task_proof_artifacts_v1(now)
+        if not project_connected_repair_seeded:
+            self._repair_seeded_project_connected_v1(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
         if not contact_html_removed:
@@ -1527,6 +1530,61 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("seeded_graph_content_refresh_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _repair_seeded_project_connected_v1(self, now_ms: int) -> None:
+        project_ids = {"aurora", "migration", "home-refresh", "freelance-followup"}
+        desired_records: dict[tuple[str, str], tuple[str, dict[str, object]]] = {}
+        desired_links: dict[str, dict[str, object]] = {}
+        default_sources = [
+            seeded_workspace_snapshot(
+                default_workspace_records(now_ms),
+                default_workspace_links(),
+                default_workspace_assets(now_ms),
+            ),
+            seeded_workspace_snapshot(
+                default_workspace_graph_records(now_ms),
+                default_workspace_graph_links(),
+            ),
+        ]
+        for records_by_collection, links in default_sources:
+            record_lookup: dict[tuple[str, str], tuple[str, dict[str, object]]] = {}
+            for collection, records in records_by_collection.items():
+                kind = self.kind_for_collection(collection)
+                for record in records:
+                    record_id = str(record.get("id") or record.get("record_id") or "").strip()
+                    if record_id:
+                        record_lookup[(kind, record_id)] = (collection, record)
+            for project_id in project_ids:
+                project_entry = record_lookup.get(("project", project_id))
+                if project_entry:
+                    desired_records[("project", project_id)] = project_entry
+            for link in links:
+                source_kind = str(link.get("source_kind") or "").strip()
+                source_id = str(link.get("source_id") or "").strip()
+                if source_kind != "project" or source_id not in project_ids:
+                    continue
+                target_kind = str(link.get("target_kind") or "").strip()
+                target_id = str(link.get("target_id") or "").strip()
+                desired_link = dict(link)
+                target_entry = record_lookup.get((target_kind, target_id))
+                if target_entry:
+                    desired_records[(target_kind, target_id)] = target_entry
+                    target_record = target_entry[1]
+                    desired_link["label"] = (
+                        str(target_record.get("title") or desired_link.get("label") or target_id).strip()
+                        or str(desired_link.get("label") or target_id).strip()
+                    )
+                desired_links[str(desired_link.get("id") or "").strip()] = desired_link
+        for collection, record in desired_records.values():
+            self.upsert_record(collection, record)
+        for link in desired_links.values():
+            self.upsert_link(link)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_project_connected_repair_v1", "1", now_ms),
             )
             self._conn.commit()
 
@@ -2113,7 +2171,7 @@ def seeded_workspace_snapshot(
                     "source_id": source_id,
                     "target_kind": "note",
                     "target_id": note_id,
-                    "label": "Note",
+                    "label": (str(record.get("title") or note_id).strip() or note_id) if kind == "project" else "Note",
                 }
             )
     return next_records, next_links
@@ -2369,6 +2427,26 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
                 "metadata": {"place": "Market", "attendees": ["Maya Chen"], "type": "family"},
             },
             {
+                "id": "aurora-roadmap-sync",
+                "title": "Aurora roadmap sync",
+                "summary": "Review milestones, launch timing, and the next decision packet.",
+                "date": day,
+                "start_at_ms": now_ms + 9 * 60 * 60 * 1000,
+                "end_at_ms": now_ms + 10 * 60 * 60 * 1000,
+                "html": "<!doctype html><h1>Aurora roadmap sync</h1><p>Walk the milestone shifts, launch-readiness risks, and the decisions that need leadership input.</p>",
+                "metadata": {"place": "Studio conference room", "attendees": ["Maya Chen"], "type": "work"},
+            },
+            {
+                "id": "migration-vendor-review",
+                "title": "Migration vendor review",
+                "summary": "Confirm the remaining blockers and the next cutover window.",
+                "date": day,
+                "start_at_ms": now_ms + 12 * 60 * 60 * 1000,
+                "end_at_ms": now_ms + 13 * 60 * 60 * 1000,
+                "html": "<!doctype html><h1>Migration vendor review</h1><p>Use this review to confirm the remaining blockers, the exact handoff owner, and the next cutoff decision.</p>",
+                "metadata": {"place": "Vendor Zoom", "attendees": ["Tom Reyes"], "type": "work"},
+            },
+            {
                 "id": "tomorrow-demo",
                 "title": "Katy soccer game",
                 "summary": "Bring water and folding chairs",
@@ -2519,13 +2597,13 @@ def default_workspace_records(now_ms: int) -> dict[str, list[dict[str, object]]]
 
 def default_workspace_links() -> list[dict[str, object]]:
     return [
-        {"id": "aurora-note-q4", "source_kind": "project", "source_id": "aurora", "target_kind": "note", "target_id": "q4", "label": "Notes"},
-        {"id": "aurora-task-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "task", "target_id": "demo-task-soon-roadmap", "label": "Tasks"},
-        {"id": "aurora-contact-maya", "source_kind": "project", "source_id": "aurora", "target_kind": "contact", "target_id": "maya", "label": "People"},
-        {"id": "aurora-calendar-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "calendar_event", "target_id": "roadmap", "label": "Roadmap sync"},
-        {"id": "aurora-feed-decision", "source_kind": "project", "source_id": "aurora", "target_kind": "feed_item", "target_id": "project-decision", "label": "Aurora launch decision"},
-        {"id": "migration-task-archive", "source_kind": "project", "source_id": "migration", "target_kind": "task", "target_id": "demo-task-done-archive", "label": "Tasks"},
-        {"id": "migration-calendar-vendor", "source_kind": "project", "source_id": "migration", "target_kind": "calendar_event", "target_id": "vendor", "label": "Vendor review"},
+        {"id": "aurora-note-q4", "source_kind": "project", "source_id": "aurora", "target_kind": "note", "target_id": "q4", "label": "Q4 hiring plan"},
+        {"id": "aurora-task-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "task", "target_id": "demo-task-soon-roadmap", "label": "Prep roadmap review packet"},
+        {"id": "aurora-contact-maya", "source_kind": "project", "source_id": "aurora", "target_kind": "contact", "target_id": "maya", "label": "Maya Chen"},
+        {"id": "aurora-calendar-roadmap", "source_kind": "project", "source_id": "aurora", "target_kind": "calendar_event", "target_id": "aurora-roadmap-sync", "label": "Aurora roadmap sync"},
+        {"id": "aurora-feed-decision", "source_kind": "project", "source_id": "aurora", "target_kind": "feed_item", "target_id": "project-decision", "label": "Aurora launch decision recorded"},
+        {"id": "migration-task-archive", "source_kind": "project", "source_id": "migration", "target_kind": "task", "target_id": "demo-task-done-archive", "label": "Archive migration handoff notes"},
+        {"id": "migration-calendar-vendor", "source_kind": "project", "source_id": "migration", "target_kind": "calendar_event", "target_id": "migration-vendor-review", "label": "Migration vendor review"},
         {"id": "migration-feed-task", "source_kind": "project", "source_id": "migration", "target_kind": "feed_item", "target_id": "task-complete", "label": "Migration notes archived"},
     ]
 

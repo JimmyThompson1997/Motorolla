@@ -155,6 +155,8 @@ const CALENDAR_CONNECTED_ROW_SELECTOR = [
   '.light-reminder-detail-tile[data-reminder-linked-kind="calendar_event"]',
   '.light-info-row[data-task-connected-kind="calendar_event"]',
 ].join(", ");
+const PROJECT_CONNECTED_ROW_SELECTOR = ".light-linked-record-feed-row";
+const CALENDAR_BLUE = "rgb(63, 109, 246)";
 
 function resolveApiToken() {
   return resolveWriteToken({ rootDir: ROOT });
@@ -550,6 +552,71 @@ async function collectCalendarConnectedRows(page) {
       };
     }).filter(row => row.title || row.detail || row.text);
   }, CALENDAR_CONNECTED_ROW_SELECTOR);
+}
+
+async function waitForProjectConnectedRows(page, timeoutMs, blockedTitles = []) {
+  await page.waitForFunction(
+    ({ selector, blocked }) => {
+      const rows = [...document.querySelectorAll(selector)];
+      if (!rows.length) {
+        return false;
+      }
+      const titles = rows
+        .map(node => String(node.querySelector("strong")?.textContent || "").trim())
+        .filter(Boolean);
+      if (!titles.length) {
+        return false;
+      }
+      return titles.every(title => !blocked.includes(title));
+    },
+    { selector: PROJECT_CONNECTED_ROW_SELECTOR, blocked: blockedTitles },
+    { timeout: timeoutMs }
+  );
+}
+
+async function collectProjectConnectedMetrics(page) {
+  return page.evaluate(selector => {
+    return [...document.querySelectorAll(selector)].map(node => {
+      const stack = node.querySelector(".light-text-stack");
+      const title = String(stack?.querySelector("strong")?.textContent || "").trim();
+      const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+      const icon = node.querySelector(".light-small-icon");
+      const iconStyle = icon ? window.getComputedStyle(icon) : null;
+      return {
+        title,
+        detail,
+        text: String(node.textContent || "").trim().replace(/\s+/g, " "),
+        kind: node.getAttribute("data-workspace-target-kind") || node.getAttribute("data-linked-record-kind") || "",
+        targetRoute: node.getAttribute("data-workspace-target-route") || "",
+        targetId: node.getAttribute("data-workspace-target-id") || "",
+        calendarIconColor: iconStyle?.color || "",
+      };
+    }).filter(row => row.title || row.detail || row.text);
+  }, PROJECT_CONNECTED_ROW_SELECTOR);
+}
+
+async function collectDetailIdentity(page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector(".light-shell");
+    const route = shell?.getAttribute("data-light-route") || "";
+    const title = String(
+      document.querySelector(".light-page-title, .light-page-title-detail, .light-task-detail-title, .light-document-page h1")
+        ?.textContent || ""
+    ).trim();
+    return {
+      route,
+      title,
+      taskId: document.querySelector(".light-task-detail-surface")?.getAttribute("data-task-detail-id") || "",
+    };
+  });
+}
+
+async function clickProjectConnectedRow(page, targetKind, targetId, timeoutMs) {
+  const row = page.locator(
+    `${PROJECT_CONNECTED_ROW_SELECTOR}[data-workspace-target-kind="${targetKind}"][data-workspace-target-id="${targetId}"]`
+  ).first();
+  await row.waitFor({ state: "visible", timeout: timeoutMs });
+  await row.click();
 }
 
 function assertCalendarConnectedRow(surfaceConfig, rows) {
@@ -1051,6 +1118,130 @@ async function captureCalendarConnectedSurface(browser, config, surfaceConfig, t
   }
 }
 
+async function captureProjectsConnectedIntegrity(browser, config, theme, viewportName, viewport, consoleEvents, networkEvents) {
+  const routeDir = path.join(config.reportDir, "projects-connected", theme, viewportName);
+  ensureDir(routeDir);
+  const context = await browser.newContext({
+    viewport,
+    screen: viewport,
+    hasTouch: viewportName === "mobile",
+    isMobile: viewportName === "mobile",
+  });
+  const page = await context.newPage();
+  page.on("console", message => {
+    consoleEvents.push({
+      route: "projects",
+      theme,
+      viewport: viewportName,
+      type: message.type(),
+      text: message.text(),
+    });
+  });
+  page.on("pageerror", error => {
+    consoleEvents.push({
+      route: "projects",
+      theme,
+      viewport: viewportName,
+      type: "pageerror",
+      text: error.message || String(error),
+    });
+  });
+  page.on("response", response => {
+    networkEvents.push({
+      route: "projects",
+      theme,
+      viewport: viewportName,
+      url: response.url(),
+      status: response.status(),
+      ok: response.ok(),
+    });
+  });
+
+  try {
+    const routeConfig = ROUTES.find(item => item.route === "projects");
+    const pageUrl = buildRouteUrl(config, routeConfig, theme);
+    await gotoRouteWithRetry(page, pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+    await waitForSurfaceReady(page, routeConfig, config.apiToken, config.timeoutMs);
+
+    await page.locator('.light-project-row[data-project-id="aurora"]').first().click();
+    await waitForRoute(page, "project-detail", config.timeoutMs);
+    await waitForProjectConnectedRows(page, config.timeoutMs, ["Note", "Tasks"]);
+    const auroraRows = await collectProjectConnectedMetrics(page);
+    assert(auroraRows.length > 0, "Projects: expected Project Aurora connected rows to render");
+    assert(auroraRows.every(row => row.title !== "Note"), `Projects: unexpected generic Note fallback row ${JSON.stringify(auroraRows)}`);
+    assert(auroraRows.every(row => row.title !== "Tasks"), `Projects: unexpected generic Tasks fallback row ${JSON.stringify(auroraRows)}`);
+    const auroraCalendarRow = auroraRows.find(row => row.kind === "calendar_event" && row.title === "Aurora roadmap sync");
+    assert(auroraCalendarRow, `Projects: expected Project Aurora calendar row to resolve semantically, saw ${JSON.stringify(auroraRows)}`);
+    assert(
+      auroraCalendarRow.calendarIconColor === CALENDAR_BLUE,
+      `Projects: expected calendar rows to keep the semantic calendar accent (saw ${auroraCalendarRow?.calendarIconColor || ""})`
+    );
+    const auroraDetailScreenshot = await saveScreenshot(page, path.join(routeDir, "project-aurora-detail.png"));
+    const auroraConnectedScreenshot = await saveScreenshot(page, path.join(routeDir, "project-aurora-connected.png"));
+
+    await clickProjectConnectedRow(page, "task", "demo-task-soon-roadmap", config.timeoutMs);
+    await waitForRoute(page, "task-detail", config.timeoutMs);
+    const auroraTaskDetail = await collectDetailIdentity(page);
+    assert(
+      auroraTaskDetail.taskId === "demo-task-soon-roadmap" || auroraTaskDetail.title === "Prep roadmap review packet",
+      `Projects: expected exact linked task detail to open, saw ${JSON.stringify(auroraTaskDetail)}`
+    );
+    const auroraTaskScreenshot = await saveScreenshot(page, path.join(routeDir, "project-aurora-task-detail.png"));
+    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+    await waitForRoute(page, "project-detail", config.timeoutMs);
+
+    await clickProjectConnectedRow(page, "note", "linked-note-project-aurora", config.timeoutMs);
+    await waitForRoute(page, "note-detail", config.timeoutMs);
+    const auroraNoteDetail = await collectDetailIdentity(page);
+    assert(
+      auroraNoteDetail.title === "Project Aurora",
+      `Projects: expected exact linked note detail to open, saw ${JSON.stringify(auroraNoteDetail)}`
+    );
+    const auroraNoteScreenshot = await saveScreenshot(page, path.join(routeDir, "project-aurora-note-detail.png"));
+    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+    await waitForRoute(page, "project-detail", config.timeoutMs);
+    await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
+    await waitForRoute(page, "projects", config.timeoutMs);
+
+    await page.locator('.light-project-row[data-project-id="home-refresh"]').first().click();
+    await waitForRoute(page, "project-detail", config.timeoutMs);
+    await waitForProjectConnectedRows(page, config.timeoutMs, ["Note", "Tasks"]);
+    const homeRows = await collectProjectConnectedMetrics(page);
+    const homeCalendarRow = homeRows.find(row => row.kind === "calendar_event" && row.title === "Front porch repair window");
+    assert(homeCalendarRow, `Projects: expected Home refresh calendar row to resolve cleanly, saw ${JSON.stringify(homeRows)}`);
+    assert(
+      homeCalendarRow.calendarIconColor === CALENDAR_BLUE,
+      `Projects: expected Home refresh calendar row to keep the semantic calendar accent (saw ${homeCalendarRow?.calendarIconColor || ""})`
+    );
+    const homeConnectedScreenshot = await saveScreenshot(page, path.join(routeDir, "home-refresh-connected.png"));
+
+    const summary = {
+      route: "projects",
+      theme,
+      viewport: viewportName,
+      screenshots: {
+        project_aurora_detail: auroraDetailScreenshot,
+        project_aurora_connected: auroraConnectedScreenshot,
+        project_aurora_task_detail: auroraTaskScreenshot,
+        project_aurora_note_detail: auroraNoteScreenshot,
+        home_refresh_connected: homeConnectedScreenshot,
+      },
+      aurora: {
+        connectedRows: auroraRows,
+        taskDetail: auroraTaskDetail,
+        noteDetail: auroraNoteDetail,
+      },
+      homeRefresh: {
+        connectedRows: homeRows,
+      },
+    };
+    writeJsonFile(path.join(routeDir, "summary.json"), summary);
+    return summary;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   ensureDir(config.reportDir);
@@ -1103,6 +1294,22 @@ async function main() {
         }
       }
     }
+    const projectsConnectedSummaries = {};
+    for (const theme of ["light", "dark"]) {
+      projectsConnectedSummaries[theme] = {};
+      for (const viewportName of ["mobile", "desktop"]) {
+        const viewport = viewportName === "desktop" ? DESKTOP_VIEWPORT : MOBILE_VIEWPORT;
+        projectsConnectedSummaries[theme][viewportName] = await captureProjectsConnectedIntegrity(
+          browser,
+          config,
+          theme,
+          viewportName,
+          viewport,
+          consoleEvents,
+          networkEvents,
+        );
+      }
+    }
     const summary = {
       schema: RESULT_SCHEMA,
       ok: true,
@@ -1113,6 +1320,7 @@ async function main() {
       remote_manifest: manifestResult.manifest,
       routes: routeSummaries,
       calendar_connected_surfaces: calendarConnectedSummaries,
+      projects_connected_surfaces: projectsConnectedSummaries,
     };
     writeJsonFile(path.join(config.reportDir, "summary.json"), summary);
     writeJsonFile(path.join(config.reportDir, "console.json"), consoleEvents);

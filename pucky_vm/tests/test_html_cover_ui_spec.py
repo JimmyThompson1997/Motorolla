@@ -558,8 +558,11 @@ def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() 
     assert 'formatCalendarDateKey(normalized, { month: "numeric", day: "numeric", year: "2-digit" })' in date_label
     assert 'String(relatedKind || "").trim() === "calendar_event" && related' in connected_value
     assert "return calendarConnectedTileTimestampLabel(related);" in connected_value
-    assert 'String(relatedKind || "") === "calendar_event"' in ensure_linked_collections
-    assert "loadWorkspaceRecord(collection, relatedId, { render: true, reason: \"linked_calendar\" })" in ensure_linked_collections
+    assert "const collection = workspaceCollectionForKind(relatedKind);" in ensure_linked_collections
+    assert "const bucket = collection ? workspaceBucket(collection) : null;" in ensure_linked_collections
+    assert "if (collection && relatedId && !workspaceRecordByKind(relatedKind, relatedId)) {" in ensure_linked_collections
+    assert 'void loadWorkspaceRecord(collection, relatedId, { render: true, reason: "linked_record" });' in ensure_linked_collections
+    assert 'String(relatedKind || "") === "calendar_event"' not in ensure_linked_collections
     assert "workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`" in record_loader
     assert "workspaceRecordCacheEntry(bucket, recordId)" in record_lookup
     assert "connectedRecordValue(entry.relatedKind, entry.related, entry.relation)" in workspace_linked_rows

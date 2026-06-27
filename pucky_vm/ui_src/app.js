@@ -9485,8 +9485,8 @@
         : link.source_id;
       const collection = workspaceCollectionForKind(relatedKind);
       const bucket = collection ? workspaceBucket(collection) : null;
-      if (String(relatedKind || "") === "calendar_event" && collection && relatedId && !workspaceRecordByKind(relatedKind, relatedId)) {
-        void loadWorkspaceRecord(collection, relatedId, { render: true, reason: "linked_calendar" });
+      if (collection && relatedId && !workspaceRecordByKind(relatedKind, relatedId)) {
+        void loadWorkspaceRecord(collection, relatedId, { render: true, reason: "linked_record" });
       }
       if (bucket && !bucket.loaded && !bucket.loading) {
         void loadWorkspaceCollection(collection, { render: true });
@@ -9671,7 +9671,7 @@
     const kind = String(entry?.kind || entry?.relatedKind || "").trim();
     const target = entry?.target || null;
     const related = entry?.related || null;
-    const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
+    const isInteractive = Boolean(related && target?.route && target?.id && target?.selectedKey);
     const showChips = options.showChips !== false;
     const showChevron = options.showChevron !== false;
     const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
@@ -12787,7 +12787,7 @@
   }
 
   function selectedFeedItem() {
-    return workspaceItems("feed-items").find(item => item.id === state.selectedFeedId) || workspaceItems("feed-items")[0] || null;
+    return selectedWorkspaceRecord("feed-items", state.selectedFeedId);
   }
 
   function workspaceRecordById(collection, id, fallback = null) {
@@ -12795,7 +12795,26 @@
     if (!normalizedId) {
       return fallback;
     }
-    return workspaceItems(collection).find(item => item.id === normalizedId || item.record_id === normalizedId) || fallback;
+    const direct = workspaceItems(collection).find(item => item.id === normalizedId || item.record_id === normalizedId);
+    if (direct) {
+      return direct;
+    }
+    const bucket = workspaceBucket(collection);
+    const cached = workspaceRecordCacheEntry(bucket, normalizedId);
+    if (cached?.record) {
+      return cached.record;
+    }
+    const queryCache = bucket?.queryCache && typeof bucket.queryCache === "object" ? bucket.queryCache : {};
+    for (const entry of Object.values(queryCache)) {
+      const match = Array.isArray(entry?.items)
+        ? entry.items.find(item => item.id === normalizedId || item.record_id === normalizedId)
+        : null;
+      if (match) {
+        rememberWorkspaceRecord(bucket, match, safeNumber(entry.lastRefreshAt) || Date.now());
+        return match;
+      }
+    }
+    return fallback;
   }
 
   function selectedWorkspaceRecord(collection, id, fallback = null) {
