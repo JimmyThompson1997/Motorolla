@@ -2167,7 +2167,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const staleSelfActivityQuery = "reminder";
     const noMatchQuery = "zzzz-no-match";
     const initialsQuery = "Da";
-    const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
+    const connectedLabels = [seed.noteTitle, seed.primaryTaskTitle, seed.meetingNoteTitle];
 
     await goHome(page, config);
     await openRouteFromHome(page, "contacts", config.timeoutMs);
@@ -2360,7 +2360,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
     const expectedInitials = "UC";
     const staleActivityQuery = "Linked to live alpha";
-    const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
+    const connectedLabels = [seed.noteTitle, seed.primaryTaskTitle, seed.meetingNoteTitle];
 
     await goHome(page, config);
     await openRouteFromHome(page, "contacts", config.timeoutMs);
