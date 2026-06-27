@@ -611,6 +611,31 @@ async function collectDetailIdentity(page) {
   });
 }
 
+async function waitForDetailIdentity(page, expected, timeoutMs) {
+  await page.waitForFunction(
+    ({ route, taskId, title }) => {
+      const shellRoute = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
+      if (route && shellRoute !== route) {
+        return false;
+      }
+      const currentTaskId = document.querySelector(".light-task-detail-surface")?.getAttribute("data-task-detail-id") || "";
+      const currentTitle = String(
+        document.querySelector(".light-page-title, .light-page-title-detail, .light-task-detail-title, .light-document-page h1")
+          ?.textContent || ""
+      ).trim();
+      if (taskId && currentTaskId === taskId) {
+        return true;
+      }
+      if (title && currentTitle === title) {
+        return true;
+      }
+      return !taskId && !title;
+    },
+    expected,
+    { timeout: timeoutMs }
+  );
+}
+
 async function clickProjectConnectedRow(page, targetKind, targetId, timeoutMs) {
   const row = page.locator(
     `${PROJECT_CONNECTED_ROW_SELECTOR}[data-workspace-target-kind="${targetKind}"][data-workspace-target-id="${targetId}"]`
@@ -1068,13 +1093,30 @@ async function captureCalendarConnectedSurface(browser, config, surfaceConfig, t
     await gotoRouteWithRetry(page, pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForRoute(page, surfaceConfig.route, config.timeoutMs);
     await page.locator(surfaceConfig.readySelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    let opener = page.locator(surfaceConfig.openerSelector).first();
-    if (!(await opener.count()) && surfaceConfig.openerText) {
-      opener = page.locator(surfaceConfig.readySelector, { hasText: surfaceConfig.openerText }).first();
+    let openerError = null;
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
+        let opener = page.locator(surfaceConfig.openerSelector).first();
+        if (!(await opener.count()) && surfaceConfig.openerText) {
+          opener = page.locator(surfaceConfig.readySelector, { hasText: surfaceConfig.openerText }).first();
+        }
+        assert(await opener.count(), `${surfaceConfig.surface}: expected a connected-surface opener matching ${surfaceConfig.openerSelector} or ${surfaceConfig.openerText || "(no openerText fallback)"}.`);
+        await opener.waitFor({ state: "visible", timeout: config.timeoutMs });
+        await opener.scrollIntoViewIfNeeded();
+        await opener.click();
+        openerError = null;
+        break;
+      } catch (error) {
+        openerError = error;
+        if (attempt >= 4) {
+          break;
+        }
+        await page.waitForTimeout(150 * attempt);
+      }
     }
-    assert(await opener.count(), `${surfaceConfig.surface}: expected a connected-surface opener matching ${surfaceConfig.openerSelector} or ${surfaceConfig.openerText || "(no openerText fallback)"}.`);
-    await opener.scrollIntoViewIfNeeded();
-    await opener.click();
+    if (openerError) {
+      throw openerError;
+    }
     await page.locator(surfaceConfig.detailSelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await page.waitForFunction(
       ({ selector, expectedTitle, datePrefixSource, timeWindowSource }) => {
@@ -1181,6 +1223,11 @@ async function captureProjectsConnectedIntegrity(browser, config, theme, viewpor
 
     await clickProjectConnectedRow(page, "task", "demo-task-soon-roadmap", config.timeoutMs);
     await waitForRoute(page, "task-detail", config.timeoutMs);
+    await waitForDetailIdentity(page, {
+      route: "task-detail",
+      taskId: "demo-task-soon-roadmap",
+      title: "Prep roadmap review packet",
+    }, config.timeoutMs);
     const auroraTaskDetail = await collectDetailIdentity(page);
     assert(
       auroraTaskDetail.taskId === "demo-task-soon-roadmap" || auroraTaskDetail.title === "Prep roadmap review packet",
@@ -1192,6 +1239,7 @@ async function captureProjectsConnectedIntegrity(browser, config, theme, viewpor
 
     await clickProjectConnectedRow(page, "note", "linked-note-project-aurora", config.timeoutMs);
     await waitForRoute(page, "note-detail", config.timeoutMs);
+    await waitForDetailIdentity(page, { route: "note-detail", title: "Project Aurora" }, config.timeoutMs);
     const auroraNoteDetail = await collectDetailIdentity(page);
     assert(
       auroraNoteDetail.title === "Project Aurora",

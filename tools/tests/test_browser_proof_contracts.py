@@ -1209,6 +1209,12 @@ def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     assert "const REMINDER_PROOF_EVENT_TITLE = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_EVENT_TITLE" in source
     assert "const REMINDER_PROOF_BLOCKED_SUMMARY = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_BLOCKED_SUMMARY" in source
     assert "surfaceConfig.openerText" in source
+    assert "let openerError = null;" in source
+    assert "await opener.scrollIntoViewIfNeeded();" in source
+    assert "await page.waitForTimeout(150 * attempt);" in source
+    assert "async function waitForDetailIdentity(page, expected, timeoutMs) {" in source
+    assert 'taskId: "demo-task-soon-roadmap"' in source
+    assert 'await waitForDetailIdentity(page, { route: "note-detail", title: "Project Aurora" }, config.timeoutMs);' in source
     assert "datePrefixSource: CALENDAR_CONNECTED_DATE_PREFIX_RE.source" in source
     assert "timeWindowSource: CALENDAR_CONNECTED_TIME_WINDOW_RE.source" in source
 
