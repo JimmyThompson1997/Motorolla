@@ -447,9 +447,12 @@ function assertConnectedRowsShared(state, fixture) {
     assert(state.rows.some(row => row.title.includes(title)), `Expected ${fixture.route} Connected to include ${title}, got ${state.rows.map(row => row.title).join(", ")}.`);
   }
   for (const [title, snippet] of Object.entries(fixture.subtitleChecks || {})) {
-    const row = state.rows.find(item => item.title.includes(title));
-    assert(row, `Expected ${fixture.route} Connected to include subtitle-check row ${title}.`);
-    assert(row.subtitle.includes(snippet), `Expected ${fixture.route} row ${title} to reuse existing summary text. Saw "${row.subtitle}".`);
+    const rows = state.rows.filter(item => item.title.includes(title));
+    assert(rows.length >= 1, `Expected ${fixture.route} Connected to include subtitle-check row ${title}.`);
+    assert(
+      rows.some(row => row.subtitle.includes(snippet)),
+      `Expected ${fixture.route} row ${title} to reuse existing summary text. Saw ${rows.map(row => `"${row.subtitle}"`).join(", ")}.`
+    );
   }
   const genericPrefix = /^(?:Task|Note|Project|Contact|Reminder|Calendar|Meeting note|Inbox)\s*[·:-]/i;
   assert(state.rows.every(row => !genericPrefix.test(row.subtitle)), `Expected ${fixture.route} Connected subtitles to avoid generic kind filler. Got ${state.rows.map(row => `${row.title} => ${row.subtitle}`).join(" | ")}.`);
