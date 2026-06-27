@@ -22,6 +22,7 @@ const THEMES = ["light", "dark"];
 const OVERLAP_EPSILON = 0.5;
 const CENTER_EPSILON = 2;
 const BADGE_CENTER_EPSILON = 3;
+const BADGE_OPTICAL_INSET_PX = 3;
 
 function loadPlaywrightCore() {
   const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
@@ -260,8 +261,8 @@ function assertHomeLabelContract(metrics) {
     if (item.badge) {
       const badgeCenterX = item.badge.left + item.badge.width / 2;
       const badgeCenterY = item.badge.top + item.badge.height / 2;
-      const expectedCenterX = item.icon.right;
-      const expectedCenterY = item.icon.top;
+      const expectedCenterX = item.icon.right - BADGE_OPTICAL_INSET_PX;
+      const expectedCenterY = item.icon.top + BADGE_OPTICAL_INSET_PX;
       const badgeDriftX = Math.abs(badgeCenterX - expectedCenterX);
       const badgeDriftY = Math.abs(badgeCenterY - expectedCenterY);
       assert(item.badgeCount, `${item.text} badge is missing visible text`);

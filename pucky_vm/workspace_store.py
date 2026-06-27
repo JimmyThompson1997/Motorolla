@@ -375,6 +375,7 @@ def _normalize_reminder_metadata(metadata: dict[str, Any], *, status: str) -> di
     if delivery_state not in {"pending", "sent", "failed"}:
         delivery_state = "pending"
     normalized["delivery_state"] = delivery_state
+    normalized["seen_at_ms"] = _int_or_zero(normalized.get("seen_at_ms"))
     normalized["last_fired_at_ms"] = _int_or_zero(normalized.get("last_fired_at_ms"))
     normalized["last_fired_due_at_ms"] = _int_or_zero(normalized.get("last_fired_due_at_ms"))
     normalized["snoozed_until_ms"] = _int_or_zero(normalized.get("snoozed_until_ms"))

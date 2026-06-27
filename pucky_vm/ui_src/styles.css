@@ -1220,6 +1220,12 @@ button {
   padding: 10px 14px;
 }
 
+.card.card-meeting-list.has-read-toggle {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  column-gap: 4px;
+  padding: 10px 10px 10px 6px;
+}
+
 .card-timestamp {
   grid-column: 3;
   grid-row: 1;
@@ -1245,6 +1251,11 @@ button {
   display: grid;
   place-items: center;
   padding: 0;
+}
+
+.card.card-meeting-list.has-read-toggle .identity {
+  width: 38px;
+  height: 48px;
 }
 
 .identity .material-icon {
@@ -1283,6 +1294,10 @@ button {
   grid-column: 1;
   grid-row: 1;
   padding: 0;
+}
+
+.card.card-meeting-list.has-read-toggle .card-body {
+  grid-column: 2;
 }
 
 .card.card-meeting-list .card-body.is-title-only {
@@ -1384,6 +1399,11 @@ button {
   min-width: 44px;
   width: 44px;
   justify-self: end;
+}
+
+.card.card-meeting-list.has-read-toggle .card-actions {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .card.card-meeting-list .card-timestamp {
@@ -3796,8 +3816,8 @@ button {
 
 .light-app-badge {
   position: absolute;
-  top: -11px;
-  right: -11px;
+  top: -8px;
+  right: -8px;
   min-width: 22px;
   height: 22px;
   border-radius: 999px;
@@ -4095,7 +4115,43 @@ button {
 }
 
 .light-graph-row.light-graph-row-meeting-notes {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 4px;
+}
+
+.light-feed-read-toggle {
+  width: 38px;
+  min-width: 38px;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: inline-grid;
+  place-items: center;
+  color: var(--icon-card-neutral);
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.light-feed-read-toggle.is-unread {
+  color: var(--read-accent, var(--accent-primary));
+}
+
+.light-feed-read-toggle:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.light-feed-read-toggle .material-icon {
+  width: 26px;
+  height: 26px;
+  fill: currentColor;
+  stroke: none;
 }
 
 .light-note-row {
@@ -4558,11 +4614,33 @@ button {
 .light-reminder-row {
   min-height: 74px;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
   padding: 13px 14px;
   text-align: left;
+}
+
+.light-reminder-row-main {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.light-reminder-row-main:focus,
+.light-reminder-row-main:focus-visible,
+.light-feed-read-toggle:focus,
+.light-feed-read-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .light-reminder-row .light-text-stack {
@@ -6272,6 +6350,10 @@ button {
   border-top: 1px solid color-mix(in srgb, var(--home-shell-border) 82%, transparent);
 }
 
+.light-task-row.has-read-toggle {
+  grid-template-columns: 30px 30px minmax(0, 1fr);
+}
+
 .light-task-row.is-pressed {
   transform: scale(0.995);
   background: color-mix(in srgb, var(--home-shell-card-strong) 84%, transparent);
@@ -6283,6 +6365,7 @@ button {
 
 .light-task-row-status-trigger,
 .light-task-selection-trigger,
+.light-task-row-read-toggle,
 .light-task-row-main {
   border: 0;
   background: transparent;
@@ -6297,7 +6380,8 @@ button {
 }
 
 .light-task-row-status-trigger,
-.light-task-selection-trigger {
+.light-task-selection-trigger,
+.light-task-row-read-toggle {
   width: 30px;
   min-width: 30px;
   min-height: 30px;
@@ -6312,6 +6396,19 @@ button {
   border-color: #22c55e;
   color: #22c55e;
   background: #ecfbf1;
+}
+
+.light-task-row-read-toggle {
+  color: var(--icon-card-neutral);
+}
+
+.light-task-row-read-toggle.is-unread {
+  color: var(--read-accent, var(--accent-primary));
+}
+
+.light-task-row-read-toggle .material-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .light-task-row-main {
@@ -6332,6 +6429,8 @@ button {
 .light-task-row-status-trigger:focus-visible,
 .light-task-selection-trigger:focus,
 .light-task-selection-trigger:focus-visible,
+.light-task-row-read-toggle:focus,
+.light-task-row-read-toggle:focus-visible,
 .light-task-detail-card:focus,
 .light-task-detail-card:focus-visible,
 .light-task-detail-action-trigger:focus,

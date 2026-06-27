@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
 const BADGE_CENTER_EPSILON = 3;
+const BADGE_OPTICAL_INSET_PX = 3;
 const INCLUDED_APPS = ["Inbox", "Meetings", "Meeting Notes", "Tasks", "Reminders"];
 const EXCLUDED_APPS = ["Connect", "Calendar", "Projects", "Settings", "Contacts", "Notes"];
 const MEETING_NOTES_API_PATH = "/api/workspace/meeting-notes";
@@ -155,6 +156,10 @@ function badgeDisplayCount(count) {
   return numeric > 99 ? "99+" : String(numeric);
 }
 
+function apiBadgeCount(payload, route) {
+  return Math.max(0, Number(payload?.badges?.[route]?.count || 0) || 0);
+}
+
 async function waitForAppBadges(config, predicate, description, timeoutMs) {
   const startedAt = Date.now();
   let lastPayload = null;
@@ -255,8 +260,41 @@ async function openHome(page, config) {
 
 async function openRouteFromHome(page, config, route) {
   await openHome(page, config);
-  await page.locator(`.light-app-tile[data-route="${route}"]`).click({ timeout: config.timeoutMs });
+  await page.evaluate(targetRoute => {
+    document.querySelector(`.light-app-tile[data-route="${targetRoute}"]`)?.click();
+  }, route);
   await waitForLightRoute(page, route, config.timeoutMs);
+}
+
+async function currentLightRoute(page) {
+  return await page.evaluate(() => String(document.querySelector(".light-shell")?.getAttribute("data-light-route") || "").trim());
+}
+
+async function openRouteFromCurrentHome(page, route, timeoutMs) {
+  await page.evaluate(targetRoute => {
+    document.querySelector(`.light-app-tile[data-route="${targetRoute}"]`)?.click();
+  }, route);
+  await waitForLightRoute(page, route, timeoutMs);
+}
+
+async function clickTopBack(page, expectedRoute, timeoutMs) {
+  await page.evaluate(() => {
+    document.querySelector("#feed .light-back-button")?.click();
+  });
+  await waitForLightRoute(page, expectedRoute, timeoutMs);
+}
+
+async function backToHome(page, timeoutMs) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (await currentLightRoute(page) === "home") {
+      return;
+    }
+    await page.evaluate(() => {
+      document.querySelector("#feed .light-back-button")?.click();
+    });
+    await page.waitForFunction(() => Boolean(document.querySelector(".light-shell")), null, { timeout: timeoutMs });
+  }
+  assert(await currentLightRoute(page) === "home", "Expected top Back to return to Home");
 }
 
 async function collectHomeBadgeMetrics(page) {
@@ -290,6 +328,39 @@ async function collectHomeBadgeMetrics(page) {
   });
 }
 
+function badgeCountForRoute(metrics, route) {
+  const item = metrics.find(entry => entry.route === route) || null;
+  return item ? String(item.badgeCount || "").trim() : "";
+}
+
+async function waitForHomeBadgeCount(page, route, expectedCount, timeoutMs) {
+  const expectedText = badgeDisplayCount(expectedCount);
+  await page.waitForFunction(({ routeValue, expectedTextValue }) => {
+    const tile = document.querySelector(`.light-app-tile[data-route="${routeValue}"]`);
+    if (!tile) {
+      return false;
+    }
+    const badge = tile.querySelector(".light-app-badge");
+    if (!expectedTextValue) {
+      return !badge;
+    }
+    return Boolean(badge) && String(badge.textContent || "").trim() === expectedTextValue;
+  }, { routeValue: route, expectedTextValue: expectedText }, { timeout: timeoutMs });
+}
+
+async function waitForElementReadState(page, selector, expectedState, timeoutMs) {
+  await page.waitForFunction(({ targetSelector, targetState }) => {
+    return document.querySelector(targetSelector)?.getAttribute("data-read-state") === targetState;
+  }, { targetSelector: selector, targetState: expectedState }, { timeout: timeoutMs });
+}
+
+async function waitForMeetingReadState(page, cardId, expectedState, timeoutMs) {
+  await page.waitForFunction(({ targetCardId, targetState }) => {
+    const node = document.querySelector(`article[data-card-id="${targetCardId}"] .identity`);
+    return Boolean(node) && node.classList.contains(`is-${targetState}`);
+  }, { targetCardId: cardId, targetState: expectedState }, { timeout: timeoutMs });
+}
+
 function assertHomeBadgeGeometry(metrics, apiPayload) {
   const badges = apiPayload?.badges && typeof apiPayload.badges === "object" ? apiPayload.badges : {};
   for (const label of INCLUDED_APPS) {
@@ -307,8 +378,8 @@ function assertHomeBadgeGeometry(metrics, apiPayload) {
     assert(item.badgeCount === expectedText, `${label} badge count mismatch; expected ${expectedText}, saw ${item.badgeCount}`);
     const badgeCenterX = item.badge.left + item.badge.width / 2;
     const badgeCenterY = item.badge.top + item.badge.height / 2;
-    const expectedCenterX = item.icon.right;
-    const expectedCenterY = item.icon.top;
+    const expectedCenterX = item.icon.right - BADGE_OPTICAL_INSET_PX;
+    const expectedCenterY = item.icon.top + BADGE_OPTICAL_INSET_PX;
     const driftX = Math.abs(badgeCenterX - expectedCenterX);
     const driftY = Math.abs(badgeCenterY - expectedCenterY);
     assert(driftX <= BADGE_CENTER_EPSILON, `${label} badge geometry drifted horizontally by ${driftX.toFixed(2)}px`);
@@ -364,7 +435,7 @@ async function openMeetingFromMeetings(page, meetingId, timeoutMs) {
 }
 
 async function openMeetingNoteDetail(page, recordId, timeoutMs) {
-  await page.locator(`.light-graph-row[data-record-id="${recordId}"]`).click({ timeout: timeoutMs });
+  await page.locator(`.light-graph-row[data-record-id="${recordId}"] .light-text-stack`).click({ timeout: timeoutMs });
   await waitForLightRoute(page, "meeting-note-detail", timeoutMs);
   await page.waitForSelector(".light-meeting-note-detail-page", { timeout: timeoutMs });
 }
@@ -376,13 +447,14 @@ async function openTaskDetail(page, recordId, timeoutMs) {
 }
 
 async function openReminderDetail(page, recordId, timeoutMs) {
-  await page.locator(`.light-reminder-row[data-reminder-id="${recordId}"]`).click({ timeout: timeoutMs });
+  await page.locator(`.light-reminder-row[data-reminder-id="${recordId}"] .light-reminder-row-main`).click({ timeout: timeoutMs });
   await waitForLightRoute(page, "reminder-detail", timeoutMs);
   await page.waitForSelector(".light-reminder-detail-card", { timeout: timeoutMs });
 }
 
 async function waitForReminderDismiss(page, config, reminderId, baselineCount) {
   await page.getByRole("button", { name: "Dismiss" }).click({ timeout: config.timeoutMs });
+  await waitForLightRoute(page, "reminders", config.timeoutMs);
   await waitForAppBadges(
     config,
     payload => Number(payload?.badges?.reminders?.count || 0) === baselineCount,
@@ -428,8 +500,9 @@ async function main() {
     excludedApps: EXCLUDED_APPS,
     notes: [
       "This proof checks badge geometry on the icon anchor and unread semantics for Inbox, Meetings, Meeting Notes, Tasks, and Reminders.",
+      "Meetings, Meeting Notes, Tasks, and Reminders each exercise manual toggle to read, manual toggle back to unread, and detail-open auto-read.",
       "Reminder exception check: read/open the reminder detail without acting, then confirm the reminder badge does not change.",
-      "Meeting Notes and Tasks verify metadata.seen_at_ms persistence and content_updated_at_ms re-unread behavior.",
+      "Meeting Notes and Tasks verify metadata.seen_at_ms persistence against content_updated_at_ms on the real workspace records.",
     ],
     screenshots: {},
     apiSnapshots: {},
@@ -491,114 +564,260 @@ async function main() {
     const seededMetrics = await collectHomeBadgeMetrics(page);
     assertHomeBadgeGeometry(seededMetrics, createdBadges);
 
-    await openRouteFromHome(page, config, "inbox");
+    await openRouteFromCurrentHome(page, "inbox", config.timeoutMs);
     await openInboxMeeting(page, String(meetingOne.card_id || ""), meetingOneId, config.timeoutMs);
     summary.screenshots.inbox_meeting_open = await saveScreenshot(page, config.reportDir, "inbox-meeting-open");
     const afterInboxMeeting = await waitForAppBadges(
       config,
       payload =>
-        Number(payload?.badges?.inbox?.count || 0) === Number(createdBadges?.badges?.inbox?.count || 0) - 1
-        && Number(payload?.badges?.meetings?.count || 0) === Number(createdBadges?.badges?.meetings?.count || 0) - 1,
+        apiBadgeCount(payload, "inbox") === apiBadgeCount(createdBadges, "inbox") - 1
+        && apiBadgeCount(payload, "meetings") === apiBadgeCount(createdBadges, "meetings") - 1,
       "cross-surface meeting read after inbox open",
       config.timeoutMs,
     );
     summary.apiSnapshots.after_inbox_meeting = afterInboxMeeting;
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadges(page, config, afterInboxMeeting);
 
-    await openRouteFromHome(page, config, "meetings");
-    await openMeetingFromMeetings(page, meetingTwoId, config.timeoutMs);
-    summary.screenshots.meetings_meeting_open = await saveScreenshot(page, config.reportDir, "meetings-meeting-open");
-    const afterMeetingsMeeting = await waitForAppBadges(
+    await openRouteFromCurrentHome(page, "meetings", config.timeoutMs);
+    await page.waitForSelector(`article[data-card-id="${meetingTwo.card_id}"] .identity`, { timeout: config.timeoutMs });
+    summary.screenshots.meetings_feed_initial = await saveScreenshot(page, config.reportDir, "meetings-feed-initial");
+    await waitForMeetingReadState(page, String(meetingTwo.card_id || ""), "unread", config.timeoutMs);
+    await page.locator(`article[data-card-id="${meetingTwo.card_id}"] .identity`).click({ timeout: config.timeoutMs });
+    await waitForMeetingReadState(page, String(meetingTwo.card_id || ""), "read", config.timeoutMs);
+    const afterMeetingToggleRead = await waitForAppBadges(
       config,
       payload =>
-        Number(payload?.badges?.inbox?.count || 0) === Number(createdBadges?.badges?.inbox?.count || 0) - 2
-        && Number(payload?.badges?.meetings?.count || 0) === Number(createdBadges?.badges?.meetings?.count || 0) - 2,
-      "cross-surface meeting read after meetings open",
+        apiBadgeCount(payload, "inbox") === apiBadgeCount(createdBadges, "inbox") - 2
+        && apiBadgeCount(payload, "meetings") === apiBadgeCount(createdBadges, "meetings") - 2,
+      "meeting toggle read decrements inbox and meetings badges",
       config.timeoutMs,
     );
-    summary.apiSnapshots.after_meetings_meeting = afterMeetingsMeeting;
+    summary.apiSnapshots.after_meeting_toggle_read = afterMeetingToggleRead;
+    summary.records.meeting_toggle_read = await waitForMeetingRecord(
+      config,
+      meetingTwoId,
+      record => Boolean(record?.read) || Boolean(record?.feed_item?.read),
+      "meeting toggle persisted read state",
+      config.timeoutMs,
+    );
+    summary.screenshots.meetings_feed_after_toggle_read = await saveScreenshot(page, config.reportDir, "meetings-feed-after-toggle-read");
+    await page.locator(`article[data-card-id="${meetingTwo.card_id}"] .identity`).click({ timeout: config.timeoutMs });
+    await waitForMeetingReadState(page, String(meetingTwo.card_id || ""), "unread", config.timeoutMs);
+    const afterMeetingToggleUnreadApi = await readAppBadges(config);
+    assert(
+      apiBadgeCount(afterMeetingToggleUnreadApi, "inbox") === apiBadgeCount(afterMeetingToggleRead, "inbox")
+      && apiBadgeCount(afterMeetingToggleUnreadApi, "meetings") === apiBadgeCount(afterMeetingToggleRead, "meetings"),
+      "Meeting unread override should stay client-local and leave /api/app-badges unchanged",
+    );
+    summary.apiSnapshots.after_meeting_toggle_unread_local = afterMeetingToggleUnreadApi;
+    summary.screenshots.meetings_feed_after_toggle_unread = await saveScreenshot(page, config.reportDir, "meetings-feed-after-toggle-unread");
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "inbox", apiBadgeCount(afterMeetingToggleRead, "inbox") + 1, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "meetings", apiBadgeCount(afterMeetingToggleRead, "meetings") + 1, config.timeoutMs);
+    summary.screenshots.home_after_meeting_local_unread = await saveScreenshot(page, config.reportDir, "home-after-meeting-local-unread");
+    const homeAfterMeetingLocalUnread = await collectHomeBadgeMetrics(page);
+    assert(
+      badgeCountForRoute(homeAfterMeetingLocalUnread, "inbox") === badgeDisplayCount(apiBadgeCount(afterMeetingToggleRead, "inbox") + 1)
+      && badgeCountForRoute(homeAfterMeetingLocalUnread, "meetings") === badgeDisplayCount(apiBadgeCount(afterMeetingToggleRead, "meetings") + 1),
+      "Expected Inbox and Meetings home badges to reflect the local unread meeting override",
+    );
+    await openRouteFromCurrentHome(page, "meetings", config.timeoutMs);
+    await openMeetingFromMeetings(page, meetingTwoId, config.timeoutMs);
+    summary.screenshots.meetings_meeting_open_after_local_unread = await saveScreenshot(page, config.reportDir, "meetings-meeting-open-after-local-unread");
+    const afterMeetingsMeetingOpen = await readAppBadges(config);
+    assert(
+      apiBadgeCount(afterMeetingsMeetingOpen, "inbox") === apiBadgeCount(afterMeetingToggleRead, "inbox")
+      && apiBadgeCount(afterMeetingsMeetingOpen, "meetings") === apiBadgeCount(afterMeetingToggleRead, "meetings"),
+      "Opening a locally unread meeting from Meetings should clear the local override without changing server badge counts",
+    );
+    summary.apiSnapshots.after_meeting_open_auto_read = afterMeetingsMeetingOpen;
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "inbox", apiBadgeCount(afterMeetingToggleRead, "inbox"), config.timeoutMs);
+    await waitForHomeBadgeCount(page, "meetings", apiBadgeCount(afterMeetingToggleRead, "meetings"), config.timeoutMs);
 
-    await openRouteFromHome(page, config, "meeting-notes");
-    await openMeetingNoteDetail(page, meetingNoteId, config.timeoutMs);
-    summary.screenshots.meeting_note_detail = await saveScreenshot(page, config.reportDir, "meeting-note-detail");
-    const seenMeetingNote = await waitForWorkspaceRecord(
+    await openRouteFromCurrentHome(page, "meeting-notes", config.timeoutMs);
+    const meetingNoteRowSelector = `.light-graph-row[data-record-id="${meetingNoteId}"]`;
+    const meetingNoteToggleSelector = `${meetingNoteRowSelector} .light-feed-read-toggle`;
+    await page.waitForSelector(meetingNoteToggleSelector, { timeout: config.timeoutMs });
+    await waitForElementReadState(page, meetingNoteRowSelector, "unread", config.timeoutMs);
+    summary.screenshots.meeting_notes_feed_initial = await saveScreenshot(page, config.reportDir, "meeting-notes-feed-initial");
+    await page.locator(meetingNoteToggleSelector).click({ timeout: config.timeoutMs });
+    await waitForElementReadState(page, meetingNoteRowSelector, "read", config.timeoutMs);
+    const afterMeetingNoteToggleRead = await waitForAppBadges(
+      config,
+      payload => apiBadgeCount(payload, "meeting-notes") === apiBadgeCount(createdBadges, "meeting-notes") - 1,
+      "meeting note toggle read decrements badge",
+      config.timeoutMs,
+    );
+    summary.apiSnapshots.after_meeting_note_toggle_read = afterMeetingNoteToggleRead;
+    summary.records.meeting_note_toggle_read = await waitForWorkspaceRecord(
       config,
       "meeting-notes",
       meetingNoteId,
       record => Number(record?.metadata?.seen_at_ms || 0) >= Number(record?.content_updated_at_ms || 0),
-      "meeting note seen_at_ms",
+      "meeting note seen_at_ms after toggle read",
       config.timeoutMs,
     );
-    summary.apiSnapshots.meeting_note_seen = seenMeetingNote;
-    const afterMeetingNoteSeen = await waitForAppBadges(
-      config,
-      payload => Number(payload?.badges?.["meeting-notes"]?.count || 0) === Number(afterMeetingsMeeting?.badges?.["meeting-notes"]?.count || 0) - 1,
-      "meeting note badge clears after detail open",
-      config.timeoutMs,
+    await page.locator(meetingNoteToggleSelector).click({ timeout: config.timeoutMs });
+    await waitForElementReadState(page, meetingNoteRowSelector, "unread", config.timeoutMs);
+    const afterMeetingNoteToggleUnreadApi = await readAppBadges(config);
+    assert(
+      apiBadgeCount(afterMeetingNoteToggleUnreadApi, "meeting-notes") === apiBadgeCount(afterMeetingNoteToggleRead, "meeting-notes"),
+      "Meeting note unread override should stay client-local and leave /api/app-badges unchanged",
     );
-    summary.apiSnapshots.after_meeting_note_seen = afterMeetingNoteSeen;
+    summary.apiSnapshots.after_meeting_note_toggle_unread_local = afterMeetingNoteToggleUnreadApi;
+    summary.screenshots.meeting_notes_feed_after_toggle_unread = await saveScreenshot(page, config.reportDir, "meeting-notes-feed-after-toggle-unread");
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "meeting-notes", apiBadgeCount(afterMeetingNoteToggleRead, "meeting-notes") + 1, config.timeoutMs);
+    summary.screenshots.home_after_meeting_note_local_unread = await saveScreenshot(page, config.reportDir, "home-after-meeting-note-local-unread");
+    const homeAfterMeetingNoteLocalUnread = await collectHomeBadgeMetrics(page);
+    assert(
+      badgeCountForRoute(homeAfterMeetingNoteLocalUnread, "meeting-notes") === badgeDisplayCount(apiBadgeCount(afterMeetingNoteToggleRead, "meeting-notes") + 1),
+      "Expected Meeting Notes home badge to reflect the local unread override",
+    );
+    await openRouteFromCurrentHome(page, "meeting-notes", config.timeoutMs);
+    await openMeetingNoteDetail(page, meetingNoteId, config.timeoutMs);
+    summary.screenshots.meeting_note_detail_after_local_unread = await saveScreenshot(page, config.reportDir, "meeting-note-detail-after-local-unread");
+    const afterMeetingNoteOpen = await readAppBadges(config);
+    assert(
+      apiBadgeCount(afterMeetingNoteOpen, "meeting-notes") === apiBadgeCount(afterMeetingNoteToggleRead, "meeting-notes"),
+      "Opening a locally unread meeting note should clear the local override without changing server badge counts",
+    );
+    summary.apiSnapshots.after_meeting_note_open_auto_read = afterMeetingNoteOpen;
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "meeting-notes", apiBadgeCount(afterMeetingNoteToggleRead, "meeting-notes"), config.timeoutMs);
 
-    await apiRequest(config, "PATCH", `${MEETING_NOTES_API_PATH}/${meetingNoteId}`, {
-      summary: "Meeting note changed after being seen.",
-    });
-    const meetingNoteUnreadAgain = await waitForAppBadges(
+    await openRouteFromCurrentHome(page, "tasks", config.timeoutMs);
+    const taskRowSelector = `.light-task-row[data-task-id="${taskId}"]`;
+    const taskReadToggleSelector = `${taskRowSelector} .light-task-row-read-toggle`;
+    const taskStatusControlSelector = `${taskRowSelector} .light-task-row-status-trigger`;
+    await page.waitForSelector(taskReadToggleSelector, { timeout: config.timeoutMs });
+    await page.waitForSelector(taskStatusControlSelector, { timeout: config.timeoutMs });
+    const taskControls = await page.evaluate(targetTaskId => {
+      const row = document.querySelector(`.light-task-row[data-task-id="${targetTaskId}"]`);
+      return {
+        statusControls: row?.querySelectorAll(".light-task-row-status-trigger").length || 0,
+        readControls: row?.querySelectorAll(".light-task-row-read-toggle").length || 0,
+      };
+    }, taskId);
+    assert(taskControls.statusControls === 1 && taskControls.readControls === 1, "Expected task row to keep its status control and add a separate unread control");
+    await waitForElementReadState(page, taskRowSelector, "unread", config.timeoutMs);
+    summary.screenshots.tasks_feed_initial = await saveScreenshot(page, config.reportDir, "tasks-feed-initial");
+    await page.locator(taskReadToggleSelector).click({ timeout: config.timeoutMs });
+    await waitForElementReadState(page, taskRowSelector, "read", config.timeoutMs);
+    const afterTaskToggleRead = await waitForAppBadges(
       config,
-      payload => Number(payload?.badges?.["meeting-notes"]?.count || 0) >= Number(afterMeetingsMeeting?.badges?.["meeting-notes"]?.count || 0),
-      "meeting note unread after content update",
+      payload => apiBadgeCount(payload, "tasks") === apiBadgeCount(createdBadges, "tasks") - 1,
+      "task toggle read decrements badge",
       config.timeoutMs,
     );
-    summary.apiSnapshots.meeting_note_unread_again = meetingNoteUnreadAgain;
-
-    await openRouteFromHome(page, config, "tasks");
-    await openTaskDetail(page, taskId, config.timeoutMs);
-    summary.screenshots.task_detail = await saveScreenshot(page, config.reportDir, "task-detail");
-    const seenTask = await waitForWorkspaceRecord(
+    summary.apiSnapshots.after_task_toggle_read = afterTaskToggleRead;
+    summary.records.task_toggle_read = await waitForWorkspaceRecord(
       config,
       "tasks",
       taskId,
       record => Number(record?.metadata?.seen_at_ms || 0) >= Number(record?.content_updated_at_ms || 0),
-      "task seen_at_ms",
+      "task seen_at_ms after toggle read",
       config.timeoutMs,
     );
-    summary.apiSnapshots.task_seen = seenTask;
-    const afterTaskSeen = await waitForAppBadges(
-      config,
-      payload => Number(payload?.badges?.tasks?.count || 0) === Number(afterMeetingsMeeting?.badges?.tasks?.count || 0) - 1,
-      "task badge clears after detail open",
-      config.timeoutMs,
+    await page.locator(taskReadToggleSelector).click({ timeout: config.timeoutMs });
+    await waitForElementReadState(page, taskRowSelector, "unread", config.timeoutMs);
+    const afterTaskToggleUnreadApi = await readAppBadges(config);
+    assert(
+      apiBadgeCount(afterTaskToggleUnreadApi, "tasks") === apiBadgeCount(afterTaskToggleRead, "tasks"),
+      "Task unread override should stay client-local and leave /api/app-badges unchanged",
     );
-    summary.apiSnapshots.after_task_seen = afterTaskSeen;
-
-    await apiRequest(config, "PATCH", `${TASKS_API_PATH}/${taskId}`, {
-      summary: "Task changed after being seen.",
-    });
-    const taskUnreadAgain = await waitForAppBadges(
-      config,
-      payload => Number(payload?.badges?.tasks?.count || 0) >= Number(afterMeetingsMeeting?.badges?.tasks?.count || 0),
-      "task unread after content update",
-      config.timeoutMs,
+    summary.apiSnapshots.after_task_toggle_unread_local = afterTaskToggleUnreadApi;
+    summary.screenshots.tasks_feed_after_toggle_unread = await saveScreenshot(page, config.reportDir, "tasks-feed-after-toggle-unread");
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "tasks", apiBadgeCount(afterTaskToggleRead, "tasks") + 1, config.timeoutMs);
+    summary.screenshots.home_after_task_local_unread = await saveScreenshot(page, config.reportDir, "home-after-task-local-unread");
+    const homeAfterTaskLocalUnread = await collectHomeBadgeMetrics(page);
+    assert(
+      badgeCountForRoute(homeAfterTaskLocalUnread, "tasks") === badgeDisplayCount(apiBadgeCount(afterTaskToggleRead, "tasks") + 1),
+      "Expected Tasks home badge to reflect the local unread override",
     );
-    summary.apiSnapshots.task_unread_again = taskUnreadAgain;
+    await openRouteFromCurrentHome(page, "tasks", config.timeoutMs);
+    await openTaskDetail(page, taskId, config.timeoutMs);
+    summary.screenshots.task_detail_after_local_unread = await saveScreenshot(page, config.reportDir, "task-detail-after-local-unread");
+    const afterTaskOpen = await readAppBadges(config);
+    assert(
+      apiBadgeCount(afterTaskOpen, "tasks") === apiBadgeCount(afterTaskToggleRead, "tasks"),
+      "Opening a locally unread task should clear the local override without changing server badge counts",
+    );
+    summary.apiSnapshots.after_task_open_auto_read = afterTaskOpen;
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "tasks", apiBadgeCount(afterTaskToggleRead, "tasks"), config.timeoutMs);
 
     const reminderBaseline = await readAppBadges(config);
-    await openRouteFromHome(page, config, "reminders");
+    await openRouteFromCurrentHome(page, "reminders", config.timeoutMs);
+    const reminderRowSelector = `.light-reminder-row[data-reminder-id="${reminderId}"]`;
+    const reminderToggleSelector = `${reminderRowSelector} .light-feed-read-toggle`;
+    await page.waitForSelector(reminderToggleSelector, { timeout: config.timeoutMs });
+    await waitForElementReadState(page, reminderRowSelector, "unread", config.timeoutMs);
+    summary.screenshots.reminders_feed_initial = await saveScreenshot(page, config.reportDir, "reminders-feed-initial");
+    await page.locator(reminderToggleSelector).click({ timeout: config.timeoutMs });
+    await waitForElementReadState(page, reminderRowSelector, "read", config.timeoutMs);
+    summary.records.reminder_toggle_read = await waitForWorkspaceRecord(
+      config,
+      "reminders",
+      reminderId,
+      record => Number(record?.metadata?.seen_at_ms || 0) > 0,
+      "reminder seen_at_ms after toggle read",
+      config.timeoutMs,
+    );
+    const reminderAfterToggleRead = await readAppBadges(config);
+    assert(
+      apiBadgeCount(reminderAfterToggleRead, "reminders") === apiBadgeCount(reminderBaseline, "reminders"),
+      "Reminder badge changed after manual read toggle",
+    );
+    summary.apiSnapshots.after_reminder_toggle_read = reminderAfterToggleRead;
+    await page.locator(reminderToggleSelector).click({ timeout: config.timeoutMs });
+    await waitForElementReadState(page, reminderRowSelector, "unread", config.timeoutMs);
+    const reminderAfterToggleUnread = await readAppBadges(config);
+    assert(
+      apiBadgeCount(reminderAfterToggleUnread, "reminders") === apiBadgeCount(reminderBaseline, "reminders"),
+      "Reminder badge changed after local unread override",
+    );
+    summary.apiSnapshots.after_reminder_toggle_unread_local = reminderAfterToggleUnread;
+    summary.screenshots.reminders_feed_after_toggle_unread = await saveScreenshot(page, config.reportDir, "reminders-feed-after-toggle-unread");
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "reminders", apiBadgeCount(reminderBaseline, "reminders"), config.timeoutMs);
+    summary.screenshots.home_after_reminder_local_unread = await saveScreenshot(page, config.reportDir, "home-after-reminder-local-unread");
+    const homeAfterReminderLocalUnread = await collectHomeBadgeMetrics(page);
+    assert(
+      badgeCountForRoute(homeAfterReminderLocalUnread, "reminders") === badgeDisplayCount(apiBadgeCount(reminderBaseline, "reminders")),
+      "Reminder home badge should stay active-count based during local seen/unseen toggles",
+    );
+    await openRouteFromCurrentHome(page, "reminders", config.timeoutMs);
     await openReminderDetail(page, reminderId, config.timeoutMs);
-    summary.screenshots.reminder_detail_before_action = await saveScreenshot(page, config.reportDir, "reminder-detail-before-action");
-    await openHome(page, config);
+    summary.screenshots.reminder_detail_open_only = await saveScreenshot(page, config.reportDir, "reminder-detail-open-only");
+    summary.records.reminder_open_seen = await waitForWorkspaceRecord(
+      config,
+      "reminders",
+      reminderId,
+      record => Number(record?.metadata?.seen_at_ms || 0) > 0,
+      "reminder seen_at_ms after detail open",
+      config.timeoutMs,
+    );
     const reminderAfterOpen = await readAppBadges(config);
     assert(
-      Number(reminderAfterOpen?.badges?.reminders?.count || 0) === Number(reminderBaseline?.badges?.reminders?.count || 0),
+      apiBadgeCount(reminderAfterOpen, "reminders") === apiBadgeCount(reminderBaseline, "reminders"),
       "Reminder badge changed after read/open the reminder detail without acting",
     );
     summary.apiSnapshots.reminder_after_open_only = reminderAfterOpen;
-
-    await openRouteFromHome(page, config, "reminders");
+    await backToHome(page, config.timeoutMs);
+    await waitForHomeBadgeCount(page, "reminders", apiBadgeCount(reminderBaseline, "reminders"), config.timeoutMs);
+    await openRouteFromCurrentHome(page, "reminders", config.timeoutMs);
     await openReminderDetail(page, reminderId, config.timeoutMs);
-    await waitForReminderDismiss(page, config, reminderId, Number(reminderBaseline?.badges?.reminders?.count || 0) - 1);
-    summary.screenshots.reminder_detail_after_dismiss = await saveScreenshot(page, config.reportDir, "reminder-detail-after-dismiss");
+    summary.screenshots.reminder_detail_before_dismiss = await saveScreenshot(page, config.reportDir, "reminder-detail-before-dismiss");
+    await waitForReminderDismiss(page, config, reminderId, apiBadgeCount(reminderBaseline, "reminders") - 1);
+    summary.screenshots.reminder_list_after_dismiss = await saveScreenshot(page, config.reportDir, "reminder-list-after-dismiss");
     const afterReminderDismiss = await readAppBadges(config);
     summary.apiSnapshots.after_reminder_dismiss = afterReminderDismiss;
 
-    await openHome(page, config);
+    await backToHome(page, config.timeoutMs);
     await waitForHomeBadges(page, config, afterReminderDismiss);
     summary.screenshots.home_final = await saveScreenshot(page, config.reportDir, "home-final");
     const finalMetrics = await collectHomeBadgeMetrics(page);

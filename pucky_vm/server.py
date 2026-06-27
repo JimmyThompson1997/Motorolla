@@ -1614,11 +1614,12 @@ class PuckyVoiceService:
                 "last_fired_at_ms",
                 "last_fired_due_at_ms",
                 "last_delivery_error",
+                "seen_at_ms",
                 "snoozed_until_ms",
             }
             if any(str(key or "").strip() not in allowed_metadata_keys for key in incoming_metadata):
                 return False
-        return "status" in payload or "due_at_ms" in payload
+        return "status" in payload or "due_at_ms" in payload or "metadata" in payload
 
     def _validate_reminder_metadata(self, metadata: dict[str, object]) -> None:
         recipients = self._reminder_recipients_from_metadata(metadata)

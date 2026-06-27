@@ -109,13 +109,14 @@ def test_home_app_labels_browser_proof_captures_badge_geometry_contract() -> Non
     source = read_source("cover_home_app_labels_playwright.mjs")
 
     assert 'const BADGE_CENTER_EPSILON = 3;' in source
+    assert 'const BADGE_OPTICAL_INSET_PX = 3;' in source
     assert 'const badge = tile.querySelector(".light-app-badge");' in source
     assert 'badge: badge ? domRect(badge) : null,' in source
     assert 'badgeCount: badge ? String(badge.textContent || "").trim() : "",' in source
     assert "const badgeCenterX = item.badge.left + item.badge.width / 2;" in source
     assert "const badgeCenterY = item.badge.top + item.badge.height / 2;" in source
-    assert "const expectedCenterX = item.icon.right;" in source
-    assert "const expectedCenterY = item.icon.top;" in source
+    assert "const expectedCenterX = item.icon.right - BADGE_OPTICAL_INSET_PX;" in source
+    assert "const expectedCenterY = item.icon.top + BADGE_OPTICAL_INSET_PX;" in source
     assert "assert(badgeDriftX <= BADGE_CENTER_EPSILON" in source
     assert "assert(badgeDriftY <= BADGE_CENTER_EPSILON" in source
 
@@ -138,10 +139,20 @@ def test_home_app_badges_browser_proof_covers_cross_app_unread_semantics() -> No
     assert '"Calendar"' in source
     assert '"Projects"' in source
     assert '".light-app-icon-badge-anchor"' in source
+    assert 'const BADGE_OPTICAL_INSET_PX = 3;' in source
+    assert "const expectedCenterX = item.icon.right - BADGE_OPTICAL_INSET_PX;" in source
+    assert "const expectedCenterY = item.icon.top + BADGE_OPTICAL_INSET_PX;" in source
     assert "metadata.seen_at_ms" in source
     assert "content_updated_at_ms" in source
     assert "badge geometry" in source.lower()
+    assert "manual toggle to read, manual toggle back to unread, and detail-open auto-read" in source.lower()
     assert "read/open the reminder detail without acting" in source.lower()
+    assert ".light-task-row-read-toggle" in source
+    assert ".light-feed-read-toggle" in source
+    assert "Meeting unread override should stay client-local and leave /api/app-badges unchanged" in source
+    assert "Meeting note unread override should stay client-local and leave /api/app-badges unchanged" in source
+    assert "Task unread override should stay client-local and leave /api/app-badges unchanged" in source
+    assert "Reminder home badge should stay active-count based during local seen/unseen toggles" in source
 
 
 def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:
