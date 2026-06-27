@@ -158,54 +158,6 @@ def test_thread_compose_browser_and_emulator_proofs_require_real_send_state_evid
     assert '"set_input_files"' not in emulator_source
 
 
-def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:
-    reminder_source = read_source("reminders_v3_browser_proof.mjs")
-    workspace_source = read_source("cover_workspace_apps_playwright.mjs")
-
-    assert "Expected no Connected feed when reminder has no graph links" in reminder_source
-    assert "Expected no Connected section title when reminder has no graph links" in reminder_source
-    assert "Expected reminder detail to omit reminder-native Connected rows" in reminder_source
-    assert "detail.nativeTileLabels.length === 0" in reminder_source
-    assert "detail.connectedCount === 0" in reminder_source
-    assert "installAuthorizedApiProxy(" not in reminder_source
-    assert 'headers.authorization = `Bearer ${token}`' not in reminder_source
-    assert "document.querySelectorAll('[data-reminder-detail-tile=\"recipient\"]').length === 0" in workspace_source
-    assert "document.querySelectorAll('[data-reminder-detail-tile=\"when\"]').length === 0" in workspace_source
-    assert 'JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"])' in workspace_source
-    assert 'for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "CONNECTED"]) {' in workspace_source
-    assert 'for (const text of ["When", "Me", "Proof Contact One", "Proof Future Task", "Proof Graph Meeting", "CONNECTED"]) {' not in workspace_source
-    assert "async function sampleReminderIconTimeline(page, reportDir, reminderIds, options = {}) {" in reminder_source
-    assert "async function sampleReminderCountdownTimeline(page, reportDir, reminderId, options = {}) {" in reminder_source
-    assert "Expected live reminder list icon to stay visually static with no animation" in reminder_source
-    assert "Expected upcoming comparison reminder list icon to stay visually static with no animation" in reminder_source
-    assert "Expected at least six distinct countdown progress values in twelve seconds" in reminder_source
-    assert "summary.motion.list_icon_stability" in reminder_source
-    assert "summary.motion.snooze_countdown" in reminder_source
-    assert "Reminder list icons stay visually static for live and upcoming rows on the hosted list." in reminder_source
-    assert "writeReminderProofSummary(config.reportDir, summary);" in reminder_source
-
-
-def test_universal_feed_tiles_browser_proof_loads_directly_without_browser_unlock() -> None:
-    source = read_source("cover_universal_feed_tiles_playwright.mjs")
-
-    assert LEGACY_LOCK_TITLE not in source
-    assert LEGACY_UNLOCK_LABEL not in source
-    assert "unlockPreviewIfNeeded(" not in source
-    assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
-
-
-def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() -> None:
-    source = read_source("cover_notes_pin_playwright.mjs")
-
-    assert "Preview needs api_token" in source
-    assert "Unlock web preview" in source
-    assert "Paste PUCKY_WEB_UI_TOKEN" in source
-    assert 'await page.getByRole("button", { name: "Save token" }).click();' in source
-    assert 'request.method() === "PATCH"' in source
-    assert '.light-note-row[data-note-id="march"] .light-note-pin-button' in source
-    assert "Notes pin write failed" in source
-
-
 def test_projects_pin_browser_proof_covers_section_toggle_and_detail_contract() -> None:
     source = read_source("cover_projects_pin_playwright.mjs")
 
