@@ -173,7 +173,20 @@ async function waitForReminderBadge(page, count, timeoutMs) {
 }
 
 async function openTile(page, label, route, timeoutMs) {
-  await page.locator(`.light-app-tile[data-app-label="${label}"]`).click({ timeout: timeoutMs });
+  const selector = `.light-app-tile[data-app-label="${label}"]`;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await page.locator(selector).first().click({ timeout: 5_000 });
+      await waitForLightRoute(page, route, 5_000);
+      return;
+    } catch (error) {
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw error;
+      }
+      await page.waitForTimeout(250);
+    }
+  }
   await waitForLightRoute(page, route, timeoutMs);
 }
 
