@@ -12360,11 +12360,17 @@
       button.addEventListener("click", onClick);
       return;
     }
+    let earlyPressHandled = false;
     let skipClick = false;
     const handlePress = event => {
       if (event instanceof MouseEvent && event.button !== 0) {
         return;
       }
+      if (earlyPressHandled) {
+        event.preventDefault();
+        return;
+      }
+      earlyPressHandled = true;
       skipClick = true;
       event.preventDefault();
       onClick(event);
@@ -12373,15 +12379,17 @@
       button.addEventListener("pointerdown", handlePress);
     } else {
       button.addEventListener("mousedown", handlePress);
-      button.addEventListener("touchstart", handlePress, { passive: false });
     }
+    button.addEventListener("touchstart", handlePress, { passive: false });
     button.addEventListener("click", event => {
       if (skipClick) {
+        earlyPressHandled = false;
         skipClick = false;
         event.preventDefault();
         event.stopPropagation();
         return;
       }
+      earlyPressHandled = false;
       onClick(event);
     });
   }
