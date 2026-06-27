@@ -9214,7 +9214,7 @@
     snoozeButton.disabled = pending || reminderIsDismissed(reminder);
     snoozeButton.addEventListener("click", event => {
       event.preventDefault();
-      void snoozeReminder(reminder, Date.now() + 90_000);
+      void snoozeReminder(reminder, Date.now() + (8 * 60 * 1000));
     });
 
     row.append(dismissButton, snoozeButton);
