@@ -354,6 +354,21 @@ async function waitForElementReadState(page, selector, expectedState, timeoutMs)
   }, { targetSelector: selector, targetState: expectedState }, { timeout: timeoutMs });
 }
 
+async function readFeedIconPaintState(page, selector) {
+  return page.evaluate(targetSelector => {
+    const row = document.querySelector(targetSelector);
+    const icon = row?.querySelector(".material-icon");
+    const computed = icon ? getComputedStyle(icon) : null;
+    return {
+      readState: String(row?.getAttribute("data-read-state") || "").trim(),
+      bellState: String(row?.querySelector("[data-reminder-bell-state]")?.getAttribute("data-reminder-bell-state") || "").trim(),
+      fill: computed ? String(computed.fill || "").trim() : "",
+      stroke: computed ? String(computed.stroke || "").trim() : "",
+      strokeWidth: computed ? String(computed.strokeWidth || "").trim() : "",
+    };
+  }, selector);
+}
+
 async function waitForMeetingReadState(page, cardId, expectedState, timeoutMs) {
   await page.waitForFunction(({ targetCardId, targetState }) => {
     const node = document.querySelector(`article[data-card-id="${targetCardId}"] .identity`);
@@ -642,8 +657,21 @@ async function main() {
     await page.waitForSelector(meetingNoteToggleSelector, { timeout: config.timeoutMs });
     await waitForElementReadState(page, meetingNoteRowSelector, "unread", config.timeoutMs);
     summary.screenshots.meeting_notes_feed_initial = await saveScreenshot(page, config.reportDir, "meeting-notes-feed-initial");
+    const meetingNoteUnreadIcon = await readFeedIconPaintState(page, meetingNoteRowSelector);
+    assert(
+      meetingNoteUnreadIcon.readState === "unread" && meetingNoteUnreadIcon.fill !== "none" && (meetingNoteUnreadIcon.stroke === "none" || meetingNoteUnreadIcon.stroke === "rgba(0, 0, 0, 0)"),
+      `Meeting note unread icon should render filled, saw ${JSON.stringify(meetingNoteUnreadIcon)}`,
+    );
     await page.locator(meetingNoteToggleSelector).click({ timeout: config.timeoutMs });
     await waitForElementReadState(page, meetingNoteRowSelector, "read", config.timeoutMs);
+    const meetingNoteReadIcon = await readFeedIconPaintState(page, meetingNoteRowSelector);
+    assert(
+      meetingNoteReadIcon.readState === "read"
+        && meetingNoteReadIcon.fill === "none"
+        && meetingNoteReadIcon.stroke !== "none"
+        && meetingNoteReadIcon.stroke !== "rgba(0, 0, 0, 0)",
+      `Meeting note read icon should render with an outline stroke, saw ${JSON.stringify(meetingNoteReadIcon)}`,
+    );
     const afterMeetingNoteToggleRead = await waitForAppBadges(
       config,
       payload => apiBadgeCount(payload, "meeting-notes") === apiBadgeCount(createdBadges, "meeting-notes") - 1,
@@ -751,60 +779,34 @@ async function main() {
     await waitForHomeBadgeCount(page, "tasks", apiBadgeCount(afterTaskToggleRead, "tasks"), config.timeoutMs);
 
     const reminderBaseline = await readAppBadges(config);
+    summary.records.reminder_before_open = await apiRequest(config, "GET", `/api/workspace/reminders/${reminderId}`);
     await openRouteFromCurrentHome(page, "reminders", config.timeoutMs);
     const reminderRowSelector = `.light-reminder-row[data-reminder-id="${reminderId}"]`;
-    const reminderToggleSelector = `${reminderRowSelector} .light-feed-read-toggle`;
-    await page.waitForSelector(reminderToggleSelector, { timeout: config.timeoutMs });
-    await waitForElementReadState(page, reminderRowSelector, "unread", config.timeoutMs);
+    const reminderBellSelector = `${reminderRowSelector} [data-reminder-bell-role="dismiss"]`;
+    await page.waitForSelector(reminderBellSelector, { timeout: config.timeoutMs });
     summary.screenshots.reminders_feed_initial = await saveScreenshot(page, config.reportDir, "reminders-feed-initial");
-    await page.locator(reminderToggleSelector).click({ timeout: config.timeoutMs });
-    await waitForElementReadState(page, reminderRowSelector, "read", config.timeoutMs);
-    summary.records.reminder_toggle_read = await waitForWorkspaceRecord(
-      config,
-      "reminders",
-      reminderId,
-      record => Number(record?.metadata?.seen_at_ms || 0) > 0,
-      "reminder seen_at_ms after toggle read",
-      config.timeoutMs,
-    );
-    const reminderAfterToggleRead = await readAppBadges(config);
     assert(
-      apiBadgeCount(reminderAfterToggleRead, "reminders") === apiBadgeCount(reminderBaseline, "reminders"),
-      "Reminder badge changed after manual read toggle",
+      await page.locator(`${reminderRowSelector} .light-feed-read-toggle`).count() === 0,
+      "Expected no reminder read-toggle control on reminder rows",
     );
-    summary.apiSnapshots.after_reminder_toggle_read = reminderAfterToggleRead;
-    await page.locator(reminderToggleSelector).click({ timeout: config.timeoutMs });
-    await waitForElementReadState(page, reminderRowSelector, "unread", config.timeoutMs);
-    const reminderAfterToggleUnread = await readAppBadges(config);
+    const reminderBellState = await readFeedIconPaintState(page, reminderRowSelector);
     assert(
-      apiBadgeCount(reminderAfterToggleUnread, "reminders") === apiBadgeCount(reminderBaseline, "reminders"),
-      "Reminder badge changed after local unread override",
+      reminderBellState.bellState === "live"
+        && reminderBellState.fill !== "none"
+        && (reminderBellState.stroke === "none" || reminderBellState.stroke === "rgba(0, 0, 0, 0)"),
+      `Expected live reminder row bell to stay filled and dismiss-capable, saw ${JSON.stringify(reminderBellState)}`,
     );
-    summary.apiSnapshots.after_reminder_toggle_unread_local = reminderAfterToggleUnread;
-    summary.screenshots.reminders_feed_after_toggle_unread = await saveScreenshot(page, config.reportDir, "reminders-feed-after-toggle-unread");
-    await backToHome(page, config.timeoutMs);
-    await waitForHomeBadgeCount(page, "reminders", apiBadgeCount(reminderBaseline, "reminders"), config.timeoutMs);
-    summary.screenshots.home_after_reminder_local_unread = await saveScreenshot(page, config.reportDir, "home-after-reminder-local-unread");
-    const homeAfterReminderLocalUnread = await collectHomeBadgeMetrics(page);
-    assert(
-      badgeCountForRoute(homeAfterReminderLocalUnread, "reminders") === badgeDisplayCount(apiBadgeCount(reminderBaseline, "reminders")),
-      "Reminder home badge should stay active-count based during local seen/unseen toggles",
-    );
-    await openRouteFromCurrentHome(page, "reminders", config.timeoutMs);
     await openReminderDetail(page, reminderId, config.timeoutMs);
     summary.screenshots.reminder_detail_open_only = await saveScreenshot(page, config.reportDir, "reminder-detail-open-only");
-    summary.records.reminder_open_seen = await waitForWorkspaceRecord(
-      config,
-      "reminders",
-      reminderId,
-      record => Number(record?.metadata?.seen_at_ms || 0) > 0,
-      "reminder seen_at_ms after detail open",
-      config.timeoutMs,
+    summary.records.reminder_after_open = await apiRequest(config, "GET", `/api/workspace/reminders/${reminderId}`);
+    assert(
+      Number(summary.records.reminder_after_open?.metadata?.seen_at_ms || 0) === Number(summary.records.reminder_before_open?.metadata?.seen_at_ms || 0),
+      "Reminder detail open should not write reminder seen metadata",
     );
     const reminderAfterOpen = await readAppBadges(config);
     assert(
       apiBadgeCount(reminderAfterOpen, "reminders") === apiBadgeCount(reminderBaseline, "reminders"),
-      "Reminder badge changed after read/open the reminder detail without acting",
+      "Reminder badge changed after opening the reminder detail without acting",
     );
     summary.apiSnapshots.reminder_after_open_only = reminderAfterOpen;
     await backToHome(page, config.timeoutMs);

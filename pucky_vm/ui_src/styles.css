@@ -4267,6 +4267,17 @@ button {
 .light-feed-read-toggle .material-icon {
   width: 26px;
   height: 26px;
+}
+
+.light-feed-read-toggle.is-read .material-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.05;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.light-feed-read-toggle.is-unread .material-icon {
   fill: currentColor;
   stroke: none;
 }
@@ -4754,10 +4765,53 @@ button {
 
 .light-reminder-row-main:focus,
 .light-reminder-row-main:focus-visible,
+.light-reminder-row-bell:focus,
+.light-reminder-row-bell:focus-visible,
 .light-feed-read-toggle:focus,
 .light-feed-read-toggle:focus-visible {
   outline: none;
   box-shadow: none;
+}
+
+.light-reminder-row-bell {
+  width: 38px;
+  min-width: 38px;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: inline-grid;
+  place-items: center;
+  color: var(--icon-card-neutral);
+  font: inherit;
+  align-self: center;
+  justify-self: start;
+}
+
+.light-reminder-row-bell.is-live {
+  color: var(--read-accent, var(--accent-primary));
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.light-reminder-row-bell .material-icon {
+  width: 26px;
+  height: 26px;
+}
+
+.light-reminder-row-bell.is-live .material-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
+.light-reminder-row-bell.is-passive .material-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.95;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .light-reminder-row .light-text-stack {

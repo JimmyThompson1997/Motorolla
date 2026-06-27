@@ -2460,27 +2460,6 @@
     return workspaceRecordContentIsUnread(record);
   }
 
-  function reminderReadAnchorAtMs(reminder) {
-    const createdAtMs = Number(reminder?.created_at_ms || reminder?.event_at_ms || 0);
-    const lastFiredAtMs = Number(reminder?.metadata?.last_fired_at_ms || 0);
-    return Math.max(
-      Number.isFinite(createdAtMs) && createdAtMs > 0 ? createdAtMs : 0,
-      Number.isFinite(lastFiredAtMs) && lastFiredAtMs > 0 ? lastFiredAtMs : 0
-    );
-  }
-
-  function reminderContentIsUnread(reminder) {
-    const anchorAtMs = reminderReadAnchorAtMs(reminder);
-    return anchorAtMs > workspaceRecordSeenAtMs(reminder);
-  }
-
-  function reminderIsUnread(reminder) {
-    if (workspaceRecordHasUnreadOverride("reminders", reminder)) {
-      return true;
-    }
-    return reminderContentIsUnread(reminder);
-  }
-
   function unreadMeetingNotesBadgeCountLocal() {
     return workspaceItems("meeting-notes").filter(record => !Boolean(record?.archived) && !Boolean(record?.deleted) && workspaceRecordIsUnread(record, "meeting-notes")).length;
   }
@@ -2682,77 +2661,6 @@
       return;
     }
     ensureWorkspaceRecordSeen(normalizedCollection, record);
-  }
-
-  function ensureReminderSeen(reminder) {
-    const currentReminder = reminderById(reminderRecordId(reminder), reminder);
-    const normalizedReminderId = reminderRecordId(currentReminder);
-    const seenAtMs = reminderReadAnchorAtMs(currentReminder);
-    if (!currentReminder || !normalizedReminderId || reminderHasPendingMutation(normalizedReminderId)) {
-      return;
-    }
-    if (!seenAtMs || seenAtMs <= workspaceRecordSeenAtMs(currentReminder)) {
-      if (workspaceRecordHasUnreadOverride("reminders", currentReminder)) {
-        setRecordUnreadOverride("reminders", normalizedReminderId, false);
-        requestRender(`reminder-seen-override:${normalizedReminderId}`);
-      }
-      return;
-    }
-    void applyReminderSeenMutation(currentReminder, seenAtMs);
-  }
-
-  async function applyReminderSeenMutation(reminder, seenAtMs) {
-    const currentReminder = reminderById(reminderRecordId(reminder), reminder);
-    const normalizedReminderId = reminderRecordId(currentReminder);
-    const normalizedSeenAtMs = Math.max(0, Number(seenAtMs || 0) || 0);
-    if (!currentReminder || !normalizedReminderId || !normalizedSeenAtMs) {
-      return null;
-    }
-    const previousOverride = workspaceRecordHasUnreadOverride("reminders", currentReminder);
-    const optimisticReminder = mergeWorkspaceRecordMetadata(currentReminder, { seen_at_ms: normalizedSeenAtMs });
-    setRecordUnreadOverride("reminders", normalizedReminderId, false);
-    replaceWorkspaceRecordLocal("reminders", normalizedReminderId, optimisticReminder);
-    requestRender(`reminder-seen:${normalizedReminderId}:optimistic`);
-    try {
-      const response = await patchWorkspaceRecord("reminders", normalizedReminderId, {
-        metadata: { seen_at_ms: normalizedSeenAtMs }
-      });
-      const nextReminder = unwrapReminderRecordResponse(response);
-      if (nextReminder && reminderRecordId(nextReminder) === normalizedReminderId) {
-        replaceWorkspaceRecordLocal("reminders", normalizedReminderId, nextReminder);
-      }
-      requestRender(`reminder-seen:${normalizedReminderId}:confirmed`);
-      return nextReminder;
-    } catch (error) {
-      replaceWorkspaceRecordLocal("reminders", normalizedReminderId, currentReminder);
-      if (previousOverride) {
-        setRecordUnreadOverride("reminders", normalizedReminderId, true);
-      }
-      requestRender(`reminder-seen:${normalizedReminderId}:rollback`);
-      showToast(String(error && error.message || error || "Unable to mark reminder seen"));
-      return null;
-    }
-  }
-
-  function toggleReminderRead(reminder) {
-    const currentReminder = reminderById(reminderRecordId(reminder), reminder);
-    const normalizedReminderId = reminderRecordId(currentReminder);
-    if (!currentReminder || !normalizedReminderId || reminderHasPendingMutation(normalizedReminderId)) {
-      return;
-    }
-    const effectiveUnread = reminderIsUnread(currentReminder);
-    const serverUnread = reminderContentIsUnread(currentReminder);
-    if (!effectiveUnread) {
-      setRecordUnreadOverride("reminders", normalizedReminderId, true);
-      requestRender(`reminder-unread-override:${normalizedReminderId}`);
-      return;
-    }
-    if (!serverUnread) {
-      setRecordUnreadOverride("reminders", normalizedReminderId, false);
-      requestRender(`reminder-read-override-clear:${normalizedReminderId}`);
-      return;
-    }
-    ensureReminderSeen(currentReminder);
   }
 
   function syncMeetingReadStateFromCard(card, read) {
@@ -8454,7 +8362,6 @@
     if (!reminder) {
       return lightPage("Reminder", { subtitle: "Reminder not found.", detail: true });
     }
-    void ensureReminderSeen(reminder);
     ensureLinkedCollections(reminder);
     const page = lightPage("Reminder", { detail: true });
     page.classList.add("light-document-page", "light-reminder-document", "light-reminder-detail-page");
@@ -8566,6 +8473,36 @@
     return row;
   }
 
+  function lightReminderRowBell(reminder) {
+    const bellState = reminderIsLive(reminder) ? "live" : "upcoming";
+    if (bellState !== "live") {
+      const bell = el("span", "light-reminder-row-bell is-passive");
+      bell.dataset.reminderBellState = bellState;
+      bell.setAttribute("aria-hidden", "true");
+      bell.innerHTML = iconSvg(semanticIconName("reminders"), { filled: false });
+      return bell;
+    }
+    const bell = el("button", "light-reminder-row-bell is-live");
+    bell.type = "button";
+    bell.dataset.reminderBellRole = "dismiss";
+    bell.dataset.reminderBellState = bellState;
+    bell.disabled = reminderHasPendingMutation(reminderRecordId(reminder)) || reminderIsDismissed(reminder);
+    bell.setAttribute("aria-label", `Dismiss ${reminder?.title || "reminder"}`);
+    applySemanticIconAccent(bell, "reminders", { propertyName: "--read-accent", allowEmpty: true });
+    bell.innerHTML = iconSvg(semanticIconName("reminders"), { filled: bellState === "live" });
+    bell.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      void dismissReminder(reminder);
+    });
+    bell.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.stopPropagation();
+      }
+    });
+    return bell;
+  }
+
   function lightReminderRow(reminder, options = {}) {
     const group = reminderGroup(reminder);
     const deliveryClass = reminderDeliveryClass(reminder);
@@ -8574,7 +8511,7 @@
     const copy = el("span", "light-text-stack");
     const secondaryCopy = reminderListSecondaryCopy(reminder);
     const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");
-    const unread = reminderIsUnread(reminder);
+    const bell = lightReminderRowBell(reminder);
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     if (secondaryCopy) {
       copy.append(el("span", "light-reminder-row-summary", secondaryCopy));
@@ -8582,7 +8519,6 @@
     row.dataset.recordId = reminder.id;
     row.dataset.reminderId = reminder.id;
     row.dataset.reminderState = reminderState;
-    row.dataset.readState = unread ? "unread" : "read";
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     const openReminder = () => {
@@ -8594,22 +8530,6 @@
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         openReminder();
-      }
-    });
-    const toggle = lightFeedReadToggleButton({
-      accentKey: "reminders",
-      title: reminder?.title || "reminder",
-      unread,
-    });
-    toggle.disabled = reminderHasPendingMutation(reminderRecordId(reminder));
-    toggle.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleReminderRead(reminder);
-    });
-    toggle.addEventListener("keydown", event => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.stopPropagation();
       }
     });
     const main = el("button", "light-reminder-row-main");
@@ -8628,7 +8548,7 @@
     });
     main.append(copy);
     row.append(
-      toggle,
+      bell,
       main,
       lightReminderRowEnd(reminder)
     );
@@ -10965,19 +10885,18 @@
     }
   }
 
-  function reminderWithDoneStatus(reminder, seenAtMs = 0) {
+  function reminderWithDoneStatus(reminder) {
     return {
       ...reminder,
       status: "done",
       metadata: {
         ...(reminder?.metadata || {}),
-        seen_at_ms: Math.max(Number(reminder?.metadata?.seen_at_ms || 0) || 0, Number(seenAtMs || 0) || 0),
         snoozed_until_ms: 0,
       },
     };
   }
 
-  function reminderWithSnooze(reminder, dueAtMs, seenAtMs = 0) {
+  function reminderWithSnooze(reminder, dueAtMs) {
     return {
       ...reminder,
       due_at_ms: dueAtMs,
@@ -10987,7 +10906,6 @@
         last_fired_at_ms: 0,
         last_fired_due_at_ms: 0,
         last_delivery_error: "",
-        seen_at_ms: Math.max(Number(reminder?.metadata?.seen_at_ms || 0) || 0, Number(seenAtMs || 0) || 0),
         snoozed_until_ms: dueAtMs,
       },
     };
@@ -10999,17 +10917,10 @@
     if (!currentReminder || !normalizedReminderId || reminderHasPendingMutation(normalizedReminderId) || reminderIsDismissed(currentReminder)) {
       return null;
     }
-    const seenAtMs = reminderReadAnchorAtMs(currentReminder);
-    const optimisticReminder = reminderWithDoneStatus(currentReminder, seenAtMs);
-    const hadUnreadOverride = workspaceRecordHasUnreadOverride("reminders", currentReminder);
-    setRecordUnreadOverride("reminders", normalizedReminderId, false);
+    const optimisticReminder = reminderWithDoneStatus(currentReminder);
     const nextReminder = await applyReminderMutation(normalizedReminderId, "done", optimisticReminder, {
       status: "done",
-      metadata: { seen_at_ms: seenAtMs }
     });
-    if (!nextReminder && hadUnreadOverride) {
-      setRecordUnreadOverride("reminders", normalizedReminderId, true);
-    }
     if (nextReminder && state.route === "reminder-detail") {
       lightNavigate("reminders", {
         from: "reminder-detail",
@@ -11092,10 +11003,7 @@
     if (!currentReminder || !normalizedReminderId || reminderHasPendingMutation(normalizedReminderId) || !Number.isFinite(nextDueAtMs)) {
       return null;
     }
-    const seenAtMs = reminderReadAnchorAtMs(currentReminder);
-    const optimisticReminder = reminderWithSnooze(currentReminder, nextDueAtMs, seenAtMs);
-    const hadUnreadOverride = workspaceRecordHasUnreadOverride("reminders", currentReminder);
-    setRecordUnreadOverride("reminders", normalizedReminderId, false);
+    const optimisticReminder = reminderWithSnooze(currentReminder, nextDueAtMs);
     const nextReminder = await applyReminderMutation(normalizedReminderId, "snooze", optimisticReminder, {
       due_at_ms: nextDueAtMs,
       metadata: {
@@ -11104,12 +11012,8 @@
         last_fired_at_ms: 0,
         last_fired_due_at_ms: 0,
         last_delivery_error: "",
-        seen_at_ms: seenAtMs,
       },
     });
-    if (!nextReminder && hadUnreadOverride) {
-      setRecordUnreadOverride("reminders", normalizedReminderId, true);
-    }
     return nextReminder;
   }
 

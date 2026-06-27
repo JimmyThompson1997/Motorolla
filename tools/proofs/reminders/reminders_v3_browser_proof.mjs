@@ -278,8 +278,12 @@ async function readReminderListState(page, reminderIds = []) {
     const titles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim());
     const rows = ids.reduce((result, id) => {
       const row = document.querySelector(`.light-reminder-row[data-reminder-id="${id}"]`);
+      const bell = row?.querySelector("[data-reminder-bell-state]");
       result[id] = row ? {
         state: row.getAttribute("data-reminder-state") || "",
+        bellState: bell?.getAttribute("data-reminder-bell-state") || "",
+        bellRole: bell?.getAttribute("data-reminder-bell-role") || "",
+        readToggleCount: row.querySelectorAll(".light-feed-read-toggle").length || 0,
         text: String(row.textContent || "").trim()
       } : null;
       return result;
@@ -357,12 +361,20 @@ async function readReminderIconStates(page, reminderIds = []) {
   return page.evaluate((targetIds) => {
     return targetIds.reduce((result, targetId) => {
       const row = document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`);
-      const icon = row?.querySelector(".light-small-icon");
+      const bell = row?.querySelector("[data-reminder-bell-state]");
+      const icon = bell?.querySelector(".material-icon");
       const style = icon ? window.getComputedStyle(icon) : null;
+      const bellStyle = bell ? window.getComputedStyle(bell) : null;
       result[targetId] = {
-        exists: Boolean(icon),
+        exists: Boolean(bell),
         rowState: row?.getAttribute("data-reminder-state") || "",
-        className: icon?.className || "",
+        bellState: bell?.getAttribute("data-reminder-bell-state") || "",
+        bellRole: bell?.getAttribute("data-reminder-bell-role") || "",
+        readToggleCount: row?.querySelectorAll(".light-feed-read-toggle").length || 0,
+        className: bell?.className || "",
+        fill: style?.fill || "",
+        stroke: style?.stroke || "",
+        color: bellStyle?.color || "",
         transform: style?.transform || "none",
         animationName: style?.animationName || "none",
         animationPlayState: style?.animationPlayState || "",
@@ -789,6 +801,9 @@ async function main() {
     assert(initialList.rows[comparisonReminderId]?.state === "upcoming", `Expected comparison reminder to start upcoming, saw ${initialList.rows[comparisonReminderId]?.state}`);
     assert(initialList.rows[reminderAId]?.state === "upcoming", `Expected reminder A to start upcoming, saw ${initialList.rows[reminderAId]?.state}`);
     assert(initialList.rows[reminderBId]?.state === "live", `Expected reminder B to start live, saw ${initialList.rows[reminderBId]?.state}`);
+    assert(initialList.rows[comparisonReminderId]?.readToggleCount === 0 && initialList.rows[reminderAId]?.readToggleCount === 0 && initialList.rows[reminderBId]?.readToggleCount === 0, "Expected no reminder read-toggle control on reminder rows");
+    assert(initialList.rows[comparisonReminderId]?.bellState === "upcoming" && !initialList.rows[comparisonReminderId]?.bellRole, "Expected upcoming reminder row bell to stay passive");
+    assert(initialList.rows[reminderBId]?.bellState === "live" && initialList.rows[reminderBId]?.bellRole === "dismiss", "Expected live reminder row bell to dismiss from the list");
     summary.screenshots.reminders_list_initial = await saveScreenshot(page, config.reportDir, "reminders-list-initial");
 
     await page.locator(`.light-reminder-row[data-reminder-id="${comparisonReminderId}"]`).click();
@@ -843,22 +858,17 @@ async function main() {
       summary.screenshots[`list_icon_t${index}`] = shot.path;
     });
 
-    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"]`).click();
-    await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-    const bLiveDetail = await assertCompactReminderDetail(page, "live", ["Dismiss", "Snooze"], { expectedConnectedLabels: [] });
-    await assertNoToast(page, "Live dismiss reminder detail");
-    summary.lifecycle.reminder_b_live_detail = bLiveDetail;
+    summary.assertions.push("opening the reminder detail without acting should not change reminder list semantics or badge behavior");
     summary.screenshots.dismiss_before = await saveScreenshot(page, config.reportDir, "dismiss-before");
-    await page.locator('[data-reminder-action="dismiss"]').click();
+    await page.locator(`.light-reminder-row[data-reminder-id="${reminderBId}"] [data-reminder-bell-role="dismiss"]`).click();
     const dismissedReminder = await waitForReminderRecord(
       config,
       reminderBId,
       reminder => reminderIsDismissed(reminder),
-      "reminder B should dismiss from the live detail page",
+      "reminder B should dismiss from the live list bell",
       30_000
     );
-    await assertNoToast(page, "Reminder B dismiss");
-    await waitForLightRoute(page, "reminders", config.timeoutMs);
+    await assertNoToast(page, "Reminder B list bell dismiss");
     await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), reminderBId, { timeout: config.timeoutMs });
     summary.lifecycle.reminder_b_dismiss = {
       status: String(dismissedReminder?.status || "").trim().toLowerCase()
@@ -905,6 +915,8 @@ async function main() {
     const afterSnoozeList = await readReminderListState(page, [reminderAId]);
     assert(afterSnoozeList.sectionTitles.includes("UPCOMING"), `Expected Upcoming after snooze, saw ${JSON.stringify(afterSnoozeList.sectionTitles)}`);
     assert(!afterSnoozeList.sectionTitles.includes("SNOOZED"), `Expected no Snoozed section after snooze, saw ${JSON.stringify(afterSnoozeList.sectionTitles)}`);
+    assert(afterSnoozeList.rows[reminderAId]?.bellState === "upcoming" && !afterSnoozeList.rows[reminderAId]?.bellRole, "Expected upcoming reminder row bell to stay passive");
+    assert(afterSnoozeList.rows[reminderAId]?.readToggleCount === 0, "Expected no reminder read-toggle control on reminder rows");
     const countdownTimeline = await sampleReminderCountdownTimeline(
       page,
       config.reportDir,

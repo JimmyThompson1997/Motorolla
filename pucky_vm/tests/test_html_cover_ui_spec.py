@@ -2352,7 +2352,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'bell.innerHTML = iconSvg(semanticIconName("reminders"), { filled: bellState === "live" });' in reminder_row_bell
     assert 'bell.dataset.reminderBellRole = "dismiss";' in reminder_row_bell
     assert 'void dismissReminder(reminder);' in reminder_row_bell
-    assert 'return el("span", "light-reminder-row-bell is-passive");' in reminder_row_bell
+    assert 'const bell = el("span", "light-reminder-row-bell is-passive");' in reminder_row_bell
     assert "lightReminderRowEnd(reminder)" in reminder_row
     assert 'wrap.dataset.reminderCountdown = "true";' in reminder_row_end
     assert 'wrap.dataset.reminderProgress = countdown.progress.toFixed(3);' in reminder_row_end
