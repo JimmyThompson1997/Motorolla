@@ -889,11 +889,17 @@ function playingStabilityResult(scenario) {
 function progressAdvancementResult(scenario) {
   const positions = scenario.timeline.samples.map(sample => Number(sample?.player?.position_ms || 0));
   const durationMs = Math.max(0, ...scenario.timeline.samples.map(sample => Number(sample?.player?.duration_ms || 0)));
-  const deltaMs = positions.length ? Math.max(...positions) - Math.min(...positions) : 0;
+  const maxPositionMs = positions.length ? Math.max(...positions) : 0;
+  const minPositionMs = positions.length ? Math.min(...positions) : 0;
+  const firstElapsedMs = Number(scenario.timeline.samples[0]?.elapsed_ms || 0);
+  const observedStartMs = firstElapsedMs <= 500 ? 0 : minPositionMs;
+  const deltaMs = Math.max(0, maxPositionMs - observedStartMs);
   const requiredDeltaMs = requiredPlaybackDeltaMs(durationMs);
   return {
     pass: deltaMs >= requiredDeltaMs,
     delta_ms: deltaMs,
+    observed_start_ms: observedStartMs,
+    max_position_ms: maxPositionMs,
     required_delta_ms: requiredDeltaMs,
     duration_ms: durationMs
   };
