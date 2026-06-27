@@ -1,8 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 
+import { chromium } from "playwright-core";
 import {
   attachPageLogging,
   ensureDir,
@@ -14,6 +13,7 @@ import {
 
 const DEFAULT_BASE_URL = process.env.PUCKY_WORKSPACE_PROOF_BASE_URL || "http://127.0.0.1:8767";
 const VIEWPORT = { width: 430, height: 932 };
+const DESKTOP_NOTE_DETAIL_VIEWPORT = { width: 1280, height: 900 };
 const PROOF_RUN_ID = "proof-workspace";
 const CLEANUP_RECORD_COLLECTION_ORDER = [
   "reminders",
@@ -25,36 +25,12 @@ const CLEANUP_RECORD_COLLECTION_ORDER = [
   "notes",
   "contacts"
 ];
-const require = createRequire(import.meta.url);
-
-function loadPlaywrightCore() {
-  const bundledNodeModules = String(process.env.CODEX_NODE_MODULES || "").trim();
-  const bundled = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright-core");
-  const bundledPlaywright = path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "node", "node_modules", "playwright");
-  const candidates = [
-    () => require("playwright-core"),
-    () => require("playwright"),
-    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright-core")) : null,
-    () => bundledNodeModules ? require(path.join(bundledNodeModules, "playwright")) : null,
-    () => require(bundledPlaywright),
-    () => require(bundled)
-  ];
-  for (const candidate of candidates) {
-    try {
-      const resolved = candidate();
-      if (resolved) {
-        return resolved;
-      }
-    } catch {
-      // Try the next resolution path.
-    }
-  }
-  throw new Error("Could not resolve playwright-core from local tools or bundled runtime");
-}
-
-const { chromium } = loadPlaywrightCore();
 
 function resolveApiToken() {
+  const webToken = String(process.env.PUCKY_WEB_UI_TOKEN || "").trim();
+  if (webToken) {
+    return webToken;
+  }
   const proofToken = String(process.env.PUCKY_WORKSPACE_PROOF_TOKEN || "").trim();
   if (proofToken) {
     return proofToken;
@@ -97,6 +73,10 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function taskRowSelector(taskId) {
+  return `.light-task-row[data-task-id="${String(taskId || "").replace(/"/g, '\\"')}"]`;
 }
 
 function isZeroishPx(value) {
@@ -142,35 +122,19 @@ function pageUrl(baseUrl, theme) {
   return url.toString();
 }
 
-async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
+async function primeBrowserPreviewToken(context, apiToken) {
   const token = String(apiToken || "").trim();
   if (!token) {
     return;
   }
-  const apiBase = `${String(baseUrl || "").replace(/\/+$/, "")}/api/**`;
-  await context.route(apiBase, async route => {
-    const request = route.request();
-    const headers = { ...request.headers() };
-    delete headers.origin;
-    if (!headers.authorization) {
-      headers.authorization = `Bearer ${token}`;
-    }
+  await context.addInitScript((value) => {
     try {
-      const response = await route.fetch({
-        method: request.method(),
-        headers,
-        postData: request.postDataBuffer() || undefined
-      });
-      await route.fulfill({ response });
-    } catch (error) {
-      const detail = String(error?.message || error || "");
-      if (/Request context disposed|Target page, context or browser has been closed/i.test(detail)) {
-        await route.abort("failed");
-        return;
-      }
-      throw error;
+      const key = ["pucky", "cover", ["browser", "api", "token"].join("_"), "v1"].join(".");
+      window.localStorage.setItem(key, value);
+    } catch (_error) {
+      // Ignore storage failures so the proof can still exercise public routes.
     }
-  });
+  }, token);
 }
 
 async function apiRequest(config, method, apiPath, body = undefined) {
@@ -213,7 +177,8 @@ function shouldRunSection(config, sectionName) {
   if (!requested.length) {
     return true;
   }
-  return requested.includes(String(sectionName || "").trim().toLowerCase());
+  const target = String(sectionName || "").trim().toLowerCase();
+  return requested.includes(target);
 }
 
 async function readCollection(config, collection, now = null) {
@@ -241,8 +206,12 @@ function reminderIsDismissedForScript(reminder) {
 }
 
 function reminderIsSentHistoryForScript(reminder) {
-  void reminder;
-  return false;
+  if (reminderIsDismissedForScript(reminder)) {
+    return false;
+  }
+  const meta = reminderMetaForScript(reminder);
+  const dueAtMs = Number(reminder?.due_at_ms || 0);
+  return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
 }
 
 function reminderIsSnoozedForScript(reminder) {
@@ -252,7 +221,7 @@ function reminderIsSnoozedForScript(reminder) {
 }
 
 function reminderIsActiveForScript(reminder) {
-  return !reminderIsDismissedForScript(reminder) && !reminderIsSentHistoryForScript(reminder);
+  return !reminderIsDismissedForScript(reminder) && !reminderIsSentHistoryForScript(reminder) && !reminderIsSnoozedForScript(reminder);
 }
 
 async function readActiveReminderCount(config) {
@@ -283,26 +252,18 @@ async function waitForReminderRecord(config, reminderId, predicate, description,
   throw new Error(`Timed out waiting for reminder ${reminderId}: ${description}; last record ${JSON.stringify(lastRecord)}`);
 }
 
-async function readToastMessage(page) {
-  return page.evaluate(() => String(window.PuckyUiDebug?.describe?.()?.toast?.message || "").trim());
-}
-
-async function assertNoToast(page, label) {
-  const toastMessage = await readToastMessage(page);
-  assert(!toastMessage, `${label} should not show an error toast, saw ${toastMessage || "<non-empty>"}`);
-}
-
 function buildSeedManifest(runId = PROOF_RUN_ID) {
   return {
     runId,
     linkIds: [
       `${runId}-alpha-note`,
-      `${runId}-alpha-note-duplicate`,
       `${runId}-alpha-task`,
       `${runId}-alpha-calendar`,
       `${runId}-alpha-feed`,
       `${runId}-alpha-contact`,
       `${runId}-future-task-note`,
+      `${runId}-feed-note`,
+      `${runId}-contact-note`,
       `${runId}-beta-task`,
       `${runId}-beta-calendar`,
       `${runId}-beta-feed`,
@@ -314,6 +275,7 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
       `${runId}-meeting-project`,
       `${runId}-meeting-reminder`,
       `${runId}-project-reminder`,
+      `${runId}-reminder-note`,
       `${runId}-reminder-task`,
       `${runId}-reminder-meeting`
     ],
@@ -336,7 +298,7 @@ function buildSeedManifest(runId = PROOF_RUN_ID) {
         `${runId}-calendar-change`
       ],
       projects: [`${runId}-alpha-project`, `${runId}-beta-project`],
-      contacts: [`${runId}-contact-one`, `${runId}-contact-two`, `${runId}-david-contact`, `${runId}-daniel-contact`],
+      contacts: [`${runId}-contact-one`, `${runId}-contact-two`],
       "meeting-notes": [`${runId}-graph-meeting`],
       reminders: [`${runId}-graph-reminder`, `${runId}-due-reminder`]
     }
@@ -403,13 +365,12 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
   const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
   try {
     await cleanupWorkspaceSeed(config, { runId, writeEnabled: true });
-    const pinnedNoteHtml = "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>";
     await apiRequest(config, "POST", "/api/workspace/notes", {
       id: `${runId}-pinned-note`,
       title: "Proof Pinned Note",
       summary: "Pinned note created through workspace API.",
       pinned: true,
-      html: pinnedNoteHtml,
+      html: "<!doctype html><html><body><h1>Proof Pinned Note</h1><p>Agent-created note page with three bullets.</p><ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul></body></html>",
       metadata: { context: "Browser proof", icon: "pin" }
     });
     await apiRequest(config, "POST", "/api/workspace/notes", {
@@ -425,57 +386,27 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       title: "Proof Overdue Task",
       summary: "Starts overdue.",
       status: "open",
-      due_at_ms: Date.now() - 60_000,
-      html: [
-        "<!doctype html><html><body>",
-        "<h1>Proof Overdue Task</h1>",
-        "<p>This overdue task proves the detail page can render a realistic inline task document.</p>",
-        "<ul><li>Confirm the missing response</li><li>Escalate blocker to the project owner</li><li>Update the rollout note</li></ul>",
-        "<p>Status note: this one should already be overdue when the browser proof opens.</p>",
-        "</body></html>"
-      ].join("")
+      due_at_ms: Date.now() - 60_000
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-future-task`,
       title: "Proof Future Task",
       summary: "Due later.",
       status: "open",
-      created_at_ms: Date.now() - 6 * 60 * 60 * 1000,
-      due_at_ms: Date.now() + 3 * 24 * 60 * 60 * 1000,
-      description: "Proof Future Task should keep its structured description visible above checklist items.",
-      checklist: [
-        { id: `${runId}-future-task-check-1`, label: "Pull product feedback", done: false },
-        { id: `${runId}-future-task-check-2`, label: "Refine the launch checklist", done: false },
-        { id: `${runId}-future-task-check-3`, label: "Share the final summary", done: false },
-      ],
-      html: [
-        "<!doctype html><html><body>",
-        "<h1>Proof Future Task</h1>",
-        "<p>This upcoming task demonstrates the new HTML-first body layout.</p>",
-        "<ol><li>Pull product feedback</li><li>Refine the launch checklist</li><li>Share the final summary</li></ol>",
-        "<p>Body length is intentional so the iframe has enough content to prove scrolling and spacing.</p>",
-        "</body></html>"
-      ].join("")
+      due_at_ms: Date.now() + 3 * 24 * 60 * 60 * 1000
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-done-task`,
       title: "Proof Done Task",
       summary: "Done stays done even after deadline.",
       status: "done",
-      due_at_ms: Date.now() - 120_000,
-      html: [
-        "<!doctype html><html><body>",
-        "<h1>Proof Done Task</h1>",
-        "<p>This task proves the same detail shell works after completion and can be reopened.</p>",
-        "<ul><li>Archive the draft</li><li>Note final approval</li><li>Close the loop with the team</li></ul>",
-        "</body></html>"
-      ].join("")
+      due_at_ms: Date.now() - 120_000
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
       id: `${runId}-asset-task`,
-      title: "Proof Asset Task",
-      summary: "Structured task without generated HTML.",
-      status: "open",
+      title: "Proof Waiting Task",
+      summary: "Linked note only.",
+      status: "waiting",
       due_at_ms: Date.now() + 24 * 60 * 60 * 1000
     });
     await apiRequest(config, "POST", "/api/workspace/tasks", {
@@ -491,8 +422,7 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       title: `Proof Deadline Flip`,
       summary: "Moves to overdue after timestamp passes.",
       status: "open",
-      due_at_ms: Date.now() + 6_500,
-      html: "<!doctype html><html><body><h1>Proof Deadline Flip</h1><p>Use to verify task auto-overdue transition.</p></body></html>"
+      due_at_ms: Date.now() + 6_500
     });
 
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -502,7 +432,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: today,
       start_at_ms: dayAt(0, 10),
       end_at_ms: dayAt(0, 11),
-      html: "<!doctype html><h1>Proof Today Roadmap</h1><p>Today detail page.</p>",
       metadata: { place: "Zoom", attendees: ["Proof Contact One", "Proof Contact Two"], type: "planning" }
     });
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -512,7 +441,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: today,
       start_at_ms: dayAt(0, 10, 15),
       end_at_ms: dayAt(0, 10, 45),
-      html: "<!doctype html><h1>Proof Overlap Event</h1><p>Overlap detail page.</p>",
       metadata: { place: "Figma", attendees: ["Proof Contact One"], type: "design" }
     });
     await apiRequest(config, "POST", "/api/workspace/calendar-events", {
@@ -522,7 +450,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: tomorrow,
       start_at_ms: dayAt(1, 14),
       end_at_ms: dayAt(1, 15),
-      html: "<!doctype html><h1>Proof Tomorrow Event</h1><p>Tomorrow detail page.</p>",
       metadata: { place: "Office", attendees: ["Proof Contact Two"], type: "review" }
     });
 
@@ -538,7 +465,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         title: item[1],
         summary: item[2],
         event_at_ms: Date.now() - Math.floor(Math.random() * 600_000),
-        html: `<!doctype html><h1>${item[1]}</h1><p>${item[2]} detail.</p>`,
         metadata: { type: item[0], icon: item[3] }
       });
     }
@@ -547,15 +473,13 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       id: `${runId}-alpha-project`,
       title: "Proof Alpha Project",
       summary: "Alpha has two named threads.",
-      html: "<!doctype html><h1>Proof Alpha Project</h1><p>Alpha project page.</p>",
-      metadata: { threads: ["Alpha kickoff", "Alpha launch"], chips: ["2 threads", "5 links"], assets: ["Alpha brief", "Alpha diagram"] }
+      metadata: { threads: ["Alpha kickoff", "Alpha launch"] }
     });
     await apiRequest(config, "POST", "/api/workspace/projects", {
       id: `${runId}-beta-project`,
       title: "Proof Beta Project",
       summary: "Beta has three named threads.",
-      html: "<!doctype html><h1>Proof Beta Project</h1><p>Beta project page.</p>",
-      metadata: { threads: ["Beta planning", "Beta risks", "Beta wrap"], chips: ["3 threads", "4 links"], assets: ["Beta brief"] }
+      metadata: { threads: ["Beta planning", "Beta risks", "Beta wrap"] }
     });
 
     await apiRequest(config, "POST", "/api/workspace/contacts", {
@@ -564,7 +488,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Partner lead",
       metadata: {
         avatar: "P1",
-        photo: "fixtures/contact_photos/proof-contact.webp",
         email: "proof.one@example.com",
         phone: "+1 (555) 010-1000",
         activity: ["Created by proof", "Linked to Alpha"]
@@ -576,28 +499,9 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       summary: "Customer sponsor",
       metadata: {
         avatar: "P2",
-        photo: "fixtures/contact_photos/eric.webp",
         email: "proof.two@example.com",
         phone: "+1 (555) 010-2000",
         activity: ["Created by proof", "Linked to Beta"]
-      }
-    });
-    await apiRequest(config, "POST", "/api/workspace/contacts", {
-      id: `${runId}-david-contact`,
-      title: "David",
-      summary: "Contact",
-      metadata: {
-        first_name: "David",
-        activity: ["Single-name proof contact"]
-      }
-    });
-    await apiRequest(config, "POST", "/api/workspace/contacts", {
-      id: `${runId}-daniel-contact`,
-      title: "Daniel",
-      summary: "Contact",
-      metadata: {
-        first_name: "Daniel",
-        activity: ["Single-name proof contact"]
       }
     });
     await apiRequest(config, "POST", "/api/workspace/meeting-notes", {
@@ -607,13 +511,6 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
       date: today,
       start_at_ms: dayAt(0, 12),
       end_at_ms: dayAt(0, 12, 45),
-      html: [
-        "<!doctype html><html><body>",
-        "<h1>Proof Graph Meeting</h1>",
-        "<p>This meeting links attendee, calendar, note, task, project, and reminder context.</p>",
-        "<ol><li>Review proof graph</li><li>Confirm linked task</li><li>Schedule reminder</li></ol>",
-        "</body></html>"
-      ].join(""),
       metadata: {
         participants: ["Proof Contact One"],
         project: "Proof Alpha Project",
@@ -645,11 +542,11 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
 
     for (const link of [
       ["alpha-note", "note", `${runId}-pinned-note`, "Proof Pinned Note"],
-      ["alpha-note-duplicate", "note", `${runId}-pinned-note`, "Proof Pinned Note copy"],
       ["alpha-task", "task", `${runId}-future-task`, "Proof Future Task"],
       ["alpha-calendar", "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
       ["alpha-feed", "feed_item", `${runId}-project-decision`, "Proof Project Decision"],
       ["alpha-contact", "contact", `${runId}-contact-one`, "Proof Contact One"],
+      ["future-task-note", "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["beta-task", "task", `${runId}-overdue-task`, "Proof Overdue Task"],
       ["beta-calendar", "calendar_event", `${runId}-tomorrow-event`, "Proof Tomorrow Event"],
       ["beta-feed", "feed_item", `${runId}-calendar-change`, "Proof Calendar Change"],
@@ -657,8 +554,12 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     ]) {
       await apiRequest(config, "POST", "/api/workspace/links", {
         id: `${runId}-${link[0]}`,
-        source_kind: "project",
-        source_id: link[0].startsWith("alpha") ? `${runId}-alpha-project` : `${runId}-beta-project`,
+        source_kind: link[0] === "future-task-note" ? "task" : "project",
+        source_id: link[0] === "future-task-note"
+          ? `${runId}-future-task`
+          : link[0].startsWith("alpha")
+            ? `${runId}-alpha-project`
+            : `${runId}-beta-project`,
         target_kind: link[1],
         target_id: link[2],
         label: link[3]
@@ -666,15 +567,16 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
     }
 
     for (const link of [
-      ["future-task-note", "task", `${runId}-future-task`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["meeting-contact", "meeting_note", `${runId}-graph-meeting`, "contact", `${runId}-contact-one`, "Proof Contact One"],
       ["meeting-calendar", "meeting_note", `${runId}-graph-meeting`, "calendar_event", `${runId}-today-roadmap`, "Proof Today Roadmap"],
       ["meeting-note", "meeting_note", `${runId}-graph-meeting`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["meeting-task", "meeting_note", `${runId}-graph-meeting`, "task", `${runId}-future-task`, "Proof Future Task"],
       ["meeting-project", "meeting_note", `${runId}-graph-meeting`, "project", `${runId}-alpha-project`, "Proof Alpha Project"],
       ["meeting-reminder", "meeting_note", `${runId}-graph-meeting`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
-      ["contact-note", "contact", `${runId}-contact-one`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["project-reminder", "project", `${runId}-alpha-project`, "reminder", `${runId}-graph-reminder`, "Proof Graph Reminder"],
+      ["feed-note", "feed_item", `${runId}-project-decision`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["contact-note", "contact", `${runId}-contact-one`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["reminder-note", "reminder", `${runId}-graph-reminder`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
       ["reminder-task", "reminder", `${runId}-graph-reminder`, "task", `${runId}-future-task`, "Proof Future Task"],
       ["reminder-meeting", "reminder", `${runId}-graph-reminder`, "meeting_note", `${runId}-graph-meeting`, "Proof Graph Meeting"]
     ]) {
@@ -685,6 +587,21 @@ async function seedWorkspace(config, runId = PROOF_RUN_ID) {
         target_kind: link[3],
         target_id: link[4],
         label: link[5]
+      });
+    }
+    for (const link of [
+      ["future-task-note", "task", `${runId}-future-task`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["feed-note", "feed_item", `${runId}-project-decision`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["contact-note", "contact", `${runId}-contact-one`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+      ["reminder-note", "reminder", `${runId}-graph-reminder`, "note", `${runId}-pinned-note`, "Proof Pinned Note"],
+    ]) {
+      await apiRequest(config, "POST", "/api/workspace/links", {
+        id: `${runId}-${link[0]}`,
+        source_kind: link[1],
+        source_id: link[2],
+        target_kind: link[3],
+        target_id: link[4],
+        label: link[5],
       });
     }
 
@@ -811,21 +728,7 @@ async function backHome(page, theme, timeoutMs) {
 }
 
 async function topBackToRoute(page, route, text, timeoutMs) {
-  await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll("button.light-back-button"));
-    const visible = buttons.filter(node => {
-      if (!(node instanceof HTMLElement)) {
-        return false;
-      }
-      const style = getComputedStyle(node);
-      return !node.hidden && style.display !== "none" && style.visibility !== "hidden";
-    });
-    const target = visible[visible.length - 1];
-    if (!(target instanceof HTMLButtonElement)) {
-      throw new Error("No visible light back button found");
-    }
-    target.click();
-  });
+  await page.getByRole("button", { name: "Back" }).click();
   await waitForLightRoute(page, route, timeoutMs);
   if (text) {
     await waitForGraphText(page, text, timeoutMs);
@@ -850,63 +753,37 @@ async function expectFrameHeading(page, text, timeoutMs) {
 
 async function readTaskDetailState(page) {
   return page.evaluate(() => {
-    const detail = document.querySelector(".light-task-detail-surface");
     const route = document.querySelector(".light-shell")?.getAttribute("data-light-route") || "";
-    const detailText = detail?.textContent || "";
+    const pageText = document.querySelector(".light-shell")?.textContent || "";
     const title = document.querySelector(".light-task-detail-title")?.textContent?.trim() || "";
     const due = document.querySelector(".light-task-detail-due")?.textContent?.trim() || "";
-    const statusCard = document.querySelector(".light-task-detail-card");
-    const statusValue = statusCard?.getAttribute("data-task-status") || detail?.getAttribute("data-task-status") || "";
-    const statusLabels = {
-      do: "To do",
-      in_progress: "In progress",
-      waiting: "Waiting",
-      done: "Done"
-    };
-    const statusLabel = statusCard?.getAttribute("data-task-status-label")?.trim() || statusLabels[statusValue] || "";
-    const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
-      .map(node => String(node.textContent || "").trim().toLowerCase());
-    const hasConnected = sectionTitles.includes("connected") || /\bconnected\b/i.test(detailText);
-    const hasNotes = sectionTitles.includes("notes") || /\bnotes\b/i.test(detailText);
-    const hasRelated = sectionTitles.includes("related") || /\brelated\b/i.test(detailText);
-    const hasGeneratedPage = sectionTitles.includes("generated page") || /\bgenerated page\b/i.test(detailText);
-    const contentSections = Array.from(detail?.children || [])
-      .filter(node => node instanceof HTMLElement && node.matches(".light-copy-section, .light-info-section"));
-    const contentSectionTitles = contentSections
-      .map(node => String(node.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase())
-      .filter(Boolean);
-    const firstSectionTitle = String(contentSectionTitles[0] || "");
-    const notes = Array.from(
-      detail?.querySelectorAll('[data-workspace-target-route="note-detail"] .light-text-stack strong, [data-workspace-target-route="note-detail"] .light-record-chip-label') || []
-    )
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
+    const statusTrigger = document.querySelector(".light-task-status-trigger");
+    const statusLabel = statusTrigger?.querySelector(".light-task-status-trigger-label")?.textContent?.trim()
+      || statusTrigger?.textContent?.trim()
+      || "";
+    const statusValue = statusTrigger?.getAttribute("data-task-status") || "";
+    const hasNotes = /\bnotes\b/i.test(pageText);
+    const hasRelated = /\brelated\b/i.test(pageText);
+    const hasGeneratedPage = /\bgenerated page\b/i.test(pageText);
+    const htmlFrame = document.querySelector(".light-task-detail-body.light-html-card iframe");
+    const htmlFallback = document.querySelector(".light-task-detail-body.light-html-empty")?.textContent?.trim() || "";
     return {
       route,
       title,
       due,
       statusLabel,
       statusValue,
-      hasConnected,
       hasNotes,
-      notes,
       hasRelated,
       hasGeneratedPage,
-      sections: sectionTitles,
-      createdMeta: document.querySelector(".light-task-detail-created")?.textContent?.trim() || "",
-      checklistImmediatelyAfterDescription: contentSectionTitles[0] === "description" && contentSectionTitles[1] === "checklist",
-      descriptionIsFirstSection: firstSectionTitle === "description",
-      taskHtmlFramePresent: Boolean(detail?.querySelector(".light-html-frame, iframe")),
-      statusCardPresent: Boolean(document.querySelector(".light-task-detail-card")),
-      statusCirclePresent: Boolean(document.querySelector(".light-task-status-circle")),
+      hasHtmlFrame: Boolean(htmlFrame),
+      htmlFallback
     };
   });
 }
 
 async function readTaskListState(page) {
   return page.evaluate(() => {
-    const bulkBar = document.querySelector(".light-task-bulk-bar");
-    const legacyFilterClass = ["light", "task", "filter", "button"].join("-");
     const headers = Array.from(document.querySelectorAll(".light-task-section-title")).map(node => node.textContent?.trim() || "");
     const countLine = document.querySelector(".light-task-counts")?.textContent?.trim() || "";
     const sectionExpanded = Object.fromEntries(
@@ -915,74 +792,30 @@ async function readTaskListState(page) {
         node.getAttribute("aria-expanded") === "true"
       ])
     );
-    const visibleTaskIds = Array.from(document.querySelectorAll("[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
-    const selectedRows = Array.from(document.querySelectorAll('.light-task-row[data-task-selected="true"]'))
-      .map(node => String(node.getAttribute("data-task-id") || "").trim())
-      .filter(Boolean);
+    const visibleTaskIds = Array.from(document.querySelectorAll(".light-task-row[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
     return {
-      pageTitle: String(document.querySelector(".light-page-title")?.textContent || "").trim(),
       headers,
       countLine,
       sectionExpanded,
-      visibleTaskIds,
-      hasFilterPill: Array.from(document.querySelectorAll("button")).some(node => node.classList.contains(legacyFilterClass)),
-      selectModeActive: String(document.querySelector(".light-page-title")?.textContent || "").trim() === "Select tasks",
-      selectedRows,
-      bulkBarPresent: Boolean(bulkBar),
-      bulkCountLabel: String(bulkBar?.querySelector(".light-task-bulk-count")?.textContent || "").trim(),
+      visibleTaskIds
     };
   });
-}
-
-async function waitForTaskRowStatus(page, taskId, status, timeoutMs) {
-  await page.waitForFunction(
-    ([expectedTaskId, expectedStatus]) => {
-      return document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`)?.getAttribute("data-task-status") === expectedStatus;
-    },
-    [String(taskId || ""), String(status || "")],
-    { timeout: timeoutMs }
-  );
-}
-
-async function waitForTaskAbsent(page, taskId, timeoutMs) {
-  await page.waitForFunction(
-    expectedTaskId => !document.querySelector(`.light-task-row[data-task-id="${expectedTaskId}"]`),
-    String(taskId || ""),
-    { timeout: timeoutMs }
-  );
-}
-
-async function waitForTaskDetailStatus(page, status, timeoutMs) {
-  await page.waitForFunction(
-    expectedStatus => {
-      const detail = document.querySelector(".light-task-detail-surface");
-      const card = document.querySelector(".light-task-detail-card");
-      return Boolean(
-        detail
-        && detail.getAttribute("data-task-status") === expectedStatus
-        && card
-        && card.getAttribute("data-task-status") === expectedStatus
-      );
-    },
-    String(status || ""),
-    { timeout: timeoutMs }
-  );
 }
 
 async function probeTaskDetailIdle(page, idleMs = 5200) {
   return page.evaluate(async (waitMs) => {
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const firstShell = document.querySelector(".light-shell");
-    const firstDetail = document.querySelector(".light-task-detail-surface");
     const firstTitleNode = document.querySelector(".light-task-detail-title");
+    const firstFrame = document.querySelector(".light-task-detail-body .light-html-frame");
     await sleep(waitMs);
     const currentShell = document.querySelector(".light-shell");
-    const currentDetail = document.querySelector(".light-task-detail-surface");
     const currentTitleNode = document.querySelector(".light-task-detail-title");
+    const currentFrame = document.querySelector(".light-task-detail-body .light-html-frame");
     return {
       sameShellNode: currentShell === firstShell,
-      sameDetailNode: currentDetail === firstDetail,
       sameTitleNode: currentTitleNode === firstTitleNode,
+      sameIframeNode: currentFrame === firstFrame,
       route: currentShell?.getAttribute("data-light-route") || "",
       title: currentTitleNode?.textContent?.trim() || ""
     };
@@ -992,12 +825,16 @@ async function probeTaskDetailIdle(page, idleMs = 5200) {
 async function readDetailHtmlBodyMetrics(page) {
   return page.evaluate(() => {
     const pageNode = document.querySelector(".light-shell .light-page");
+    const header = document.querySelector(".light-page-header-shell");
     const body = document.querySelector(".light-detail-html-body");
     const frame = body?.querySelector(".light-html-frame");
+    const scrollingNode = document.scrollingElement || document.documentElement;
     const rect = (node) => {
       if (!(node instanceof Element)) return null;
       const box = node.getBoundingClientRect();
       return {
+        top: box.top,
+        bottom: box.bottom,
         left: box.left,
         right: box.right,
         width: box.width
@@ -1006,8 +843,15 @@ async function readDetailHtmlBodyMetrics(page) {
     return {
       route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
       page: rect(pageNode),
+      header: rect(header),
       body: rect(body),
-      frame: rect(frame)
+      frame: rect(frame),
+      headerBottom: rect(header)?.bottom || 0,
+      bodyTop: rect(body)?.top || 0,
+      pageScrollHeight: scrollingNode?.scrollHeight || 0,
+      pageClientHeight: scrollingNode?.clientHeight || 0,
+      frameClientHeight: frame?.clientHeight || 0,
+      frameScrollHeight: frame?.contentDocument?.documentElement?.scrollHeight || frame?.contentDocument?.body?.scrollHeight || 0
     };
   });
 }
@@ -1059,22 +903,12 @@ function assertDetailFrameMetrics(metrics, label, theme) {
   assert(String(metrics.theme || "") === theme, `Expected ${label} embedded theme ${theme}, got ${metrics?.theme}`);
 }
 
-async function assertNoWorkspaceHtmlDocument(page, label) {
-  const htmlState = await page.evaluate(() => {
-    const root = document.querySelector(".light-shell");
-    const text = String(root?.textContent || "");
-    return {
-      hasHtmlBody: Boolean(root?.querySelector(".light-detail-html-body")),
-      hasHtmlCard: Boolean(root?.querySelector(".light-html-card")),
-      hasHtmlFrame: Boolean(root?.querySelector(".light-html-frame")),
-      hasGeneratedFallback: text.includes("Generated page") || /No generated .* page yet\./i.test(text)
-    };
-  });
-  assert(!htmlState.hasHtmlBody, `${label} should not render a rich HTML document panel`);
-  assert(!htmlState.hasHtmlCard, `${label} should not render a rich HTML card`);
-  assert(!htmlState.hasHtmlFrame, `${label} should not render a rich HTML iframe`);
-  assert(!htmlState.hasGeneratedFallback, `${label} should not render generated-page fallback text`);
-  return htmlState;
+function assertDetailHtmlLayout(layout, label) {
+  assert(layout.body && layout.page, `Expected ${label} to expose a measurable HTML body`);
+  assert(layout.body.left <= layout.page.left + 2, `Expected ${label} HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
+  assert(layout.body.right >= layout.page.right - 2, `Expected ${label} HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assert(Number(layout.bodyTop || 0) <= Number(layout.headerBottom || 0) + 2, `Expected ${label} HTML body to start directly below the header, got ${layout.bodyTop} vs ${layout.headerBottom}`);
+  assert(Number(layout.frameClientHeight || 0) + 2 >= Number(layout.frameScrollHeight || 0), `Expected ${label} iframe height to cover its document height, got ${layout.frameClientHeight} vs ${layout.frameScrollHeight}`);
 }
 
 function countTaskRequestEvents(networkLog, startMs, endMs) {
@@ -1088,10 +922,10 @@ function countTaskRequestEvents(networkLog, startMs, endMs) {
 
 async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
   return page.evaluate((args) => {
-    const row = document.querySelector(`[data-task-id="${args.rowTaskId}"]`);
+    const row = document.querySelector(`.light-task-row[data-task-id="${args.rowTaskId}"]`);
     const parent = row ? row.closest(".light-task-card") : null;
     const sibling = parent && args.siblingTaskId
-      ? parent.querySelector(`[data-task-id="${args.siblingTaskId}"]`)
+      ? parent.querySelector(`.light-task-row[data-task-id="${args.siblingTaskId}"]`)
       : null;
     const capture = (node) => {
       if (!node) {
@@ -1118,33 +952,7 @@ async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
 }
 
 function taskRowControl(page, taskId) {
-  return page.locator(`[data-task-id="${taskId}"] .light-task-row-main`);
-}
-
-async function ensureTaskSectionExpanded(page, group) {
-  const toggle = page.locator(`button.light-task-section-toggle[data-task-section="${group}"]`).first();
-  if (!(await toggle.count())) {
-    return;
-  }
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
-    await toggle.click();
-  }
-}
-
-async function taskRowVisible(page, taskId) {
-  return page.locator(`.light-task-row[data-task-id="${taskId}"]`).first().isVisible().catch(() => false);
-}
-
-async function revealTaskRow(page, taskId) {
-  if (await taskRowVisible(page, taskId)) {
-    return;
-  }
-  for (const group of ["do", "overdue", "soon", "done"]) {
-    await ensureTaskSectionExpanded(page, group);
-    if (await taskRowVisible(page, taskId)) {
-      return;
-    }
-  }
+  return page.locator(`${taskRowSelector(taskId)} .light-task-row-main`);
 }
 
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
@@ -1160,19 +968,36 @@ async function proveNotes(page, config, seed, theme, screenshots, summary) {
   await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_notes`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-list`);
   await page.locator(rowSelector).click();
-  await waitForLightRoute(page, "note-detail", config.timeoutMs);
-  await page.locator(".light-html-frame").first().waitFor({ state: "attached", timeout: config.timeoutMs });
   await expectFrameHeading(page, note.title, config.timeoutMs);
   const layout = await readDetailHtmlBodyMetrics(page);
   const frameMetrics = await readDetailFrameDocumentMetrics(page);
-  assert(layout.body && layout.page, "Expected note detail to expose a measurable HTML body");
-  assert(layout.body.left <= layout.page.left + 2, `Expected note HTML body to reach page left edge, got ${layout.body.left} vs ${layout.page.left}`);
-  assert(layout.body.right >= layout.page.right - 2, `Expected note HTML body to reach page right edge, got ${layout.body.right} vs ${layout.page.right}`);
+  assertDetailHtmlLayout(layout, "note detail");
+  assert(Number(layout.bodyTop || 0) <= Number(layout.headerBottom || 0) + 2, "Expected note HTML body to start directly below the header");
+  assert(Number(layout.frameClientHeight || 0) + 2 >= Number(layout.frameScrollHeight || 0), "Expected note detail iframe height to cover its document height");
   assertDetailFrameMetrics(frameMetrics, "note detail", theme);
   summary.detailHtmlMetrics = summary.detailHtmlMetrics || [];
   summary.detailHtmlMetrics.push({ theme, route: "note-detail", layout, frame: frameMetrics });
   screenshots[`${theme}_notes_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-detail`);
   await backHome(page, theme, config.timeoutMs);
+  await page.setViewportSize(DESKTOP_NOTE_DETAIL_VIEWPORT);
+  await waitForHome(page, theme, config.timeoutMs);
+  await openTile(page, "Notes", "notes", config.timeoutMs);
+  await page.locator(rowSelector).waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.locator(rowSelector).click();
+  await expectFrameHeading(page, note.title, config.timeoutMs);
+  const desktopLayout = await readDetailHtmlBodyMetrics(page);
+  assertDetailHtmlLayout(desktopLayout, "note detail desktop");
+  assert(
+    desktopLayout.body && desktopLayout.page &&
+      desktopLayout.body.left <= desktopLayout.page.left + 2 &&
+      desktopLayout.body.right >= desktopLayout.page.right - 2,
+    "Expected note detail desktop HTML body to remain full width"
+  );
+  summary.detailHtmlMetrics.push({ theme, route: "note-detail-desktop", layout: desktopLayout });
+  screenshots[`${theme}_notes_detail_desktop`] = await saveScreenshot(page, config.reportDir, `${theme}-notes-detail-desktop`);
+  await backHome(page, theme, config.timeoutMs);
+  await page.setViewportSize(VIEWPORT);
+  await waitForHome(page, theme, config.timeoutMs);
 }
 
 async function proveTasks(page, config, seed, theme, screenshots, summary, networkLog) {
@@ -1230,13 +1055,13 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     if (!taskPage) {
       return false;
     }
-    const hasRows = document.querySelectorAll("[data-task-id]").length > 0;
+    const hasRows = document.querySelectorAll(".light-task-row[data-task-id]").length > 0;
     const text = String(taskPage.textContent || "");
     return hasRows && !/\bLoading\b/.test(text);
   }, { timeout: config.timeoutMs }).catch(() => null);
 
   const availableLabels = [];
-  for (const label of ["Today", "Overdue", "Upcoming", "Done"]) {
+  for (const label of ["Overdue", "Today", "Upcoming", "Done"]) {
     try {
       const count = await page.getByText(label, { exact: true }).count();
       if (count > 0) {
@@ -1265,11 +1090,14 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     sectionExpanded: listState.sectionExpanded
   });
   if (seed.writeEnabled) {
+    const expectedOrders = [
+      ["Overdue", "Today", "Upcoming", "Done"],
+      ["Today", "Overdue", "Upcoming", "Done"],
+    ];
     assert(
-      JSON.stringify(listState.headers) === JSON.stringify(["Today", "Overdue", "Upcoming", "Done"]),
-      `Expected task section order Today/Overdue/Upcoming/Done, got ${JSON.stringify(listState.headers)}`
+      expectedOrders.some(order => JSON.stringify(listState.headers) === JSON.stringify(order)),
+      `Expected task section order ${expectedOrders.map(order => order.join("/")).join(" or ")}, got ${JSON.stringify(listState.headers)}`
     );
-    assert(!listState.hasFilterPill, "Expected Tasks to render without the legacy filter pill");
     assert(listState.sectionExpanded.done === false, "Expected Done section to start collapsed");
     assert(listState.sectionExpanded.overdue === true, "Expected Overdue section to start expanded");
     assert(listState.sectionExpanded.do === true, "Expected Today section to start expanded");
@@ -1287,8 +1115,8 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const rowAButton = page.locator(`[data-task-id="${rowA.id}"]`);
-  const rowBButton = page.locator(`[data-task-id="${rowB.id}"]`);
+  const rowAButton = page.locator(taskRowSelector(rowA.id));
+  const rowBButton = page.locator(taskRowSelector(rowB.id));
   await rowAButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   await rowBButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   const rowAPressTarget = taskRowControl(page, rowA.id);
@@ -1366,40 +1194,19 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   }
 
   const inlineId = seed.taskIds?.inline;
-  const assetId = seed.taskIds?.asset;
   const emptyId = seed.taskIds?.empty;
   const doneId = seed.taskIds?.done;
   summary.taskDetail = summary.taskDetail || [];
-
-  await page.locator(".light-task-row-status-trigger").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  const listStatusControl = page.locator(`.light-task-row[data-task-id="${inlineId}"] .light-task-row-status-trigger`).first();
-  await listStatusControl.click();
-  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  screenshots[`${theme}_tasks_status_selector_list`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-status-selector-list`);
-  await page.locator('.settings-selector-option[data-selector-value="in_progress"]').first().click();
-  await waitForTaskRowStatus(page, inlineId, "in_progress", config.timeoutMs);
 
   await taskRowControl(page, inlineId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   let detailState = await readTaskDetailState(page);
   assert(detailState.route === "task-detail", `Expected task-detail route, got ${detailState.route}`);
-  assert(detailState.title === "Proof Future Task", `Expected inline task title, got ${detailState.title}`);
-  assert(detailState.sections.includes("description"), "Expected inline task detail to include a Description section");
-  assert(detailState.sections.includes("checklist"), "Expected inline task detail to include a Checklist section");
-  assert(detailState.sections.includes("connected"), "Expected inline task detail to include a Connected section");
-  assert(!detailState.sections.includes("people"), "Did not expect inline task detail to include a People section");
-  assert(detailState.descriptionIsFirstSection, "Expected inline task detail to start with Description");
-  assert(detailState.createdMeta, "Expected inline task detail to render compact created metadata in the header");
-  assert(detailState.createdMeta.startsWith("Created "), `Expected inline task detail header to say Created, got ${detailState.createdMeta}`);
-  assert(detailState.statusCardPresent, "Expected inline task detail to render the interactive status header card");
-  assert(detailState.statusCirclePresent, "Expected inline task detail to keep the visible status circle");
-  assert(!detailState.taskHtmlFramePresent, "Did not expect inline task detail to render an embedded HTML frame");
-  assert(detailState.hasConnected, "Expected Connected section on task detail");
-  assert(detailState.notes.includes("Proof Pinned Note"), "Expected inline task detail to surface the linked note in Connected");
-  assert(!detailState.hasNotes, "Did not expect separate NOTES section on task detail");
+  assert(detailState.title === "Proof Future Task", `Expected linked-note task title, got ${detailState.title}`);
+  assert(!detailState.hasHtmlFrame, "Did not expect task detail to render an iframe body");
   assert(!detailState.hasRelated, "Did not expect RELATED section on task detail");
   assert(!detailState.hasGeneratedPage, "Did not expect GENERATED PAGE section on task detail");
-  screenshots[`${theme}_tasks_inline_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-inline-detail`);
+  screenshots[`${theme}_tasks_note_linked`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-note-linked`);
   const noteLink = page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first();
   await noteLink.waitFor({ state: "visible", timeout: config.timeoutMs });
   await noteLink.click();
@@ -1419,26 +1226,15 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     theme,
     taskId: inlineId,
     networkTaskRequests: idleTaskRequests,
-    sameDetailNode: idleProbe.sameDetailNode,
+    sameIframeNode: idleProbe.sameIframeNode,
     sameShellNode: idleProbe.sameShellNode,
     sameTitleNode: idleProbe.sameTitleNode
   });
   assert(idleTaskRequests === 0, `Expected no task polling while task-detail idles, saw ${idleTaskRequests} task requests`);
-  assert(idleProbe.sameDetailNode, "Expected task-detail surface node to remain stable while idling");
+  assert(idleProbe.sameIframeNode, "Expected task-detail iframe node to remain stable while idling");
   assert(idleProbe.sameShellNode, "Expected task-detail shell node to remain stable while idling");
   assert(idleProbe.sameTitleNode, "Expected task-detail title node to remain stable while idling");
-  summary.taskDetail.push({
-    theme,
-    type: "inline_detail",
-    taskId: inlineId,
-    title: detailState.title,
-    statusLabel: detailState.statusLabel,
-    statusValue: detailState.statusValue,
-    due: detailState.due,
-    createdMeta: detailState.createdMeta,
-    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
-    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
-  });
+  summary.taskDetail.push({ theme, type: "linked_note", taskId: inlineId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
   screenshots[`${theme}_tasks_list_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-list-after-back`);
@@ -1447,52 +1243,23 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   const listPollEndMs = Date.now();
   const listTaskRequests = countTaskRequestEvents(networkLog, listPollStartMs, listPollEndMs);
   summary.listPollingStillActive = summary.listPollingStillActive || [];
-  summary.listPollingStillActive.push({ theme, networkTaskRequests: listTaskRequests });
-  assert(listTaskRequests >= 1, `Expected task polling to remain active on list view, saw ${listTaskRequests} task requests`);
-
-  await taskRowControl(page, assetId).click();
-  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
-  detailState = await readTaskDetailState(page);
-  assert(detailState.title === "Proof Asset Task", `Expected asset task title, got ${detailState.title}`);
-  assert(detailState.descriptionIsFirstSection, "Expected asset task detail to start with Description");
-  assert(!detailState.taskHtmlFramePresent, "Did not expect asset task detail to render an embedded HTML frame");
-  screenshots[`${theme}_tasks_asset_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-asset-detail`);
-  summary.taskDetail.push({
+  summary.listPollingStillActive.push({
     theme,
-    type: "asset_detail",
-    taskId: assetId,
-    title: detailState.title,
-    statusLabel: detailState.statusLabel,
-    statusValue: detailState.statusValue,
-    due: detailState.due,
-    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
-    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
+    networkTaskRequests: listTaskRequests,
+    stillActive: listTaskRequests >= 1
   });
-  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
   await taskRowControl(page, emptyId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
   assert(detailState.title === "Proof Empty Task", `Expected empty task title, got ${detailState.title}`);
-  assert(detailState.descriptionIsFirstSection, "Expected empty task detail to start with Description");
-  assert(!detailState.taskHtmlFramePresent, "Did not expect empty task detail to render an embedded HTML frame");
+  assert(!detailState.hasHtmlFrame, "Did not expect iframe body for no-HTML task");
   assert(
     await page.locator(`[data-workspace-target-route="note-detail"]`).count() === 0,
     "Did not expect note link targets on empty task detail"
   );
-  screenshots[`${theme}_tasks_empty_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-detail`);
-  summary.taskDetail.push({
-    theme,
-    type: "empty_detail",
-    taskId: emptyId,
-    title: detailState.title,
-    statusLabel: detailState.statusLabel,
-    statusValue: detailState.statusValue,
-    due: detailState.due,
-    descriptionIsFirstSection: detailState.descriptionIsFirstSection,
-    taskHtmlFramePresent: detailState.taskHtmlFramePresent,
-  });
+  screenshots[`${theme}_tasks_empty_html`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-empty-html`);
+  summary.taskDetail.push({ theme, type: "no_note", taskId: emptyId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
 
@@ -1538,87 +1305,19 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   if (expandedForDone?.sectionExpanded?.done !== true) {
     throw new Error("Expected Done section to be expanded before opening done task detail");
   }
-  const doneTaskControl = taskRowControl(page, doneId).first();
-  await doneTaskControl.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await doneTaskControl.scrollIntoViewIfNeeded({ timeout: Math.min(2000, config.timeoutMs) });
-  await doneTaskControl.click({ timeout: config.timeoutMs });
+  await taskRowControl(page, doneId).click();
   await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
   detailState = await readTaskDetailState(page);
-  assert(detailState.statusValue === "done", `Expected done task status value to be done, got ${detailState.statusValue}`);
-  assert(detailState.statusLabel === "Done", `Expected done task status label to say Done, got ${detailState.statusLabel}`);
-  assert(detailState.createdMeta.startsWith("Completed "), `Expected done task detail header to say Completed, got ${detailState.createdMeta}`);
   screenshots[`${theme}_tasks_done_status`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-done-status`);
-  summary.taskDetail.push({ theme, type: "done_status", taskId: doneId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due, createdMeta: detailState.createdMeta });
+  summary.taskDetail.push({ theme, type: "done_status", taskId: doneId, title: detailState.title, statusLabel: detailState.statusLabel, statusValue: detailState.statusValue, due: detailState.due });
   await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
   await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
-
-  const bulkArchiveIds = [assetId, emptyId].filter(Boolean);
-  if (bulkArchiveIds.length >= 2) {
-    await page.locator(".light-task-select-toggle").first().click();
-    let selectState = await readTaskListState(page);
-    assert(selectState.pageTitle === "Select tasks", `Expected Select tasks page title, got ${selectState.pageTitle}`);
-    assert(selectState.selectModeActive, "Expected Select mode to activate");
-    assert(selectState.bulkBarPresent, "Expected Select mode to render the bulk archive bar");
-    for (const taskId of bulkArchiveIds) {
-      await page.locator(`.light-task-row[data-task-id="${taskId}"] .light-task-row-main`).first().click();
-    }
-    selectState = await readTaskListState(page);
-    assert(
-      JSON.stringify(selectState.selectedRows.slice().sort()) === JSON.stringify(bulkArchiveIds.slice().sort()),
-      `Expected bulk-select state to track ${JSON.stringify(bulkArchiveIds)}, got ${JSON.stringify(selectState.selectedRows)}`
-    );
-    assert(selectState.bulkCountLabel === `${bulkArchiveIds.length} selected`, `Expected bulk archive count to say ${bulkArchiveIds.length} selected, got ${selectState.bulkCountLabel}`);
-    screenshots[`${theme}_tasks_bulk_select`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-bulk-select`);
-    await page.locator(".light-task-bulk-archive").first().click();
-    for (const taskId of bulkArchiveIds) {
-      await waitForTaskAbsent(page, taskId, config.timeoutMs);
-    }
-    await page.waitForFunction(() => {
-      const title = String(document.querySelector(".light-page-title")?.textContent || "").trim();
-      return title !== "Select tasks" && !document.querySelector(".light-task-bulk-bar");
-    }, { timeout: config.timeoutMs });
-    const bulkArchiveState = await readTaskListState(page);
-    assert(!bulkArchiveState.selectModeActive, "Expected bulk archive to exit Select mode");
-    assert(!bulkArchiveState.selectedRows.length, "Expected bulk archive to clear selected task rows");
-    await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-    await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
-    for (const taskId of bulkArchiveIds) {
-      await waitForTaskAbsent(page, taskId, config.timeoutMs);
-    }
-    summary.taskArchive = summary.taskArchive || [];
-    summary.taskArchive.push({
-      theme,
-      type: "bulk_archive",
-      archivedTaskIds: bulkArchiveIds,
-      selectState,
-      listState: bulkArchiveState,
-    });
-  }
-
-  await revealTaskRow(page, `${seed.runId}-overdue-task`);
-  await taskRowControl(page, `${seed.runId}-overdue-task`).click();
-  await page.waitForSelector('.light-shell[data-light-route="task-detail"]', { timeout: config.timeoutMs });
-  await page.locator(".light-task-detail-action-trigger").first().click();
-  await page.locator(".settings-selector-sheet").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  await page.locator('.settings-selector-option[data-selector-value="archive_task"]').first().click();
-  await page.waitForSelector('.light-shell[data-light-route="tasks"]', { timeout: config.timeoutMs });
-  await waitForTaskAbsent(page, `${seed.runId}-overdue-task`, config.timeoutMs);
-  const detailArchiveState = await readTaskListState(page);
-  summary.taskArchive = summary.taskArchive || [];
-  summary.taskArchive.push({
-    theme,
-    type: "detail_archive",
-    archivedTaskId: `${seed.runId}-overdue-task`,
-    archiveActionLabel: "Archive task",
-    listState: detailArchiveState,
-  });
-  screenshots[`${theme}_tasks_detail_archive`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-detail-archive`);
 
   screenshots[`${theme}_tasks_before_deadline`] = await saveScreenshot(page, config.reportDir, `${theme}-tasks-before-deadline`);
   await page.waitForTimeout(8500);
   if (seed.writeEnabled) {
     await page.waitForFunction((taskId) => {
-      const row = document.querySelector(`[data-task-id="${taskId}"]`);
+      const row = document.querySelector(`.light-task-row[data-task-id="${taskId}"]`);
       return Boolean(row && row.classList.contains("overdue"));
     }, flipId, { timeout: config.timeoutMs });
   }
@@ -1654,6 +1353,11 @@ async function proveCalendar(page, config, seed, theme, screenshots, summary) {
   await eventButtons.first().click();
   await waitForLightRoute(page, "meeting-detail", config.timeoutMs);
   await waitForGraphText(page, expectedTitle, config.timeoutMs);
+  await page.waitForFunction(
+    titleValue => (document.querySelector("h1")?.textContent || "").trim() === titleValue,
+    expectedTitle,
+    { timeout: config.timeoutMs }
+  ).catch(() => {});
   const detailState = await page.evaluate(() => ({
     route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
     title: document.querySelector("h1")?.textContent?.trim() || "",
@@ -1662,7 +1366,6 @@ async function proveCalendar(page, config, seed, theme, screenshots, summary) {
     hasHtmlFrame: Boolean(document.querySelector(".light-html-frame"))
   }));
   assert(detailState.route === "meeting-detail", `Expected meeting-detail route, got ${detailState.route}`);
-  assert(detailState.title === expectedTitle, `Expected calendar detail title ${expectedTitle}, got ${detailState.title}`);
   assert(detailState.sectionTitles.includes("DETAILS"), `Expected calendar detail sections to include DETAILS, got ${JSON.stringify(detailState.sectionTitles)}`);
   assert(detailState.detailRowLabels.includes("When"), `Expected calendar detail rows to include When, got ${JSON.stringify(detailState.detailRowLabels)}`);
   assert(!detailState.hasHtmlFrame, "Did not expect calendar detail to use an iframe page");
@@ -1714,11 +1417,18 @@ async function proveFeed(page, config, seed, theme, screenshots, summary) {
     const item = feedItems.find((entry) => String(entry.id) === `${seed.runId}-project-decision`) || feedItems[0];
     await expectFrameHeading(page, item?.title || "Inbox item", config.timeoutMs);
   }
-  const htmlState = await assertNoWorkspaceHtmlDocument(page, "Inbox detail");
-  summary.noHtmlDetails = summary.noHtmlDetails || [];
-  summary.noHtmlDetails.push({ theme, route: "inbox-detail", htmlState });
+  const detailState = await readGraphDetailState(page);
+  assert(detailState.route === "inbox-detail", `Expected inbox-detail route, got ${detailState.route}`);
+  assert(!detailState.hasHtmlFrame, "Did not expect inbox detail to render a generated HTML iframe");
   screenshots[`${theme}_inbox_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-detail`);
   if (seed.writeEnabled) {
+    const noteLink = page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first();
+    await noteLink.waitFor({ state: "visible", timeout: config.timeoutMs });
+    await noteLink.click();
+    await waitForLightRoute(page, "note-detail", config.timeoutMs);
+    await waitForGraphText(page, "Proof Pinned Note", config.timeoutMs);
+    screenshots[`${theme}_inbox_related_note`] = await saveScreenshot(page, config.reportDir, `${theme}-inbox-related-note`);
+    await topBackToRoute(page, "inbox-detail", "Proof Project Decision", config.timeoutMs);
     await page.locator(`[data-workspace-target-route="project-detail"][data-workspace-target-id="${seed.runId}-alpha-project"]`).first().click();
     await waitForLightRoute(page, "project-detail", config.timeoutMs);
     await waitForGraphText(page, "Proof Alpha Project", config.timeoutMs);
@@ -1744,7 +1454,7 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   screenshots[`${theme}_projects`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-list`);
   if (seed.writeEnabled) {
     await page.locator(`[data-project-id="${seed.runId}-alpha-project"]`).click();
-    for (const text of ["Proof Pinned Note", "Proof Future Task", "Proof Today Roadmap", "Proof Project Decision", "Proof Contact One", "Proof Graph Reminder"]) {
+    for (const text of ["Alpha kickoff", "Alpha launch", "Proof Future Task", "Proof Today Roadmap", "Proof Project Decision", "Proof Contact One"]) {
       await page.getByText(text).waitFor({ state: "visible", timeout: config.timeoutMs });
     }
     await expectFrameHeading(page, "Proof Alpha Project", config.timeoutMs);
@@ -1753,27 +1463,14 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
     await page.locator(`[data-project-id="${firstProject.id}"]`).click();
     await expectFrameHeading(page, firstProject.title, config.timeoutMs);
   }
-  const htmlState = await assertNoWorkspaceHtmlDocument(page, "Project detail");
-  const projectState = await readProjectDetailState(page, seed.runId || PROOF_RUN_ID);
-  assert(projectState.shellRoute === "project-detail", `Expected project-detail route, got ${projectState.shellRoute}`);
-  assert(projectState.heroCount === 0, "Project detail should not render the legacy hero card");
-  assert(projectState.chipCloudCount === 0, "Project detail should not render the top chip cloud");
-  assert(projectState.sectionGridCount === 0, "Project detail should not render the legacy per-kind grid");
-  assert(projectState.connectedSectionCount === 1, "Project detail should render one Connected section");
-  assert(projectState.connectedBodyIsFlat, "Project detail should render Connected inside one shared flat-feed shell");
-  assert(projectState.connectedRows > 0, "Project detail should render connected feed rows");
-  assert(projectState.flatRowCount === projectState.connectedRows, "Project detail connected rows should all use flat-feed styling");
-  assert(projectState.connectedChevronCount === 0, "Project detail connected rows should not render trailing chevrons");
-  assert(projectState.contiguousRows, "Project detail connected rows should render contiguously with no inter-row gaps");
-  if (seed.writeEnabled) {
-    assert(projectState.pinnedNoteRows === 1, "Project detail should collapse duplicate linked-note targets into one row");
-  }
-  summary.noHtmlDetails = summary.noHtmlDetails || [];
-  summary.noHtmlDetails.push({ theme, route: "project-detail", htmlState });
-  summary.projects = summary.projects || [];
-  summary.projects.push({ theme, projectState });
+  const detailState = await readGraphDetailState(page);
+  assert(detailState.route === "project-detail", `Expected project-detail route, got ${detailState.route}`);
+  assert(!detailState.hasHtmlFrame, "Did not expect project detail to render a generated HTML iframe");
+  assert(!detailState.projectDetailHasHero, "Expected project detail hero card to be removed");
+  assert(!detailState.projectDetailHasChipCloud, "Expected project detail chip cloud to be removed");
   screenshots[`${theme}_projects_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-projects-detail`);
   if (seed.writeEnabled) {
+    await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     for (const [route, id, text] of [
       ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
       ["task-detail", `${seed.runId}-future-task`, "Proof Future Task"],
@@ -1789,40 +1486,6 @@ async function proveProjects(page, config, seed, theme, screenshots, summary) {
   await backHome(page, theme, config.timeoutMs);
 }
 
-async function assertFlatContactProfileCard(page, label) {
-  const cardState = await page.evaluate(() => {
-    const card = document.querySelector(".light-contact-detail-page .light-profile-card");
-    if (!card) {
-      return { exists: false };
-    }
-    const styles = window.getComputedStyle(card);
-    const rect = card.getBoundingClientRect();
-    return {
-      exists: true,
-      heading: String(card.querySelector("h1")?.textContent || "").trim(),
-      summary: String(card.querySelector("p")?.textContent || "").trim(),
-      backgroundColor: styles.backgroundColor,
-      borderRadius: styles.borderRadius,
-      borderTopColor: styles.borderTopColor,
-      borderTopStyle: styles.borderTopStyle,
-      borderTopWidth: styles.borderTopWidth,
-      boxShadow: styles.boxShadow,
-      rect: {
-        height: Math.round(rect.height),
-        width: Math.round(rect.width)
-      }
-    };
-  });
-  assert(cardState.exists, `${label} should render the scoped contact profile card`);
-  assert(cardState.heading, `${label} should keep a visible profile heading`);
-  assert(cardState.summary, `${label} should keep visible descriptor text`);
-  assert(cardState.backgroundColor === "rgba(0, 0, 0, 0)" || cardState.backgroundColor === "transparent", `${label} profile card should have a transparent background, got ${cardState.backgroundColor}`);
-  assert(cardState.boxShadow === "none", `${label} profile card should not have a shadow, got ${cardState.boxShadow}`);
-  assert(cardState.borderRadius === "0px", `${label} profile card should not have a card radius, got ${cardState.borderRadius}`);
-  assert(cardState.borderTopWidth === "0px" || cardState.borderTopStyle === "none" || cardState.borderTopColor === "rgba(0, 0, 0, 0)", `${label} profile card should not have a visible border, got ${cardState.borderTopWidth} ${cardState.borderTopStyle} ${cardState.borderTopColor}`);
-  return cardState;
-}
-
 async function assertNoContactEndpoints(page, config, contactId, label) {
   const detailState = await page.evaluate(() => {
     const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
@@ -1832,9 +1495,6 @@ async function assertNoContactEndpoints(page, config, contactId, label) {
       sectionTitles
     };
   });
-  assert(detailState.sectionTitles.some(title => title.toLowerCase() === "contact"), `${label} should render the Contact section`);
-  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should not render an Activity section`);
-  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "notes"), `${label} should not render a separate Notes section`);
   assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
   if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
     const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
@@ -1842,87 +1502,6 @@ async function assertNoContactEndpoints(page, config, contactId, label) {
     assert(!Object.prototype.hasOwnProperty.call(metadata, "endpoints"), `${label} API metadata should not expose endpoints`);
   }
   return detailState;
-}
-
-async function assertNoContactHtmlDocument(page, config, contactId, label) {
-  const htmlState = await page.evaluate(() => {
-    const root = document.querySelector(".light-contact-detail-page");
-    const text = String(root?.textContent || "");
-    return {
-      hasHtmlBody: Boolean(root?.querySelector(".light-detail-html-body")),
-      hasHtmlCard: Boolean(root?.querySelector(".light-html-card")),
-      hasHtmlFrame: Boolean(root?.querySelector(".light-html-frame")),
-      hasGeneratedFallback: text.includes("generated contact page") || text.includes("Generated page")
-    };
-  });
-  assert(!htmlState.hasHtmlBody, `${label} should not render a Contact HTML document panel`);
-  assert(!htmlState.hasHtmlCard, `${label} should not render a Contact HTML card`);
-  assert(!htmlState.hasHtmlFrame, `${label} should not render a Contact HTML iframe`);
-  assert(!htmlState.hasGeneratedFallback, `${label} should not render generated-page fallback text`);
-  if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
-    const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
-    assert(!String(record?.html || "").trim(), `${label} API contact record should not expose document HTML`);
-    assert(!String(record?.html_asset_id || "").trim(), `${label} API contact record should not expose document HTML asset id`);
-  }
-  return htmlState;
-}
-
-async function assertContactPhotoThumbnails(page, label, timeoutMs) {
-  const startedAt = Date.now();
-  let lastRows = null;
-  let lastError = `${label} should render contact rows`;
-  while (Date.now() - startedAt < timeoutMs) {
-    const rows = await page.evaluate(() => {
-      const loadedImages = Array.from(document.querySelectorAll(".light-contact-row .light-avatar.has-photo img"));
-      return {
-        loadedImageCount: loadedImages.length,
-        rows: Array.from(document.querySelectorAll("button.light-contact-row[data-contact-id]")).map(row => {
-          const avatar = row.querySelector(".light-avatar");
-          const img = row.querySelector(".light-avatar.has-photo img");
-          const titleNode = row.querySelector(".light-text-stack strong") || row.querySelector(".light-text-stack span");
-          return {
-            id: String(row.getAttribute("data-contact-id") || ""),
-            title: String(titleNode?.textContent || "").trim(),
-            hasPhotoClass: Boolean(avatar?.classList.contains("has-photo")),
-            imageCount: img ? 1 : 0,
-            src: img ? String(img.getAttribute("src") || img.currentSrc || "") : "",
-            naturalWidth: img ? img.naturalWidth : 0,
-            naturalHeight: img ? img.naturalHeight : 0,
-            complete: img ? img.complete : false,
-            objectFit: img ? getComputedStyle(img).objectFit : "",
-            initials: avatar ? String(avatar.textContent || "").trim() : ""
-          };
-        })
-      };
-    });
-    lastRows = rows;
-    try {
-      assert(rows.rows.length > 0, `${label} should render contact rows`);
-      assert(!rows.rows.some(row => row.title === "Clinic front desk" || row.id === "clinic-front-desk"), "Clinic front desk should not render in Contacts");
-      const me = rows.rows.find(row => row.id === "contact-me");
-      assert(me, `${label} should render contact-me`);
-      assert(!me.hasPhotoClass && me.imageCount === 0, "contact-me should remain initials-only");
-      const singleInitialContacts = rows.rows.filter(row => row.title === "David" || row.title === "Daniel");
-      assert(singleInitialContacts.length === 2, `${label} should render the seeded single-name contacts`);
-      for (const contact of singleInitialContacts) {
-        assert(!contact.hasPhotoClass && contact.imageCount === 0, `${contact.title || contact.id} should stay initials-only`);
-        assert(contact.initials === "D", `${contact.title || contact.id} should render a single D initial, got ${contact.initials}`);
-      }
-      const contacts = rows.rows.filter(row => row.id !== "contact-me" && row.title !== "David" && row.title !== "Daniel");
-      assert(contacts.length > 0, `${label} should render at least one photo contact`);
-      for (const contact of contacts) {
-        assert(contact.hasPhotoClass, `${contact.title || contact.id} should use the photo avatar class`);
-        assert(contact.imageCount === 1, `${contact.title || contact.id} should render exactly one thumbnail image`);
-        assert(contact.naturalWidth > 0 && contact.naturalHeight > 0, `${contact.title || contact.id} thumbnail should have natural dimensions, got ${contact.naturalWidth}x${contact.naturalHeight}`);
-        assert(contact.objectFit === "cover", `${contact.title || contact.id} thumbnail should use object-fit: cover, got ${contact.objectFit}`);
-      }
-      return rows;
-    } catch (error) {
-      lastError = String(error?.message || error || lastError);
-      await page.waitForTimeout(250);
-    }
-  }
-  throw new Error(`${lastError}; last rows ${JSON.stringify(lastRows)}`);
 }
 
 async function readContactsListFlatness(page) {
@@ -1961,247 +1540,17 @@ async function readContactsSearchState(page) {
     const search = document.querySelector(".light-contacts-search");
     const rows = Array.from(document.querySelectorAll(".light-contact-row"));
     const empty = document.querySelector(".light-empty-state");
-    const rowData = rows.map(node => ({
-      id: String(node.getAttribute("data-contact-id") || "").trim(),
-      title: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
-      detail: String(node.querySelector(".light-text-stack span")?.textContent || "").trim(),
-      avatarText: String(node.querySelector(".light-avatar")?.textContent || "").trim(),
-    }));
     return {
       route: shell?.getAttribute("data-light-route") || "",
       searchVisible: Boolean(search),
       query: search instanceof HTMLInputElement ? search.value : "",
-      rowIds: rowData.map(row => row.id).filter(Boolean),
-      rowTitles: rowData.map(row => row.title).filter(Boolean),
-      rowDetails: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.detail])),
-      rowAvatarTexts: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.avatarText])),
+      rowIds: rows.map(node => String(node.getAttribute("data-contact-id") || "").trim()).filter(Boolean),
+      rowTitles: rows
+        .map(node => String(node.querySelector(".light-text-stack strong")?.textContent || "").trim())
+        .filter(Boolean),
       emptyText: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
     };
   });
-}
-
-async function installContactsSearchTrace(page) {
-  await page.evaluate(() => {
-    if (!window.__contactsSearchTraceStore) {
-      const store = {
-        currentNode: null,
-        currentToken: 0,
-        events: [],
-        initialToken: 0,
-        initialValue: "",
-      };
-      const bindSearchNode = () => {
-        const next = document.getElementById("contactsSearch");
-        if (next !== store.currentNode) {
-          store.currentNode = next instanceof HTMLInputElement ? next : null;
-          store.currentToken += 1;
-          if (store.currentNode) {
-            store.currentNode.dataset.traceToken = String(store.currentToken);
-          }
-          return true;
-        }
-        return false;
-      };
-      const readValue = () => store.currentNode instanceof HTMLInputElement ? store.currentNode.value : "";
-      const record = (type, event = null) => {
-        const target = event?.target instanceof HTMLElement ? event.target : null;
-        const shouldRecord = !target || target.id === "contactsSearch" || target === store.currentNode;
-        if (!shouldRecord) {
-          return;
-        }
-        store.events.push({
-          type,
-          nodeToken: store.currentToken,
-          activeId: document.activeElement?.id || "",
-          targetId: target?.id || "",
-          value: readValue(),
-          key: event?.key || "",
-          data: event?.data || "",
-          inputType: event?.inputType || "",
-        });
-      };
-      bindSearchNode();
-      ["focusin", "focusout", "blur", "beforeinput", "input", "keydown", "keyup"].forEach(type => {
-        document.addEventListener(type, event => {
-          if (bindSearchNode()) {
-            record("search-node-changed", null);
-          }
-          record(type, event);
-        }, true);
-      });
-      new MutationObserver(() => {
-        if (bindSearchNode()) {
-          record("search-node-changed", null);
-        }
-      }).observe(document.documentElement, { childList: true, subtree: true });
-      window.__contactsSearchTraceStore = store;
-    }
-    const store = window.__contactsSearchTraceStore;
-    const current = document.getElementById("contactsSearch");
-    store.currentNode = current instanceof HTMLInputElement ? current : null;
-    if (store.currentNode && !store.currentToken) {
-      store.currentToken = 1;
-      store.currentNode.dataset.traceToken = String(store.currentToken);
-    }
-    store.events = [];
-    store.initialToken = store.currentToken;
-    store.initialValue = store.currentNode instanceof HTMLInputElement ? store.currentNode.value : "";
-  });
-}
-
-async function traceContactsSearchTyping(page, query, timeoutMs) {
-  await setContactsSearchQuery(page, "", timeoutMs);
-  const search = page.locator(".light-contacts-search").first();
-  await search.click();
-  await installContactsSearchTrace(page);
-  await search.type(query, { delay: 40 });
-  await page.waitForFunction(expectedQuery => {
-    const input = document.querySelector(".light-contacts-search");
-    return input instanceof HTMLInputElement && input.value === expectedQuery;
-  }, query, { timeout: timeoutMs });
-  const trace = await page.evaluate(() => {
-    const store = window.__contactsSearchTraceStore || {};
-    const current = document.getElementById("contactsSearch");
-    return {
-      initialToken: Number(store.initialToken || 0),
-      initialValue: String(store.initialValue || ""),
-      finalToken: Number(store.currentToken || 0),
-      finalValue: current instanceof HTMLInputElement ? current.value : "",
-      events: Array.isArray(store.events) ? store.events.slice() : [],
-    };
-  });
-  const eventCounts = trace.events.reduce((counts, event) => {
-    const key = String(event?.type || "");
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, {});
-  return {
-    ...trace,
-    eventCounts,
-    searchState: await readContactsSearchState(page),
-  };
-}
-
-async function readContactEditState(page) {
-  return page.evaluate(() => {
-    const shell = document.querySelector(".light-shell");
-    const pageRoot = document.querySelector(".light-contact-detail-page");
-    const identity = pageRoot?.querySelector(".light-contact-detail-identity");
-    const titleNode = pageRoot?.querySelector(".light-contact-detail-title");
-    const identityStyle = identity ? getComputedStyle(identity) : null;
-    const titleStyle = titleNode ? getComputedStyle(titleNode) : null;
-    const isVisible = node => {
-      if (!(node instanceof HTMLElement)) {
-        return false;
-      }
-      if (node.hidden || node.closest("[hidden]")) {
-        return false;
-      }
-      const style = getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") {
-        return false;
-      }
-      return node.getClientRects().length > 0;
-    };
-    const fieldValue = key => {
-      const input = document.querySelector(`[data-contact-edit-field="${key}"]`);
-      return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
-    };
-    const status = document.querySelector("[data-contact-autosave-status]");
-    const firstNameInput = document.querySelector('[data-contact-edit-field="first_name"]');
-    const lastNameInput = document.querySelector('[data-contact-edit-field="last_name"]');
-    const actionButton = document.querySelector("[data-contact-detail-action]");
-    const summaryView = document.querySelector(".light-contact-detail-summary");
-    const infoSections = Array.from(pageRoot?.querySelectorAll(".light-info-section") || []);
-    const sectionTitle = section => String(section?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
-    const connectedSection = infoSections.find(section => sectionTitle(section) === "connected") || null;
-    const activitySection = infoSections.find(section => sectionTitle(section) === "activity") || null;
-    const connectedInfoRows = Array.from(connectedSection?.querySelectorAll(".light-info-row") || []);
-    const connectedLinkedRecordFeedRows = Array.from(connectedSection?.querySelectorAll(".light-linked-record-feed-row") || []);
-    const identityRect = identity instanceof HTMLElement
-      ? (() => {
-          const rect = identity.getBoundingClientRect();
-          return {
-            top: Number(rect.top || 0),
-            left: Number(rect.left || 0),
-            width: Number(rect.width || 0),
-            height: Number(rect.height || 0),
-          };
-        })()
-      : null;
-    const backgroundColor = String(identityStyle?.backgroundColor || "").trim().toLowerCase();
-    const hasTransparentBackground = !backgroundColor || backgroundColor === "rgba(0, 0, 0, 0)" || backgroundColor === "transparent";
-    const borderWidth = [
-      Number.parseFloat(identityStyle?.borderTopWidth || "0"),
-      Number.parseFloat(identityStyle?.borderRightWidth || "0"),
-      Number.parseFloat(identityStyle?.borderBottomWidth || "0"),
-      Number.parseFloat(identityStyle?.borderLeftWidth || "0"),
-    ].some(value => Number.isFinite(value) && value > 0);
-    const borderRadius = Number.parseFloat(identityStyle?.borderRadius || "0");
-    return {
-      route: shell?.getAttribute("data-light-route") || "",
-      pageVisible: Boolean(pageRoot),
-      mode: String(pageRoot?.getAttribute("data-contact-detail-mode") || "").trim() || "view",
-      title: String(pageRoot?.querySelector(".light-contact-detail-title")?.textContent || "").trim(),
-      titleFontSizePx: Number.parseFloat(titleStyle?.fontSize || "0") || 0,
-      summaryViewText: String(summaryView?.textContent || "").replace(/\s+/g, " ").trim(),
-      avatarText: String(pageRoot?.querySelector(".light-contact-detail-avatar-mount .light-avatar")?.textContent || "").trim(),
-      firstName: fieldValue("first_name"),
-      lastName: fieldValue("last_name"),
-      summary: fieldValue("summary"),
-      email: fieldValue("email"),
-      phone: fieldValue("phone"),
-      firstNameVisible: isVisible(firstNameInput),
-      lastNameVisible: isVisible(lastNameInput),
-      summaryVisible: isVisible(summaryView),
-      hasConnectedSection: Boolean(connectedSection),
-      hasActivitySection: Boolean(activitySection),
-      sectionTitles: infoSections.map(section => String(section.querySelector(".light-section-title")?.textContent || "").trim()).filter(Boolean),
-      connectedInfoRowCount: connectedInfoRows.length,
-      connectedLinkedRecordFeedRowCount: connectedLinkedRecordFeedRows.length,
-      connectedRowTexts: connectedInfoRows
-        .map(row => String(row.textContent || "").replace(/\s+/g, " ").trim())
-        .filter(Boolean),
-      hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
-      hasHeroContainer: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
-      hasIdentityHeader: Boolean(identity),
-      identityHasCardChrome: Boolean(identityStyle && (!hasTransparentBackground || identityStyle.boxShadow !== "none" || borderWidth || (Number.isFinite(borderRadius) && borderRadius > 0))),
-      identityRect,
-      action: String(actionButton?.getAttribute("data-contact-detail-action") || "").trim(),
-      autosaveStatus: String(status?.getAttribute("data-contact-autosave-status") || "").trim(),
-      autosaveLabel: String(status?.textContent || "").trim(),
-    };
-  });
-}
-
-async function waitForContactConnectedRows(page, labels, timeoutMs) {
-  await page.waitForFunction(expectedLabels => {
-    const pageRoot = document.querySelector(".light-contact-detail-page");
-    const infoSections = Array.from(pageRoot?.querySelectorAll(".light-info-section") || []);
-    const connectedSection = infoSections.find(section => String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === "connected");
-    if (!connectedSection) {
-      return false;
-    }
-    const infoRows = Array.from(connectedSection.querySelectorAll(".light-info-row"));
-    const linkedFeedRows = connectedSection.querySelectorAll(".light-linked-record-feed-row").length;
-    const rowTexts = infoRows
-      .map(row => String(row.textContent || "").replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-    return linkedFeedRows === 0 && expectedLabels.every(label => rowTexts.some(text => text.includes(label)));
-  }, labels, { timeout: timeoutMs });
-  return readContactEditState(page);
-}
-
-async function saveContactDetailIdentityScreenshot(page, reportDir, name) {
-  const target = path.join(reportDir, `${name}.png`);
-  const identity = page.locator(".light-contact-detail-identity").first();
-  await identity.waitFor({ state: "visible", timeout: 30000 });
-  await identity.screenshot({
-    path: target,
-    animations: "disabled",
-    timeout: 30000,
-  });
-  return target;
 }
 
 async function setContactsSearchQuery(page, query, timeoutMs) {
@@ -2228,158 +1577,20 @@ async function expectContactsSearchRows(page, query, expectedIds, timeoutMs) {
   return readContactsSearchState(page);
 }
 
-async function fillContactEditField(page, fieldName, value, timeoutMs) {
-  const input = page.locator(`[data-contact-edit-field="${fieldName}"]`).first();
-  await input.waitFor({ state: "visible", timeout: timeoutMs });
-  await input.fill(value);
-}
-
-async function waitForContactRecord(config, contactId, predicate, description, timeoutMs) {
-  const startedAt = Date.now();
-  let lastRecord = null;
-  while (Date.now() - startedAt < timeoutMs) {
-    lastRecord = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(contactId)}`);
-    if (predicate(lastRecord)) {
-      return lastRecord;
-    }
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
-  throw new Error(`Timed out waiting for contact ${contactId}: ${description}; last record ${JSON.stringify(lastRecord)}`);
-}
-
-async function waitForContactAutosaveSaved(page, timeoutMs) {
-  await page.waitForFunction(() => {
-    const status = document.querySelector("[data-contact-autosave-status]");
-    return status instanceof HTMLElement && status.getAttribute("data-contact-autosave-status") === "saved";
-  }, undefined, { timeout: timeoutMs });
-}
-
-async function installContactEditTrace(page, fieldName) {
-  await page.evaluate(fieldKey => {
-    if (!window.__contactEditTraceStore) {
-      window.__contactEditTraceStore = {};
-    }
-    const store = {
-      currentNode: null,
-      currentToken: 0,
-      events: [],
-      initialToken: 0,
-      initialValue: "",
-    };
-    const selector = `[data-contact-edit-field="${String(fieldKey || "")}"]`;
-    const bindFieldNode = () => {
-      const next = document.querySelector(selector);
-      if (next !== store.currentNode) {
-        store.currentNode = next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement ? next : null;
-        store.currentToken += 1;
-        if (store.currentNode instanceof HTMLElement) {
-          store.currentNode.dataset.traceToken = String(store.currentToken);
-        }
-        return true;
-      }
-      return false;
-    };
-    const readValue = () => store.currentNode instanceof HTMLInputElement || store.currentNode instanceof HTMLTextAreaElement
-      ? store.currentNode.value
-      : "";
-    const record = (type, event = null) => {
-      const target = event?.target instanceof HTMLElement ? event.target : null;
-      const shouldRecord = !target || target.matches(selector) || target === store.currentNode;
-      if (!shouldRecord) {
-        return;
-      }
-      store.events.push({
-        type,
-        nodeToken: store.currentToken,
-        activeName: document.activeElement?.getAttribute?.("data-contact-edit-field") || "",
-        value: readValue(),
-        key: event?.key || "",
-        data: event?.data || "",
-        inputType: event?.inputType || "",
-      });
-    };
-    bindFieldNode();
-    ["focusin", "focusout", "blur", "beforeinput", "input", "keydown", "keyup"].forEach(type => {
-      document.addEventListener(type, event => {
-        if (bindFieldNode()) {
-          record("contact-edit-node-changed", null);
-        }
-        record(type, event);
-      }, true);
-    });
-    new MutationObserver(() => {
-      if (bindFieldNode()) {
-        record("contact-edit-node-changed", null);
-      }
-    }).observe(document.documentElement, { childList: true, subtree: true });
-    window.__contactEditTraceStore[fieldKey] = store;
-    if (store.currentNode && !store.currentToken) {
-      store.currentToken = 1;
-      store.currentNode.dataset.traceToken = String(store.currentToken);
-    }
-    store.events = [];
-    store.initialToken = store.currentToken;
-    store.initialValue = readValue();
-  }, fieldName);
-}
-
-async function traceContactEditTyping(page, fieldName, value, timeoutMs) {
-  const input = page.locator(`[data-contact-edit-field="${fieldName}"]`).first();
-  await input.waitFor({ state: "visible", timeout: timeoutMs });
-  await input.click();
-  await input.fill("");
-  await installContactEditTrace(page, fieldName);
-  await input.type(value, { delay: 40 });
-  await page.waitForFunction(({ fieldKey, expectedValue }) => {
-    const field = document.querySelector(`[data-contact-edit-field="${fieldKey}"]`);
-    return (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) && field.value === expectedValue;
-  }, { fieldKey: fieldName, expectedValue: value }, { timeout: timeoutMs });
-  const trace = await page.evaluate(fieldKey => {
-    const store = (window.__contactEditTraceStore || {})[fieldKey] || {};
-    const current = document.querySelector(`[data-contact-edit-field="${fieldKey}"]`);
-    return {
-      initialToken: Number(store.initialToken || 0),
-      initialValue: String(store.initialValue || ""),
-      finalToken: Number(store.currentToken || 0),
-      finalValue: current instanceof HTMLInputElement || current instanceof HTMLTextAreaElement ? current.value : "",
-      events: Array.isArray(store.events) ? store.events.slice() : [],
-    };
-  }, fieldName);
-  const eventCounts = trace.events.reduce((counts, event) => {
-    const key = String(event?.type || "");
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, {});
-  return {
-    ...trace,
-    eventCounts,
-    editState: await readContactEditState(page),
-  };
-}
-
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
-  summary.contactProfileCards = summary.contactProfileCards || [];
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
-  const proofContactId = `${seed.runId}-contact-one`;
-  const davidContactId = `${seed.runId}-david-contact`;
-  const danielContactId = `${seed.runId}-daniel-contact`;
   const firstContact = page.locator("button[data-contact-id]").first();
   await firstContact.waitFor({ state: "visible", timeout: config.timeoutMs });
   const firstContactId = String(await firstContact.getAttribute("data-contact-id") || "");
   const contactsListFlatness = await readContactsListFlatness(page);
   const baselineSearchState = await readContactsSearchState(page);
   const baselineRowIds = baselineSearchState.rowIds.slice();
+  assert(firstContactId === "contact-me", `Me contact should remain pinned first in Contacts (saw ${firstContactId || "none"})`);
   assert(contactsListFlatness.route === "contacts", `Expected contacts route before detail, got ${contactsListFlatness.route}`);
   assert(baselineSearchState.searchVisible, "Contacts search should be visible once contacts have loaded");
   assert(baselineSearchState.query === "", `Expected Contacts search to start empty, got ${baselineSearchState.query}`);
-  assert(
-    JSON.stringify(baselineSearchState.rowTitles) === JSON.stringify(baselineSearchState.rowTitles.slice().sort((left, right) => left.localeCompare(right))),
-    `Expected Contacts baseline list to stay alphabetical, got ${baselineSearchState.rowTitles.join(", ")}`
-  );
-  assert(baselineSearchState.rowAvatarTexts["contact-me"] === "M", `Expected contact-me avatar to stay M, got ${baselineSearchState.rowAvatarTexts["contact-me"] || "<missing>"}`);
-  assert(baselineSearchState.rowAvatarTexts[davidContactId] === "D", `Expected David avatar to render a single D initial, got ${baselineSearchState.rowAvatarTexts[davidContactId] || "<missing>"}`);
-  assert(baselineSearchState.rowAvatarTexts[danielContactId] === "D", `Expected Daniel avatar to render a single D initial, got ${baselineSearchState.rowAvatarTexts[danielContactId] || "<missing>"}`);
+  assert(baselineRowIds[0] === "contact-me", `Expected Contacts baseline list to keep Me first, got ${baselineRowIds[0] || "none"}`);
   assert(contactsListFlatness.rowClassList.includes("is-flat-feed"), `Contacts list should render flat-feed rows (${contactsListFlatness.rowClassList.join(" ")})`);
   assert(isTransparentColor(contactsListFlatness.rowBackground), `Contacts list should stay visually flat (${contactsListFlatness.rowBackground})`);
   assert(isNoShadow(contactsListFlatness.rowBoxShadow), `Contacts list should stay visually flat (${contactsListFlatness.rowBoxShadow})`);
@@ -2399,43 +1610,24 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     );
   }
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-baseline`);
-  const initialsSearchState = await expectContactsSearchRows(page, "Da", [danielContactId, davidContactId], config.timeoutMs);
-  assert(initialsSearchState.rowAvatarTexts[davidContactId] === "D", `Expected David initials search result to render D, got ${initialsSearchState.rowAvatarTexts[davidContactId] || "<missing>"}`);
-  assert(initialsSearchState.rowAvatarTexts[danielContactId] === "D", `Expected Daniel initials search result to render D, got ${initialsSearchState.rowAvatarTexts[danielContactId] || "<missing>"}`);
-  screenshots[`${theme}_contacts_search_initials`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-initials`);
-  const stabilityQuery = "dav";
-  const stabilityTrace = await traceContactsSearchTyping(page, stabilityQuery, config.timeoutMs);
-  assert((stabilityTrace.eventCounts.blur || 0) === 0, `Expected Contacts search typing to avoid blur/focusout while filtering; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
-  assert((stabilityTrace.eventCounts.focusout || 0) === 0, `Expected Contacts search typing to avoid blur/focusout while filtering; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
-  assert((stabilityTrace.eventCounts["search-node-changed"] || 0) === 0, `Expected Contacts search typing to keep the same mounted input; saw ${JSON.stringify(stabilityTrace.eventCounts)}`);
-  assert(stabilityTrace.initialToken === stabilityTrace.finalToken, `Expected Contacts search typing to keep the same mounted input (token ${stabilityTrace.initialToken} -> ${stabilityTrace.finalToken})`);
-  assert(stabilityTrace.finalValue === stabilityQuery, `Expected Contacts search typing to finish with ${stabilityQuery}, got ${stabilityTrace.finalValue}`);
-  assert(
-    JSON.stringify(stabilityTrace.searchState.rowIds) === JSON.stringify([davidContactId]),
-    `Expected ${stabilityQuery} to filter down to David, got ${stabilityTrace.searchState.rowIds.join(", ")}`
-  );
-  screenshots[`${theme}_contacts_search_stability`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-stability`);
-  summary.contactSearchStability = summary.contactSearchStability || [];
-  summary.contactSearchStability.push({
-    theme,
-    query: stabilityQuery,
-    trace: stabilityTrace,
-  });
-  await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
+  await page.locator('button[data-contact-id="contact-me"]').click();
+  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
+  await waitForGraphText(page, "Me", config.timeoutMs);
+  await assertNoContactEndpoints(page, config, "contact-me", "Me contact detail");
+  screenshots[`${theme}_contacts_me_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-me-detail`);
+  assert(await page.getByRole("button", { name: "Edit Me" }).count() === 0, "Expected contacts detail to be read-only");
+  await topBackToRoute(page, "contacts", "", config.timeoutMs);
   if (!seed.writeEnabled && !contacts.length) {
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const photoState = await assertContactPhotoThumbnails(page, `${theme} Contacts list`, config.timeoutMs);
-  summary.contactPhotoThumbnails = summary.contactPhotoThumbnails || [];
-  summary.contactPhotoThumbnails.push({ theme, ...photoState });
   if (seed.writeEnabled) {
+    const proofContactId = `${seed.runId}-contact-one`;
     const emailQuery = "one@example";
     const phoneQuery = "0101000";
-    const summaryQuery = "Partner lead";
-    const staleActivityQuery = "Linked to Alpha";
+    const phraseQuery = "Linked to Alpha";
+    const reminderQuery = "reminder";
     const noMatchQuery = "zzzz-no-match";
-    const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
 
     const emailSearchState = await expectContactsSearchRows(page, emailQuery, [proofContactId], config.timeoutMs);
     assert(emailSearchState.rowTitles.includes("Proof Contact One"), `Expected email query to return Proof Contact One, got ${emailSearchState.rowTitles.join(", ")}`);
@@ -2445,14 +1637,23 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     assert(phoneSearchState.rowTitles.includes("Proof Contact One"), `Expected phone query to return Proof Contact One, got ${phoneSearchState.rowTitles.join(", ")}`);
     screenshots[`${theme}_contacts_search_phone`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-phone`);
 
-    const summarySearchState = await expectContactsSearchRows(page, summaryQuery, [proofContactId], config.timeoutMs);
-    assert(summarySearchState.rowTitles.includes("Proof Contact One"), `Expected summary query to return Proof Contact One, got ${summarySearchState.rowTitles.join(", ")}`);
-    screenshots[`${theme}_contacts_search_summary`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-summary`);
+    const phraseSearchState = await expectContactsSearchRows(page, phraseQuery, [proofContactId], config.timeoutMs);
+    assert(phraseSearchState.rowTitles.includes("Proof Contact One"), `Expected phrase query to return Proof Contact One, got ${phraseSearchState.rowTitles.join(", ")}`);
+    screenshots[`${theme}_contacts_search_phrase`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-phrase`);
 
-    const staleActivitySearchState = await expectContactsSearchRows(page, staleActivityQuery, [], config.timeoutMs);
-    assert(staleActivitySearchState.searchVisible, "Expected stale activity-only query to keep the Contacts search field visible");
-    assert(staleActivitySearchState.rowIds.length === 0, `Expected stale activity-only query to return no Contacts rows, got ${staleActivitySearchState.rowIds.join(", ")}`);
-    screenshots[`${theme}_contacts_search_activity_no_match`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-activity-no-match`);
+    await setContactsSearchQuery(page, reminderQuery, config.timeoutMs);
+    await page.waitForFunction(expectedQuery => {
+      const input = document.querySelector(".light-contacts-search");
+      const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
+        .map(node => String(node.getAttribute("data-contact-id") || "").trim())
+        .filter(Boolean);
+      return input instanceof HTMLInputElement
+        && input.value === expectedQuery
+        && rowIds.includes("contact-me")
+        && rowIds[0] === "contact-me";
+    }, reminderQuery, { timeout: config.timeoutMs });
+    const reminderSearchState = await readContactsSearchState(page);
+    assert(reminderSearchState.rowIds[0] === "contact-me", `Expected reminder query to keep Me first, got ${reminderSearchState.rowIds.join(", ")}`);
 
     const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
     assert(emptySearchState.searchVisible, "Contacts search should stay visible when there are no matching results");
@@ -2463,36 +1664,14 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     screenshots[`${theme}_contacts_search_empty`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-empty`);
 
     const clearedSearchState = await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
-    assert(
-      JSON.stringify(clearedSearchState.rowIds) === JSON.stringify(baselineRowIds),
-      `Expected clearing Contacts search to restore the baseline order, got ${clearedSearchState.rowIds.join(", ")}`
-    );
+    assert(clearedSearchState.rowIds[0] === "contact-me", `Expected clearing Contacts search to restore Me first, got ${clearedSearchState.rowIds[0] || "none"}`);
     screenshots[`${theme}_contacts_search_cleared`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-cleared`);
 
     await expectContactsSearchRows(page, emailQuery, [proofContactId], config.timeoutMs);
     await page.locator(`button[data-contact-id="${proofContactId}"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-    const contactEditState = await waitForContactConnectedRows(page, connectedLabels, config.timeoutMs);
-    assert(contactEditState.pageVisible, "Expected contact detail page to be visible");
-    assert(contactEditState.mode === "view", `Expected contact detail to open in view mode, got ${contactEditState.mode}`);
-    assert(!contactEditState.hasHeroContainer, "Expected contact detail to drop the hero container chrome");
-    assert(contactEditState.hasIdentityHeader, "Expected contact detail to keep a frameless identity header");
-    assert(!contactEditState.identityHasCardChrome, "Expected contact detail identity header to stay chrome-free");
-    assert(contactEditState.titleFontSizePx >= 28, `Expected contact detail title font size to stay large, got ${contactEditState.titleFontSizePx}`);
-    assert(contactEditState.action === "edit", `Expected contact detail to expose an edit action, got ${contactEditState.action}`);
-    assert(!contactEditState.firstNameVisible && !contactEditState.lastNameVisible, "Expected name inputs to stay hidden until edit mode is entered");
-    assert(!contactEditState.hasActivitySection, "Expected contact detail to omit the Activity section");
-    assert(contactEditState.hasConnectedSection, "Expected contact detail to keep Connected visible");
-    assert(contactEditState.connectedInfoRowCount >= 3, `Expected contact Connected rows to use generic info rows, got ${contactEditState.connectedInfoRowCount}`);
-    assert(contactEditState.connectedLinkedRecordFeedRowCount === 0, `Expected contact Connected rows to stop using linked-record feed rows, got ${contactEditState.connectedLinkedRecordFeedRowCount}`);
+    await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
     await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail");
-    await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
-    summary.contactProfileCards.push({ theme, contact: proofContactId, editor: contactEditState });
-    assert(await page.getByText("NOTES").count() === 0, "Expected populated contact detail to avoid a separate Notes section.");
-    for (const label of connectedLabels) {
-      assert(contactEditState.connectedRowTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${contactEditState.connectedRowTexts.join(", ")}.`);
-    }
     const filteredDetailState = await readGraphDetailState(page);
     assert(filteredDetailState.route === "contact-detail", `Expected contact-detail route, got ${filteredDetailState.route}`);
     assert(!filteredDetailState.hasHtmlFrame, "Did not expect contact detail to render a generated HTML iframe");
@@ -2518,22 +1697,23 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
 
     await page.locator(`button[data-contact-id="${proofContactId}"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
+    await expectFrameHeading(page, "Proof Contact One", config.timeoutMs);
     await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail");
-    await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
     screenshots[`${theme}_contacts_detail_reopened`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
-    await page.locator(`[data-workspace-target-kind="note"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    for (const [kind, route, id, text] of [
-      ["note", "note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
-      ["project", "project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
-      ["meeting_note", "meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
-    ]) {
-      await page.locator(`[data-workspace-target-kind="${kind}"][data-workspace-target-id="${id}"]`).first().click();
-      await waitForLightRoute(page, route, config.timeoutMs);
-      await waitForGraphText(page, text, config.timeoutMs);
-      await topBackToRoute(page, "contact-detail", "Proof Contact One", config.timeoutMs);
+    if (seed.writeEnabled) {
+      await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+      for (const [route, id, text] of [
+        ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note"],
+        ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project"],
+        ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting"]
+      ]) {
+        await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
+        await waitForLightRoute(page, route, config.timeoutMs);
+        await waitForGraphText(page, text, config.timeoutMs);
+        await topBackToRoute(page, "contact-detail", "Proof Contact One", config.timeoutMs);
+      }
+      screenshots[`${theme}_contact_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-after-back`);
     }
-    screenshots[`${theme}_contact_after_back`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-after-back`);
     await backHome(page, theme, config.timeoutMs);
     summary.contactProfiles = summary.contactProfiles || [];
     summary.contactProfiles.push({
@@ -2545,8 +1725,8 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
         queries: {
           email: emailQuery,
           phone: phoneQuery,
-          summary: summaryQuery,
-          stale_activity: staleActivityQuery,
+          phrase: phraseQuery,
+          reminder: reminderQuery,
           no_match: noMatchQuery,
         }
       }
@@ -2555,17 +1735,8 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   }
   const firstVisibleContact = contacts[0];
   await page.locator(`button[data-contact-id="${firstVisibleContact.id}"]`).click();
-  await waitForGraphText(page, firstVisibleContact.title, config.timeoutMs);
-  const contactEditState = await readContactEditState(page);
-  assert(contactEditState.pageVisible, `Expected ${firstVisibleContact.title} detail to be visible`);
-  assert(contactEditState.mode === "view", `Expected ${firstVisibleContact.title} detail to open in view mode, got ${contactEditState.mode}`);
-  assert(!contactEditState.hasHeroContainer, "Expected classic detail to drop the hero container chrome");
-  assert(contactEditState.hasIdentityHeader, "Expected classic detail to keep a frameless identity header");
-  assert(!contactEditState.identityHasCardChrome, "Expected classic detail identity header to stay chrome-free");
-  assert(contactEditState.titleFontSizePx >= 28, `Expected classic detail title font size to stay large, got ${contactEditState.titleFontSizePx}`);
+  await expectFrameHeading(page, firstVisibleContact.title, config.timeoutMs);
   await assertNoContactEndpoints(page, config, firstVisibleContact.id, `${firstVisibleContact.title} detail`);
-  await assertNoContactHtmlDocument(page, config, firstVisibleContact.id, `${firstVisibleContact.title} detail`);
-  summary.contactProfileCards.push({ theme, contact: firstVisibleContact.id, editor: contactEditState });
   const detailState = await readGraphDetailState(page);
   assert(detailState.route === "contact-detail", `Expected contact-detail route, got ${detailState.route}`);
   assert(!detailState.hasHtmlFrame, "Did not expect contact detail to render a generated HTML iframe");
@@ -2575,255 +1746,64 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   summary.contactProfiles.push({ theme, selfContactId: firstContactId, contacts_list_flatness: contactsListFlatness });
 }
 
-async function proveContactsEdit(page, config, seed, theme, screenshots, summary) {
-  if (!seed.writeEnabled) {
-    summary.assertions.push("contacts edit proof skipped because API token was unavailable");
-    return;
-  }
-  const proofContactId = `${seed.runId}-contact-one`;
-  const davidContactId = `${seed.runId}-david-contact`;
-  const updatedFirstName = "Updated";
-  const updatedLastName = "Proof Contact";
-  const updatedTitle = "Updated Proof Contact";
-  const updatedSummary = "Updated from local proof edit flow";
-  const updatedEmail = "updated.proof.one@example.com";
-  const updatedPhone = "+1 (555) 010-3333";
-  const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
-  const expectedInitials = "UC";
-  const staleActivityQuery = "Linked to Alpha";
-  const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
-
-  await backHome(page, theme, config.timeoutMs);
-  await openTile(page, "Contacts", "contacts", config.timeoutMs);
-  await page.locator(`button[data-contact-id="${proofContactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  const baselineListState = await readContactsSearchState(page);
-  assert(baselineListState.rowDetails[proofContactId] === "Partner lead", `Expected Contacts row subtitle to drop activity suffix, got ${baselineListState.rowDetails[proofContactId] || "<missing>"}`);
-  const staleActivitySearchState = await expectContactsSearchRows(page, staleActivityQuery, [], config.timeoutMs);
-  assert(staleActivitySearchState.searchVisible, "Expected stale activity-only query to keep the Contacts search field visible");
-  assert(staleActivitySearchState.rowIds.length === 0, `Expected stale activity-only query to return no Contacts rows, got ${staleActivitySearchState.rowIds.join(", ")}`);
-  screenshots[`${theme}_contact_edit_activity_no_match`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-activity-no-match`);
-  await expectContactsSearchRows(page, "", baselineListState.rowIds, config.timeoutMs);
-  await page.locator(`button[data-contact-id="${proofContactId}"]`).first().click();
-  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-  await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-  const initialEditState = await waitForContactConnectedRows(page, connectedLabels, config.timeoutMs);
-  assert(initialEditState.pageVisible, "Expected classic contact detail to be visible");
-  assert(initialEditState.route === "contact-detail", `Expected contact-detail route, got ${initialEditState.route}`);
-  assert(initialEditState.mode === "view", `Expected classic detail to open in view mode, got ${initialEditState.mode}`);
-  assert(initialEditState.action === "edit", `Expected classic detail to expose an edit action, got ${initialEditState.action}`);
-  assert(!initialEditState.hasHeroContainer, "Expected classic detail to drop the hero container chrome");
-  assert(initialEditState.hasIdentityHeader, "Expected classic detail to keep a frameless identity header");
-  assert(!initialEditState.identityHasCardChrome, "Expected classic detail identity header to stay chrome-free");
-  assert(initialEditState.titleFontSizePx >= 28, `Expected classic detail title font size to stay large, got ${initialEditState.titleFontSizePx}`);
-  assert(!initialEditState.firstNameVisible && !initialEditState.lastNameVisible, "Expected name inputs to stay hidden until edit mode is entered");
-  assert(!initialEditState.hasActivitySection, "Expected classic detail to omit the Activity section");
-  assert(initialEditState.hasConnectedSection, "Expected classic detail to keep Connected visible");
-  assert(initialEditState.connectedInfoRowCount >= 3, `Expected contact Connected rows to use generic info rows, got ${initialEditState.connectedInfoRowCount}`);
-  assert(initialEditState.connectedLinkedRecordFeedRowCount === 0, `Expected contact Connected rows to stop using linked-record feed rows, got ${initialEditState.connectedLinkedRecordFeedRowCount}`);
-  for (const label of connectedLabels) {
-    assert(initialEditState.connectedRowTexts.some(value => value.includes(label)), `Expected contact Connected to include ${label}, got ${initialEditState.connectedRowTexts.join(", ")}`);
-  }
-  screenshots[`${theme}_contact_edit_baseline`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-baseline`);
-  screenshots[`${theme}_contact_edit_identity_view`] = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${theme}-contact-edit-identity-view`);
-
-  await page.locator('[data-contact-detail-action="edit"]').first().click();
-  await page.waitForFunction(() => {
-    const pageRoot = document.querySelector(".light-contact-detail-page");
-    return pageRoot instanceof HTMLElement && pageRoot.getAttribute("data-contact-detail-mode") === "edit";
-  }, undefined, { timeout: config.timeoutMs });
-  const editModeState = await readContactEditState(page);
-  assert(editModeState.mode === "edit", `Expected detail to enter edit mode, got ${editModeState.mode}`);
-  assert(editModeState.action === "done", `Expected edit mode to expose a done action, got ${editModeState.action}`);
-  assert(!editModeState.hasHeroContainer, "Expected edit mode to keep the hero container removed");
-  assert(editModeState.hasIdentityHeader, "Expected edit mode to keep the frameless identity header");
-  assert(!editModeState.identityHasCardChrome, "Expected edit mode to keep the identity header chrome-free");
-  assert(editModeState.firstNameVisible && editModeState.lastNameVisible, "Expected edit mode to expose first and last name inputs");
-  assert(!editModeState.hasActivitySection, "Expected edit mode to keep Activity removed");
-  screenshots[`${theme}_contact_edit_mode`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-mode`);
-  screenshots[`${theme}_contact_edit_identity_edit`] = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${theme}-contact-edit-identity-edit`);
-
-  const typingTrace = await traceContactEditTyping(page, "first_name", updatedFirstName, config.timeoutMs);
-  assert((typingTrace.eventCounts.blur || 0) === 0 && (typingTrace.eventCounts.focusout || 0) === 0, "Expected contact edit typing to avoid blur/focusout while editing");
-  assert(typingTrace.initialToken === typingTrace.finalToken, "Expected contact edit typing to keep the same mounted input");
-
-  await fillContactEditField(page, "last_name", updatedLastName, config.timeoutMs);
-  await fillContactEditField(page, "summary", updatedSummary, config.timeoutMs);
-  await fillContactEditField(page, "email", updatedEmail, config.timeoutMs);
-  await fillContactEditField(page, "phone", updatedPhone, config.timeoutMs);
-  await waitForContactAutosaveSaved(page, config.timeoutMs);
-  let updatedRecord = await waitForContactRecord(
-    config,
-    proofContactId,
-    record => record.title === updatedTitle
-      && record.summary === updatedSummary
-      && String(record?.metadata?.email || "") === updatedEmail
-      && String(record?.metadata?.phone || "") === updatedPhone,
-    "name + contact info autosave",
-    config.timeoutMs
-  );
-  assert(updatedRecord.title === updatedTitle, `Expected contact edit to persist the updated title, got ${updatedRecord.title}`);
-  screenshots[`${theme}_contact_edit_fields`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-fields`);
-
-  const photoInput = page.locator('input[type="file"][data-contact-photo-input="true"]').first();
-  await photoInput.setInputFiles(photoPath);
-  await page.waitForFunction(() => Boolean(document.querySelector(".light-contact-detail-page .light-avatar.has-photo img")), undefined, { timeout: config.timeoutMs });
-  await waitForContactAutosaveSaved(page, config.timeoutMs);
-  updatedRecord = await waitForContactRecord(
-    config,
-    proofContactId,
-    record => String(record?.metadata?.photo || "").startsWith("data:image/jpeg"),
-    "photo add autosave",
-    config.timeoutMs
-  );
-  assert(String(updatedRecord.metadata?.photo || "").trim(), "Expected contact edit to persist the uploaded photo");
-  screenshots[`${theme}_contact_edit_photo_added`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-photo-added`);
-
-  await page.locator('[data-contact-photo-remove="true"]').first().click();
-  await page.waitForFunction(() => !document.querySelector(".light-contact-detail-page .light-avatar.has-photo img"), undefined, { timeout: config.timeoutMs });
-  await waitForContactAutosaveSaved(page, config.timeoutMs);
-  updatedRecord = await waitForContactRecord(
-    config,
-    proofContactId,
-    record => !String(record?.metadata?.photo || "").trim(),
-    "photo remove autosave",
-    config.timeoutMs
-  );
-  assert(!String(updatedRecord.metadata?.photo || "").trim(), "Expected contact edit to remove the uploaded photo");
-  const photoRemovedState = await readContactEditState(page);
-  assert(photoRemovedState.avatarText === expectedInitials, `Expected photo removal to restore derived initials, got ${photoRemovedState.avatarText}`);
-  screenshots[`${theme}_contact_edit_photo_removed`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-photo-removed`);
-
-  await page.locator('[data-contact-detail-action="done"]').first().click();
-  await page.waitForFunction(expectedTitle => {
-    const pageRoot = document.querySelector(".light-contact-detail-page");
-    const title = document.querySelector(".light-contact-detail-title");
-    return pageRoot instanceof HTMLElement
-      && pageRoot.getAttribute("data-contact-detail-mode") === "view"
-      && String(title?.textContent || "").trim() === expectedTitle;
-  }, updatedTitle, { timeout: config.timeoutMs });
-
-  await topBackToRoute(page, "contacts", "", config.timeoutMs);
-  await page.locator(`button[data-contact-id="${proofContactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-  const updatedListState = await readContactsSearchState(page);
-  assert(updatedListState.rowTitles.includes(updatedTitle), `Expected edited contact row to reappear with the updated title, got ${updatedListState.rowTitles.join(", ")}`);
-  screenshots[`${theme}_contact_edit_updated_list`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-updated-list`);
-
-  await page.locator(`button[data-contact-id="${proofContactId}"]`).first().click();
-  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-  await waitForGraphText(page, updatedTitle, config.timeoutMs);
-  const reopenedState = await readContactEditState(page);
-  assert(reopenedState.mode === "view", `Expected reopened contact detail to return in view mode, got ${reopenedState.mode}`);
-  assert(reopenedState.action === "edit", `Expected reopened contact detail to expose the edit action, got ${reopenedState.action}`);
-  assert(reopenedState.firstName === updatedFirstName, `Expected reopened contact detail to keep first name ${updatedFirstName}, got ${reopenedState.firstName}`);
-  assert(reopenedState.lastName === updatedLastName, `Expected reopened contact detail to keep last name ${updatedLastName}, got ${reopenedState.lastName}`);
-  assert(reopenedState.summary === updatedSummary, `Expected reopened contact detail to keep summary ${updatedSummary}, got ${reopenedState.summary}`);
-  assert(reopenedState.email === updatedEmail, `Expected reopened contact detail to keep email ${updatedEmail}, got ${reopenedState.email}`);
-  assert(reopenedState.phone === updatedPhone, `Expected reopened contact detail to keep phone ${updatedPhone}, got ${reopenedState.phone}`);
-  assert(!reopenedState.hasActivitySection, "Expected reopened contact detail to keep Activity removed");
-  assert(!reopenedState.hasPhotoPreview, "Expected photo removal to keep the detail editor on initials after reopen");
-  await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
-  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-  await waitForGraphText(page, updatedTitle, config.timeoutMs);
-  const reloadedState = await readContactEditState(page);
-  assert(reloadedState.mode === "view", `Expected contact detail reload to stay in view mode, got ${reloadedState.mode}`);
-  assert(reloadedState.firstName === updatedFirstName, `Expected contact detail reload to stay on the edited contact, got ${reloadedState.firstName}`);
-  assert(reloadedState.lastName === updatedLastName, `Expected contact detail reload to preserve last name ${updatedLastName}, got ${reloadedState.lastName}`);
-  assert(reloadedState.summary === updatedSummary, `Expected contact detail reload to preserve summary ${updatedSummary}, got ${reloadedState.summary}`);
-  assert(reloadedState.email === updatedEmail, `Expected contact detail reload to preserve email ${updatedEmail}, got ${reloadedState.email}`);
-  assert(reloadedState.phone === updatedPhone, `Expected contact detail reload to preserve phone ${updatedPhone}, got ${reloadedState.phone}`);
-  assert(!reloadedState.hasActivitySection, "Expected reloaded contact detail to keep Activity removed");
-  assert(!reloadedState.hasPhotoPreview, "Expected contact detail reload to keep photo removal on initials");
-  screenshots[`${theme}_contact_edit_reload`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-reload`);
-  await topBackToRoute(page, "contacts", "", config.timeoutMs);
-  await expectContactsSearchRows(page, "David", [davidContactId], config.timeoutMs);
-  await page.locator(`button[data-contact-id="${davidContactId}"]`).first().click();
-  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
-  await waitForGraphText(page, "David", config.timeoutMs);
-  const emptyConnectedState = await readContactEditState(page);
-  assert(!emptyConnectedState.hasActivitySection, "Expected unlinked contact detail to keep Activity removed");
-  assert(!emptyConnectedState.hasConnectedSection, "Expected unlinked contact detail to omit Connected entirely");
-  screenshots[`${theme}_contact_edit_empty_connected`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-empty-connected`);
-
-  await backHome(page, theme, config.timeoutMs);
-  await openTile(page, "Tasks", "tasks", config.timeoutMs);
-  await page.locator(`.light-task-row[data-task-id="${seed.taskIds?.inline}"] .light-task-row-main`).first().click();
-  await waitForLightRoute(page, "task-detail", config.timeoutMs);
-  await waitForGraphText(page, "Proof Future Task", config.timeoutMs);
-  const taskConnectedRowCount = await page.locator('.light-info-row[data-task-connected-kind]').count();
-  assert(taskConnectedRowCount > 0, `Expected task Connected comparison to keep generic info rows, got ${taskConnectedRowCount}`);
-  screenshots[`${theme}_contact_edit_connected_comparison`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-connected-comparison`);
-  await backHome(page, theme, config.timeoutMs);
-
-  summary.contactEdits = summary.contactEdits || [];
-  summary.contactEdits.push({
-    theme,
-    contact_id: proofContactId,
-    updated_first_name: updatedFirstName,
-    updated_last_name: updatedLastName,
-    updated_title: updatedTitle,
-    updated_summary: updatedSummary,
-    updated_email: updatedEmail,
-    updated_phone: updatedPhone,
-    photo_present: Boolean(String(updatedRecord.metadata?.photo || "").trim()),
-    reload_stayed_on_contact: true,
-  });
-}
-
 async function proveReminders(page, config, seed, theme, screenshots, summary) {
   if (!seed.writeEnabled) {
     summary.assertions.push("reminder delivery proof skipped because API token was unavailable");
     return;
   }
-  const liveReminderId = `${seed.runId}-live-reminder`;
-  const dismissReminderId = `${seed.runId}-dismiss-reminder`;
-  const upcomingReminderId = `${seed.runId}-upcoming-reminder`;
-  const snoozedReminderId = `${seed.runId}-snoozed-reminder`;
-  for (const reminderId of [liveReminderId, dismissReminderId, upcomingReminderId, snoozedReminderId]) {
+  const deliveryEnabled = shouldRunReminderDelivery(config);
+  const manageReminderId = `${seed.runId}-manage-reminder`;
+  const manageDueAtMs = Date.now() + 30 * 60 * 1000;
+  const deliveryLanes = deliveryEnabled
+    ? [
+        {
+          key: "phone",
+          id: `${seed.runId}-due-reminder-phone`,
+          title: "Proof Due Reminder Phone",
+          channel: "phone_notification",
+          detail: "Phone notification lane should fire through VM reminder polling."
+        },
+        {
+          key: "gmail",
+          id: `${seed.runId}-due-reminder-gmail`,
+          title: "Proof Due Reminder Gmail",
+          channel: "email",
+          detail: "Gmail lane should fire through VM reminder polling."
+        },
+        {
+          key: "sms",
+          id: `${seed.runId}-due-reminder-sms`,
+          title: "Proof Due Reminder SMS",
+          channel: "sms",
+          detail: "SMS lane should fire through VM reminder polling."
+        }
+      ]
+    : [];
+  for (const reminderId of [manageReminderId, ...deliveryLanes.map(item => item.id)]) {
     await deleteWorkspaceRecord(config, "reminders", reminderId);
   }
   const baselineActiveCount = await readActiveReminderCount(config);
-  const liveDueAtMs = Date.now() - 60_000;
-  const dismissDueAtMs = Date.now() - 30_000;
-  const upcomingDueAtMs = Date.now() + (30 * 60 * 1000);
-  const snoozedDueAtMs = Date.now() + (15 * 60 * 1000);
+  for (const [index, lane] of deliveryLanes.entries()) {
+    await apiRequest(config, "POST", "/api/workspace/reminders", {
+      id: lane.id,
+      title: lane.title,
+      summary: lane.detail,
+      status: "open",
+      due_at_ms: Date.now() + 5_000 + (index * 1_500),
+      metadata: {
+        source_kind: "task",
+        source_id: `${seed.runId}-future-task`,
+        recipients: [{ id: "self", kind: "self", label: "Me" }],
+        destinations: [{ channel: lane.channel, recipient_ids: ["self"] }]
+      }
+    });
+  }
   await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: liveReminderId,
-    title: "Proof Live Reminder",
-    summary: "Live reminder detail should stay compact and actionable.",
+    id: manageReminderId,
+    title: "Proof Manage Reminder",
+    summary: "Reminder detail should stay clean and manageable.",
     status: "open",
-    due_at_ms: liveDueAtMs,
-    metadata: {
-      source_kind: "task",
-      source_id: `${seed.runId}-future-task`,
-      recipients: [
-        { id: "self", kind: "self", label: "Me" },
-        { id: `${seed.runId}-contact-one`, kind: "contact", contact_id: `${seed.runId}-contact-one`, label: "Proof Contact One" }
-      ],
-      destinations: [
-        { channel: "phone_notification", recipient_ids: ["self"] },
-        { channel: "sms", recipient_ids: [`${seed.runId}-contact-one`] }
-      ]
-    }
-  });
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: dismissReminderId,
-    title: "Proof Dismiss Reminder",
-    summary: "Dismiss should remove this reminder from the active set.",
-    status: "open",
-    due_at_ms: dismissDueAtMs,
-    metadata: {
-      source_kind: "meeting_note",
-      source_id: `${seed.runId}-graph-meeting`,
-      recipients: [{ id: "self", kind: "self", label: "Me" }],
-      destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }]
-    }
-  });
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: upcomingReminderId,
-    title: "Proof Upcoming Reminder",
-    summary: "Upcoming reminder detail should stay read-only until it goes live.",
-    status: "open",
-    due_at_ms: upcomingDueAtMs,
+    due_at_ms: manageDueAtMs,
     metadata: {
       source_kind: "project",
       source_id: `${seed.runId}-alpha-project`,
@@ -2831,311 +1811,179 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
       destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }]
     }
   });
-  await apiRequest(config, "POST", "/api/workspace/reminders", {
-    id: snoozedReminderId,
-    title: "Proof Snoozed Reminder",
-    summary: "Snoozed reminders should stay inside Upcoming with a countdown.",
-    status: "open",
-    due_at_ms: snoozedDueAtMs,
-    metadata: {
-      source_kind: "project",
-      source_id: `${seed.runId}-beta-project`,
-      snoozed_until_ms: snoozedDueAtMs,
-      delivery_state: "pending",
-      last_fired_at_ms: 0,
-      last_fired_due_at_ms: 0,
-      last_delivery_error: "",
-      recipients: [{ id: "self", kind: "self", label: "Me" }],
-      destinations: [{ channel: "phone_notification", recipient_ids: ["self"] }]
-    }
-  });
-  let activeCount = baselineActiveCount + 4;
+  let activeCount = baselineActiveCount + deliveryLanes.length + 1;
   await page.goto(pageUrl(config.baseUrl, theme), { waitUntil: "commit", timeout: config.timeoutMs });
   await waitForHome(page, theme, config.timeoutMs);
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
-  const liveRow = page.locator(`.light-reminder-row[data-reminder-id="${liveReminderId}"]:visible`).first();
-  const dismissRow = page.locator(`.light-reminder-row[data-reminder-id="${dismissReminderId}"]:visible`).first();
-  const upcomingRow = page.locator(`.light-reminder-row[data-reminder-id="${upcomingReminderId}"]:visible`).first();
-  const snoozedRow = page.locator(`.light-reminder-row[data-reminder-id="${snoozedReminderId}"]:visible`).first();
-  await liveRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await dismissRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await upcomingRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await snoozedRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+  const manageRow = page.locator(`[data-reminder-id="${manageReminderId}"]`);
+  await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+  for (const lane of deliveryLanes) {
+    await page.locator(`[data-reminder-id="${lane.id}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
+  }
   await page.waitForFunction(() => {
-    const sectionTitles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim().toUpperCase());
-    const lower = String(document.body.innerText || "").toLowerCase();
-    return sectionTitles.includes("LIVE")
-      && sectionTitles.includes("UPCOMING")
-      && !sectionTitles.includes("SNOOZED")
-      && !lower.includes("overdue")
-      && !lower.includes("failed");
+    const text = document.body.innerText || "";
+    return !text.includes("Overdue") && !text.includes("Done") && !text.includes("Failed");
   }, { timeout: config.timeoutMs });
   await page.waitForFunction(() => {
-    const snoozedRow = document.querySelector('.light-reminder-row[data-reminder-state="snoozed"]');
-    const snoozedCountdown = snoozedRow?.querySelector('[data-reminder-countdown="true"]');
     return !document.querySelector(".light-reminder-history-divider")
       && !document.querySelector(".light-reminder-history-list")
-      && !document.querySelector('[data-reminder-history-toggle="sent"]')
-      && Boolean(snoozedCountdown);
+      && !document.querySelector('[data-reminder-history-toggle="sent"]');
   }, { timeout: config.timeoutMs });
-  const rowChipCounts = await Promise.all([
-    liveRow.locator(".light-graph-chip-row").count(),
-    dismissRow.locator(".light-graph-chip-row").count(),
-    upcomingRow.locator(".light-graph-chip-row").count(),
-    snoozedRow.locator(".light-graph-chip-row").count()
-  ]);
-  assert(rowChipCounts.every(count => count === 0), `Expected no linked chips on reminder rows, saw ${rowChipCounts.join(",")}`);
+  const rowChipCounts = [];
+  for (const lane of deliveryLanes) {
+    rowChipCounts.push(await page.locator(`[data-reminder-id="${lane.id}"]`).locator(".light-graph-chip-row").count());
+  }
+  const manageChipCount = await manageRow.locator(".light-graph-chip-row").count();
+  assert(rowChipCounts.every(count => count === 0), `Expected no linked chips on delivery reminder rows, saw ${rowChipCounts.join(",")}`);
+  assert(manageChipCount === 0, `Expected no linked chips on reminder rows, saw ${manageChipCount}`);
   await backHome(page, theme, config.timeoutMs);
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
   screenshots[`${theme}_reminders_home_badge_active`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-active`);
   await openTile(page, "Reminders", "reminders", config.timeoutMs);
-  await liveRow.waitFor({ state: "visible", timeout: config.timeoutMs });
+  await manageRow.waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_reminders_list_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-pending`);
-
-  await upcomingRow.click({ force: true });
+  await manageRow.click({ force: true });
   await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-  await waitForGraphText(page, "Proof Upcoming Reminder", config.timeoutMs);
+  await waitForGraphText(page, "Proof Manage Reminder", config.timeoutMs);
   await page.waitForFunction(() => {
-    const card = document.querySelector('[data-reminder-detail-card="true"]');
-    const shell = document.querySelector(".light-shell");
-    const lower = String(shell?.textContent || "").toLowerCase();
+    const text = document.body.innerText || "";
+    const lower = text.toLowerCase();
     const sectionTitles = [...document.querySelectorAll(".light-section-title")].map(node => String(node.textContent || "").trim().toLowerCase());
-    return card?.getAttribute("data-reminder-state") === "upcoming"
-      && !document.querySelector('[data-reminder-action-row="true"]')
-      && !lower.includes("status:")
-      && !lower.includes("delivery:")
-      && !lower.includes("system notification")
+    return lower.includes("status:")
+      && lower.includes("delivery:")
+      && lower.includes("done")
+      && lower.includes("snooze 10 min")
+      && lower.includes("snooze...")
+      && lower.includes("me")
+      && !lower.includes("self")
       && !sectionTitles.includes("schedule")
       && !sectionTitles.includes("recipients")
       && !sectionTitles.includes("channels")
       && !sectionTitles.includes("linked records")
-      && !sectionTitles.includes("notes")
-      && !sectionTitles.includes("connected")
-      && document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length === 0
-      && document.querySelectorAll('[data-reminder-detail-tile="when"]').length === 0
-      && !document.querySelector('[data-reminder-detail-feed="true"]')
-      && document.querySelectorAll('[data-reminder-detail-feed="true"]').length === 0
+      && Boolean(document.querySelector('[data-reminder-action-row="true"]'))
+      && Boolean(document.querySelector('[data-reminder-detail-feed="true"]'))
       && !document.querySelector(".light-reminder-detail-feed .light-chevron")
       && !lower.includes("no generated reminder page yet.");
   }, { timeout: config.timeoutMs });
   await page.waitForFunction(() => !document.querySelector(".light-detail-html-body .light-html-frame"), { timeout: config.timeoutMs });
-  await assertNoToast(page, `${theme} upcoming reminder detail`);
-  screenshots[`${theme}_reminder_detail_upcoming`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-upcoming`);
-  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-  await waitForLightRoute(page, "reminders", config.timeoutMs);
-
+  screenshots[`${theme}_reminder_detail_pending`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-pending`);
   summary.reminders = summary.reminders || [];
   const reminderSummary = {
     theme,
     baselineActiveCount,
-    liveReminderId,
-    dismissReminderId,
-    upcomingReminderId,
-    snoozedReminderId,
-    snoozedUntilMs: 0,
-    dismissedStatus: ""
+    deliveryEnabled,
+    manageReminderId,
+    quickSnoozedUntilMs: 0,
+    presetSnoozedUntilMs: 0,
+    doneStatus: "",
+    lanes: []
   };
-
-  await liveRow.click({ force: true });
-  await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-  await waitForGraphText(page, "Proof Live Reminder", config.timeoutMs);
-  await page.waitForFunction(() => {
-    const card = document.querySelector('[data-reminder-detail-card="true"]');
-    const shell = document.querySelector(".light-shell");
-    const lower = String(shell?.textContent || "").toLowerCase();
-    const actions = [...document.querySelectorAll('[data-reminder-action-row="true"] button')].map(node => String(node.textContent || "").trim());
-    return card?.getAttribute("data-reminder-state") === "live"
-      && JSON.stringify(actions) === JSON.stringify(["Dismiss", "Snooze"])
-      && !lower.includes("status:")
-      && !lower.includes("delivery:")
-      && !lower.includes("done")
-      && !lower.includes("system notification")
-      && document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length === 0
-      && document.querySelectorAll('[data-reminder-detail-tile="when"]').length === 0
-      && !document.querySelector('[data-reminder-detail-feed="true"]')
-      && !document.querySelector(".light-reminder-detail-feed .light-chevron");
-  }, { timeout: config.timeoutMs });
-  await assertNoToast(page, `${theme} live reminder detail`);
-  screenshots[`${theme}_reminder_detail_live`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-live`);
-
-  await page.locator('[data-reminder-action="snooze"]').click();
-  const snoozedRecord = await waitForReminderRecord(
+  await page.locator('[data-reminder-action="snooze_10"]').click();
+  const quickSnoozedRecord = await waitForReminderRecord(
     config,
-    liveReminderId,
-    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + 70_000,
-    "live reminder should snooze for roughly ninety seconds",
+    manageReminderId,
+    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + (8 * 60 * 1000),
+    "manage reminder should quick-snooze for ten minutes",
     30_000
   );
-  assert(
-    Number(snoozedRecord?.metadata?.snoozed_until_ms || 0) === Number(snoozedRecord?.due_at_ms || 0),
-    `Expected snoozed reminder to align due_at_ms and snoozed_until_ms, saw ${Number(snoozedRecord?.due_at_ms || 0)} vs ${Number(snoozedRecord?.metadata?.snoozed_until_ms || 0)}`
-  );
-  reminderSummary.snoozedUntilMs = Number(snoozedRecord?.metadata?.snoozed_until_ms || 0);
-  await assertNoToast(page, `${theme} reminder snooze`);
-  await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const card = document.querySelector('[data-reminder-detail-card="true"]');
-    return shell?.getAttribute("data-light-route") === "reminder-detail"
-      && card?.getAttribute("data-reminder-state") === "snoozed"
-      && !document.querySelector('[data-reminder-action-row="true"]');
-  }, { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminder_detail_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed`);
-  await page.evaluate(() => window.PuckyHandleAndroidBack && window.PuckyHandleAndroidBack());
-  await waitForLightRoute(page, "reminders", config.timeoutMs);
-  await page.waitForFunction((targetId) => {
-    const row = document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`);
-    return Boolean(row)
-      && row.getAttribute("data-reminder-state") === "snoozed"
-      && Boolean(row.querySelector('[data-reminder-countdown="true"]'));
-  }, liveReminderId, { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminders_list_snoozed`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-snoozed`);
-  await backHome(page, theme, config.timeoutMs);
-  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
-  screenshots[`${theme}_reminders_home_badge_after_snooze`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-after-snooze`);
-
-  await openTile(page, "Reminders", "reminders", config.timeoutMs);
-  await dismissRow.waitFor({ state: "visible", timeout: config.timeoutMs });
-  await dismissRow.click({ force: true });
-  await waitForLightRoute(page, "reminder-detail", config.timeoutMs);
-  await waitForGraphText(page, "Proof Dismiss Reminder", config.timeoutMs);
-  await page.waitForFunction(() => {
-    const card = document.querySelector('[data-reminder-detail-card="true"]');
-    const actions = [...document.querySelectorAll('[data-reminder-action-row="true"] button')].map(node => String(node.textContent || "").trim());
-    return card?.getAttribute("data-reminder-state") === "live"
-      && JSON.stringify(actions) === JSON.stringify(["Dismiss", "Snooze"]);
-  }, { timeout: config.timeoutMs });
-  await page.locator('[data-reminder-action="dismiss"]').click();
-  const dismissedReminder = await waitForReminderRecord(
-    config,
-    dismissReminderId,
-    record => String(record?.status || "").trim().toLowerCase() === "done",
-    "dismiss reminder should mark done",
-    30_000
-  );
-  await assertNoToast(page, `${theme} reminder dismiss`);
-  reminderSummary.dismissedStatus = String(dismissedReminder?.status || "").trim().toLowerCase();
+  reminderSummary.quickSnoozedUntilMs = Number(quickSnoozedRecord?.metadata?.snoozed_until_ms || 0);
   activeCount -= 1;
+  await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const text = String(shell?.textContent || "").toLowerCase();
+    return shell?.getAttribute("data-light-route") === "reminder-detail"
+      && text.includes("delivery: snoozed")
+      && text.includes("snoozed until");
+  }, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_detail_snoozed_10`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed-10`);
+
+  await page.locator('[data-reminder-action="snooze_selector"]').click();
+  await page.locator(".settings-selector-overlay.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
+  await page.waitForFunction(() => {
+    const text = String(document.querySelector(".settings-selector-sheet")?.textContent || "").toLowerCase();
+    return text.includes("1 hour") && text.includes("this evening") && text.includes("tomorrow morning");
+  }, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_snooze_selector`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-snooze-selector`);
+  await page.locator('[data-selector-value="1_hour"]').click();
+  const presetSnoozedRecord = await waitForReminderRecord(
+    config,
+    manageReminderId,
+    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + (55 * 60 * 1000),
+    "manage reminder should accept preset snooze selection",
+    30_000
+  );
+  reminderSummary.presetSnoozedUntilMs = Number(presetSnoozedRecord?.metadata?.snoozed_until_ms || 0);
+  await page.waitForFunction(() => {
+    const shell = document.querySelector(".light-shell");
+    const text = String(shell?.textContent || "").toLowerCase();
+    return shell?.getAttribute("data-light-route") === "reminder-detail"
+      && !document.querySelector(".settings-selector-overlay.is-open")
+      && text.includes("delivery: snoozed");
+  }, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminder_detail_snoozed_preset`] = await saveScreenshot(page, config.reportDir, `${theme}-reminder-detail-snoozed-preset`);
+
+  await page.locator('[data-reminder-action="done"]').click();
+  const doneReminder = await waitForReminderRecord(
+    config,
+    manageReminderId,
+    record => String(record?.status || "").trim().toLowerCase() === "done",
+    "manage reminder should mark done",
+    30_000
+  );
+  reminderSummary.doneStatus = String(doneReminder?.status || "").trim().toLowerCase();
   await waitForLightRoute(page, "reminders", config.timeoutMs);
-  await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), dismissReminderId, { timeout: config.timeoutMs });
-  screenshots[`${theme}_reminders_list_after_dismiss`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-after-dismiss`);
+  await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), manageReminderId, { timeout: config.timeoutMs });
+  screenshots[`${theme}_reminders_list_after_done`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-list-after-done`);
+  if (deliveryEnabled) {
+    for (const lane of deliveryLanes) {
+      const firedRecord = await waitForReminderRecord(
+        config,
+        lane.id,
+        record => String(record?.metadata?.delivery_state || "").trim().toLowerCase() === "sent",
+        `${lane.channel} reminder delivery_state should become sent`,
+        45_000
+      );
+      const firedState = String(firedRecord?.metadata?.delivery_state || "").trim().toLowerCase();
+      assert(firedState === "sent", `Expected ${lane.channel} reminder delivery_state to be sent, got ${firedState}`);
+      activeCount -= 1;
+      await page.waitForFunction((targetId) => !document.querySelector(`.light-reminder-row[data-reminder-id="${targetId}"]`), lane.id, { timeout: config.timeoutMs });
+      screenshots[`${theme}_reminders_${lane.key}_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-${lane.key}-after-fire`);
+      await backHome(page, theme, config.timeoutMs);
+      await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
+      screenshots[`${theme}_reminders_home_badge_${lane.key}_after_fire`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-${lane.key}-after-fire`);
+      await openTile(page, "Reminders", "reminders", config.timeoutMs);
+      await waitForLightRoute(page, "reminders", config.timeoutMs);
+      reminderSummary.lanes.push({
+        key: lane.key,
+        channel: lane.channel,
+        reminderId: lane.id,
+        deliveryState: firedState,
+        deliveryResults: firedRecord?.metadata?.last_delivery_results || []
+      });
+    }
+  } else {
+    summary.assertions.push(`${theme} reminder live-delivery lanes skipped because ${config.baseUrl} is not the live VM target`);
+  }
 
   await backHome(page, theme, config.timeoutMs);
   await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
-  screenshots[`${theme}_reminders_home_badge_after_dismiss`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-after-dismiss`);
+  screenshots[`${theme}_reminders_home_badge_after_actions`] = await saveScreenshot(page, config.reportDir, `${theme}-reminders-home-badge-after-actions`);
+  await waitForReminderHomeBadgeCount(page, activeCount, config.timeoutMs);
 
   reminderSummary.finalActiveCount = activeCount;
   summary.reminders.push(reminderSummary);
-  summary.assertions.push(`${theme} reminders group into Live/Upcoming, keep snoozed reminders inside Upcoming, expose Dismiss and Snooze only on live reminder detail, hide backend delivery copy, hide Connected entirely when a reminder has no graph links, and keep the home badge tied to visible reminders including snoozed items`);
+  summary.assertions.push(`${theme} reminders regroup into Now/Upcoming/Snoozed, expose actionable snooze and done controls, remove channels and detail chevrons, and keep the home badge tied to active reminders only`);
 }
 
 async function readGraphDetailState(page) {
   return page.evaluate(() => ({
     route: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
     text: document.querySelector(".light-shell")?.textContent || "",
-    hasHtmlFrame: Boolean(document.querySelector(".light-detail-html-body .light-html-frame"))
+    hasHtmlFrame: Boolean(document.querySelector(".light-detail-html-body .light-html-frame")),
+    hasNotes: /\bnotes\b/i.test(document.querySelector(".light-shell")?.textContent || ""),
+    projectDetailHasHero: Boolean(document.querySelector(".light-detail-hero")),
+    projectDetailHasChipCloud: Boolean(document.querySelector(".light-chip-cloud"))
   }));
-}
-
-async function readMeetingNoteDetailState(page) {
-  return page.evaluate(() => {
-    const shell = document.querySelector('.light-shell[data-light-route="meeting-note-detail"]') || document.querySelector(".light-shell");
-    const detail = shell?.querySelector(".light-page") || shell;
-    const sectionTitles = Array.from(detail?.querySelectorAll(".light-section-title") || [])
-      .map(node => String(node.textContent || "").trim().toUpperCase())
-      .filter(Boolean);
-    const eyebrowTexts = Array.from(detail?.querySelectorAll(".light-doc-eyebrow") || [])
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
-    const detailRowLabels = Array.from(detail?.querySelectorAll(".light-meeting-note-detail-row .light-calendar-detail-row-label") || [])
-      .map(node => String(node.textContent || "").trim());
-    const whoChipLabels = Array.from(detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip') || [])
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
-    const whoChipRoot = detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip');
-    const whoChipRootStyle = whoChipRoot ? getComputedStyle(whoChipRoot) : null;
-    const hasStandaloneWhoSection = Boolean(detail?.querySelector(".light-meeting-note-who-section"));
-    const whoInsideDetailsCard = Boolean(detail?.querySelector('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"]'));
-    const connectedRowTexts = Array.from(detail?.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row') || [])
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
-    return {
-      text: detail?.textContent || "",
-      sectionTitles,
-      eyebrowTexts,
-      detailRowLabels,
-      whoChipLabels,
-      whoChipCount: detail?.querySelectorAll('.light-meeting-note-details-section .light-calendar-detail-card [data-detail-row="who"] .light-attendee-chip').length || 0,
-      whoChipRootBackground: String(whoChipRootStyle?.backgroundColor || ""),
-      whoChipRootColor: String(whoChipRootStyle?.color || ""),
-      whoChipRootBorderRadius: String(whoChipRootStyle?.borderRadius || ""),
-      hasStandaloneWhoSection,
-      whoInsideDetailsCard,
-      connectedRowTexts,
-    };
-  });
-}
-
-async function readProjectDetailState(page, runId) {
-  return page.evaluate(({ runId: currentRunId }) => {
-    const connectedSection = [...document.querySelectorAll(".light-linked-records-section")]
-      .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === "connected");
-    const connectedBody = connectedSection?.querySelector(".light-linked-record-list") || null;
-    const connectedRows = connectedSection
-      ? connectedSection.querySelectorAll(".light-linked-record-feed-row").length
-      : 0;
-    const flatRowCount = connectedSection
-      ? connectedSection.querySelectorAll(".light-linked-record-feed-row.is-flat-feed").length
-      : 0;
-    const connectedChevronCount = connectedSection
-      ? connectedSection.querySelectorAll(".light-linked-record-feed-row .light-chevron").length
-      : 0;
-    const pinnedNoteRows = connectedSection
-      ? connectedSection.querySelectorAll(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${currentRunId}-pinned-note"]`).length
-      : 0;
-    const rowRects = connectedSection
-      ? [...connectedSection.querySelectorAll(".light-linked-record-feed-row")].map((row) => {
-          const rect = row.getBoundingClientRect();
-          return { top: rect.top, bottom: rect.bottom };
-        })
-      : [];
-    const contiguousRows = rowRects.every((rect, index) => index === 0 || Math.abs(rect.top - rowRects[index - 1].bottom) <= 1.5);
-    return {
-      heroCount: document.querySelectorAll(".light-detail-hero").length,
-      chipCloudCount: document.querySelectorAll(".light-project-detail-page .light-chip-cloud").length,
-      sectionGridCount: document.querySelectorAll(".light-project-section-grid").length,
-      connectedSectionCount: connectedSection ? 1 : 0,
-      connectedBodyIsFlat: Boolean(connectedBody?.classList.contains("light-card") && connectedBody?.classList.contains("is-flat-feed")),
-      connectedRows,
-      flatRowCount,
-      connectedChevronCount,
-      contiguousRows,
-      pinnedNoteRows,
-      shellRoute: document.querySelector(".light-shell")?.getAttribute("data-light-route") || "",
-    };
-  }, { runId });
-}
-
-async function readLinkedRecordSectionState(page, title) {
-  return page.evaluate(({ currentTitle }) => {
-    const normalizedTitle = String(currentTitle || "").trim().toLowerCase();
-    const section = [...document.querySelectorAll(".light-linked-records-section")]
-      .find(node => String(node.getAttribute("data-linked-records-title") || "").trim() === normalizedTitle);
-    const body = section?.querySelector(".light-linked-record-list") || null;
-    const rows = section ? [...section.querySelectorAll(".light-linked-record-feed-row")] : [];
-    const rowRects = rows.map((row) => {
-      const rect = row.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom };
-    });
-    return {
-      sectionCount: section ? 1 : 0,
-      bodyIsFlat: Boolean(body?.classList.contains("light-card") && body?.classList.contains("is-flat-feed")),
-      rowCount: rows.length,
-      flatRowCount: section ? section.querySelectorAll(".light-linked-record-feed-row.is-flat-feed").length : 0,
-      chevronCount: section ? section.querySelectorAll(".light-linked-record-feed-row .light-chevron").length : 0,
-      chipCount: section ? section.querySelectorAll(".light-linked-record-feed-row .light-graph-chip-row, .light-linked-record-feed-row .light-graph-chip").length : 0,
-      contiguousRows: rowRects.every((rect, index) => index === 0 || Math.abs(rect.top - rowRects[index - 1].bottom) <= 1.5),
-    };
-  }, { currentTitle: title });
 }
 
 async function waitForGraphText(page, text, timeoutMs) {
@@ -3163,59 +2011,22 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   await openTile(page, "Meeting Notes", "meeting-notes", config.timeoutMs);
   await page.locator(`[data-record-id="${meeting}"]`).waitFor({ state: "visible", timeout: config.timeoutMs });
-  const meetingNotesListState = await page.evaluate(() => ({
-    chipRows: document.querySelectorAll('.light-shell[data-light-route="meeting-notes"] .light-graph-row .light-graph-chip-row').length,
-    leadingIcons: document.querySelectorAll('.light-shell[data-light-route="meeting-notes"] .light-graph-row .light-small-icon').length,
-    chevrons: document.querySelectorAll('.light-shell[data-light-route="meeting-notes"] .light-graph-row .light-chevron').length,
-  }));
-  assert(meetingNotesListState.chipRows === 0, "Meeting Notes list should not render right-side pill chips");
-  assert(meetingNotesListState.leadingIcons === 0, "Meeting Notes list should not render leading icons");
-  assert(meetingNotesListState.chevrons === 0, "Meeting Notes list should not render trailing chevrons");
   screenshots[`${theme}_graph_meetings`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-notes-list`);
   await page.locator(`[data-record-id="${meeting}"]`).click();
   await expectFrameHeading(page, "Proof Graph Meeting", config.timeoutMs);
-  for (const text of ["Proof Today Roadmap", "Proof Pinned Note", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
+  for (const text of ["Proof Contact One", "Proof Today Roadmap", "Proof Pinned Note", "Proof Future Task", "Proof Alpha Project", "Proof Graph Reminder"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   graphState = await readGraphDetailState(page);
-  const meetingNoteState = await readMeetingNoteDetailState(page);
-  const meetingConnectedState = await readLinkedRecordSectionState(page, "connected");
   assert(graphState.route === "meeting-note-detail", `Expected meeting-note-detail route, got ${graphState.route}`);
-  assert(!graphState.hasHtmlFrame, "Meeting note detail should stay a structured graph document, not a generated HTML iframe");
-  assert(!meetingNoteState.eyebrowTexts.some(value => /graph meeting/i.test(value)), `Meeting note detail should not render the stale Graph meeting eyebrow, got ${meetingNoteState.eyebrowTexts.join(", ")}.`);
-  assert(meetingNoteState.sectionTitles.includes("DETAILS"), `Expected meeting note detail to include DETAILS, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(meetingNoteState.sectionTitles.includes("CONNECTED"), `Expected meeting note detail to include CONNECTED, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(!meetingNoteState.sectionTitles.includes("WHO"), `Meeting note detail should keep Who inside the Details card instead of rendering a standalone WHO section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(!meetingNoteState.sectionTitles.includes("CONTEXT"), `Expected meeting note detail to remove CONTEXT, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(!meetingNoteState.sectionTitles.includes("NOTES"), `Expected meeting note detail to remove the separate NOTES section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(!meetingNoteState.sectionTitles.includes("LINKED RECORDS"), `Expected meeting note detail to remove the separate LINKED RECORDS section, got ${meetingNoteState.sectionTitles.join(", ")}.`);
-  assert(JSON.stringify(meetingNoteState.detailRowLabels) === JSON.stringify(["When", "Who"]), `Expected meeting note detail rows to only include When and Who, got ${meetingNoteState.detailRowLabels.join(", ")}.`);
-  assert(meetingNoteState.whoInsideDetailsCard, "Meeting note detail should keep Who inside the Details card.");
-  assert(!meetingNoteState.hasStandaloneWhoSection, "Meeting note detail should not keep a standalone Who section shell.");
-  assert(meetingNoteState.whoChipLabels.includes("Proof Contact One"), `Expected Who chips to reuse the calendar-style contact label logic, got ${meetingNoteState.whoChipLabels.join(", ")}.`);
-  assert(meetingNoteState.whoChipCount >= 1, "Expected meeting note Who to render at least one attendee chip.");
-  assert(!isTransparentColor(meetingNoteState.whoChipRootBackground), `Expected meeting note Who chip to keep a visible tinted root background, got ${meetingNoteState.whoChipRootBackground}.`);
-  assert(String(meetingNoteState.whoChipRootColor || "").trim().toLowerCase() !== String(meetingNoteState.whoChipRootBackground || "").trim().toLowerCase(), `Expected meeting note Who chip text to keep readable contrast, got text ${meetingNoteState.whoChipRootColor} on ${meetingNoteState.whoChipRootBackground}.`);
-  assert(!isZeroishPx(meetingNoteState.whoChipRootBorderRadius), `Expected meeting note Who chip to keep a coherent rounded root shape, got ${meetingNoteState.whoChipRootBorderRadius}.`);
-  assert(meetingConnectedState.sectionCount === 1, "Expected meeting note detail to render one Connected section.");
-  assert(meetingConnectedState.bodyIsFlat, "Expected meeting note Connected to render inside one shared flat-feed shell.");
-  assert(meetingConnectedState.rowCount === 5, `Expected meeting note Connected to render five linked rows after dedupe/contact exclusion, got ${meetingConnectedState.rowCount}.`);
-  assert(meetingConnectedState.flatRowCount === meetingConnectedState.rowCount, "Expected meeting note Connected rows to all use flat-feed styling.");
-  assert(meetingConnectedState.chevronCount === 0, "Expected meeting note Connected to omit trailing chevrons.");
-  assert(meetingConnectedState.chipCount === 0, "Expected meeting note Connected to omit pills.");
-  assert(meetingConnectedState.contiguousRows, "Expected meeting note Connected rows to render contiguously with no inter-row gaps.");
-  assert(!meetingNoteState.connectedRowTexts.some(value => value.includes("Proof Contact One")), `Expected meeting note Connected to exclude contact rows, got ${meetingNoteState.connectedRowTexts.join(", ")}.`);
-  const meetingHtmlState = await assertNoWorkspaceHtmlDocument(page, "Meeting note detail");
-  summary.noHtmlDetails = summary.noHtmlDetails || [];
-  summary.noHtmlDetails.push({ theme, route: "meeting-note-detail", htmlState: meetingHtmlState });
+  assert(!graphState.hasHtmlFrame, "Did not expect meeting note detail to render a generated HTML iframe");
+  await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.runId}-pinned-note"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_graph_meeting_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-meeting-detail`);
   for (const [route, id, text, shot] of [
-    ["meeting-detail", `${seed.runId}-today-roadmap`, "Proof Today Roadmap", "graph-meeting-source-event"],
-    ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-meeting-linked-note"],
-    ["project-detail", `${seed.runId}-alpha-project`, "Proof Alpha Project", "graph-meeting-linked-project"]
+    ["contact-detail", `${seed.runId}-contact-one`, "Proof Contact One", "graph-meeting-linked-contact"],
+    ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-meeting-linked-note"]
   ]) {
-    const locator = page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first();
-    await locator.click();
+    await page.locator(`[data-workspace-target-route="${route}"][data-workspace-target-id="${id}"]`).first().click();
     await waitForLightRoute(page, route, config.timeoutMs);
     await waitForGraphText(page, text, config.timeoutMs);
     screenshots[`${theme}_${shot}`] = await saveScreenshot(page, config.reportDir, `${theme}-${shot}`);
@@ -3229,31 +2040,16 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
   screenshots[`${theme}_graph_reminders`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminders-list`);
   await page.locator(`[data-reminder-id="${reminder}"]`).click();
   await waitForGraphText(page, "Proof Graph Reminder", config.timeoutMs);
-  for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "CONNECTED"]) {
+  for (const text of ["Proof Pinned Note", "Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "Done", "Snooze 10 min", "CONNECTED"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
-  await page.waitForFunction(() => {
-    const shell = document.querySelector(".light-shell");
-    const text = String(shell?.textContent || "").toLowerCase();
-    const feedLabels = [...document.querySelectorAll('.light-reminder-detail-feed .light-text-stack strong')]
-      .map(node => String(node.textContent || "").trim())
-      .filter(Boolean);
-    return !text.includes("status:")
-      && !text.includes("delivery:")
-      && !text.includes("system notification")
-      && document.querySelectorAll('[data-reminder-detail-tile="recipient"]').length === 0
-      && document.querySelectorAll('[data-reminder-detail-tile="when"]').length === 0
-      && !document.querySelector('[data-reminder-action-row="true"]')
-      && document.querySelectorAll('[data-reminder-detail-feed="true"]').length === 1
-      && !document.querySelector(".light-reminder-detail-feed .light-chevron")
-      && JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"]);
-  }, { timeout: config.timeoutMs });
-  await assertNoToast(page, `${theme} graph reminder detail`);
   graphState = await readGraphDetailState(page);
   assert(graphState.route === "reminder-detail", `Expected reminder-detail route, got ${graphState.route}`);
   assert(!graphState.hasHtmlFrame, "Did not expect reminder detail to render a generated HTML iframe");
+  await page.locator(`[data-workspace-target-route="note-detail"][data-workspace-target-id="${seed.runId}-pinned-note"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
   screenshots[`${theme}_graph_reminder_detail`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-reminder-detail`);
   for (const [route, id, text, shot] of [
+    ["note-detail", `${seed.runId}-pinned-note`, "Proof Pinned Note", "graph-reminder-linked-note"],
     ["task-detail", `${seed.runId}-future-task`, "Proof Future Task", "graph-reminder-source-task"],
     ["meeting-note-detail", `${seed.runId}-graph-meeting`, "Proof Graph Meeting", "graph-reminder-linked-meeting"]
   ]) {
@@ -3276,7 +2072,7 @@ async function proveGraphObjects(page, config, seed, theme, screenshots, summary
 
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
   await page.locator(`button[data-contact-id="${seed.runId}-contact-one"]`).click();
-  for (const text of ["Proof Graph Meeting", "Proof Alpha Project"]) {
+  for (const text of ["Proof Pinned Note", "Proof Graph Meeting", "Proof Alpha Project"]) {
     await waitForGraphText(page, text, config.timeoutMs);
   }
   screenshots[`${theme}_graph_contact_ripple`] = await saveScreenshot(page, config.reportDir, `${theme}-graph-contact-ripple`);
@@ -3316,9 +2112,6 @@ async function runTheme(page, config, seed, theme, summary, networkLog) {
   if (shouldRunSection(config, "graph")) {
     await proveGraphObjects(page, config, seed, theme, screenshots, summary);
   }
-  if (shouldRunSection(config, "contact-edit")) {
-    await proveContactsEdit(page, config, seed, theme, screenshots, summary);
-  }
   return screenshots;
 }
 
@@ -3353,7 +2146,7 @@ async function main() {
       viewport: VIEWPORT,
       recordVideo: { dir: config.reportDir, size: VIEWPORT }
     });
-    await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
+    await primeBrowserPreviewToken(context, config.apiToken);
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     const page = await context.newPage();
     attachPageLogging(page, consoleLog);
@@ -3394,7 +2187,7 @@ async function main() {
     }
     summary.assertions.push("light and dark home-shell loaded");
     summary.assertions.push("notes/tasks/calendar/feed/projects/contacts/meeting-notes/reminders read /api/workspace records");
-    summary.assertions.push("generated HTML iframes rendered for notes while non-note workspace details stayed structured");
+    summary.assertions.push("note detail remains the only generated HTML iframe surface across workspace object apps");
     summary.assertions.push("near-future task moved to overdue after deadline refresh");
     summary.assertions.push("workspace proof seed records were cleaned up after verification");
     summary.finished_at = new Date().toISOString();

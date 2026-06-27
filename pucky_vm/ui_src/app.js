@@ -251,6 +251,7 @@
     scrubPreviewByPath: new Map(),
     scrubbingAudioKey: "",
     audioToggleBusyKey: "",
+    queuedAudioToggleKey: "",
     timestampTap: null,
     audioCard: null,
     traceCard: null,
@@ -16191,8 +16192,15 @@
   async function toggleAudio(card) {
     const busyKey = audioStateKey(card);
     const phaseBefore = currentTileAudioPhase(card);
-    if (state.audioToggleBusyKey === busyKey || ["starting", "pause_pending"].includes(phaseBefore)) {
+    if (state.audioToggleBusyKey === busyKey && phaseBefore !== "pause_pending") {
+      queueSameCardToggle(busyKey, phaseBefore);
       return;
+    }
+    if (["starting", "pause_pending"].includes(phaseBefore)) {
+      return;
+    }
+    if (state.queuedAudioToggleKey && !samePath(state.queuedAudioToggleKey, busyKey)) {
+      clearQueuedSameCardToggle(state.queuedAudioToggleKey);
     }
     recordAudioProbeEvent("click_received", {
       target_key: busyKey,
@@ -16366,11 +16374,23 @@
       showToast(message);
       render();
     } finally {
+      const replayQueuedSameCardToggle = shouldReplayQueuedSameCardToggle(card, busyKey);
       if (state.audioToggleBusyKey === busyKey) {
         state.audioToggleBusyKey = "";
         recordAudioProbeEvent("busy_end", { target_key: busyKey });
       }
+      if (!replayQueuedSameCardToggle) {
+        clearQueuedSameCardToggle(busyKey);
+      }
       render();
+      if (replayQueuedSameCardToggle) {
+        clearQueuedSameCardToggle(busyKey);
+        recordAudioProbeEvent("busy_same_card_toggle_replayed", {
+          target_key: busyKey,
+          phase_before_replay: currentTileAudioPhase(card)
+        });
+        await toggleAudio(card);
+      }
     }
   }
 
@@ -20478,6 +20498,7 @@
       return false;
     }
     clearAudioProbeResetTimer();
+    clearQueuedSameCardToggle(targetKey);
     const now = Date.now();
     const value = String(outcome || "").trim() || "idle";
     const phase = ["start_failed", "ended_immediately"].includes(value) ? value : "idle";
@@ -20507,6 +20528,42 @@
       scheduleAudioProbeReset(extra.reset_delay_ms || AUDIO_TERMINAL_RESET_MS);
     }
     return true;
+  }
+
+  function queueSameCardToggle(targetKey, phase) {
+    if (!samePath(state.audioToggleBusyKey, targetKey)) {
+      return false;
+    }
+    if (!["starting", "playing_confirmed"].includes(String(phase || ""))) {
+      return false;
+    }
+    if (samePath(state.queuedAudioToggleKey, targetKey)) {
+      return false;
+    }
+    state.queuedAudioToggleKey = targetKey;
+    recordAudioProbeEvent("busy_same_card_toggle_queued", {
+      target_key: targetKey,
+      phase_before: String(phase || "")
+    });
+    return true;
+  }
+
+  function clearQueuedSameCardToggle(targetKey = "") {
+    if (targetKey && !samePath(state.queuedAudioToggleKey, targetKey)) {
+      return false;
+    }
+    if (!state.queuedAudioToggleKey) {
+      return false;
+    }
+    state.queuedAudioToggleKey = "";
+    return true;
+  }
+
+  function shouldReplayQueuedSameCardToggle(card, targetKey) {
+    return samePath(state.queuedAudioToggleKey, targetKey)
+      && currentTileAudioPhase(card) === "playing_confirmed"
+      && activePlayerMatchesCard(card)
+      && Boolean(state.player?.is_playing);
   }
 
   function prefersHostedDirectAudio(card) {

@@ -17,7 +17,9 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_PAGE_URL = "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1";
 const DEFAULT_REPORT_DIR = path.resolve(repoRoot, ".tmp", "cover-inbox-tile-audio-truth");
+const DEFAULT_LOCAL_PREFERRED_SESSION_ID = "fixture_immediate_retap";
 const VIEWPORT = { width: 430, height: 932 };
+const IMMEDIATE_RETAP_SETTLE_MS = 2500;
 
 function parseArgs(argv) {
   const config = {
@@ -26,12 +28,17 @@ function parseArgs(argv) {
     timeoutMs: 30000,
     headless: true,
     browserName: "chromium",
+    preferredSessionId: "",
     preferredTitle: "Probe Check",
     sampleDurationMs: 8000,
     sampleIntervalMs: 100,
     skipCanonicalCheck: false,
-    apiToken: String(process.env.PUCKY_API_TOKEN || "").trim(),
+    apiToken: String(process.env.PUCKY_WEB_UI_TOKEN || process.env.PUCKY_API_TOKEN || "").trim(),
     allowAutoplayBypass: false,
+    viewportWidth: VIEWPORT.width,
+    viewportHeight: VIEWPORT.height,
+    immediateSecondTapDelayMs: 0,
+    immediateSecondTapAttempts: 3,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = String(argv[index] || "");
@@ -45,8 +52,18 @@ function parseArgs(argv) {
       config.sampleDurationMs = Math.max(500, Number(argv[++index] || config.sampleDurationMs) || config.sampleDurationMs);
     } else if (arg === "--sample-interval-ms" && argv[index + 1]) {
       config.sampleIntervalMs = Math.max(50, Number(argv[++index] || config.sampleIntervalMs) || config.sampleIntervalMs);
+    } else if (arg === "--preferred-session-id" && argv[index + 1]) {
+      config.preferredSessionId = String(argv[++index] || config.preferredSessionId);
     } else if (arg === "--preferred-title" && argv[index + 1]) {
       config.preferredTitle = String(argv[++index] || config.preferredTitle);
+    } else if (arg === "--viewport-width" && argv[index + 1]) {
+      config.viewportWidth = Math.max(320, Number(argv[++index] || config.viewportWidth) || config.viewportWidth);
+    } else if (arg === "--viewport-height" && argv[index + 1]) {
+      config.viewportHeight = Math.max(480, Number(argv[++index] || config.viewportHeight) || config.viewportHeight);
+    } else if (arg === "--immediate-second-tap-delay-ms" && argv[index + 1]) {
+      config.immediateSecondTapDelayMs = Math.max(0, Number(argv[++index] || config.immediateSecondTapDelayMs) || 0);
+    } else if (arg === "--immediate-second-tap-attempts" && argv[index + 1]) {
+      config.immediateSecondTapAttempts = Math.max(1, Number(argv[++index] || config.immediateSecondTapAttempts) || config.immediateSecondTapAttempts);
     } else if (arg === "--headed") {
       config.headless = false;
     } else if (arg === "--browser" && argv[index + 1]) {
@@ -59,6 +76,13 @@ function parseArgs(argv) {
     }
   }
   return config;
+}
+
+function configuredViewport(config) {
+  return {
+    width: Math.max(320, Number(config.viewportWidth || VIEWPORT.width) || VIEWPORT.width),
+    height: Math.max(480, Number(config.viewportHeight || VIEWPORT.height) || VIEWPORT.height)
+  };
 }
 
 function isLocalProofUrl(pageUrl) {
@@ -171,9 +195,12 @@ async function installInjectionHelpers(page) {
       return;
     }
     const base = window.Pucky.request.bind(window.Pucky);
+    const baseMediaPlay = HTMLMediaElement.prototype.play;
     window.__codexAudioTruthBaseRequest = base;
+    window.__codexAudioTruthBaseMediaPlay = baseMediaPlay;
     window.__codexAudioTruthResetRequest = () => {
       window.Pucky.request = window.__codexAudioTruthBaseRequest;
+      HTMLMediaElement.prototype.play = window.__codexAudioTruthBaseMediaPlay;
     };
     window.__codexAudioTruthInjectPlayFailure = (message = "Injected browser proof play failure.") => {
       const original = window.__codexAudioTruthBaseRequest;
@@ -210,6 +237,91 @@ async function installInjectionHelpers(page) {
         return original(payload);
       };
     };
+    window.__codexAudioTruthInjectPlayResolveLag = (delayMs = 220) => {
+      const original = window.__codexAudioTruthBaseRequest;
+      let armed = true;
+      window.Pucky.request = async (payload) => {
+        if (armed && payload && payload.command === "player.play") {
+          armed = false;
+          const result = await original(payload);
+          await new Promise(resolve => window.setTimeout(resolve, Math.max(0, Number(delayMs || 220))));
+          return result;
+        }
+        return original(payload);
+      };
+    };
+    window.__codexAudioTruthInjectImmediateRetap = ({ sessionId = "", title = "", delayMs = 0, resolveLagMs = 220 } = {}) => {
+      const originalPlay = window.__codexAudioTruthBaseMediaPlay;
+      const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      const findCard = () => {
+        const cards = Array.from(document.querySelectorAll('article[data-card-id], article[data-card-session-id]'));
+        return (sessionId
+          ? cards.find(card => String(card.getAttribute("data-card-session-id") || "") === String(sessionId || ""))
+          : null)
+          || cards.find(card => normalize(card.querySelector(".title")?.textContent) === normalize(title))
+          || cards.find(card => normalize(card.querySelector(".title")?.textContent).includes(normalize(title)))
+          || null;
+      };
+      let armed = true;
+      HTMLMediaElement.prototype.play = function patchedPlay(...args) {
+        if (!armed) {
+          return originalPlay.apply(this, args);
+        }
+        armed = false;
+        const media = this;
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          let playSettled = false;
+          let playValue;
+          let playingObserved = false;
+          const finish = () => {
+            if (settled || !playSettled) {
+              return;
+            }
+            settled = true;
+            window.setTimeout(() => resolve(playValue), Math.max(0, Number(resolveLagMs || 220)));
+          };
+          const triggerRetap = () => {
+            const button = findCard()?.querySelector("button.action-audio");
+            if (button) {
+              const dispatch = () => {
+                button.dispatchEvent(new window.MouseEvent("click", {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window
+                }));
+              };
+              if (Number(delayMs || 0) > 0) {
+                window.setTimeout(dispatch, Math.max(0, Number(delayMs || 0)));
+              } else {
+                dispatch();
+              }
+            }
+          };
+          const onPlaying = () => {
+            media.removeEventListener("playing", onPlaying);
+            playingObserved = true;
+            triggerRetap();
+            finish();
+          };
+          media.addEventListener("playing", onPlaying, { once: true });
+          const result = originalPlay.apply(media, args);
+          Promise.resolve(result).then((value) => {
+            playValue = value;
+            playSettled = true;
+            if (!playingObserved) {
+              return;
+            }
+            finish();
+          }, reject);
+          window.setTimeout(() => {
+            media.removeEventListener("playing", onPlaying);
+            playingObserved = true;
+            finish();
+          }, Math.max(600, Number(resolveLagMs || 220) + 400));
+        });
+      };
+    };
     window.__codexAudioTruthHelpersReady = true;
   });
 }
@@ -233,146 +345,71 @@ async function listAudioCards(page) {
   });
 }
 
-function pickCards(cards, preferredTitle) {
-  const preferred = cards.find(card => card.title === preferredTitle)
-    || cards.find(card => card.title.includes(preferredTitle))
+function pickCards(cards, preferredSessionId, preferredTitle) {
+  const preferredSessionIdValue = String(preferredSessionId || "").trim();
+  const preferredTitleValue = String(preferredTitle || "").trim();
+  const preferred = (preferredSessionIdValue
+    ? cards.find(card => String(card.session_id || "") === preferredSessionIdValue)
+    : null)
+    || cards.find(card => card.title === preferredTitleValue)
+    || cards.find(card => card.title.includes(preferredTitleValue))
     || cards[0]
     || null;
-  const secondary = cards.find(card => preferred && card.title !== preferred.title) || null;
+  const secondary = cards.find(card => preferred && String(card.session_id || "") !== String(preferred.session_id || "")) || null;
   return {
     primary: preferred,
     secondary
   };
 }
 
-function cardLocator(page, title) {
+function targetTitle(target) {
+  return typeof target === "string"
+    ? target
+    : String(target?.title || "");
+}
+
+function targetSessionId(target) {
+  return typeof target === "string"
+    ? ""
+    : String(target?.session_id || "");
+}
+
+function targetLabel(target) {
+  return targetSessionId(target) || targetTitle(target);
+}
+
+function cardLocator(page, target) {
+  const sessionId = targetSessionId(target);
+  if (sessionId) {
+    return page.locator(`article[data-card-session-id="${sessionId}"]`).first();
+  }
+  const title = targetTitle(target);
   return page.locator('article[data-card-id], article[data-card-session-id]').filter({
     has: page.locator(".title", { hasText: title })
   }).first();
 }
 
-function audioClickDelivered(before, after, title) {
-  const beforePhase = String(before?.card?.audio_phase || "");
-  const afterPhase = String(after?.card?.audio_phase || "");
-  const afterProbeTitle = String(after?.probe?.target_card?.title || "");
-  const afterPlayerTitle = String(after?.player?.title || "");
-  if (!after?.card?.found) {
-    return false;
+async function clickAudioButton(page, target) {
+  const button = cardLocator(page, target).locator("button.action-audio").first();
+  try {
+    await button.click({ timeout: 5000 });
+  } catch (_) {
+    await cardLocator(page, target).locator("button.action-audio").first().evaluate(node => node.click());
   }
-  if (afterPhase && afterPhase !== beforePhase) {
-    return true;
-  }
-  if (String(after?.card?.audio_busy || "") === "true") {
-    return true;
-  }
-  if (beforePhase === "playing_confirmed") {
-    return !after?.player?.is_playing || /^Play\b/.test(String(after?.card?.button_label || ""));
-  }
-  if (afterProbeTitle === title && afterPhase !== "idle") {
-    return true;
-  }
-  if (beforePhase === "idle") {
-    return Boolean(after?.player?.is_playing && afterPlayerTitle === title);
-  }
-  return false;
 }
 
-async function waitForAudioClickDelivery(page, title, before, timeoutMs = 750) {
-  const startedAt = Date.now();
-  let last = await collectDiagnostics(page, title);
-  while (Date.now() - startedAt <= timeoutMs) {
-    if (audioClickDelivered(before, last, title)) {
-      return { delivered: true, diagnostics: last };
-    }
-    await page.waitForTimeout(75);
-    last = await collectDiagnostics(page, title);
-  }
-  return { delivered: audioClickDelivered(before, last, title), diagnostics: last };
-}
-
-async function resolveAudioButton(page, title) {
-  let lastError = null;
-  for (let attemptIndex = 0; attemptIndex < 8; attemptIndex += 1) {
-    const button = cardLocator(page, title).locator("button.action-audio").first();
-    try {
-      await button.waitFor({ state: "visible", timeout: 5000 });
-      const target = await button.evaluate(node => ({
-        card_id: String(node.getAttribute("data-card-id") || ""),
-        session_id: String(node.getAttribute("data-card-session-id") || ""),
-        label: String(node.getAttribute("aria-label") || "")
-      }));
-      return { button, target };
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(100 + attemptIndex * 50);
-    }
-  }
-  throw lastError || new Error(`Could not resolve audio button for "${title}"`);
-}
-
-async function clickAudioButton(page, title) {
-  const { button, target } = await resolveAudioButton(page, title);
-  const before = await collectDiagnostics(page, title);
-  const attempts = [];
-  const attempt = async (strategy, action) => {
-    try {
-      await action();
-    } catch (error) {
-      attempts.push({
-        strategy,
-        delivered: false,
-        error: String(error?.message || error || "")
-      });
-      return null;
-    }
-    const delivery = await waitForAudioClickDelivery(page, title, before);
-    attempts.push({
-      strategy,
-      delivered: delivery.delivered,
-      phase: String(delivery.diagnostics?.card?.audio_phase || ""),
-      busy: String(delivery.diagnostics?.card?.audio_busy || ""),
-      player_title: String(delivery.diagnostics?.player?.title || ""),
-      player_source: String(delivery.diagnostics?.player?.source || ""),
-      probe_target_title: String(delivery.diagnostics?.probe?.target_card?.title || ""),
-      probe_phase: String(delivery.diagnostics?.probe?.current_tile_audio_phase || "")
-    });
-    return delivery.delivered ? delivery : null;
-  };
-
-  let delivered = await attempt("locator_click", () => button.click({ timeout: 5000 }));
-  if (!delivered) {
-    delivered = await attempt("force_locator_click", () => button.click({ timeout: 5000, force: true }));
-  }
-  if (!delivered) {
-    delivered = await attempt("mouse_click", async () => {
-      const fresh = await resolveAudioButton(page, title);
-      const box = await fresh.button.boundingBox();
-      if (!box) {
-        throw new Error("audio button bounding box was unavailable");
-      }
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    });
-  }
-  if (!delivered) {
-    throw new Error(`Audio click did not reach "${title}" (${JSON.stringify({ target, attempts })})`);
-  }
-  return {
-    title,
-    target,
-    attempts,
-    delivered_strategy: attempts.find(item => item.delivered)?.strategy || ""
-  };
-}
-
-async function collectDiagnostics(page, title) {
-  return page.evaluate(async (targetTitle) => {
+async function collectDiagnostics(page, target) {
+  return page.evaluate(async ({ requestedTitle, requestedSessionId }) => {
     const surface = await window.Pucky.request({ command: "ui.surface.get", args: {} });
     const probe = await window.Pucky.request({ command: "ui.debug.audio_probe.get", args: {} });
     const player = await window.Pucky.request({ command: "player.state", args: {} });
     const cards = Array.from(document.querySelectorAll('article[data-card-id], article[data-card-session-id]'));
     const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
-    const node = cards.find(card => normalize(card.querySelector(".title")?.textContent) === targetTitle)
-      || cards.find(card => normalize(card.querySelector(".title")?.textContent).includes(targetTitle))
+    const node = (requestedSessionId
+      ? cards.find(card => String(card.getAttribute("data-card-session-id") || "") === requestedSessionId)
+      : null)
+      || cards.find(card => normalize(card.querySelector(".title")?.textContent) === requestedTitle)
+      || cards.find(card => normalize(card.querySelector(".title")?.textContent).includes(requestedTitle))
       || null;
     const button = node?.querySelector("button.action-audio") || null;
     const status = node?.querySelector(".tile-audio-status") || null;
@@ -413,10 +450,31 @@ async function collectDiagnostics(page, title) {
         wave_tick_count: node?.querySelectorAll(".wave-row .tick").length || 0
       }
     };
-  }, title);
+  }, {
+    requestedTitle: targetTitle(target),
+    requestedSessionId: targetSessionId(target)
+  });
 }
 
-async function sampleTimeline(page, title, options = {}) {
+function probeEvents(samples) {
+  return samples.flatMap(sample => Array.isArray(sample?.probe?.recent_events) ? sample.probe.recent_events : []);
+}
+
+function findProbeEvent(samples, type) {
+  return probeEvents(samples).find(event => String(event?.type || "") === type) || null;
+}
+
+async function pauseAnyActiveAudio(page) {
+  await page.evaluate(async () => {
+    try {
+      await window.Pucky.request({ command: "player.pause", args: {} });
+    } catch (_) {
+      // Best effort cleanup between attempts.
+    }
+  });
+}
+
+async function sampleTimeline(page, target, options = {}) {
   const durationMs = Math.max(500, Number(options.durationMs || 8000));
   const intervalMs = Math.max(50, Number(options.intervalMs || 100));
   const reportDir = options.reportDir;
@@ -429,7 +487,7 @@ async function sampleTimeline(page, title, options = {}) {
   const startedAt = Date.now();
   while (Date.now() - startedAt <= durationMs) {
     const elapsedMs = Date.now() - startedAt;
-    const snapshot = await collectDiagnostics(page, title);
+    const snapshot = await collectDiagnostics(page, target);
     const sample = {
       elapsed_ms: elapsedMs,
       ...snapshot
@@ -472,6 +530,33 @@ async function sampleTimeline(page, title, options = {}) {
   return { samples, screenshots };
 }
 
+async function waitForFirstConfirmedSample(page, target, options = {}) {
+  const durationMs = Math.max(500, Number(options.durationMs || 8000));
+  const intervalMs = Math.max(10, Number(options.intervalMs || 25));
+  const samples = [];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= durationMs) {
+    const elapsedMs = Date.now() - startedAt;
+    const snapshot = await collectDiagnostics(page, target);
+    const sample = {
+      elapsed_ms: elapsedMs,
+      ...snapshot
+    };
+    samples.push(sample);
+    if (sample.card.audio_phase === "playing_confirmed" || sample.card.audio_phase === "start_failed" || sample.card.audio_phase === "ended_immediately") {
+      return {
+        samples,
+        sample
+      };
+    }
+    await page.waitForTimeout(intervalMs);
+  }
+  return {
+    samples,
+    sample: lastSample(samples)
+  };
+}
+
 function firstSampleWithPhase(samples, phase) {
   return samples.find(sample => sample.card.audio_phase === phase) || null;
 }
@@ -484,13 +569,13 @@ function phaseSeen(samples, phase) {
   return Boolean(firstSampleWithPhase(samples, phase));
 }
 
-async function runStartStopScenario(page, config, title, reportDir) {
+async function runStartStopScenario(page, config, target, reportDir) {
   await loadInbox(page, config);
   await installInjectionHelpers(page);
-  const preClick = await collectDiagnostics(page, title);
+  const preClick = await collectDiagnostics(page, target);
   const preClickShot = await saveScreenshot(page, reportDir, "01-pre-click");
-  const startClick = await clickAudioButton(page, title);
-  const timeline = await sampleTimeline(page, title, {
+  await clickAudioButton(page, target);
+  const timeline = await sampleTimeline(page, target, {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
     reportDir,
@@ -509,10 +594,9 @@ async function runStartStopScenario(page, config, title, reportDir) {
   });
   let stopTimeline = null;
   let stopShot = "";
-  let stopClick = null;
   if (phaseSeen(timeline.samples, "playing_confirmed") && lastSample(timeline.samples)?.card?.audio_phase === "playing_confirmed") {
-    stopClick = await clickAudioButton(page, title);
-    stopTimeline = await sampleTimeline(page, title, {
+    await clickAudioButton(page, target);
+    stopTimeline = await sampleTimeline(page, target, {
       durationMs: 2500,
       intervalMs: config.sampleIntervalMs,
       reportDir,
@@ -521,14 +605,137 @@ async function runStartStopScenario(page, config, title, reportDir) {
     stopShot = stopTimeline.screenshots.final || "";
   }
   return {
-    title,
-    start_click: startClick,
+    target,
     pre_click: preClick,
     pre_click_screenshot: preClickShot,
     timeline,
-    stop_click: stopClick,
     stop_timeline: stopTimeline,
     stop_screenshot: stopShot
+  };
+}
+
+async function runImmediateRetapScenario(page, config, target, reportDir) {
+  const attempts = [];
+  for (let attempt = 1; attempt <= config.immediateSecondTapAttempts; attempt += 1) {
+    const prefix = `03-immediate-retap-attempt-${attempt}`;
+    await loadInbox(page, config);
+    await installInjectionHelpers(page);
+    const preClick = await collectDiagnostics(page, target);
+    const preClickShot = await saveScreenshot(page, reportDir, `${prefix}-pre-click`);
+    let playTimeline = { samples: [], screenshots: {} };
+    let stopTimeline = null;
+    let confirmed = null;
+    let finalSample = null;
+    if (isLocalProofUrl(config.pageUrl)) {
+      await page.evaluate(({ requestedTitle, requestedSessionId, delayMs }) => {
+        window.__codexAudioTruthInjectImmediateRetap?.({
+          title: requestedTitle,
+          sessionId: requestedSessionId,
+          delayMs,
+          resolveLagMs: 220
+        });
+      }, {
+        requestedTitle: targetTitle(target),
+        requestedSessionId: targetSessionId(target),
+        delayMs: config.immediateSecondTapDelayMs
+      });
+      await clickAudioButton(page, target);
+      stopTimeline = await sampleTimeline(page, target, {
+        durationMs: Math.max(config.sampleDurationMs, IMMEDIATE_RETAP_SETTLE_MS + 1200),
+        intervalMs: Math.min(config.sampleIntervalMs, 50),
+        reportDir,
+        prefix: `${prefix}-retap`,
+        stopWhen: (sample, samples) => {
+          const queued = findProbeEvent(samples, "busy_same_card_toggle_queued");
+          const replayed = findProbeEvent(samples, "busy_same_card_toggle_replayed");
+          return Boolean(
+            (queued && replayed && sample.card.audio_phase === "idle" && !sample.player.is_playing)
+            || sample.card.audio_phase === "start_failed"
+            || sample.card.audio_phase === "ended_immediately"
+          );
+        }
+      });
+      playTimeline = stopTimeline;
+      confirmed = firstSampleWithPhase(stopTimeline.samples, "playing_confirmed");
+      finalSample = lastSample(stopTimeline.samples);
+    } else {
+      await clickAudioButton(page, target);
+      const playWait = await waitForFirstConfirmedSample(page, target, {
+        durationMs: config.sampleDurationMs,
+        intervalMs: Math.min(config.sampleIntervalMs, 25)
+      });
+      playTimeline = {
+        samples: playWait.samples,
+        screenshots: {}
+      };
+      confirmed = firstSampleWithPhase(playTimeline.samples, "playing_confirmed");
+      finalSample = lastSample(playTimeline.samples);
+      if (confirmed) {
+        if (config.immediateSecondTapDelayMs > 0) {
+          await page.waitForTimeout(config.immediateSecondTapDelayMs);
+        }
+        await clickAudioButton(page, target);
+        stopTimeline = await sampleTimeline(page, target, {
+          durationMs: IMMEDIATE_RETAP_SETTLE_MS,
+          intervalMs: config.sampleIntervalMs,
+          reportDir,
+          prefix: `${prefix}-retap`
+        });
+        finalSample = lastSample(stopTimeline.samples) || finalSample;
+      }
+    }
+    const attemptSamples = stopTimeline && stopTimeline !== playTimeline
+      ? [...playTimeline.samples, ...stopTimeline.samples]
+      : playTimeline.samples.slice();
+    const confirmedSample = confirmed
+      || attemptSamples.find(sample => Array.isArray(sample?.probe?.recent_events)
+        && sample.probe.recent_events.some(event => event.type === "phase" && event.phase === "playing_confirmed"))
+      || null;
+    const queuedEvent = findProbeEvent(attemptSamples, "busy_same_card_toggle_queued");
+    const replayedEvent = findProbeEvent(attemptSamples, "busy_same_card_toggle_replayed");
+    const finalPhase = String(finalSample?.card?.audio_phase || "");
+    const finalIsPlaying = Boolean(finalSample?.player?.is_playing);
+    const pass = Boolean(
+      confirmedSample
+      && queuedEvent
+      && replayedEvent
+      && finalPhase === "idle"
+      && !finalIsPlaying
+    );
+    attempts.push({
+      attempt,
+      target,
+      pre_click: preClick,
+      pre_click_screenshot: preClickShot,
+      play_timeline: playTimeline,
+      stop_timeline: stopTimeline,
+      confirmed_at_ms: confirmedSample?.elapsed_ms ?? null,
+      queued_event_seen: Boolean(queuedEvent),
+      replayed_event_seen: Boolean(replayedEvent),
+      final_phase: finalPhase,
+      final_is_playing: finalIsPlaying,
+      pass,
+      reason: !confirmedSample
+        ? "playing_confirmed never observed before immediate re-tap"
+        : !queuedEvent
+          ? "queued same-card re-tap event was never observed"
+          : !replayedEvent
+            ? "queued same-card re-tap was never replayed"
+            : finalPhase !== "idle"
+              ? `final tile phase remained ${finalPhase || "unknown"}`
+              : finalIsPlaying
+                ? "player.state.is_playing remained true after settle window"
+                : ""
+    });
+    await resetInjection(page);
+    await pauseAnyActiveAudio(page);
+    await page.waitForTimeout(150);
+  }
+  return {
+    target,
+    expected_attempts: config.immediateSecondTapAttempts,
+    delay_ms: config.immediateSecondTapDelayMs,
+    attempts
   };
 }
 
@@ -539,39 +746,35 @@ function requiredPlaybackDeltaMs(durationMs) {
   return 2000;
 }
 
-async function runCrossCardScenario(page, config, primaryTitle, secondaryTitle, reportDir) {
+async function runCrossCardScenario(page, config, primaryTarget, secondaryTarget, reportDir) {
   await loadInbox(page, config);
   await installInjectionHelpers(page);
-  const primaryClick = await clickAudioButton(page, primaryTitle);
+  await clickAudioButton(page, primaryTarget);
   await page.waitForTimeout(600);
-  const secondaryClick = await clickAudioButton(page, secondaryTitle);
-  const timeline = await sampleTimeline(page, secondaryTitle, {
+  await clickAudioButton(page, secondaryTarget);
+  const timeline = await sampleTimeline(page, secondaryTarget, {
     durationMs: 3000,
     intervalMs: config.sampleIntervalMs,
     reportDir,
     prefix: "06-cross-card"
   });
-  const primaryState = await collectDiagnostics(page, primaryTitle);
+  const primaryState = await collectDiagnostics(page, primaryTarget);
   return {
-    primary_title: primaryTitle,
-    secondary_title: secondaryTitle,
-    clicks: {
-      primary: primaryClick,
-      secondary: secondaryClick
-    },
+    primary_target: primaryTarget,
+    secondary_target: secondaryTarget,
     timeline,
     primary_state_after_switch: primaryState
   };
 }
 
-async function runInjectedFailureScenario(page, config, title, reportDir) {
+async function runInjectedFailureScenario(page, config, target, reportDir) {
   await loadInbox(page, config);
   await installInjectionHelpers(page);
   await page.evaluate(() => {
     window.__codexAudioTruthInjectPlayFailure("Injected browser proof play failure.");
   });
-  const click = await clickAudioButton(page, title);
-  const timeline = await sampleTimeline(page, title, {
+  await clickAudioButton(page, target);
+  const timeline = await sampleTimeline(page, target, {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
     reportDir,
@@ -579,20 +782,19 @@ async function runInjectedFailureScenario(page, config, title, reportDir) {
   });
   await resetInjection(page);
   return {
-    title,
-    click,
+    target,
     timeline
   };
 }
 
-async function runInjectedEarlyStopScenario(page, config, title, reportDir) {
+async function runInjectedEarlyStopScenario(page, config, target, reportDir) {
   await loadInbox(page, config);
   await installInjectionHelpers(page);
   await page.evaluate(() => {
     window.__codexAudioTruthInjectEarlyStop(450);
   });
-  const click = await clickAudioButton(page, title);
-  const timeline = await sampleTimeline(page, title, {
+  await clickAudioButton(page, target);
+  const timeline = await sampleTimeline(page, target, {
     durationMs: config.sampleDurationMs,
     intervalMs: config.sampleIntervalMs,
     reportDir,
@@ -600,8 +802,7 @@ async function runInjectedEarlyStopScenario(page, config, title, reportDir) {
   });
   await resetInjection(page);
   return {
-    title,
-    click,
+    target,
     timeline
   };
 }
@@ -688,17 +889,11 @@ function playingStabilityResult(scenario) {
 function progressAdvancementResult(scenario) {
   const positions = scenario.timeline.samples.map(sample => Number(sample?.player?.position_ms || 0));
   const durationMs = Math.max(0, ...scenario.timeline.samples.map(sample => Number(sample?.player?.duration_ms || 0)));
-  const maxPositionMs = positions.length ? Math.max(...positions) : 0;
-  const minPositionMs = positions.length ? Math.min(...positions) : 0;
-  const firstElapsedMs = Number(scenario.timeline.samples[0]?.elapsed_ms || 0);
-  const observedStartMs = firstElapsedMs <= 500 ? 0 : minPositionMs;
-  const deltaMs = Math.max(0, maxPositionMs - observedStartMs);
+  const deltaMs = positions.length ? Math.max(...positions) - Math.min(...positions) : 0;
   const requiredDeltaMs = requiredPlaybackDeltaMs(durationMs);
   return {
     pass: deltaMs >= requiredDeltaMs,
     delta_ms: deltaMs,
-    observed_start_ms: observedStartMs,
-    max_position_ms: maxPositionMs,
     required_delta_ms: requiredDeltaMs,
     duration_ms: durationMs
   };
@@ -715,6 +910,23 @@ function stopResult(scenario) {
   return {
     pass: Boolean(finalSample && finalSample.card.audio_phase === "idle"),
     final_phase: finalSample?.card.audio_phase || ""
+  };
+}
+
+function immediateRetapResult(scenario) {
+  const attempts = Array.isArray(scenario?.attempts) ? scenario.attempts : [];
+  const failedAttempt = attempts.find(attempt => !attempt.pass) || null;
+  return {
+    pass: attempts.length >= Math.max(1, Number(scenario?.expected_attempts || 1)) && !failedAttempt,
+    attempts_run: attempts.length,
+    expected_attempts: Math.max(1, Number(scenario?.expected_attempts || 1)),
+    delay_ms: Math.max(0, Number(scenario?.delay_ms || 0)),
+    failed_attempt: failedAttempt?.attempt ?? null,
+    failed_reason: failedAttempt?.reason || "",
+    queued_events_seen: attempts.filter(attempt => attempt.queued_event_seen).length,
+    replayed_events_seen: attempts.filter(attempt => attempt.replayed_event_seen).length,
+    final_phase: failedAttempt?.final_phase || attempts.at(-1)?.final_phase || "",
+    final_is_playing: failedAttempt ? failedAttempt.final_is_playing : (attempts.at(-1)?.final_is_playing ?? null)
   };
 }
 
@@ -807,6 +1019,15 @@ function buildAnalysis(summary) {
   lines.push(`- Second-tap stop returned cleanly to idle: ${summary.results.stop.pass ? "PASS" : "FAIL"}${summary.results.stop.final_phase ? ` (${summary.results.stop.final_phase})` : ""}`);
   lines.push("");
 
+  lines.push("## Immediate Re-Tap");
+  lines.push(`- Immediate re-tap pause passed: ${summary.results.immediate_retap.pass ? "PASS" : "FAIL"} (${summary.results.immediate_retap.attempts_run}/${summary.results.immediate_retap.expected_attempts} attempts, ${summary.results.immediate_retap.delay_ms} ms delay)`);
+  lines.push(`- Queued events seen: ${summary.results.immediate_retap.queued_events_seen}`);
+  lines.push(`- Replayed events seen: ${summary.results.immediate_retap.replayed_events_seen}`);
+  if (summary.results.immediate_retap.failed_reason) {
+    lines.push(`- Failure detail: attempt ${summary.results.immediate_retap.failed_attempt} - ${summary.results.immediate_retap.failed_reason}`);
+  }
+  lines.push("");
+
   lines.push("## Cross Card");
   lines.push(`- Primary tile cleared after switching: ${summary.results.cross_card.pass ? "PASS" : "FAIL"} (primary final phase: ${summary.results.cross_card.primary_final_phase || "idle"})`);
   lines.push("");
@@ -849,6 +1070,9 @@ async function run() {
   fs.writeFileSync(consoleLogPath, "", "utf8");
 
   const isLocalProof = config.skipCanonicalCheck || isLocalProofUrl(config.pageUrl);
+  if (isLocalProof && !String(config.preferredSessionId || "").trim()) {
+    config.preferredSessionId = DEFAULT_LOCAL_PREFERRED_SESSION_ID;
+  }
   const repo = isLocalProof ? { head: "", upstream: "", branch_status: "", clean: true } : ensureCanonicalMasterReady();
   const manifest = await fetchManifest(config.pageUrl, config.apiToken);
   if (!isLocalProof) {
@@ -856,6 +1080,7 @@ async function run() {
   }
 
   const browser = await launchConfiguredBrowser(config);
+  const viewport = configuredViewport(config);
 
   const summary = {
     browser_name: config.browserName,
@@ -864,6 +1089,13 @@ async function run() {
     repo,
     manifest,
     chrome_path: config.browserName === "chromium" ? resolveChromePath() : "",
+    config: {
+      preferred_session_id: config.preferredSessionId,
+      preferred_title: config.preferredTitle,
+      viewport,
+      immediate_second_tap_delay_ms: config.immediateSecondTapDelayMs,
+      immediate_second_tap_attempts: config.immediateSecondTapAttempts
+    },
     screenshots: {}
   };
 
@@ -874,8 +1106,8 @@ async function run() {
     const networkEvents = [];
     const consoleMessages = [];
     const context = await browser.newContext({
-      viewport: VIEWPORT,
-      recordVideo: { dir: videoDir, size: VIEWPORT }
+      viewport,
+      recordVideo: { dir: videoDir, size: viewport }
     });
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     const page = await context.newPage();
@@ -901,20 +1133,23 @@ async function run() {
     await loadInbox(page, config);
     await installInjectionHelpers(page);
     const audioCards = await listAudioCards(page);
-    const targets = pickCards(audioCards, config.preferredTitle);
+    const targets = pickCards(audioCards, config.preferredSessionId, config.preferredTitle);
     assert(targets.primary, "No Inbox cards with tile audio were found on the live page.");
     summary.targets = {
       primary_title: targets.primary.title,
-      secondary_title: targets.secondary?.title || ""
+      primary_session_id: targets.primary.session_id || "",
+      secondary_title: targets.secondary?.title || "",
+      secondary_session_id: targets.secondary?.session_id || ""
     };
-    summary.initial_surface = await collectDiagnostics(page, targets.primary.title);
+    summary.initial_surface = await collectDiagnostics(page, targets.primary);
 
-    const startStop = await runStartStopScenario(page, config, targets.primary.title, config.reportDir);
+    const startStop = await runStartStopScenario(page, config, targets.primary, config.reportDir);
+    const immediateRetap = await runImmediateRetapScenario(page, config, targets.primary, config.reportDir);
     const crossCard = targets.secondary
-      ? await runCrossCardScenario(page, config, targets.primary.title, targets.secondary.title, config.reportDir)
+      ? await runCrossCardScenario(page, config, targets.primary, targets.secondary, config.reportDir)
       : null;
-    const injectedFailure = await runInjectedFailureScenario(page, config, targets.primary.title, config.reportDir);
-    const injectedEarlyStop = await runInjectedEarlyStopScenario(page, config, targets.primary.title, config.reportDir);
+    const injectedFailure = await runInjectedFailureScenario(page, config, targets.primary, config.reportDir);
+    const injectedEarlyStop = await runInjectedEarlyStopScenario(page, config, targets.primary, config.reportDir);
 
     fs.writeFileSync(path.join(config.reportDir, "final-dom.html"), await page.content(), "utf8");
     writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);
@@ -922,6 +1157,7 @@ async function run() {
 
     summary.scenarios = {
       start_stop: startStop,
+      immediate_retap: immediateRetap,
       cross_card: crossCard,
       injected_failure: injectedFailure,
       injected_early_stop: injectedEarlyStop
@@ -932,6 +1168,7 @@ async function run() {
       playing_stability: playingStabilityResult(startStop),
       progress_advancement: progressAdvancementResult(startStop),
       stop: stopResult(startStop),
+      immediate_retap: immediateRetapResult(immediateRetap),
       cross_card: crossCard ? crossCardResult(crossCard) : { pass: false, reason: "No secondary audio card found." },
       injected_failure: injectedFailureResult(injectedFailure),
       injected_early_stop: injectedEarlyStopResult(injectedEarlyStop),
@@ -944,6 +1181,9 @@ async function run() {
       playing_confirmed: startStop.timeline.screenshots.playing_confirmed || "",
       one_second_after_confirmed: startStop.timeline.screenshots.one_second_after_confirmed || "",
       stop_final: startStop.stop_screenshot || "",
+      immediate_retap_pre_click: immediateRetap.attempts[0]?.pre_click_screenshot || "",
+      immediate_retap_confirmed: immediateRetap.attempts[0]?.play_timeline?.screenshots?.playing_confirmed || "",
+      immediate_retap_final: immediateRetap.attempts[0]?.stop_timeline?.screenshots?.final || "",
       cross_card_final: crossCard?.timeline?.screenshots?.final || "",
       injected_start_failed: injectedFailure.timeline.screenshots.start_failed || injectedFailure.timeline.screenshots.final || "",
       injected_ended_immediately: injectedEarlyStop.timeline.screenshots.ended_immediately || injectedEarlyStop.timeline.screenshots.final || ""
@@ -969,6 +1209,7 @@ async function run() {
     assert(summary.results.playing_stability.pass, `Confirmed playback did not remain stable enough to trust the UI (${summary.results.playing_stability.stability_kind || summary.results.playing_stability.reason || "unknown"}).`);
     assert(summary.results.progress_advancement.pass, `Audio did not advance enough to prove real playback (${summary.results.progress_advancement.delta_ms} ms / required ${summary.results.progress_advancement.required_delta_ms} ms).`);
     assert(summary.results.stop.pass, `Second-tap pause/stop did not return the tile to idle (${summary.results.stop.final_phase || summary.results.stop.reason || "unknown"}).`);
+    assert(summary.results.immediate_retap.pass, `Immediate same-card re-tap did not stop cleanly (${summary.results.immediate_retap.failed_reason || summary.results.immediate_retap.final_phase || "unknown"}).`);
     assert(summary.results.cross_card.pass, `Cross-card playback handoff failed (${summary.results.cross_card.reason || summary.results.cross_card.primary_final_phase || "unknown"}).`);
     assert(summary.results.injected_failure.pass, "Injected play failure did not surface as a clear start_failed outcome.");
     assert(summary.results.injected_early_stop.pass, "Injected early stop did not surface as ended_immediately.");

@@ -31,6 +31,12 @@ def test_deploy_manifest_uses_repo_artifacts_not_device_paths() -> None:
     assert encoded.count("device_audio_path") == 1
     assert "public_audio_path" not in encoded
     assert "public_audio_playlist_path" not in encoded
+    assert any(
+        card["session_id"] == "fixture_immediate_retap"
+        and card["audio_artifact"] == "immediate-retap-proof.wav"
+        and card["html_artifact"] == "immediate-retap-proof.html"
+        for card in spec["cards"]
+    )
 
     artifacts = set()
     assert any(card.get("audio_artifact") and not card.get("html_artifact") for card in spec["cards"])
@@ -135,6 +141,8 @@ def test_bundle_contains_deploy_manifest_and_artifacts(tmp_path: Path) -> None:
     assert "fixtures/artifacts/morning-checklist.csv" in files
     assert "fixtures/artifacts/morning-notes.txt" in files
     assert "fixtures/artifacts/morning-unknown.bin" in files
+    assert "fixtures/artifacts/immediate-retap-proof.wav" in files
+    assert "fixtures/artifacts/immediate-retap-proof.html" in files
     assert (ARTIFACTS / "real-master-through-chapter-8.pdf").read_bytes().startswith(b"%PDF")
     assert (ARTIFACTS / "real-manuscript-chapters-0-7.docx").read_bytes().startswith(b"PK")
     assert (ARTIFACTS / "real-video-4-webview.mp4").read_bytes()[4:12].startswith(b"ftyp")

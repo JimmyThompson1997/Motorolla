@@ -3,6 +3,62 @@
   "artifact_base_path": "fixtures/artifacts",
   "cards": [
     {
+      "session_id": "fixture_immediate_retap",
+      "title": "Immediate re-tap proof",
+      "icon": "mic",
+      "accent": "#ff7b54",
+      "created_at": "2026-05-21T09:12:00-07:00",
+      "summary": "Deterministic inbox audio proof card with a long clip dedicated to the same-card immediate pause race.",
+      "transcript_messages": [
+        {
+          "role": "user",
+          "text": "Play this proof clip, then tap again immediately.",
+          "time": "2:21 PM"
+        },
+        {
+          "role": "assistant",
+          "text": "This fixture exists so the browser proof can verify that a same-card second tap during startup is honored and returns the tile to idle.",
+          "time": "2:22 PM"
+        }
+      ],
+      "trace": {
+        "schema": "pucky.turn_trace.v1",
+        "turn_id": "turn_fixture_immediate_retap",
+        "sections": [
+          {
+            "kind": "thinking",
+            "title": "Preparing the immediate re-tap proof card.",
+            "items": [
+              {
+                "label": "dedicated_audio_asset",
+                "status": "completed"
+              },
+              {
+                "label": "stable_session_id",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "kind": "reasoning",
+            "title": "Reproducing the start-window pause race.",
+            "items": [
+              {
+                "label": "same_card_second_tap",
+                "status": "completed"
+              },
+              {
+                "label": "busy_window_probe",
+                "status": "failed"
+              }
+            ]
+          }
+        ]
+      },
+      "audio_artifact": "immediate-retap-proof.wav",
+      "html_artifact": "immediate-retap-proof.html"
+    },
+    {
       "session_id": "fixture_morning",
       "title": "Morning launch",
       "icon": "clock",

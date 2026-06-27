@@ -1,0 +1,46 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Immediate re-tap proof</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: system-ui, sans-serif;
+    background: linear-gradient(180deg, #fff3eb 0%, #ffe2d5 100%);
+    color: #2f1d18;
+    line-height: 1.5;
+  }
+  h1 { margin: 0 0 14px; font-size: 30px; line-height: 1.08; }
+  section {
+    margin: 16px 0;
+    padding: 16px;
+    border: 2px solid #2f1d18;
+    background: rgba(255, 255, 255, 0.7);
+    box-shadow: 6px 6px 0 #ff9c73;
+  }
+  .tag {
+    display: inline-block;
+    margin-bottom: 8px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: #2f1d18;
+    color: #fff3eb;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  p { margin: 8px 0 0; font-size: 16px; }
+</style>
+<h1>Immediate re-tap proof</h1>
+<section>
+  <span class="tag">Purpose</span>
+  <p>This committed fixture page pairs with a longer audio clip so the inbox audio proof can verify the same-card pause race without depending on a live inbox card.</p>
+  <p>The success condition is simple: an immediate second tap during startup must still be honored and must return the tile to idle.</p>
+</section>
+<section>
+  <span class="tag">Why it exists</span>
+  <p>The original one-second WAV fixtures could finish naturally before the proof had enough time to distinguish a real queued pause from a false pass caused by clip completion.</p>
+  <p>This page is only here to keep the deterministic proof target self-contained in the shipped fixture bundle.</p>
+</section>
