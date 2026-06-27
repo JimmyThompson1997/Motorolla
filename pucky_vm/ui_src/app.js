@@ -213,6 +213,7 @@
     reminderHistoryExpanded: false,
     meetingDetailSections: null,
     meetingDetailSectionCache: {},
+    connectedSectionState: {},
     workspace: {
       notes: initialWorkspaceBucketState(),
       tasks: initialWorkspaceBucketState(),
@@ -6692,17 +6693,29 @@
     refs.saveStatus.dataset.contactSaveState = state.contacts.editStatus || "idle";
     syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);
     syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);
-    const connectedRows = contactConnectedRows(contact);
-    const connectedKey = connectedRows.map(row => [
-      row.kind,
-      row.target?.id || "",
-      row.label,
-      row.value,
+    const connectedEntries = workspaceLinkedEntries(contact, { currentKind: "contact", dedupeTargets: true });
+    const connectedKey = connectedEntries.map(entry => [
+      entry.relatedKind,
+      entry.related?.id || entry.relatedId || "",
+      String(entry.related?.title || entry.label || "").trim(),
+      linkedRecordTimestampLabel(entry),
+      linkedRecordSubtitleText(entry),
     ].join(":")).join("|");
     if (refs.connectedHost.dataset.connectedKey !== connectedKey) {
       refs.connectedHost.dataset.connectedKey = connectedKey;
-      refs.connectedHost.replaceChildren(...(connectedRows.length
-        ? [lightInfoSection("Connected", connectedRows, { showTrailingChevron: false })]
+      refs.connectedHost.replaceChildren(...(connectedEntries.length
+        ? [lightLinkedRecordSection(contact, {
+            title: "Connected",
+            fromRoute: "contact-detail",
+            dedupeTargets: true,
+            showChips: false,
+            showChevron: false,
+            variant: "flat",
+            collapsible: true,
+            defaultExpanded: true,
+            sectionStateScope: "contact-detail",
+            sectionStateId: contactId,
+          })]
         : []));
     }
   }
@@ -6756,6 +6769,7 @@
       row.dataset.contactId = contact.id;
       row.addEventListener("click", () => {
         state.selectedContactId = contact.id;
+        resetConnectedSection("contact-detail", contact.id, true);
         lightNavigate("contact-detail", { from: "contacts" });
       });
       row.append(lightAvatar(contact), lightContactCopy(contact));
@@ -7401,6 +7415,7 @@
         ...state.meetingDetailSectionCache,
         [String(event.id || "").trim()]: state.meetingDetailSections,
       };
+      resetConnectedSection("meeting-detail", event.id, true);
       lightNavigate("meeting-detail", { from: "calendar" });
     };
     block.addEventListener("click", event => {
@@ -7456,8 +7471,52 @@
     return {
       meetingId: normalizedMeetingId,
       details: true,
-      connected: false,
+      connected: true,
     };
+  }
+
+  function connectedSectionStateKey(scope, recordId) {
+    const normalizedScope = String(scope || "").trim().toLowerCase();
+    const normalizedId = String(recordId || "").trim();
+    if (!normalizedScope || !normalizedId) {
+      return "";
+    }
+    return `${normalizedScope}:${normalizedId}`;
+  }
+
+  function connectedSectionExpanded(scope, recordId, defaultExpanded = true) {
+    const key = connectedSectionStateKey(scope, recordId);
+    if (!key) {
+      return defaultExpanded !== false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(state.connectedSectionState, key)) {
+      return defaultExpanded !== false;
+    }
+    return state.connectedSectionState[key] !== false;
+  }
+
+  function setConnectedSectionExpanded(scope, recordId, expanded) {
+    const key = connectedSectionStateKey(scope, recordId);
+    if (!key) {
+      return;
+    }
+    state.connectedSectionState = {
+      ...state.connectedSectionState,
+      [key]: Boolean(expanded),
+    };
+  }
+
+  function resetConnectedSection(scope, recordId, defaultExpanded = true) {
+    setConnectedSectionExpanded(scope, recordId, defaultExpanded !== false);
+  }
+
+  function toggleConnectedSection(scope, recordId, defaultExpanded = true) {
+    setConnectedSectionExpanded(
+      scope,
+      recordId,
+      !connectedSectionExpanded(scope, recordId, defaultExpanded)
+    );
+    render();
   }
 
   function ensureMeetingDetailSections(meetingId = state.selectedMeetingId) {
@@ -7537,7 +7596,21 @@
     const page = lightPage(meeting.title || "Event", { detail: true });
     page.classList.add("light-document-page", "light-event-document", "light-event-detail-page");
     page.append(lightCalendarEventDetailsSection(meeting, attendees));
-    page.append(lightMeetingDetailConnectedSection(meeting));
+    const connected = lightLinkedRecordSection(meeting, {
+      title: "Connected",
+      fromRoute: "meeting-detail",
+      dedupeTargets: true,
+      showChips: false,
+      showChevron: false,
+      variant: "flat",
+      collapsible: true,
+      defaultExpanded: true,
+      sectionStateScope: "meeting-detail",
+      sectionStateId: meeting?.id,
+    });
+    if (connected) {
+      page.append(connected);
+    }
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
       page.append(lightListSection("Agenda", meta.agenda));
     }
@@ -7749,30 +7822,6 @@
     }
   }
 
-  function lightMeetingDetailConnectedSection(meeting) {
-    const entries = workspaceLinkedEntries(meeting, {
-      excludeKinds: ["contact"],
-    });
-    const list = el("div", "light-linked-record-list light-feed-section-body light-feed-list light-card is-flat-feed");
-    list.dataset.linkedRecordsCount = String(entries.length);
-    if (!entries.length) {
-      list.append(el("div", "light-linked-records-empty-shell is-flat-feed"));
-    } else {
-      entries.forEach(entry => list.append(lightLinkedRecordFeedRow(entry, {
-        fromRoute: "meeting-detail",
-        showChips: false,
-        showChevron: false,
-        variant: "flat",
-      })));
-    }
-    return lightMeetingDetailSection("Connected", "connected", list, {
-      expanded: meetingDetailSectionExpanded("connected", meeting?.id),
-      count: entries.length,
-      sectionClassName: "light-linked-records-section is-flat-feed",
-      linkedRecordsTitle: "connected",
-    });
-  }
-
   function lightMeetingDetailSection(title, sectionKey, bodyContent, options = {}) {
     const normalizedTitle = String(title || "").trim();
     const normalizedKey = String(sectionKey || normalizedTitle).trim().toLowerCase();
@@ -7784,7 +7833,7 @@
       section.dataset.linkedRecordsTitle = String(options.linkedRecordsTitle || "").trim().toLowerCase();
     }
     const controlsId = `light-meeting-detail-section-${normalizedKey}`;
-    section.append(lightMeetingDetailSectionHeader(normalizedTitle, normalizedKey, options.count, expanded, controlsId));
+    section.append(lightMeetingDetailSectionHeader(normalizedTitle, normalizedKey, options.count, expanded, controlsId, options.onToggle));
     const body = el("div", "light-meeting-detail-section-body");
     body.id = controlsId;
     body.hidden = !expanded;
@@ -7795,16 +7844,21 @@
     return section;
   }
 
-  function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId) {
+  function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId, onToggle = null) {
     const button = el("button", expanded ? "light-feed-section-header light-meeting-detail-section-header is-expanded" : "light-feed-section-header light-meeting-detail-section-header");
     button.type = "button";
     button.dataset.meetingDetailSection = String(sectionKey || "").trim().toLowerCase();
     button.setAttribute("aria-expanded", String(expanded));
     button.setAttribute("aria-controls", controlsId);
     button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${String(title || sectionKey || "section").trim().toLowerCase()}`);
+    button._sectionToggle = typeof onToggle === "function" ? onToggle : null;
     button.addEventListener("click", event => {
       event.preventDefault();
       event.stopPropagation();
+      if (typeof button._sectionToggle === "function") {
+        button._sectionToggle();
+        return;
+      }
       toggleMeetingDetailSection(sectionKey);
     });
     const copy = el("span", "light-meeting-detail-section-copy");
@@ -8106,6 +8160,7 @@
       interactive: true,
       open: () => {
         state.selectedReminderId = reminder.id;
+        resetConnectedSection("reminder-detail", reminder.id, true);
         lightNavigate("reminder-detail", { from: "reminders" });
       },
       renderMode: "flat",
@@ -8128,6 +8183,7 @@
       interactive: true,
       open: () => {
         state.selectedProjectId = project.id;
+        resetConnectedSection("project-detail", project.id, true);
         lightNavigate("project-detail", { from: "projects" });
       },
       renderMode: "flat",
@@ -8202,17 +8258,21 @@
       page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));
     }
     page.append(lightMeetingNoteDetailsSection(meeting));
-    page.append(lightLinkedRecordSection(meeting, {
+    const connected = lightLinkedRecordSection(meeting, {
       title: "Connected",
-      excludeKinds: ["contact"],
-      showWhenEmpty: true,
       fromRoute: "meeting-note-detail",
       dedupeTargets: true,
       showChips: false,
       showChevron: false,
       variant: "flat",
-      detailResolver: meetingNoteConnectedDetail,
-    }));
+      collapsible: true,
+      defaultExpanded: true,
+      sectionStateScope: "meeting-note-detail",
+      sectionStateId: meeting?.id,
+    });
+    if (connected) {
+      page.append(connected);
+    }
     return page;
   }
 
@@ -8374,9 +8434,20 @@
     const surface = el("div", "light-reminder-detail-surface");
     surface.dataset.reminderDetailId = String(reminder?.id || "");
     surface.append(lightReminderDetailCard(reminder));
-    const feed = lightReminderDetailFeed(reminder);
-    if (feed) {
-      surface.append(feed);
+    const connected = lightLinkedRecordSection(reminder, {
+      title: "Connected",
+      fromRoute: "reminder-detail",
+      dedupeTargets: true,
+      showChips: false,
+      showChevron: false,
+      variant: "flat",
+      collapsible: true,
+      defaultExpanded: true,
+      sectionStateScope: "reminder-detail",
+      sectionStateId: reminderRecordId(reminder),
+    });
+    if (connected) {
+      surface.append(connected);
     }
     return surface;
   }
@@ -8414,6 +8485,16 @@
     row.type = "button";
     row.dataset.recordId = record.id;
     row.addEventListener("click", () => {
+      if ([
+        "meeting-detail",
+        "meeting-note-detail",
+        "task-detail",
+        "project-detail",
+        "contact-detail",
+        "reminder-detail",
+      ].includes(String(options.detailRoute || "").trim())) {
+        resetConnectedSection(options.detailRoute, record.id, true);
+      }
       state[options.selectedKey] = record.id;
       lightNavigate(options.detailRoute, { from: options.collection });
     });
@@ -8524,6 +8605,7 @@
     row.tabIndex = 0;
     const openReminder = () => {
       state.selectedReminderId = reminder.id;
+      resetConnectedSection("reminder-detail", reminder.id, true);
       lightNavigate("reminder-detail", { from: "reminders" });
     };
     row.addEventListener("click", openReminder);
@@ -8668,23 +8750,6 @@
       rows.push({ icon: "apps", label: "Participants", value: "Just me" });
     }
     return rows;
-  }
-
-  function meetingNoteConnectedDetail(entry) {
-    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
-    const kindLabel = graphKindLabel(kind);
-    const related = entry?.related || null;
-    if (!related) {
-      return String(entry?.relation || kindLabel).trim() || kindLabel;
-    }
-    if (kind === "calendar_event") {
-      return calendarConnectedTileTimestampLabel(related);
-    }
-    const timestamp = kind === "note"
-      ? noteTimestampLabel(related)
-      : workspaceTimestamp(linkedRecordRecencyMs(kind, related), "");
-    const summary = String(related?.summary || "").trim();
-    return [kindLabel, timestamp, summary].filter(Boolean).join(DOT);
   }
 
   function reminderDestinationRows(reminder) {
@@ -9111,20 +9176,6 @@
       ...reminderDetailLinkedNoteRows(reminder),
       ...reminderDetailLinkedRecordRows(reminder),
     ];
-  }
-
-  function lightReminderDetailFeed(reminder) {
-    const rows = reminderDetailFeedRows(reminder);
-    if (!rows.length) {
-      return null;
-    }
-    const section = el("section", "light-info-section light-reminder-detail-feed-section");
-    section.append(lightSectionTitle("Connected"));
-    const card = el("div", "light-card light-info-card light-reminder-detail-feed");
-    card.dataset.reminderDetailFeed = "true";
-    rows.forEach(row => card.append(lightInfoRow(row)));
-    section.append(card);
-    return section;
   }
 
   function lightReminderActionRow(reminder) {
@@ -9727,6 +9778,16 @@
         [String(target.id || "").trim()]: state.meetingDetailSections,
       };
     }
+    if ([
+      "meeting-detail",
+      "meeting-note-detail",
+      "task-detail",
+      "project-detail",
+      "contact-detail",
+      "reminder-detail",
+    ].includes(String(target.route || "").trim())) {
+      resetConnectedSection(target.route, target.id, true);
+    }
     state[target.selectedKey] = target.id;
     lightNavigate(target.route, {
       from: fromRoute || state.route || "",
@@ -9836,51 +9897,6 @@
     return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
   }
 
-  function contactConnectedRows(contact) {
-    const rows = [];
-    const seen = new Set();
-    workspaceLinkedEntries(contact, { currentKind: "contact" }).forEach(entry => {
-      const target = entry.target || workspaceTargetForKind(entry.relatedKind, entry.related?.id || entry.relatedId);
-      const key = target?.kind && target?.id
-        ? `${target.kind}:${target.id}`
-        : `${entry.relatedKind}:${entry.relatedId}`;
-      if (!target || !key || seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);
-      const value = entry.relatedKind === "note"
-        ? String(entry.related?.summary || entry.relation || "Note").trim() || "Note"
-        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true });
-      rows.push({
-        icon: graphKindIcon(entry.relatedKind),
-        accentKey: graphKindAccentKey(entry.relatedKind),
-        label: String(entry.related?.title || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),
-        value,
-        target,
-        kind: entry.relatedKind,
-        recencyMs,
-        fromRoute: "contact-detail",
-        dataset: {
-          contactConnectedKind: entry.relatedKind,
-          contactConnectedRecencyMs: String(recencyMs || 0),
-        },
-      });
-    });
-    rows.sort((left, right) => {
-      const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);
-      if (recencyDelta !== 0) {
-        return recencyDelta;
-      }
-      const kindDelta = String(left.kind || "").localeCompare(String(right.kind || ""));
-      if (kindDelta !== 0) {
-        return kindDelta;
-      }
-      return String(left.label || "").localeCompare(String(right.label || ""));
-    });
-    return rows;
-  }
-
   function connectedRecordEntries(records, options = {}) {
     const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
       ? new Set(options.includeKinds.map(value => String(value || "").trim()).filter(Boolean))
@@ -9923,6 +9939,85 @@
     return entries;
   }
 
+  function ensureConnectedRecordEntries(records) {
+    (Array.isArray(records) ? records : []).forEach(item => {
+      const kind = String(item?.kind || item?.relatedKind || "").trim();
+      const recordId = String(item?.id || item?.record_id || item?.relatedId || "").trim();
+      const collection = workspaceCollectionForKind(kind);
+      const bucket = collection ? workspaceBucket(collection) : null;
+      if (collection && recordId && !workspaceRecordByKind(kind, recordId)) {
+        void loadWorkspaceRecord(collection, recordId, { render: true, reason: "linked_record" });
+      }
+      if (bucket && !bucket.loaded && !bucket.loading) {
+        void loadWorkspaceCollection(collection, { render: true });
+      }
+    });
+  }
+
+  function linkedRecordSourceRecord(entry) {
+    if (entry?.related && typeof entry.related === "object") {
+      return entry.related;
+    }
+    if (entry?.snapshot && typeof entry.snapshot === "object") {
+      return entry.snapshot;
+    }
+    return null;
+  }
+
+  function linkedRecordTimestampMs(kind, record) {
+    const normalizedKind = String(kind || "").trim();
+    if (!record || typeof record !== "object" || normalizedKind === "contact") {
+      return 0;
+    }
+    const candidates = [
+      record?.event_at_ms,
+      record?.start_at_ms,
+      record?.due_at_ms,
+      record?.updated_at_ms,
+      record?.created_at_ms,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate || 0);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  function linkedRecordTimestampLabel(entry) {
+    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
+    const record = linkedRecordSourceRecord(entry);
+    if (!record) {
+      return "";
+    }
+    if (kind === "calendar_event") {
+      return calendarConnectedTileTimestampLabel(record);
+    }
+    if (kind === "note") {
+      return noteTimestampLabel(record);
+    }
+    return workspaceTimestamp(linkedRecordTimestampMs(kind, record), "");
+  }
+
+  function linkedRecordSubtitleText(entry) {
+    const record = linkedRecordSourceRecord(entry);
+    const values = [
+      record?.summary,
+      record?.preview,
+      record?.value,
+      record?.metadata?.preview,
+      record?.metadata?.value,
+    ];
+    for (const value of values) {
+      const text = String(value || "").trim();
+      if (text) {
+        return text;
+      }
+    }
+    return "";
+  }
+
   function lightLinkedRecordChips(entry) {
     if (entry?.related) {
       return graphObjectChips(entry.related);
@@ -9954,14 +10049,13 @@
       ].filter(Boolean).join(" ")
     );
     const title = String(related?.title || entry?.label || entry?.relatedId || graphKindLabel(kind)).trim() || graphKindLabel(kind);
-    const detail = typeof options.detailResolver === "function"
-      ? String(options.detailResolver(entry) || "").trim()
-      : related
-        ? graphListLabel(related)
-        : String(entry?.relation || graphKindLabel(kind)).trim() || graphKindLabel(kind);
+    const subtitle = linkedRecordSubtitleText(entry);
+    const meta = linkedRecordTimestampLabel(entry);
     row.dataset.recordId = String(related?.id || entry?.relatedId || "").trim();
     row.dataset.linkedRecordKind = kind;
     row.dataset.linkedRecordId = String(entry?.relatedId || "").trim();
+    row.dataset.linkedRecordMeta = meta;
+    row.dataset.linkedRecordSubtitle = subtitle;
     if (isInteractive) {
       row.type = "button";
       row.dataset.workspaceTargetRoute = target.route;
@@ -9973,7 +10067,17 @@
         options.openOptions || {}
       ));
     }
-    row.append(lightSmallIcon(graphKindIcon(kind), graphKindAccentKey(kind)), lightTextStack(title, detail));
+    const copy = el("span", "light-linked-record-feed-copy");
+    const head = el("span", "light-linked-record-feed-head");
+    head.append(el("strong", "light-linked-record-feed-title", title));
+    if (meta) {
+      head.append(el("span", "light-linked-record-feed-meta", meta));
+    }
+    copy.append(head);
+    if (subtitle) {
+      copy.append(el("span", "light-linked-record-feed-subtitle", subtitle));
+    }
+    row.append(lightSmallIcon(graphKindIcon(kind), graphKindAccentKey(kind)), copy);
     if (showChips) {
       row.append(lightLinkedRecordChips(entry));
     }
@@ -9987,6 +10091,13 @@
     const title = options.title || "Linked records";
     const showWhenEmpty = options.showWhenEmpty === true;
     const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
+    const collapsible = options.collapsible === true;
+    const sectionStateScope = String(options.sectionStateScope || options.fromRoute || state.route || "").trim().toLowerCase();
+    const sectionStateId = String(options.sectionStateId || record?.id || record?.record_id || "").trim();
+    const defaultExpanded = options.defaultExpanded !== false;
+    if (Array.isArray(options.entries)) {
+      ensureConnectedRecordEntries(options.entries);
+    }
     const entries = Array.isArray(options.entries)
       ? connectedRecordEntries(options.entries, {
           includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
@@ -10001,13 +10112,6 @@
     if (!entries.length && !showWhenEmpty) {
       return null;
     }
-    const section = el("section", "light-linked-records-section light-feed-section");
-    if (flatFeed) {
-      section.classList.add("is-flat-feed");
-    }
-    section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();
-    const header = el("div", "light-feed-section-header");
-    header.append(lightSectionTitle(title));
     const body = el("div", "light-linked-record-list light-feed-section-body light-feed-list");
     if (flatFeed) {
       body.classList.add("light-card", "is-flat-feed");
@@ -10020,12 +10124,31 @@
         fromRoute: options.fromRoute || state.route || "",
         rowClassName: options.rowClassName || "",
         openOptions: options.openOptions || {},
-        detailResolver: typeof options.detailResolver === "function" ? options.detailResolver : null,
         showChips: options.showChips !== false,
         showChevron: options.showChevron !== false,
         variant: flatFeed ? "flat" : "",
       })));
     }
+    if (collapsible) {
+      return lightMeetingDetailSection(title, String(options.sectionKey || title).trim().toLowerCase(), body, {
+        expanded: connectedSectionExpanded(sectionStateScope, sectionStateId, defaultExpanded),
+        count: entries.length,
+        sectionClassName: [
+          "light-linked-records-section",
+          flatFeed ? "is-flat-feed" : "",
+          String(options.sectionClassName || "").trim(),
+        ].filter(Boolean).join(" "),
+        linkedRecordsTitle: title,
+        onToggle: () => toggleConnectedSection(sectionStateScope, sectionStateId, defaultExpanded),
+      });
+    }
+    const section = el("section", "light-linked-records-section light-feed-section");
+    if (flatFeed) {
+      section.classList.add("is-flat-feed");
+    }
+    section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();
+    const header = el("div", "light-feed-section-header");
+    header.append(lightSectionTitle(title));
     section.append(header, body);
     return section;
   }
@@ -11166,6 +11289,7 @@
 
   function openTaskFromList(task) {
     state.selectedTaskId = task.id;
+    resetConnectedSection("task-detail", task.id, true);
     if (taskUsesSplitLayout()) {
       state.route = "tasks";
       state.previousLightRoute = "tasks";
@@ -11214,53 +11338,6 @@
     });
   }
 
-  function taskConnectedRows(task) {
-    const seen = new Set();
-    const rows = [];
-    const origin = { taskId: taskRecordId(task), route: taskDetailReturnRoute() };
-    workspaceLinkedEntries(task, { currentKind: "task" }).forEach(entry => {
-      const target = entry.target;
-      const key = target?.kind && target?.id
-        ? `${target.kind}:${target.id}`
-        : `${entry.relatedKind}:${entry.relatedId}`;
-      if (!target || seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);
-      const value = entry.relatedKind === "note"
-        ? String(entry.related?.summary || entry.relation || "Note").trim() || "Note"
-        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true });
-      rows.push({
-        icon: graphKindIcon(entry.relatedKind),
-        accentKey: graphKindAccentKey(entry.relatedKind),
-        label: String(entry.label || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),
-        value,
-        target,
-        kind: entry.relatedKind,
-        recencyMs,
-        fromRoute: origin.route,
-        openOptions: { taskOrigin: origin },
-        dataset: {
-          taskConnectedKind: entry.relatedKind,
-          taskConnectedRecencyMs: String(recencyMs || 0),
-        },
-      });
-    });
-    rows.sort((left, right) => {
-      const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);
-      if (recencyDelta !== 0) {
-        return recencyDelta;
-      }
-      const kindDelta = String(left.kind || "").localeCompare(String(right.kind || ""));
-      if (kindDelta !== 0) {
-        return kindDelta;
-      }
-      return String(left.label || "").localeCompare(String(right.label || ""));
-    });
-    return rows;
-  }
-
   function lightTaskChecklistSection(task) {
     const items = taskChecklist(task);
     if (!items.length) {
@@ -11291,11 +11368,20 @@
   }
 
   function lightTaskConnectedSection(task) {
-    const rows = taskConnectedRows(task);
-    if (!rows.length) {
-      return null;
-    }
-    return lightInfoSection("Connected", rows, { showTrailingChevron: false });
+    const origin = { taskId: taskRecordId(task), route: taskDetailReturnRoute() };
+    return lightLinkedRecordSection(task, {
+      title: "Connected",
+      fromRoute: origin.route,
+      dedupeTargets: true,
+      showChips: false,
+      showChevron: false,
+      variant: "flat",
+      collapsible: true,
+      defaultExpanded: true,
+      sectionStateScope: "task-detail",
+      sectionStateId: taskRecordId(task),
+      openOptions: { taskOrigin: origin },
+    });
   }
 
   function lightChipIcon(icon, accentKey = "") {
@@ -11674,6 +11760,7 @@
         return;
       }
       state.selectedProjectId = projectId;
+      resetConnectedSection("project-detail", projectId, true);
       lightNavigate("project-detail", { from: "projects" });
     };
     row.addEventListener("click", openProject);
@@ -11715,26 +11802,6 @@
     return row;
   }
 
-  function projectConnectedDetail(entry) {
-    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
-    const kindLabel = graphKindLabel(kind);
-    const related = entry?.related || null;
-    if (!related) {
-      return String(entry?.relation || kindLabel).trim() || kindLabel;
-    }
-    if (kind === "calendar_event") {
-      return calendarConnectedTileTimestampLabel(related);
-    }
-    if (kind === "contact") {
-      return [kindLabel, String(related.summary || "").trim()].filter(Boolean).join(DOT);
-    }
-    const timestamp = workspaceTimestamp(
-      related.event_at_ms || related.start_at_ms || related.due_at_ms || related.updated_at_ms,
-      ""
-    );
-    return [kindLabel, timestamp, String(related.summary || "").trim()].filter(Boolean).join(DOT);
-  }
-
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
@@ -11743,16 +11810,21 @@
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
     page.classList.add("light-project-detail-page");
-    page.append(lightLinkedRecordSection(project, {
+    const connected = lightLinkedRecordSection(project, {
       title: "Connected",
-      showWhenEmpty: true,
       fromRoute: "project-detail",
       dedupeTargets: true,
       showChips: false,
       showChevron: false,
       variant: "flat",
-      detailResolver: projectConnectedDetail,
-    }));
+      collapsible: true,
+      defaultExpanded: true,
+      sectionStateScope: "project-detail",
+      sectionStateId: projectRecordId(project),
+    });
+    if (connected) {
+      page.append(connected);
+    }
     return page;
   }
 
@@ -14662,27 +14734,19 @@
     return row;
   }
 
-  function meetingRuntimeConnectedDetail(entry) {
-    if (entry?.related) {
-      return meetingNoteConnectedDetail(entry);
-    }
-    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
-    const kindLabel = graphKindLabel(kind);
-    const summary = String(entry?.snapshot?.summary || "").trim();
-    return [kindLabel, summary].filter(Boolean).join(DOT) || kindLabel;
-  }
-
   function meetingRuntimeConnectedSection(meeting) {
     return lightLinkedRecordSection(meeting, {
       title: "Connected",
       entries: meetingConnectedRecords(meeting),
-      showWhenEmpty: true,
       fromRoute: "meeting-detail",
       dedupeTargets: true,
       showChips: false,
       showChevron: false,
       variant: "flat",
-      detailResolver: meetingRuntimeConnectedDetail,
+      collapsible: true,
+      defaultExpanded: true,
+      sectionStateScope: "runtime-meeting-detail",
+      sectionStateId: String(meeting?.meeting_id || meeting?.id || "").trim(),
       openOptions: {
         detailOrigin: {
           kind: "meeting_detail",
@@ -14716,6 +14780,9 @@
     state.audioCard = null;
     const panel = document.getElementById("detail");
     const detailCard = meetingCardFromRecord(meeting);
+    if (!options.restoring) {
+      resetConnectedSection("runtime-meeting-detail", String(meeting?.meeting_id || meeting?.id || "").trim(), true);
+    }
     if (!options.restoring) {
       markCardRead(detailCard);
     }

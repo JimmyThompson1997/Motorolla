@@ -471,19 +471,43 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'el("h1", "", meeting.title || "Untitled event")' not in light_meeting_detail
     assert "lightCalendarEventDetailsSection(meeting, attendees)" in light_meeting_detail
     assert 'page.append(lightCopySection("Description", meeting.summary));' not in light_meeting_detail
-    assert "lightMeetingDetailConnectedSection(meeting)" in light_meeting_detail
-    assert "lightLinkedRecordSection(meeting, {" not in light_meeting_detail
+    assert "const connected = lightLinkedRecordSection(meeting, {" in light_meeting_detail
+    assert 'title: "Connected"' in light_meeting_detail
+    assert 'fromRoute: "meeting-detail"' in light_meeting_detail
+    assert "dedupeTargets: true," in light_meeting_detail
+    assert "showChips: false," in light_meeting_detail
+    assert "showChevron: false," in light_meeting_detail
+    assert 'variant: "flat",' in light_meeting_detail
+    assert "collapsible: true," in light_meeting_detail
+    assert "defaultExpanded: true," in light_meeting_detail
+    assert 'sectionStateScope: "meeting-detail"' in light_meeting_detail
+    assert "sectionStateId: meeting?.id," in light_meeting_detail
+    assert "lightMeetingDetailConnectedSection(meeting)" not in light_meeting_detail
     assert 'lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true })' not in light_meeting_detail
     assert 'lightInfoSection("Linked records", linkedRows)' not in light_meeting_detail
     linked_record_section = function_block(app, "lightLinkedRecordSection")
+    linked_record_feed_row = function_block(app, "lightLinkedRecordFeedRow")
     assert "const entries = Array.isArray(options.entries)" in linked_record_section
+    assert "const collapsible = options.collapsible === true;" in linked_record_section
+    assert "const sectionStateScope =" in linked_record_section
+    assert "const sectionStateId =" in linked_record_section
+    assert "const defaultExpanded = options.defaultExpanded !== false;" in linked_record_section
+    assert "ensureConnectedRecordEntries(options.entries);" in linked_record_section
     assert 'connectedRecordEntries(options.entries, {' in linked_record_section
     assert ': workspaceLinkedEntries(record, {' in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert "if (!entries.length && !showWhenEmpty) {" in linked_record_section
-    assert 'section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();' in linked_record_section
     assert 'body.append(el("div", flatFeed ? "light-linked-records-empty-shell is-flat-feed" : "light-card light-linked-records-empty-shell"));' in linked_record_section
     assert 'entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {' in linked_record_section
+    assert 'return lightMeetingDetailSection(title, String(options.sectionKey || title).trim().toLowerCase(), body, {' in linked_record_section
+    assert "onToggle: () => toggleConnectedSection(sectionStateScope, sectionStateId, defaultExpanded)," in linked_record_section
+    assert 'const meta = linkedRecordTimestampLabel(entry);' in linked_record_feed_row
+    assert 'const subtitle = linkedRecordSubtitleText(entry);' in linked_record_feed_row
+    assert 'const copy = el("span", "light-linked-record-feed-copy");' in linked_record_feed_row
+    assert 'const head = el("span", "light-linked-record-feed-head");' in linked_record_feed_row
+    assert 'head.append(el("strong", "light-linked-record-feed-title", title));' in linked_record_feed_row
+    assert 'head.append(el("span", "light-linked-record-feed-meta", meta));' in linked_record_feed_row
+    assert 'copy.append(el("span", "light-linked-record-feed-subtitle", subtitle));' in linked_record_feed_row
     light_calendar_event_details_section = function_block(app, "lightCalendarEventDetailsSection")
     assert 'function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {' in app
     assert 'const card = el("div", "light-calendar-detail-card light-calendar-event-detail-card");' in app
@@ -523,18 +547,24 @@ def test_light_shell_back_stack_persists_history_and_graph_targets_open_through_
     assert 'row.classList.add("is-compact");' in app
     assert 'function calendarEventCompactDateLabel(event, timeZone = calendarEffectiveTimeZone()) {' in app
     assert 'function calendarEventCompactWhenLabel(event, timeZone = calendarEffectiveTimeZone()) {' in app
-    assert 'function lightMeetingDetailConnectedSection(meeting) {' in app
     assert 'function lightMeetingDetailSection(title, sectionKey, bodyContent, options = {}) {' in app
-    assert 'function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId) {' in app
+    assert 'function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId, onToggle = null) {' in app
     assert 'function resetMeetingDetailSections(meetingId = state.selectedMeetingId) {' in app
     assert 'function ensureMeetingDetailSections(meetingId = state.selectedMeetingId) {' in app
     assert 'function toggleMeetingDetailSection(sectionKey) {' in app
+    assert 'function connectedSectionStateKey(scope, recordId) {' in app
+    assert 'function connectedSectionExpanded(scope, recordId, defaultExpanded = true) {' in app
+    assert 'function setConnectedSectionExpanded(scope, recordId, expanded) {' in app
+    assert 'function resetConnectedSection(scope, recordId, defaultExpanded = true) {' in app
+    assert 'function toggleConnectedSection(scope, recordId, defaultExpanded = true) {' in app
     assert 'state.meetingDetailSections = resetMeetingDetailSections(event.id);' in app
     assert 'state.meetingDetailSections = resetMeetingDetailSections(target.id);' in app
+    assert 'resetConnectedSection("meeting-detail", event.id, true);' in app
     assert 'const body = el("div", "light-meeting-detail-section-body");' in app
     assert 'body.hidden = !expanded;' in app
     assert 'button.setAttribute("aria-expanded", String(expanded));' in app
     assert 'button.setAttribute("aria-controls", controlsId);' in app
+    assert 'button._sectionToggle = typeof onToggle === "function" ? onToggle : null;' in app
     assert 'function lightGuestAttendeeChip(label) {' in app
     assert 'return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());' in app
     assert "function disambiguateCalendarChipLabels(chips) {" in app
@@ -586,9 +616,9 @@ def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() 
     record_lookup = function_block(app, "workspaceRecordByKind")
     workspace_linked_rows = function_block(app, "workspaceLinkedRows")
     reminder_linked_rows = function_block(app, "reminderDetailLinkedRows")
-    task_connected_rows = function_block(app, "taskConnectedRows")
-    meeting_connected_detail = function_block(app, "meetingNoteConnectedDetail")
-    project_connected_detail = function_block(app, "projectConnectedDetail")
+    linked_record_timestamp_label = function_block(app, "linkedRecordTimestampLabel")
+    linked_record_subtitle_text = function_block(app, "linkedRecordSubtitleText")
+    ensure_connected_entries = function_block(app, "ensureConnectedRecordEntries")
 
     assert 'String(record?.kind || "").trim() === "calendar_event"' in graph_list_label
     assert "return calendarConnectedTileTimestampLabel(record);" in graph_list_label
@@ -610,12 +640,16 @@ def test_calendar_connected_tiles_use_relative_time_window_instead_of_summary() 
     assert "workspaceRecordCacheEntry(bucket, recordId)" in record_lookup
     assert "connectedRecordValue(entry.relatedKind, entry.related, entry.relation)" in workspace_linked_rows
     assert "connectedRecordValue(relatedKind, related, relation, { preferSummary: true })" in reminder_linked_rows
-    assert "connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true })" in task_connected_rows
-    assert "return calendarConnectedTileTimestampLabel(related);" in meeting_connected_detail
-    assert "return calendarConnectedTileTimestampLabel(related);" in project_connected_detail
-    assert "value: String(related?.summary || relation || graphKindLabel(relatedKind))" not in task_connected_rows
-    assert "calendarEventDayLabel(related)" not in meeting_connected_detail
-    assert "calendarEventDayLabel(related)" not in project_connected_detail
+    assert 'const collection = workspaceCollectionForKind(kind);' in ensure_connected_entries
+    assert 'void loadWorkspaceRecord(collection, recordId, { render: true, reason: "linked_record" });' in ensure_connected_entries
+    assert "if (kind === \"calendar_event\") {" in linked_record_timestamp_label
+    assert "return calendarConnectedTileTimestampLabel(record);" in linked_record_timestamp_label
+    assert "if (kind === \"note\") {" in linked_record_timestamp_label
+    assert "return noteTimestampLabel(record);" in linked_record_timestamp_label
+    assert "return workspaceTimestamp(linkedRecordTimestampMs(kind, record), \"\");" in linked_record_timestamp_label
+    assert "record?.summary," in linked_record_subtitle_text
+    assert "record?.preview," in linked_record_subtitle_text
+    assert "record?.value," in linked_record_subtitle_text
 
 
 def test_calendar_day_rail_selection_motion_contracts() -> None:
@@ -1901,7 +1935,6 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     meeting_note_details = function_block(app, "lightMeetingNoteDetailsSection")
     meeting_note_who_row = function_block(app, "lightMeetingNoteWhoRow")
     meeting_note_attendees = function_block(app, "meetingNoteAttendeeEntries")
-    meeting_note_connected_detail = function_block(app, "meetingNoteConnectedDetail")
     project_detail = function_block(app, "lightProjectDetailPage")
     graph_detail = function_block(app, "lightGraphDetailPage")
 
@@ -1922,43 +1955,48 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'showChips ? "" : "is-no-chips",' in linked_feed_row
     assert 'showChevron ? "" : "is-no-chevron",' in linked_feed_row
     assert 'flatFeed ? "is-flat-feed" : "",' in linked_feed_row
-    assert 'typeof options.detailResolver === "function"' in linked_feed_row
     assert "if (showChips) {" in linked_feed_row
     assert 'if (isInteractive && showChevron) {' in linked_feed_row
     assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
     assert 'const connectedHost = el("div", "light-contact-detail-connected");' in contact_detail
     assert "refs.connectedHost.replaceChildren(" in contact_detail_sync
-    assert 'lightInfoSection("Connected", connectedRows, { showTrailingChevron: false })' in contact_detail_sync
-    assert "lightLinkedRecordSection(contact" not in contact_detail_sync
+    assert 'const connectedEntries = workspaceLinkedEntries(contact, { currentKind: "contact", dedupeTargets: true });' in contact_detail_sync
+    assert 'lightLinkedRecordSection(contact, {' in contact_detail_sync
+    assert 'title: "Connected"' in contact_detail_sync
+    assert 'fromRoute: "contact-detail"' in contact_detail_sync
+    assert "dedupeTargets: true," in contact_detail_sync
+    assert "collapsible: true," in contact_detail_sync
+    assert "defaultExpanded: true," in contact_detail_sync
+    assert 'sectionStateScope: "contact-detail"' in contact_detail_sync
     assert "const title = options.title || \"Linked records\";" in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert 'const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";' in linked_record_section
+    assert "const collapsible = options.collapsible === true;" in linked_record_section
     assert "const entries = Array.isArray(options.entries)" in linked_record_section
     assert 'connectedRecordEntries(options.entries, {' in linked_record_section
     assert ': workspaceLinkedEntries(record, {' in linked_record_section
     assert "dedupeTargets: options.dedupeTargets === true," in linked_record_section
     assert "if (flatFeed) {" in linked_record_section
-    assert 'section.classList.add("is-flat-feed");' in linked_record_section
     assert 'body.classList.add("light-card", "is-flat-feed");' in linked_record_section
-    assert "detailResolver: typeof options.detailResolver === \"function\" ? options.detailResolver : null," in linked_record_section
     assert "showChips: options.showChips !== false," in linked_record_section
     assert "showChevron: options.showChevron !== false," in linked_record_section
     assert 'variant: flatFeed ? "flat" : "",' in linked_record_section
+    assert 'return lightMeetingDetailSection(title, String(options.sectionKey || title).trim().toLowerCase(), body, {' in linked_record_section
     assert "lightHtmlDocument(contact" not in contact_detail
     assert "lightGraphDetailPage(meeting" not in meeting_note_detail
     assert 'page.classList.add("light-document-page", "light-meeting-note-detail-page");' in meeting_note_detail
     assert 'page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));' in meeting_note_detail
     assert "page.append(lightMeetingNoteDetailsSection(meeting));" in meeting_note_detail
-    assert "page.append(lightLinkedRecordSection(meeting, {" in meeting_note_detail
+    assert "const connected = lightLinkedRecordSection(meeting, {" in meeting_note_detail
     assert 'title: "Connected"' in meeting_note_detail
-    assert 'excludeKinds: ["contact"]' in meeting_note_detail
-    assert "showWhenEmpty: true" in meeting_note_detail
     assert "dedupeTargets: true," in meeting_note_detail
     assert "showChips: false," in meeting_note_detail
     assert 'showChevron: false,' in meeting_note_detail
     assert 'variant: "flat",' in meeting_note_detail
-    assert "detailResolver: meetingNoteConnectedDetail," in meeting_note_detail
+    assert "collapsible: true," in meeting_note_detail
+    assert "defaultExpanded: true," in meeting_note_detail
+    assert 'sectionStateScope: "meeting-note-detail"' in meeting_note_detail
     assert "Graph meeting" not in meeting_note_detail
     assert "lightLinkedNotesSection(meeting)" not in meeting_note_detail
     assert 'lightInfoSection("Linked records"' not in meeting_note_detail
@@ -1983,10 +2021,6 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");' in meeting_note_who_row
     assert 'lightCalendarContactChip(entry, { fromRoute: "meeting-note-detail" })' in meeting_note_who_row
     assert "lightGuestAttendeeChip(entry.label)" in meeting_note_who_row
-    assert 'if (kind === "calendar_event") {' in meeting_note_connected_detail
-    assert "return calendarConnectedTileTimestampLabel(related);" in meeting_note_connected_detail
-    assert 'const timestamp = kind === "note"' in meeting_note_connected_detail
-    assert "linkedRecordRecencyMs(kind, related)" in meeting_note_connected_detail
     assert 'const notes = lightLinkedNotesSection(item);' in feed_detail
     assert 'const relatedRows = lightLinkedRecordRows(item, { excludeKinds: ["note"] });' in feed_detail
     assert "lightHtmlDocument(item" not in feed_detail
@@ -1996,17 +2030,16 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "lightChipCloud(" not in project_detail
     assert "light-project-section-grid" not in project_detail
     assert 'page.classList.add("light-project-detail-page");' in project_detail
-    assert "page.append(lightLinkedRecordSection(project, {" in project_detail
+    assert "const connected = lightLinkedRecordSection(project, {" in project_detail
     assert 'title: "Connected"' in project_detail
-    assert "showWhenEmpty: true" in project_detail
     assert 'fromRoute: "project-detail"' in project_detail
     assert "dedupeTargets: true," in project_detail
     assert "showChips: false," in project_detail
     assert 'showChevron: false,' in project_detail
     assert 'variant: "flat",' in project_detail
-    assert "detailResolver: projectConnectedDetail," in project_detail
-    assert "function projectConnectedDetail(entry) {" in app
-    assert "return calendarConnectedTileTimestampLabel(related);" in function_block(app, "projectConnectedDetail")
+    assert "collapsible: true," in project_detail
+    assert "defaultExpanded: true," in project_detail
+    assert 'sectionStateScope: "project-detail"' in project_detail
     assert 'const notes = lightLinkedNotesSection(record);' in graph_detail
     assert 'const linkedRows = lightLinkedRecordRows(record, { excludeKinds: ["note"] });' in graph_detail
     assert "lightHtmlDocument(record" not in graph_detail
@@ -2016,6 +2049,9 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert "grid-template-columns: 48px minmax(0, 1fr) auto;" in styles
     assert ".light-linked-record-feed-row.is-no-chips.is-no-chevron {" in styles
     assert "grid-template-columns: 48px minmax(0, 1fr);" in styles
+    assert ".light-linked-record-feed-head {" in styles
+    assert ".light-linked-record-feed-meta {" in styles
+    assert ".light-linked-record-feed-subtitle {" in styles
 
 
 def test_note_flash_debug_surface_and_browser_delay_contracts_stay_notes_only() -> None:
@@ -2123,7 +2159,6 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     task_detail_surface = function_block(app, "lightTaskDetailSurface")
     task_checklist_section = function_block(app, "lightTaskChecklistSection")
     toggle_task_checklist_item = function_block(app, "toggleTaskChecklistItem")
-    task_connected_rows = function_block(app, "taskConnectedRows")
     task_connected_section = function_block(app, "lightTaskConnectedSection")
     task_selection_control = function_block(app, "lightTaskSelectionControl")
     task_bulk_action_bar = function_block(app, "lightTaskBulkActionBar")
@@ -2164,17 +2199,18 @@ def test_tasks_use_compact_header_checklist_first_connected_rows_single_status_t
     assert 'target: workspaceTargetForKind(relatedKind, related?.id || relatedId),' in workspace_linked_entries
     assert 'if (kind === "note") {' in linked_record_recency
     assert 'return noteContentUpdatedAtMs(related);' in linked_record_recency
-    assert 'workspaceLinkedEntries(task, { currentKind: "task" }).forEach(entry => {' in task_connected_rows
-    assert 'const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);' in task_connected_rows
-    assert 'value = entry.relatedKind === "note"' in task_connected_rows
-    assert 'dataset: {' in task_connected_rows
-    assert 'taskConnectedKind: entry.relatedKind,' in task_connected_rows
-    assert 'taskConnectedRecencyMs: String(recencyMs || 0),' in task_connected_rows
-    assert 'rows.sort((left, right) => {' in task_connected_rows
-    assert 'const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);' in task_connected_rows
-    assert 'return lightInfoSection("Connected", rows, { showTrailingChevron: false });' in task_connected_section
+    assert 'const origin = { taskId: taskRecordId(task), route: taskDetailReturnRoute() };' in task_connected_section
+    assert 'return lightLinkedRecordSection(task, {' in task_connected_section
+    assert 'title: "Connected"' in task_connected_section
+    assert "dedupeTargets: true," in task_connected_section
+    assert "showChips: false," in task_connected_section
+    assert 'showChevron: false,' in task_connected_section
+    assert 'variant: "flat",' in task_connected_section
+    assert "collapsible: true," in task_connected_section
+    assert "defaultExpanded: true," in task_connected_section
+    assert 'sectionStateScope: "task-detail"' in task_connected_section
+    assert 'openOptions: { taskOrigin: origin },' in task_connected_section
     assert "lightRecordChip(" not in task_connected_section
-    assert 'connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true })' in task_connected_rows
     assert "lightHtmlDocument(task" not in task_detail_surface
     assert 'const connected = lightTaskConnectedSection(task);' in task_detail_surface
     assert "surface.append(connected);" in task_detail_surface
@@ -2295,7 +2331,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     should_tick_reminder_ui = function_block(app, "shouldTickReminderLiveUi")
     reminder_detail = function_block(app, "lightReminderDetailPage")
     reminder_detail_surface = function_block(app, "lightReminderDetailSurface")
-    reminder_detail_feed = function_block(app, "lightReminderDetailFeed")
     reminder_detail_card = function_block(app, "lightReminderDetailCard")
     reminder_action_row = function_block(app, "lightReminderActionRow")
     reminder_feed_rows = function_block(app, "reminderDetailFeedRows")
@@ -2377,13 +2412,17 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "ensureReminderSeen(reminder)" not in reminder_detail
     assert "page.append(lightReminderDetailSurface(reminder));" in reminder_detail
     assert 'page.append(lightReminderDetailCard(reminder));' not in reminder_detail
-    assert 'const feed = lightReminderDetailFeed(reminder);' in reminder_detail_surface
     assert 'surface.append(lightReminderDetailCard(reminder));' in reminder_detail_surface
-    assert "const rows = reminderDetailFeedRows(reminder);" in reminder_detail_feed
-    assert "if (!rows.length) {" in reminder_detail_feed
-    assert "return null;" in reminder_detail_feed
-    assert 'card.dataset.reminderDetailFeed = "true";' in reminder_detail_feed
-    assert 'rows.forEach(row => card.append(lightInfoRow(row)));' in reminder_detail_feed
+    assert 'const connected = lightLinkedRecordSection(reminder, {' in reminder_detail_surface
+    assert 'title: "Connected"' in reminder_detail_surface
+    assert 'fromRoute: "reminder-detail"' in reminder_detail_surface
+    assert "dedupeTargets: true," in reminder_detail_surface
+    assert "showChips: false," in reminder_detail_surface
+    assert 'showChevron: false,' in reminder_detail_surface
+    assert 'variant: "flat",' in reminder_detail_surface
+    assert "collapsible: true," in reminder_detail_surface
+    assert "defaultExpanded: true," in reminder_detail_surface
+    assert 'sectionStateScope: "reminder-detail"' in reminder_detail_surface
     assert "reminderDetailLinkedNoteRows(reminder)" in reminder_feed_rows
     assert "reminderDetailLinkedRecordRows(reminder)" in reminder_feed_rows
     assert "reminderDetailRows(reminder)" not in reminder_feed_rows
@@ -2681,7 +2720,6 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     sync_contacts_search_input = function_block(app, "syncContactsSearchInput")
     contact_search_terms = function_block(app, "contactSearchTerms")
     contact_matches_search = function_block(app, "contactMatchesSearch")
-    contact_connected_rows = function_block(app, "contactConnectedRows")
     filtered_contacts = function_block(app, "filteredContactsListItems")
     bind_contact_detail_text_field = function_block(app, "bindContactDetailTextField")
     build_contact_detail_field_row = function_block(app, "buildContactDetailFieldRow")
@@ -2758,12 +2796,6 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "phoneDigits.includes(queryDigits)" in contact_matches_search
     assert "meta.activity" not in light_contact_copy
     assert 'return lightTextStack(contactDisplayName(contact), contact.summary || "Contact");' in light_contact_copy
-    assert "function contactConnectedRows(contact) {" in app
-    assert 'workspaceLinkedEntries(contact, { currentKind: "contact" })' in contact_connected_rows
-    assert 'const key = target?.kind && target?.id' in contact_connected_rows
-    assert 'label: String(entry.related?.title || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),' in contact_connected_rows
-    assert 'connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true })' in contact_connected_rows
-    assert 'rows.sort((left, right) => {' in contact_connected_rows
     assert 'refs.empty.hidden = contacts.length > 0;' in sync_contacts_page
     assert 'refs.list.hidden = contacts.length === 0;' in sync_contacts_page
     assert 'No contacts match your search.' in sync_contacts_page
@@ -2826,14 +2858,22 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert 'refs.saveStatus.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";' in sync_contact_detail_editor
     assert 'syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);' in sync_contact_detail_editor
     assert 'syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);' in sync_contact_detail_editor
-    assert 'const connectedRows = contactConnectedRows(contact);' in sync_contact_detail_editor
-    assert 'const connectedKey = connectedRows.map(row => [' in sync_contact_detail_editor
+    assert 'const connectedEntries = workspaceLinkedEntries(contact, { currentKind: "contact", dedupeTargets: true });' in sync_contact_detail_editor
+    assert 'const connectedKey = connectedEntries.map(entry => [' in sync_contact_detail_editor
     assert 'if (refs.connectedHost.dataset.connectedKey !== connectedKey) {' in sync_contact_detail_editor
     assert 'refs.connectedHost.dataset.connectedKey = connectedKey;' in sync_contact_detail_editor
-    assert 'lightInfoSection("Connected", connectedRows, { showTrailingChevron: false })' in sync_contact_detail_editor
+    assert 'lightLinkedRecordSection(contact, {' in sync_contact_detail_editor
+    assert 'title: "Connected"' in sync_contact_detail_editor
+    assert 'fromRoute: "contact-detail"' in sync_contact_detail_editor
+    assert "dedupeTargets: true," in sync_contact_detail_editor
+    assert "showChips: false," in sync_contact_detail_editor
+    assert 'showChevron: false,' in sync_contact_detail_editor
+    assert 'variant: "flat",' in sync_contact_detail_editor
+    assert "collapsible: true," in sync_contact_detail_editor
+    assert "defaultExpanded: true," in sync_contact_detail_editor
+    assert 'sectionStateScope: "contact-detail"' in sync_contact_detail_editor
     assert 'lightInfoSection("Activity"' not in sync_contact_detail_editor
     assert "lightLinkedNotesSection(contact)" not in sync_contact_detail_editor
-    assert "lightLinkedRecordSection(contact" not in sync_contact_detail_editor
     assert "render();" not in bind_contact_detail_text_field
     assert "render();" not in update_contact_detail_draft
     assert 'const interactionMode = String(options.interactionMode || "click").trim().toLowerCase();' in bind_light_button_action

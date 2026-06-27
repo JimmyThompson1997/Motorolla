@@ -1779,13 +1779,13 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(detailState.sectionTitles.includes("CONNECTED"), `Expected event detail section titles to include Connected, got ${detailState.sectionTitles.join(", ")}.`);
     assert(!detailState.hasStandaloneDescriptionTitle, "Expected event detail to avoid a standalone Description section.");
     assert(detailState.detailsExpanded, "Expected Details to start expanded on a fresh event open.");
-    assert(!detailState.connectedExpanded, "Expected Connected to start collapsed on a fresh event open.");
+    assert(detailState.connectedExpanded, "Expected Connected to start expanded on a fresh event open.");
     assert(detailState.descriptionVisible, "Expected merged description text inside Details.");
     assert(detailState.descriptionText.includes("Homepage pass, invoice cleanup"), `Expected merged description text inside Details, got ${detailState.descriptionText}.`);
     assert(detailState.description_link_count >= 1, "Expected merged description text to expose a clickable Google Meet URL.");
     assert(detailState.description_link_hrefs.some(value => value.includes("meet.google.com")), `Expected merged description link to target meet.google.com. Got ${JSON.stringify(detailState.description_link_hrefs)}.`);
-    assert(detailState.connectedCount === 5, `Expected Connected header count to show five linked records, got ${detailState.connectedCount}.`);
-    assert(detailState.visibleConnectedRowCount === 0, `Expected no visible Connected rows while collapsed, got ${detailState.visibleConnectedRowCount}.`);
+    assert(detailState.connectedCount === 7, `Expected Connected header count to show seven linked records, got ${detailState.connectedCount}.`);
+    assert(detailState.visibleConnectedRowCount === 7, `Expected Connected rows to stay visible while expanded, got ${detailState.visibleConnectedRowCount}.`);
     assert(!detailState.text.includes("Linked records"), "Expected event detail to keep the section label as Connected.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected Who to render guests as chips instead of paragraph copy.");
     assert(detailState.detailRowMetrics.when?.is_compact, `Expected When row to use compact metadata layout, got ${JSON.stringify(detailState.detailRowMetrics.when)}.`);
@@ -1814,8 +1814,8 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
 
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     detailState = await readMeetingDetailState(page);
-    assert(detailState.connectedExpanded, "Expected Connected to expand after tapping its header.");
-    assert(detailState.visibleConnectedRowCount === 5, `Expected Connected to reveal five flat linked rows, got ${detailState.visibleConnectedRowCount}.`);
+    assert(detailState.connectedExpanded, "Expected Connected to stay expanded after tapping its header.");
+    assert(detailState.visibleConnectedRowCount === 7, `Expected Connected to reveal seven flat linked rows, got ${detailState.visibleConnectedRowCount}.`);
     const connectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     const connectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     const connectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
@@ -1825,15 +1825,15 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(connectedLayout.recordChipCount === 0, `Expected Connected rows to omit linked-record chips on desktop detail, got ${JSON.stringify(connectedLayout)}.`);
     assert(connectedLayout.sectionClassName.includes("is-flat-feed") && connectedLayout.bodyClassName.includes("is-flat-feed"), `Expected Connected section to render inside one shared flat-feed shell on desktop detail, got ${JSON.stringify(connectedLayout)}.`);
     assert(connectedLayout.flatRowCount === connectedLayout.rowCount, `Expected Connected rows to all render in flat-feed mode on desktop detail, got ${JSON.stringify(connectedLayout)}.`);
-    assert(await connectedRows.count() === 5, `Expected the populated Connected section to render five linked rows, got ${await connectedRows.count()}.`);
-    for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
+    assert(await connectedRows.count() === 7, `Expected the populated Connected section to render seven linked rows, got ${await connectedRows.count()}.`);
+    for (const label of ["Jimmy Torres", "Jeff Bennett", "Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
       assert(connectedRowTexts.some(value => value.includes(normalizedLabel)), `Expected Connected to include ${label}, got ${connectedRowTexts.join(", ")}.`);
     }
     assert(new Set(connectedRowTexts.map(value => value.replace(/\s+/g, " ").trim())).size === connectedRowTexts.length, `Expected Connected rows to stay curated and distinct on desktop detail. Got ${connectedRowTexts.join(" | ")}.`);
-    assert(!connectedRowTexts.some(value => value.includes("Jimmy T.")), "Expected contact chips to stay in Who, not Connected.");
-    assert(!connectedRowTexts.some(value => value.includes("Jeff B.")), "Expected contact chips to stay in Who, not Connected.");
-    assert(!connectedRowTexts.some(value => value.includes("Outside counsel")), "Expected attendee contacts to stay in Who, not Connected.");
+    assert(connectedRowTexts.some(value => value.includes("Jimmy Torres")), "Expected linked contacts to appear in Connected as full feed rows.");
+    assert(connectedRowTexts.some(value => value.includes("Jeff Bennett")), "Expected linked contacts to appear in Connected as full feed rows.");
+    assert(!connectedRowTexts.some(value => value.includes("Outside counsel")), "Expected unlinked attendee contacts to stay out of Connected.");
     assert(!connectedRowTexts.some(value => value.includes("Kitchen table")), "Expected place to stay out of Connected rows on detail.");
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="place"] .light-attendee-chip').count() === 0, "Expected Place to stay plain text only.");
     await saveLocatorShot(connectedSection, reportDir, `calendar-desktop-${theme}-connected.png`, summary);
@@ -1895,10 +1895,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await setCalendarDate(page, seed.today);
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const emptyConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
-    await emptyConnectedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
-    assert(await emptyConnectedSection.locator(".light-linked-record-feed-row").count() === 0, "Expected the sparse event Connected section to stay empty when only attendee chips exist.");
-    const emptyConnectedShell = emptyConnectedSection.locator(".light-linked-records-empty-shell").first();
-    await emptyConnectedShell.waitFor({ state: "attached", timeout: config.timeoutMs });
+    assert(await emptyConnectedSection.count() === 0, "Expected the sparse event to omit Connected entirely when there are no linked records.");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-connected-empty.png`, summary);
     await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -1907,7 +1904,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await selectCalendarEventByContainer(page, seed);
     detailState = await readMeetingDetailState(page);
     assert(detailState.detailsExpanded, "Expected reopening the event detail to reset Details open.");
-    assert(!detailState.connectedExpanded, "Expected reopening the event detail to reset Connected closed.");
+    assert(detailState.connectedExpanded, "Expected reopening the event detail to reset Connected open.");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-container-click.png`, summary);
     await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -2212,13 +2209,13 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileDetailState.sectionTitles.includes("CONNECTED"), `Expected mobile event detail section titles to include Connected, got ${mobileDetailState.sectionTitles.join(", ")}.`);
     assert(!mobileDetailState.hasStandaloneDescriptionTitle, "Expected mobile event detail to avoid a standalone Description section.");
     assert(mobileDetailState.detailsExpanded, "Expected Details to start expanded on a fresh event open.");
-    assert(!mobileDetailState.connectedExpanded, "Expected Connected to start collapsed on a fresh event open.");
+    assert(mobileDetailState.connectedExpanded, "Expected Connected to start expanded on a fresh event open.");
     assert(mobileDetailState.descriptionVisible, "Expected merged description text inside Details.");
     assert(mobileDetailState.descriptionText.includes("Homepage pass, invoice cleanup"), `Expected merged description text inside Details, got ${mobileDetailState.descriptionText}.`);
     assert(mobileDetailState.description_link_count >= 1, "Expected mobile merged description text to expose a clickable Google Meet URL.");
     assert(mobileDetailState.description_link_hrefs.some(value => value.includes("meet.google.com")), `Expected mobile merged description link to target meet.google.com. Got ${JSON.stringify(mobileDetailState.description_link_hrefs)}.`);
-    assert(mobileDetailState.connectedCount === 5, `Expected mobile Connected header count to show five linked records, got ${mobileDetailState.connectedCount}.`);
-    assert(mobileDetailState.visibleConnectedRowCount === 0, `Expected mobile Connected rows to stay hidden while collapsed, got ${mobileDetailState.visibleConnectedRowCount}.`);
+    assert(mobileDetailState.connectedCount === 7, `Expected mobile Connected header count to show seven linked records, got ${mobileDetailState.connectedCount}.`);
+    assert(mobileDetailState.visibleConnectedRowCount === 7, `Expected mobile Connected rows to stay visible while expanded, got ${mobileDetailState.visibleConnectedRowCount}.`);
     assert(!mobileDetailState.text.includes("Linked records"), "Expected mobile event detail to keep the section label as Connected.");
     const mobileWhoChipTexts = mobileDetailState.whoChipTexts;
     assert(await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-calendar-detail-guest-list').count() === 0, "Expected mobile Who row to avoid guest paragraphs.");
@@ -2252,12 +2249,12 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.detailsExpanded, "Expected mobile Details to stay expanded after returning from a Who chip.");
-    assert(!mobileDetailState.connectedExpanded, "Expected mobile Connected to stay collapsed before the user expands it.");
+    assert(mobileDetailState.connectedExpanded, "Expected mobile Connected to stay expanded after returning from a Who chip.");
 
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     mobileDetailState = await readMeetingDetailState(page);
-    assert(mobileDetailState.connectedExpanded, "Expected mobile Connected to expand after tapping its header.");
-    assert(mobileDetailState.visibleConnectedRowCount === 5, `Expected mobile Connected to reveal five flat linked rows, got ${mobileDetailState.visibleConnectedRowCount}.`);
+    assert(mobileDetailState.connectedExpanded, "Expected mobile Connected to stay expanded after tapping its header.");
+    assert(mobileDetailState.visibleConnectedRowCount === 7, `Expected mobile Connected to reveal seven flat linked rows, got ${mobileDetailState.visibleConnectedRowCount}.`);
     const mobileConnectedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
     const mobileConnectedRows = page.locator('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
     const mobileConnectedRowTexts = await allText(page, '.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row');
@@ -2267,13 +2264,15 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileConnectedLayout.recordChipCount === 0, `Expected mobile Connected rows to omit linked-record chips, got ${JSON.stringify(mobileConnectedLayout)}.`);
     assert(mobileConnectedLayout.sectionClassName.includes("is-flat-feed") && mobileConnectedLayout.bodyClassName.includes("is-flat-feed"), `Expected mobile Connected section to render inside one shared flat-feed shell, got ${JSON.stringify(mobileConnectedLayout)}.`);
     assert(mobileConnectedLayout.flatRowCount === mobileConnectedLayout.rowCount, `Expected mobile Connected rows to all render in flat-feed mode, got ${JSON.stringify(mobileConnectedLayout)}.`);
-    assert(!mobileConnectedRowTexts.some(value => value.includes("Jimmy T.")) && !mobileConnectedRowTexts.some(value => value.includes("Jeff B.")), `Expected mobile Connected rows to exclude contacts, got ${mobileConnectedRowTexts.join(", ")}.`);
-    for (const label of ["Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
+    assert(mobileConnectedRowTexts.some(value => value.includes("Jimmy Torres")), `Expected mobile Connected rows to include linked contact Jimmy Torres, got ${mobileConnectedRowTexts.join(", ")}.`);
+    assert(mobileConnectedRowTexts.some(value => value.includes("Jeff Bennett")), `Expected mobile Connected rows to include linked contact Jeff Bennett, got ${mobileConnectedRowTexts.join(", ")}.`);
+    assert(!mobileConnectedRowTexts.some(value => value.includes("Outside counsel")), `Expected mobile Connected rows to keep unlinked attendee contacts out of Connected, got ${mobileConnectedRowTexts.join(", ")}.`);
+    for (const label of ["Jimmy Torres", "Jeff Bennett", "Proof freelance follow-up", "Send proof review notes · Task", "Send proof review notes · Reminder", "Proof review outline", "Proof freelance prep"]) {
       const normalizedLabel = label.replace(" · Task", "").replace(" · Reminder", "");
       assert(mobileConnectedRowTexts.some(value => value.includes(normalizedLabel)), `Expected mobile Connected to include ${label}, got ${mobileConnectedRowTexts.join(", ")}.`);
     }
     assert(new Set(mobileConnectedRowTexts.map(value => value.replace(/\s+/g, " ").trim())).size === mobileConnectedRowTexts.length, `Expected Connected rows to stay curated and distinct on mobile detail. Got ${mobileConnectedRowTexts.join(" | ")}.`);
-    assert(await mobileConnectedRows.count() === 5, `Expected mobile Connected to render five linked rows, got ${await mobileConnectedRows.count()}.`);
+    assert(await mobileConnectedRows.count() === 7, `Expected mobile Connected to render seven linked rows, got ${await mobileConnectedRows.count()}.`);
     await saveLocatorShot(mobileConnectedSection, reportDir, `calendar-mobile-${theme}-connected.png`, summary);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-connected-expanded.png`, summary);
 
@@ -2319,7 +2318,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await selectCalendarEventByContainer(page, seed);
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.detailsExpanded, "Expected reopening the mobile event detail to reset Details open.");
-    assert(!mobileDetailState.connectedExpanded, "Expected reopening the mobile event detail to reset Connected closed.");
+    assert(mobileDetailState.connectedExpanded, "Expected reopening the mobile event detail to reset Connected open.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-container-click.png`, summary);
     await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
@@ -2368,9 +2367,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(await currentLightRoute(page) === "calendar", `Expected Back from late-call detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const mobileEmptyConnected = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
-    await mobileEmptyConnected.waitFor({ state: "visible", timeout: config.timeoutMs });
-    assert(await mobileEmptyConnected.locator(".light-linked-record-feed-row").count() === 0, "Expected the mobile sparse event Connected section to stay empty when only attendee chips exist.");
-    await mobileEmptyConnected.locator(".light-linked-records-empty-shell").first().waitFor({ state: "attached", timeout: config.timeoutMs });
+    assert(await mobileEmptyConnected.count() === 0, "Expected the mobile sparse event to omit Connected entirely when there are no linked records.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-connected-empty.png`, summary);
     summary.assertions.push(`mobile ${theme} sticky header, meeting-detail section toggles, and empty Connected shells stayed readable`);
   } finally {

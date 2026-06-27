@@ -4183,6 +4183,7 @@ button {
 .light-linked-record-feed-row {
   cursor: pointer;
   touch-action: manipulation;
+  align-items: start;
 }
 
 .light-linked-record-feed-row.is-no-chips {
@@ -4201,6 +4202,50 @@ button {
   min-height: 74px;
   background: color-mix(in srgb, var(--home-shell-card-strong) 82%, transparent);
   box-shadow: none;
+}
+
+.light-linked-record-feed-row .light-small-icon {
+  margin-top: 2px;
+}
+
+.light-linked-record-feed-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-self: stretch;
+  justify-content: center;
+}
+
+.light-linked-record-feed-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.light-linked-record-feed-title {
+  min-width: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.light-linked-record-feed-meta {
+  max-width: min(46%, 220px);
+  justify-self: end;
+  color: var(--home-shell-text-muted);
+  font-size: 13px;
+  line-height: 1.3;
+  font-weight: 600;
+  text-align: right;
+  white-space: normal;
+}
+
+.light-linked-record-feed-subtitle {
+  color: var(--home-shell-text-muted);
+  font-size: 16px;
+  line-height: 1.4;
 }
 
 .light-list {

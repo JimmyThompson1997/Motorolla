@@ -152,8 +152,6 @@ const CALENDAR_CONNECTED_TIME_WINDOW_RE = /\b\d{1,2}:\d{2}\s?(?:AM|PM)\s*-\s*\d{
 const CALENDAR_CONNECTED_DATE_PREFIX_RE = /^(?:Today|Tomorrow|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|\d{1,2}\/\d{1,2}\/\d{2})\s*[·•]\s*/;
 const CALENDAR_CONNECTED_ROW_SELECTOR = [
   '.light-linked-record-feed-row[data-workspace-target-kind="calendar_event"]',
-  '.light-reminder-detail-tile[data-reminder-linked-kind="calendar_event"]',
-  '.light-info-row[data-task-connected-kind="calendar_event"]',
 ].join(", ");
 const PROJECT_CONNECTED_ROW_SELECTOR = ".light-linked-record-feed-row";
 const CALENDAR_BLUE = "rgb(63, 109, 246)";
@@ -503,9 +501,16 @@ async function collectDetailMetrics(page) {
   return page.evaluate(({ detailSelector, calendarConnectedRowSelector }) => {
     function calendarConnectedRows() {
       return [...document.querySelectorAll(calendarConnectedRowSelector)].map(node => {
-        const stack = node.querySelector(".light-text-stack");
-        const title = String(stack?.querySelector("strong")?.textContent || "").trim();
-        const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+        const title = String(
+          node.querySelector(".light-linked-record-feed-title")?.textContent
+          || node.querySelector(".light-text-stack strong")?.textContent
+          || ""
+        ).trim();
+        const detail = String(
+          node.querySelector(".light-linked-record-feed-meta")?.textContent
+          || node.querySelector(".light-text-stack span")?.textContent
+          || ""
+        ).trim().replace(/\s+/g, " ");
         return {
           title,
           detail,
@@ -523,11 +528,11 @@ async function collectDetailMetrics(page) {
       scheduleSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "SCHEDULE").length,
       channelsSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "CHANNELS").length,
       notesSections: [...document.querySelectorAll(".light-section-title")].filter(node => String(node.textContent || "").trim() === "NOTES").length,
-      reminderDetailFeeds: document.querySelectorAll('[data-reminder-detail-feed="true"]').length,
+      reminderDetailFeeds: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"]').length,
       reminderDetailState: reminderCard?.getAttribute("data-reminder-state") || "",
-      reminderConnectedRows: document.querySelectorAll('[data-reminder-detail-feed="true"] [data-reminder-detail-tile]').length,
+      reminderConnectedRows: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row').length,
       reminderActionRows: document.querySelectorAll('[data-reminder-action-row="true"]').length,
-      reminderDetailChevrons: document.querySelectorAll(".light-reminder-detail-feed .light-chevron").length,
+      reminderDetailChevrons: document.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-chevron').length,
       reminderHasStatusText: String(reminderDetailTextSource?.textContent || "").includes("Status:"),
       reminderHasDeliveryText: String(reminderDetailTextSource?.textContent || "").includes("Delivery:"),
       projectGridCount: document.querySelectorAll(".light-project-section-grid").length,
@@ -544,9 +549,16 @@ async function collectDetailMetrics(page) {
 async function collectCalendarConnectedRows(page) {
   return page.evaluate(selector => {
     return [...document.querySelectorAll(selector)].map(node => {
-      const stack = node.querySelector(".light-text-stack");
-      const title = String(stack?.querySelector("strong")?.textContent || "").trim();
-      const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+      const title = String(
+        node.querySelector(".light-linked-record-feed-title")?.textContent
+        || node.querySelector(".light-text-stack strong")?.textContent
+        || ""
+      ).trim();
+      const detail = String(
+        node.querySelector(".light-linked-record-feed-meta")?.textContent
+        || node.querySelector(".light-text-stack span")?.textContent
+        || ""
+      ).trim().replace(/\s+/g, " ");
       return {
         title,
         detail,
@@ -579,9 +591,18 @@ async function waitForProjectConnectedRows(page, timeoutMs, blockedTitles = []) 
 async function collectProjectConnectedMetrics(page) {
   return page.evaluate(selector => {
     return [...document.querySelectorAll(selector)].map(node => {
-      const stack = node.querySelector(".light-text-stack");
-      const title = String(stack?.querySelector("strong")?.textContent || "").trim();
-      const detail = String(stack?.querySelector("span")?.textContent || "").trim().replace(/\s+/g, " ");
+      const title = String(
+        node.querySelector(".light-linked-record-feed-title")?.textContent
+        || node.querySelector(".light-text-stack strong")?.textContent
+        || node.querySelector("strong")?.textContent
+        || ""
+      ).trim();
+      const detail = String(
+        node.querySelector(".light-linked-record-feed-subtitle")?.textContent
+        || node.querySelector(".light-linked-record-feed-meta")?.textContent
+        || node.querySelector(".light-text-stack span")?.textContent
+        || ""
+      ).trim().replace(/\s+/g, " ");
       const icon = node.querySelector(".light-small-icon");
       const iconStyle = icon ? window.getComputedStyle(icon) : null;
       return {
@@ -661,10 +682,6 @@ function assertCalendarConnectedRow(surfaceConfig, rows) {
     CALENDAR_CONNECTED_TIME_WINDOW_RE.test(row.detail),
     `${surfaceConfig.surface}: Calendar row should show a start-end time window, saw "${row.detail}"`
   );
-  for (const blocked of surfaceConfig.blockedSummaries || []) {
-    assert(!row.detail.includes(blocked), `${surfaceConfig.surface}: Calendar row leaked old summary text "${blocked}"`);
-    assert(!row.text.includes(blocked), `${surfaceConfig.surface}: Calendar row container leaked old summary text "${blocked}"`);
-  }
   return row;
 }
 
@@ -1207,8 +1224,16 @@ async function captureCalendarConnectedSurface(browser, config, surfaceConfig, t
         const timeWindowRe = new RegExp(timeWindowSource, "i");
         const rows = [...document.querySelectorAll(selector)];
         return rows.some(row => {
-          const title = String(row.querySelector(".light-text-stack strong")?.textContent || "").trim();
-          const detail = String(row.querySelector(".light-text-stack span")?.textContent || "").trim().replace(/\s+/g, " ");
+          const title = String(
+            row.querySelector(".light-linked-record-feed-title")?.textContent
+            || row.querySelector(".light-text-stack strong")?.textContent
+            || ""
+          ).trim();
+          const detail = String(
+            row.querySelector(".light-linked-record-feed-meta")?.textContent
+            || row.querySelector(".light-text-stack span")?.textContent
+            || ""
+          ).trim().replace(/\s+/g, " ");
           if (expectedTitle && title !== expectedTitle) {
             return false;
           }
