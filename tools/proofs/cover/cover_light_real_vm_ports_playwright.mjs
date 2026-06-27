@@ -89,6 +89,49 @@ function pickConnectedFeedItem(feedItems) {
   return (Array.isArray(feedItems) ? feedItems : []).find(item => Array.isArray(item?.connected_records) && item.connected_records.length > 0) || null;
 }
 
+function feedMeetingId(item) {
+  const origin = item && typeof item.origin === "object" ? item.origin : {};
+  for (const candidate of [origin.meeting_id, item?.meeting_id, item?.turn_id, item?.session_id, origin.thread_id]) {
+    const value = String(candidate || "").trim();
+    if (/^meeting-[A-Za-z0-9._:-]{1,160}$/.test(value)) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function meetingCardKind(item) {
+  const origin = item && typeof item.origin === "object" ? item.origin : {};
+  const card = item && typeof item.card === "object" ? item.card : {};
+  const cardOrigin = card && typeof card.origin === "object" ? card.origin : {};
+  return String(item?.card_kind || card.card_kind || origin.card_kind || cardOrigin.card_kind || "").trim().toLowerCase();
+}
+
+function meetingState(item) {
+  const origin = item && typeof item.origin === "object" ? item.origin : {};
+  const card = item && typeof item.card === "object" ? item.card : {};
+  const cardOrigin = card && typeof card.origin === "object" ? card.origin : {};
+  return String(item?.meeting_state || card.meeting_state || origin.meeting_state || cardOrigin.meeting_state || "").trim().toLowerCase();
+}
+
+function isLegacyMeetingNoiseCard(item) {
+  if (!feedMeetingId(item)) {
+    return false;
+  }
+  const connectedCount = Array.isArray(item?.connected_records) ? item.connected_records.length : 0;
+  if (connectedCount > 0) {
+    return false;
+  }
+  const title = normalizeText(item?.title || "").toLowerCase();
+  const summary = normalizeText(item?.summary || item?.text || "").toLowerCase();
+  const kind = meetingCardKind(item);
+  const state = meetingState(item);
+  if (kind === "meeting_failed" || kind === "meeting_processing" || state === "failed" || state === "processing") {
+    return true;
+  }
+  return title === "meeting needs review" || summary.includes("usable meeting transcript attachment yet");
+}
+
 async function clickLightTile(page, route) {
   const tile = page.locator(`.light-app-tile[data-route="${route}"]`);
   await tile.waitFor({ state: "visible", timeout: 10000 });
@@ -152,11 +195,15 @@ async function main() {
   ensureDir(config.reportDir);
 
   const feedPayload = await fetchJson(apiUrl(config.pageUrl, "/api/feed?limit=100&include_archived=0&compact=1"));
+  const archivedFeedPayload = await fetchJson(apiUrl(config.pageUrl, "/api/feed?limit=100&include_archived=1&compact=1"));
   const meetingsPayload = await fetchJson(apiUrl(config.pageUrl, "/api/meetings?compact=1"));
   const feedItems = Array.isArray(feedPayload.items) ? feedPayload.items : Array.isArray(feedPayload.cards) ? feedPayload.cards : [];
+  const archivedFeedItems = Array.isArray(archivedFeedPayload.items) ? archivedFeedPayload.items : Array.isArray(archivedFeedPayload.cards) ? archivedFeedPayload.cards : [];
   const meetingItems = Array.isArray(meetingsPayload.meetings) ? meetingsPayload.meetings : [];
+  const archivedMeetingNoise = archivedFeedItems.filter(item => Boolean(item?.archived) && isLegacyMeetingNoiseCard(item));
   assert(feedItems.length > 0, "VM /api/feed returned no cards");
   assert(meetingItems.length > 0, "VM /api/meetings returned no meetings");
+  assert(archivedMeetingNoise.length === 0, `Archived Inbox API should exclude legacy failed/processing/review meeting noise (found ${archivedMeetingNoise.length}: ${JSON.stringify(archivedMeetingNoise.slice(0, 5).map(item => item?.title || item?.card_id || ""))}).`);
 
   const browser = await chromium.launch({ executablePath: resolveChromePath(), headless: true });
   const context = await browser.newContext({ viewport: VIEWPORT, screen: VIEWPORT, hasTouch: true, isMobile: true });
@@ -242,6 +289,22 @@ async function main() {
       }
     }
 
+    const archivedToggle = page.locator('.light-shell[data-light-route="inbox"] .inbox-archive-toggle');
+    await archivedToggle.click();
+    await waitForUniversalInboxReady(page, config.timeoutMs);
+    await page.waitForFunction(() => {
+      const button = document.querySelector('.light-shell[data-light-route="inbox"] .inbox-archive-toggle');
+      return Boolean(button && button.getAttribute("aria-pressed") === "true");
+    }, null, { timeout: config.timeoutMs });
+    const archivedInboxTitles = await visibleTitles(page, '.light-shell[data-light-route="inbox"] article.card .title');
+    const archivedApiTitles = titleSet(archivedFeedItems.filter(item => Boolean(item?.archived)));
+    const matchingArchivedInboxTitles = archivedInboxTitles.filter(title => archivedApiTitles.has(title));
+    if (archivedApiTitles.size > 0) {
+      assert(matchingArchivedInboxTitles.length > 0, `Light Inbox archived view did not match archived /api/feed titles: ${JSON.stringify(archivedInboxTitles.slice(0, 6))}`);
+    }
+    screenshots.inboxArchived = await saveScreenshot(page, config.reportDir, "06-vm-light-inbox-archived");
+    optionalActions.archived_inbox_matching_titles = matchingArchivedInboxTitles.slice(0, 10);
+
     await backToHome(page);
     await clickLightTile(page, "meetings");
     await page.locator(".light-shell[data-light-route=\"meetings\"] .meetings-page").waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -285,6 +348,8 @@ async function main() {
       ok: true,
       page_url: config.pageUrl,
       feed_api_count: feedItems.length,
+      archived_feed_api_count: archivedFeedItems.length,
+      archived_meeting_noise_api_count: archivedMeetingNoise.length,
       meetings_api_count: meetingItems.length,
       connected_feed_api_count: Array.isArray(feedItems) ? feedItems.filter(item => Array.isArray(item?.connected_records) && item.connected_records.length > 0).length : 0,
       inbox_card_count: inboxCardCount,

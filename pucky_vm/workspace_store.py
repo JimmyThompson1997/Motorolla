@@ -929,6 +929,29 @@ class WorkspaceStore:
             row = self._conn.execute("SELECT COUNT(*) AS count FROM workspace_records WHERE deleted = 0").fetchone()
         return int(row["count"] or 0) if row else 0
 
+    def meta_value(self, key: str) -> str:
+        clean_key = str(key or "").strip()
+        if not clean_key:
+            return ""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM workspace_meta WHERE key = ?",
+                (clean_key,),
+            ).fetchone()
+        return str(row["value"] or "") if row else ""
+
+    def set_meta_value(self, key: str, value: str = "1", *, now_ms: int | None = None) -> None:
+        clean_key = str(key or "").strip()
+        if not clean_key:
+            return
+        updated_at_ms = self.now_ms() if now_ms is None else int(now_ms)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                (clean_key, str(value or ""), updated_at_ms),
+            )
+            self._conn.commit()
+
     def now_ms(self) -> int:
         return int(self._clock_ms())
 

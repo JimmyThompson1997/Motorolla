@@ -288,6 +288,50 @@ class FeedStore:
                 return None
             return self._build_group_item(group_key, compact=compact)
 
+    def replace_turn_transcript_messages(
+        self,
+        turn_id: str,
+        transcript_messages: list[dict[str, object]],
+        *,
+        preserve_updated_at: bool = False,
+    ) -> dict[str, object] | None:
+        clean_turn_id = str(turn_id or "").strip()
+        if not clean_turn_id:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT turn_id, card_id, updated_at, updated_at_ms
+                FROM turns
+                WHERE turn_id = ?
+                """,
+                (clean_turn_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if preserve_updated_at:
+                updated_at = str(row["updated_at"] or _iso_time(time.time()))
+                updated_at_ms = int(row["updated_at_ms"] or round(time.time() * 1000))
+            else:
+                now = time.time()
+                updated_at = _iso_time(now)
+                updated_at_ms = round(now * 1000)
+            self._conn.execute(
+                """
+                UPDATE turns
+                SET transcript_messages_json = ?, updated_at = ?, updated_at_ms = ?
+                WHERE turn_id = ?
+                """,
+                (
+                    json.dumps(transcript_messages or [], separators=(",", ":")),
+                    updated_at,
+                    updated_at_ms,
+                    clean_turn_id,
+                ),
+            )
+            self._conn.commit()
+            return self._build_item(str(row["card_id"]))
+
     def get_artifact(self, artifact_id: str) -> dict[str, object] | None:
         clean = str(artifact_id or "").strip()
         if not clean:

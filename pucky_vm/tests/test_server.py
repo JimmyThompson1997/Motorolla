@@ -968,6 +968,77 @@ class ServerTests(unittest.TestCase):
         for item in self.service.workspace.list_records("reminders", include_archived=True, include_deleted=True)["items"]:
             self.service.workspace.patch_record("reminders", str(item["id"]), {"archived": True, "deleted": True})
 
+    def seed_legacy_meeting_feed_item(
+        self,
+        *,
+        meeting_id: str,
+        title: str,
+        summary: str,
+        source: str = "vscode",
+        archived: bool = True,
+        read: bool = False,
+        html_content: str = "",
+        card_kind: str = "",
+        meeting_state: str = "",
+        assistant_attachments: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        origin: dict[str, object] = {
+            "runtime": "codex",
+            "thread_id": meeting_id,
+            "source": source,
+        }
+        if source == "meeting_recording" or meeting_state or card_kind:
+            origin["meeting_id"] = meeting_id
+        if card_kind:
+            origin["card_kind"] = card_kind
+        if meeting_state:
+            origin["meeting_state"] = meeting_state
+        transcript_messages = [
+            {
+                "role": "user",
+                "text": "Meeting recording uploaded for review.",
+                "created_at": "2026-06-01T12:00:00Z",
+                "turn_id": meeting_id,
+            },
+            {
+                "role": "assistant",
+                "text": summary,
+                "created_at": "2026-06-01T12:00:10Z",
+                "attachments": list(assistant_attachments or []),
+            },
+        ]
+        item = self.service.feed.upsert_turn_result(
+            turn_id=meeting_id,
+            session_id=meeting_id,
+            reply_mode="card_only",
+            reply_text=summary,
+            title=title,
+            summary=summary,
+            icon="mic",
+            origin=origin,
+            telemetry={"event": "legacy.meeting.seed"},
+            transcript_messages=transcript_messages,
+            request_audio_mime_type="audio/wav",
+            request_audio_base64="",
+            audio_mime_type="audio/wav",
+            audio_base64=base64.b64encode(b"RIFFlegacy-meeting-audio").decode("ascii"),
+            html_mime_type="text/html" if html_content else "",
+            html_base64=base64.b64encode(html_content.encode("utf-8")).decode("ascii") if html_content else "",
+        )
+        if archived:
+            self.service.feed.apply_action(
+                client_action_id=f"legacy_seed_archive:{meeting_id}",
+                card_id=str(item["card_id"]),
+                action="archive",
+            )
+        if read:
+            self.service.feed.apply_action(
+                client_action_id=f"legacy_seed_read:{meeting_id}",
+                card_id=str(item["card_id"]),
+                action="mark_read",
+            )
+        return self.service.feed.get_item(str(item["card_id"])) or {}
+
     def test_service_start_initializes_broker_before_reminder_thread(self) -> None:
         events: list[str] = []
 
@@ -3479,6 +3550,160 @@ class ServerTests(unittest.TestCase):
         synced_record = self.service._meeting_record_by_id(meeting_id)
         self.assertIsNotNone(synced_record)
         self.assertTrue(bool((synced_record or {}).get("feed_item", {}).get("archived")))
+
+    def test_legacy_successful_meeting_feed_item_migrates_to_note_and_preserves_state(self) -> None:
+        meeting_id = "meeting-20260601-123000-legacy-success"
+        legacy_html = meeting_summary_html(
+            title="Legacy Launch Review",
+            overview="<p>We reviewed the launch blockers.</p>",
+            participants="<p>Jimmy, Jack, Maya</p>",
+            action_items="<ul><li>Jimmy: ship the launch copy</li></ul>",
+            follow_up="<p>Prepare the merged note and follow-up tasks.</p>",
+        )
+        item = self.seed_legacy_meeting_feed_item(
+            meeting_id=meeting_id,
+            title="Legacy Launch Review",
+            summary="Transcribed and diarized the launch review with follow-up items.",
+            source="vscode",
+            archived=True,
+            read=True,
+            html_content=legacy_html,
+        )
+
+        self.service._migrate_legacy_meeting_outputs_v1()
+        self.service._migrate_legacy_meeting_outputs_v1()
+
+        note_id = f"meeting-note-{meeting_id}"
+        note = self.service.workspace.get_record("notes", note_id)
+        self.assertIsNotNone(note)
+        self.assertIn("launch blockers", str(note.get("html") or "").lower())
+
+        migrated = self.service.feed.get_item(str(item["card_id"]))
+        self.assertIsNotNone(migrated)
+        self.assertTrue(bool(migrated["archived"]))
+        self.assertTrue(bool(migrated["read"]))
+        self.assertEqual(migrated["connected_records"][0]["kind"], "note")
+        self.assertEqual(migrated["connected_records"][0]["id"], note_id)
+        assistant = next(message for message in migrated["transcript_messages"] if message.get("role") == "assistant")
+        assistant_connected = assistant.get("connected_records") or []
+        self.assertEqual(len(assistant_connected), 1)
+        self.assertEqual(assistant_connected[0]["kind"], "note")
+        self.assertEqual(assistant_connected[0]["id"], note_id)
+
+    def test_legacy_completed_meeting_record_backfills_connected_note_from_summary_fallback(self) -> None:
+        meeting_id = "meeting-20260601-123100-legacy-runtime"
+        item = self.seed_legacy_meeting_feed_item(
+            meeting_id=meeting_id,
+            title="Badge Proof Meeting A",
+            summary="Hosted proof meeting A.",
+            source="meeting_recording",
+            archived=True,
+            read=False,
+        )
+        record = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": meeting_id,
+            "state": "completed",
+            "created_at": "2026-06-01T12:31:00Z",
+            "updated_at": "2026-06-01T12:31:05Z",
+            "started_at": "2026-06-01T12:31:00Z",
+            "stopped_at": "2026-06-01T12:31:05Z",
+            "duration_ms": 5000,
+            "device_id": "device-1",
+            "device_path": "/proof/meeting.wav",
+            "mime_type": "audio/wav",
+            "audio_bytes": len(b"RIFFlegacy-meeting-audio"),
+            "audio_path": "",
+            "audio_url": "",
+            "metadata": {},
+            "transcript_status": "completed",
+            "transcript_error": "",
+            "transcript_text": "",
+            "transcript_result": {},
+            "diarization_requested": False,
+            "diarization_status": "plain_transcript",
+            "speaker_turns": [],
+            "agent": {"label": "Meeting Mode Agent"},
+            "archived": True,
+            "failure_stage": "",
+            "failure_reason": "",
+            "card_id": str(item["card_id"]),
+            "card": dict(item.get("card") or {}),
+            "feed_item": dict(item),
+            "connected_records": [],
+        }
+        self.service._upsert_meeting(record)
+
+        self.service._migrate_legacy_meeting_outputs_v1()
+
+        note_id = f"meeting-note-{meeting_id}"
+        note = self.service.workspace.get_record("notes", note_id)
+        self.assertIsNotNone(note)
+        self.assertIn("Hosted proof meeting A.", str(note.get("html") or ""))
+
+        meeting = self.service.meeting_detail(meeting_id)["meeting"]
+        self.assertEqual(meeting["state"], "completed")
+        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
+        self.assertEqual(meeting["connected_records"][0]["id"], note_id)
+        self.assertEqual(meeting["feed_item"]["connected_records"][0]["kind"], "note")
+        self.assertEqual(meeting["feed_item"]["connected_records"][0]["id"], note_id)
+
+    def test_feed_sync_excludes_archived_noncanonical_legacy_meeting_noise(self) -> None:
+        kept = self.seed_legacy_meeting_feed_item(
+            meeting_id="meeting-20260601-123200-legacy-keep",
+            title="Meeting Audio Review",
+            summary="Transcription completed. The audio appears to contain no intelligible speech.",
+            source="vscode",
+            archived=True,
+            html_content="<h1>Meeting Audio Review</h1><p>No intelligible speech.</p>",
+        )
+        hidden_review = self.seed_legacy_meeting_feed_item(
+            meeting_id="meeting-20260601-123201-legacy-review",
+            title="Meeting needs review",
+            summary="The meeting agent replied, but did not return a usable Meeting Transcript attachment yet.",
+            source="meeting_recording",
+            archived=True,
+        )
+        hidden_failed = self.seed_legacy_meeting_feed_item(
+            meeting_id="meeting-20260601-123202-legacy-failed",
+            title="Meeting processing failed",
+            summary="Processing stopped during meeting_agent_call: timeout",
+            source="meeting_recording",
+            archived=True,
+            card_kind="meeting_failed",
+            meeting_state="failed",
+        )
+        hidden_processing = self.seed_legacy_meeting_feed_item(
+            meeting_id="meeting-20260601-123203-legacy-processing",
+            title="Processing meeting recording",
+            summary="Transcribing, diarizing, and checking for follow-up instructions...",
+            source="meeting_recording",
+            archived=True,
+            card_kind="meeting_processing",
+            meeting_state="processing",
+        )
+        visible_active = self.seed_legacy_meeting_feed_item(
+            meeting_id="meeting-20260601-123204-active-processing",
+            title="Processing meeting recording",
+            summary="Transcribing, diarizing, and checking for follow-up instructions...",
+            source="meeting_recording",
+            archived=False,
+            card_kind="meeting_processing",
+            meeting_state="processing",
+        )
+
+        self.service._migrate_legacy_meeting_outputs_v1()
+
+        archived_payload = self.get_json("/api/feed?limit=50&compact=1&include_archived=1", headers={"Authorization": "Bearer secret"})
+        archived_ids = {str(item["card_id"]) for item in archived_payload["items"]}
+        self.assertIn(str(kept["card_id"]), archived_ids)
+        self.assertNotIn(str(hidden_review["card_id"]), archived_ids)
+        self.assertNotIn(str(hidden_failed["card_id"]), archived_ids)
+        self.assertNotIn(str(hidden_processing["card_id"]), archived_ids)
+
+        active_payload = self.get_json("/api/feed?limit=50&compact=1&include_archived=0", headers={"Authorization": "Bearer secret"})
+        active_ids = {str(item["card_id"]) for item in active_payload["items"]}
+        self.assertIn(str(visible_active["card_id"]), active_ids)
 
     def test_meeting_archive_missing_meeting_fails_with_not_found(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

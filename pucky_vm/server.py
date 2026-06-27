@@ -88,6 +88,7 @@ MAX_CARD_ICON_NAME_CHARS = 48
 CARD_ICON_NAME_RE = re.compile(r"^[a-z0-9_]{1,48}$")
 CARD_ICON_ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DISPLAYABLE_ATTACHMENT_PATH_RE = re.compile(r"(/[^\\s\"'<>()[\\]{}]+)")
+LEGACY_MEETING_NOTE_MIGRATION_META_KEY = "legacy_meeting_note_first_v1"
 BROKER_MODULE_PATH = Path(__file__).resolve().parents[1] / "pucky-apk" / "fly-broker" / "pucky_fly_broker.py"
 AGENT_RUNTIME_ACTIONS: tuple[dict[str, str], ...] = (
     {"name": "initialize", "kind": "lifecycle"},
@@ -716,6 +717,7 @@ class PuckyVoiceService:
             self.meeting_codex.start()
         ensure_broker_initialized()
         self._recover_stale_meeting_runtime_records()
+        self._migrate_legacy_meeting_outputs_v1()
         self._sync_archived_meeting_feed_cards()
         if self._reminder_poll_thread is None or not self._reminder_poll_thread.is_alive():
             self._reminder_stop_event.clear()
@@ -1074,6 +1076,302 @@ class PuckyVoiceService:
                     lambda record=record: self._upsert_meeting(record),
                     sqlite_retry=True,
                 )
+
+    def _feed_item_meeting_id(self, item: dict[str, object]) -> str:
+        origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+        for candidate in (
+            origin.get("meeting_id"),
+            item.get("meeting_id"),
+            item.get("turn_id"),
+            item.get("session_id"),
+            origin.get("thread_id"),
+        ):
+            meeting_id = _safe_meeting_id(candidate)
+            if meeting_id:
+                return meeting_id
+        return ""
+
+    def _is_meeting_feed_item(self, item: dict[str, object]) -> bool:
+        return bool(self._feed_item_meeting_id(item))
+
+    def _is_failed_or_processing_meeting_item(self, item: dict[str, object]) -> bool:
+        origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+        card = item.get("card") if isinstance(item.get("card"), dict) else {}
+        card_origin = card.get("origin") if isinstance(card.get("origin"), dict) else {}
+        card_kind = str(
+            item.get("card_kind")
+            or card.get("card_kind")
+            or origin.get("card_kind")
+            or card_origin.get("card_kind")
+            or ""
+        ).strip().lower()
+        meeting_state = str(
+            item.get("meeting_state")
+            or card.get("meeting_state")
+            or origin.get("meeting_state")
+            or card_origin.get("meeting_state")
+            or ""
+        ).strip().lower()
+        return card_kind in {"meeting_failed", "meeting_processing"} or meeting_state in {"failed", "processing"}
+
+    def _is_legacy_meeting_review_item(self, item: dict[str, object]) -> bool:
+        title = str(item.get("title") or "").strip().lower()
+        summary = str(item.get("summary") or item.get("text") or "").strip().lower()
+        return title == "meeting needs review" or "usable meeting transcript attachment yet" in summary
+
+    def _canonical_connected_records(self, item: dict[str, object]) -> list[dict[str, object]]:
+        connected = item.get("connected_records")
+        if not isinstance(connected, list):
+            return []
+        return [dict(entry) for entry in connected if isinstance(entry, dict)]
+
+    def _should_include_inbox_feed_item(self, item: dict[str, object], *, include_archived: bool) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if not self._is_meeting_feed_item(item):
+            return True
+        connected_records = self._canonical_connected_records(item)
+        if connected_records:
+            return True
+        archived = bool(item.get("archived"))
+        if not archived and self._is_failed_or_processing_meeting_item(item):
+            return True
+        return False
+
+    def _legacy_meeting_primary_note_ref(
+        self,
+        *,
+        meeting_id: str,
+        note_id: str,
+        title: str,
+        summary: str,
+    ) -> dict[str, object]:
+        return {
+            "kind": "note",
+            "collection": "notes",
+            "id": note_id,
+            "title": title,
+            "summary": summary,
+            "meeting_id": meeting_id,
+        }
+
+    def _legacy_meeting_attachment_html(self, attachment: dict[str, object]) -> str:
+        if not isinstance(attachment, dict):
+            return ""
+        for field in ("document_html_artifact", "viewer_artifact", "html_artifact", "artifact"):
+            artifact_id = str(attachment.get(field) or "").strip()
+            if not artifact_id:
+                continue
+            artifact = self.feed.get_artifact(artifact_id)
+            if not isinstance(artifact, dict):
+                continue
+            mime = str(artifact.get("mime_type") or "").strip().lower()
+            if mime != "text/html":
+                continue
+            try:
+                decoded = base64.b64decode(str(artifact.get("content_base64") or "")).decode("utf-8", errors="replace").strip()
+            except Exception:
+                decoded = ""
+            if decoded:
+                return decoded
+        mime = str(attachment.get("mime_type") or "").strip().lower()
+        text = str(attachment.get("text") or "").strip()
+        if mime == "text/html" and text:
+            return text
+        return ""
+
+    def _legacy_meeting_note_html_from_item(self, item: dict[str, object], *, title: str, meeting_id: str) -> str:
+        html_base64 = str(item.get("html_base64") or "").strip()
+        if html_base64:
+            try:
+                decoded = base64.b64decode(html_base64).decode("utf-8", errors="replace").strip()
+            except Exception:
+                decoded = ""
+            if decoded:
+                return decoded
+        transcript_messages = item.get("transcript_messages") if isinstance(item.get("transcript_messages"), list) else []
+        assistant_attachments: list[dict[str, object]] = []
+        for message in transcript_messages:
+            if not isinstance(message, dict) or str(message.get("role") or "").strip().lower() != "assistant":
+                continue
+            attachments = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+            assistant_attachments.extend(dict(entry) for entry in attachments if isinstance(entry, dict))
+        for attachment in assistant_attachments:
+            title_key = str(attachment.get("title") or "").strip().lower()
+            if title_key in {"meeting summary", "summary"}:
+                html_body = self._legacy_meeting_attachment_html(attachment)
+                if html_body:
+                    return html_body
+        for attachment in assistant_attachments:
+            title_key = str(attachment.get("title") or "").strip().lower()
+            if title_key in {"meeting transcript", "transcript"}:
+                html_body = self._legacy_meeting_attachment_html(attachment)
+                if html_body:
+                    return html_body
+        for attachment in assistant_attachments:
+            title_key = str(attachment.get("title") or "").strip().lower()
+            if title_key not in {"meeting transcript", "transcript", "transcript (plain text)"}:
+                continue
+            transcript_text = str(attachment.get("text") or "").replace("\r\n", "\n").strip()
+            if transcript_text:
+                return _meeting_transcript_html_document(
+                    {
+                        "meeting_id": meeting_id,
+                        "title": title,
+                        "recording_title": title,
+                    },
+                    transcript_text,
+                )
+        fallback_text = str(item.get("text") or item.get("summary") or "").strip()
+        return _legacy_meeting_summary_note_html(title, fallback_text)
+
+    def _patch_legacy_meeting_connected_message(
+        self,
+        item: dict[str, object],
+        connected_record: dict[str, object],
+    ) -> dict[str, object] | None:
+        transcript_messages = [
+            dict(message)
+            for message in (item.get("transcript_messages") if isinstance(item.get("transcript_messages"), list) else [])
+            if isinstance(message, dict)
+        ]
+        connected_key = (
+            str(connected_record.get("kind") or "").strip(),
+            str(connected_record.get("id") or "").strip(),
+        )
+        assistant_indexes = [
+            index
+            for index, message in enumerate(transcript_messages)
+            if str(message.get("role") or "").strip().lower() == "assistant"
+        ]
+        if assistant_indexes:
+            index = assistant_indexes[-1]
+            message = dict(transcript_messages[index])
+            existing_connected = [
+                dict(entry)
+                for entry in (message.get("connected_records") if isinstance(message.get("connected_records"), list) else [])
+                if isinstance(entry, dict)
+            ]
+            if not any(
+                (
+                    str(entry.get("kind") or "").strip(),
+                    str(entry.get("id") or entry.get("record_id") or "").strip(),
+                ) == connected_key
+                for entry in existing_connected
+            ):
+                message["connected_records"] = [dict(connected_record), *existing_connected]
+                transcript_messages[index] = message
+            else:
+                return item
+        else:
+            transcript_messages.append(
+                _assistant_transcript_message(
+                    text=str(item.get("text") or item.get("summary") or "Meeting saved.").strip() or "Meeting saved.",
+                    created_at=str(item.get("updated_at") or item.get("created_at") or _iso_time(time.time())),
+                    attachments=[],
+                    connected_records=[dict(connected_record)],
+                )
+            )
+        return self.feed.replace_turn_transcript_messages(
+            str(item.get("turn_id") or ""),
+            transcript_messages,
+            preserve_updated_at=True,
+        )
+
+    def _migrate_legacy_meeting_record(self, meeting_id: str, connected_record: dict[str, object]) -> None:
+        record = self._meeting_record_by_id(meeting_id)
+        if not isinstance(record, dict):
+            return
+        current = [
+            dict(entry)
+            for entry in (record.get("connected_records") if isinstance(record.get("connected_records"), list) else [])
+            if isinstance(entry, dict)
+        ]
+        current_keys = {
+            (
+                str(entry.get("kind") or "").strip(),
+                str(entry.get("id") or entry.get("record_id") or "").strip(),
+            )
+            for entry in current
+        }
+        note_key = (
+            str(connected_record.get("kind") or "").strip(),
+            str(connected_record.get("id") or "").strip(),
+        )
+        merged = [dict(connected_record), *current] if note_key not in current_keys else current
+        record["connected_records"] = merged
+        if str(record.get("state") or "").strip().lower() not in {"failed", "processing"}:
+            record["state"] = "completed"
+        feed_item = self.feed.get_item(str(record.get("card_id") or "")) if str(record.get("card_id") or "").strip() else None
+        if isinstance(feed_item, dict):
+            record["feed_item"] = feed_item
+            if isinstance(feed_item.get("card"), dict):
+                record["card"] = dict(feed_item.get("card") or {})
+            record["card_id"] = str(feed_item.get("card_id") or record.get("card_id") or "")
+        self._upsert_meeting(record)
+
+    def _migrate_single_legacy_meeting_item(self, item: dict[str, object]) -> bool:
+        if not isinstance(item, dict):
+            return False
+        meeting_id = self._feed_item_meeting_id(item)
+        if not meeting_id:
+            return False
+        if self._canonical_connected_records(item):
+            return False
+        if self._is_failed_or_processing_meeting_item(item) or self._is_legacy_meeting_review_item(item):
+            return False
+        title = _meeting_fallback_display_title(
+            {
+                "meeting_id": meeting_id,
+                "title": item.get("title"),
+                "recording_title": item.get("title"),
+                "created_at": item.get("created_at"),
+                "updated_at": item.get("updated_at"),
+            }
+        )
+        summary = str(item.get("summary") or item.get("text") or title).strip() or title
+        note_id = f"meeting-note-{meeting_id}"
+        note_html = self._legacy_meeting_note_html_from_item(item, title=title, meeting_id=meeting_id)
+        self.workspace.upsert_record(
+            "notes",
+            {
+                "id": note_id,
+                "title": title,
+                "summary": summary,
+                "html": note_html,
+                "metadata": {
+                    "source_kind": "meeting",
+                    "source_id": meeting_id,
+                    "meeting_id": meeting_id,
+                    "legacy_migration": "meeting_note_first_v1",
+                },
+            },
+        )
+        connected_record = self._legacy_meeting_primary_note_ref(
+            meeting_id=meeting_id,
+            note_id=note_id,
+            title=title,
+            summary=summary,
+        )
+        migrated_item = self._patch_legacy_meeting_connected_message(item, connected_record)
+        if isinstance(migrated_item, dict):
+            self._migrate_legacy_meeting_record(meeting_id, connected_record)
+            return True
+        return False
+
+    def _migrate_legacy_meeting_outputs_v1(self) -> None:
+        if self.workspace.meta_value(LEGACY_MEETING_NOTE_MIGRATION_META_KEY):
+            return
+        cursor = ""
+        while True:
+            payload = self.feed.list_feed(cursor or None, 100, include_archived=True, compact=False)
+            for item in list(payload.get("items") or []):
+                if isinstance(item, dict):
+                    self._migrate_single_legacy_meeting_item(item)
+            if not bool(payload.get("has_more")) or not str(payload.get("next_cursor") or "").strip():
+                break
+            cursor = str(payload.get("next_cursor") or "")
+        self.workspace.set_meta_value(LEGACY_MEETING_NOTE_MIGRATION_META_KEY, "1")
 
     def health(self) -> dict[str, object]:
         return {
@@ -4711,6 +5009,7 @@ class PuckyVoiceService:
                 "title",
                 "summary",
                 "icon",
+                "connected_records",
                 "archived",
                 "read",
                 "deleted",
@@ -4963,13 +5262,17 @@ class PuckyVoiceService:
                 return reconciled
         return item
 
-    def _decorate_feed_payload(self, payload: dict[str, object]) -> dict[str, object]:
+    def _decorate_feed_payload(self, payload: dict[str, object], *, include_archived: bool = True) -> dict[str, object]:
+        visible_items: list[dict[str, object]] = []
         for item in list(payload.get("items") or []):
             if isinstance(item, dict):
                 reconciled = dict(self._reconcile_meeting_feed_item(item))
                 item.clear()
                 item.update(reconciled)
                 self._decorate_feed_item(item)
+                if self._should_include_inbox_feed_item(item, include_archived=include_archived):
+                    visible_items.append(item)
+        payload["items"] = visible_items
         return payload
 
     def _load_card_icons(self) -> dict[str, dict[str, str]]:
@@ -5545,7 +5848,8 @@ class PuckyVoiceService:
         base_url: str = "",
     ) -> dict[str, object]:
         return self._decorate_feed_payload(
-            self.feed.list_feed(cursor, limit, include_archived=include_archived, compact=compact, base_url=base_url)
+            self.feed.list_feed(cursor, limit, include_archived=include_archived, compact=compact, base_url=base_url),
+            include_archived=include_archived,
         )
 
     def feed_action(self, client_action_id: str, card_id: str, action: str) -> dict[str, object]:
@@ -6021,6 +6325,60 @@ def _meeting_transcript_preview(transcript_text: object, *, max_chars: int = 140
             return clean_line
         return clean_line[: max(0, max_chars - 1)].rstrip() + "…"
     return ""
+
+
+def _legacy_meeting_summary_note_html(title: str, summary_text: str) -> str:
+    safe_title = html.escape(str(title or "Meeting Note").strip() or "Meeting Note")
+    safe_summary = html.escape(str(summary_text or "").strip() or "Legacy meeting output.")
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{safe_title}</title>
+    <style>
+      :root {{
+        color-scheme: light;
+        --page-bg: #f3f5f8;
+        --card-bg: #ffffff;
+        --text: #101820;
+        --muted: #52606d;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        background: linear-gradient(180deg, #f8fafc 0%, var(--page-bg) 100%);
+        color: var(--text);
+        font: 16px/1.55 "Segoe UI", system-ui, sans-serif;
+        padding: 20px;
+      }}
+      main {{
+        max-width: 760px;
+        margin: 0 auto;
+        background: var(--card-bg);
+        border-radius: 24px;
+        box-shadow: 0 16px 60px rgba(15, 23, 42, 0.10);
+        padding: 24px 20px 28px;
+      }}
+      h1 {{
+        margin: 0 0 10px;
+        font-size: 28px;
+        line-height: 1.1;
+      }}
+      p {{
+        margin: 0;
+        color: var(--muted);
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{safe_title}</h1>
+      <p>{safe_summary}</p>
+    </main>
+  </body>
+</html>
+"""
 
 
 def _normalize_turn_id(raw: str | None) -> str:
