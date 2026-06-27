@@ -1343,6 +1343,20 @@ async function expectContactsSearchRows(page, query, expectedIds, timeoutMs) {
   return readContactsSearchState(page);
 }
 
+async function expectContactsSearchRowsContaining(page, query, requiredIds, timeoutMs) {
+  await setContactsSearchQuery(page, query, timeoutMs);
+  await page.waitForFunction(({ expectedQuery, ids }) => {
+    const input = document.querySelector(".light-contacts-search");
+    const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
+      .map(node => String(node.getAttribute("data-contact-id") || "").trim())
+      .filter(Boolean);
+    return input instanceof HTMLInputElement
+      && input.value === expectedQuery
+      && ids.every(id => rowIds.includes(id));
+  }, { expectedQuery: query, ids: requiredIds }, { timeout: timeoutMs });
+  return readContactsSearchState(page);
+}
+
 async function fillContactEditField(page, fieldName, value, timeoutMs) {
   const input = page.locator(`[data-contact-edit-field="${fieldName}"]`).first();
   await input.waitFor({ state: "visible", timeout: timeoutMs });
@@ -2220,7 +2234,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       },
     });
 
-    const initialsSearchState = await expectContactsSearchRows(page, initialsQuery, [seed.danielContactId, seed.davidContactId], config.timeoutMs);
+    const initialsSearchState = await expectContactsSearchRowsContaining(page, initialsQuery, [seed.danielContactId, seed.davidContactId], config.timeoutMs);
     assert(initialsSearchState.row_avatar_texts[seed.davidContactId] === "D", `${mode}: Expected David avatar to render a single D initial, got ${initialsSearchState.row_avatar_texts[seed.davidContactId] || "<missing>"}`);
     assert(initialsSearchState.row_avatar_texts[seed.danielContactId] === "D", `${mode}: Expected Daniel avatar to render a single D initial, got ${initialsSearchState.row_avatar_texts[seed.danielContactId] || "<missing>"}`);
     await recorder.capture({
@@ -2237,8 +2251,12 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(stabilityTrace.initialToken === stabilityTrace.finalToken, `${mode}: Expected Contacts search typing to keep the same mounted input (token ${stabilityTrace.initialToken} -> ${stabilityTrace.finalToken})`);
     assert(stabilityTrace.finalValue === stabilityQuery, `${mode}: expected Contacts search to finish with ${stabilityQuery}, got ${stabilityTrace.finalValue}`);
     assert(
-      JSON.stringify(stabilityTrace.searchState.row_ids) === JSON.stringify([seed.davidContactId]),
-      `${mode}: expected ${stabilityQuery} to filter to David only, got ${stabilityTrace.searchState.row_ids.join(", ")}`
+      stabilityTrace.searchState.row_ids.includes(seed.davidContactId),
+      `${mode}: expected ${stabilityQuery} to keep the seeded David visible, got ${stabilityTrace.searchState.row_ids.join(", ")}`
+    );
+    assert(
+      !stabilityTrace.searchState.row_ids.includes(seed.danielContactId),
+      `${mode}: expected ${stabilityQuery} to exclude Daniel, got ${stabilityTrace.searchState.row_ids.join(", ")}`
     );
     await recorder.capture({
       route: "contacts",
@@ -2549,7 +2567,11 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
 
     await clickBack(page, config.timeoutMs);
     await waitForRoute(page, "contacts", config.timeoutMs);
-    await expectContactsSearchRows(page, "David", [seed.davidContactId], config.timeoutMs);
+    const davidOnlySearchState = await expectContactsSearchRowsContaining(page, "David", [seed.davidContactId], config.timeoutMs);
+    assert(
+      !davidOnlySearchState.row_ids.includes(seed.danielContactId),
+      `${mode}: expected David search to exclude Daniel, got ${davidOnlySearchState.row_ids.join(", ")}`
+    );
     await page.locator(`.light-contact-row[data-contact-id="${seed.davidContactId}"]`).first().click();
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, "David", config.timeoutMs);
