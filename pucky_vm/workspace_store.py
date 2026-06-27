@@ -967,6 +967,7 @@ class WorkspaceStore:
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             task_proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'task_proof_cleanup_v1'").fetchone()
             project_connected_repair_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_project_connected_repair_v1'").fetchone()
+            connected_detail_repair_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v2'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
             contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
@@ -1025,6 +1026,8 @@ class WorkspaceStore:
             self._cleanup_task_proof_artifacts_v1(now)
         if not project_connected_repair_seeded:
             self._repair_seeded_project_connected_v1(now)
+        if not connected_detail_repair_seeded:
+            self._repair_seeded_connected_detail_v2(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
         if not contact_html_removed:
@@ -1586,6 +1589,65 @@ class WorkspaceStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
                 ("seeded_project_connected_repair_v1", "1", now_ms),
+            )
+            self._conn.commit()
+
+    def _repair_seeded_connected_detail_v2(self, now_ms: int) -> None:
+        source_ids_by_kind = {
+            "project": {"aurora", "migration", "home-refresh", "freelance-followup"},
+            "task": {"demo-task-do-paint-samples", "demo-task-send-freelance-mockup"},
+        }
+        desired_records: dict[tuple[str, str], tuple[str, dict[str, object]]] = {}
+        desired_links: dict[str, dict[str, object]] = {}
+        default_sources = [
+            seeded_workspace_snapshot(
+                default_workspace_records(now_ms),
+                default_workspace_links(),
+                default_workspace_assets(now_ms),
+            ),
+            seeded_workspace_snapshot(
+                default_workspace_graph_records(now_ms),
+                default_workspace_graph_links(),
+            ),
+        ]
+        for records_by_collection, links in default_sources:
+            record_lookup: dict[tuple[str, str], tuple[str, dict[str, object]]] = {}
+            for collection, records in records_by_collection.items():
+                kind = self.kind_for_collection(collection)
+                for record in records:
+                    record_id = str(record.get("id") or record.get("record_id") or "").strip()
+                    if record_id:
+                        record_lookup[(kind, record_id)] = (collection, record)
+            for source_kind, source_ids in source_ids_by_kind.items():
+                for source_id in source_ids:
+                    source_entry = record_lookup.get((source_kind, source_id))
+                    if source_entry:
+                        desired_records[(source_kind, source_id)] = source_entry
+            for link in links:
+                source_kind = str(link.get("source_kind") or "").strip()
+                source_id = str(link.get("source_id") or "").strip()
+                if source_id not in source_ids_by_kind.get(source_kind, set()):
+                    continue
+                target_kind = str(link.get("target_kind") or "").strip()
+                target_id = str(link.get("target_id") or "").strip()
+                desired_link = dict(link)
+                target_entry = record_lookup.get((target_kind, target_id))
+                if target_entry:
+                    desired_records[(target_kind, target_id)] = target_entry
+                    target_record = target_entry[1]
+                    desired_link["label"] = (
+                        str(target_record.get("title") or desired_link.get("label") or target_id).strip()
+                        or str(desired_link.get("label") or target_id).strip()
+                    )
+                desired_links[str(desired_link.get("id") or "").strip()] = desired_link
+        for collection, record in desired_records.values():
+            self.upsert_record(collection, record)
+        for link in desired_links.values():
+            self.upsert_link(link)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
+                ("seeded_connected_detail_repair_v2", "1", now_ms),
             )
             self._conn.commit()
 

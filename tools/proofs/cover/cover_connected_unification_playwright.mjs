@@ -615,29 +615,33 @@ async function openRuntimeMeetingDetail(page, meeting, timeoutMs) {
 }
 
 async function verifySurface(page, scenarioDir, viewportLabel, theme, fixture, summary, timeoutMs) {
-  await waitForConnectedHydration(page, fixture.rootSelector, fixture.expectedTitles.length, timeoutMs);
-  const state = await readConnectedState(page, fixture.rootSelector);
-  assertConnectedRowsShared(state, fixture);
-  if (fixture.expectWhoOverlap) {
-    assert(state.detailWhoLabels.some(label => /maya/i.test(label)), `Expected ${fixture.route} Who section to keep Maya visible alongside Connected.`);
-    assert(state.rows.some(row => row.title.includes("Maya Chen")), `Expected ${fixture.route} Connected to include the same linked contact that appears in Who.`);
+  try {
+    await waitForConnectedHydration(page, fixture.rootSelector, fixture.expectedTitles.length, timeoutMs);
+    const state = await readConnectedState(page, fixture.rootSelector);
+    assertConnectedRowsShared(state, fixture);
+    if (fixture.expectWhoOverlap) {
+      assert(state.detailWhoLabels.some(label => /maya/i.test(label)), `Expected ${fixture.route} Who section to keep Maya visible alongside Connected.`);
+      assert(state.rows.some(row => row.title.includes("Maya Chen")), `Expected ${fixture.route} Connected to include the same linked contact that appears in Who.`);
+    }
+    summary.surfaces.push({
+      viewport: viewportLabel,
+      theme,
+      route: fixture.route,
+      title: fixture.title,
+      sectionClassName: state.sectionClassName,
+      rowClassName: state.rows[0]?.className || "",
+      rowCount: state.rows.length,
+    });
+    const slug = `${viewportLabel}-${theme}-${fixture.route}`;
+    summary.screenshots[`${slug}-full`] = await saveScreenshot(page, scenarioDir, `${slug}-full.png`);
+    summary.screenshots[`${slug}-connected`] = await saveLocatorShot(
+      page.locator(`${fixture.rootSelector} .light-linked-records-section[data-linked-records-title="connected"]`).first(),
+      scenarioDir,
+      `${slug}-connected.png`
+    );
+  } catch (error) {
+    throw new Error(`${viewportLabel}/${theme}/${fixture.route}: ${String(error?.message || error || "Connected verification failed")}`);
   }
-  summary.surfaces.push({
-    viewport: viewportLabel,
-    theme,
-    route: fixture.route,
-    title: fixture.title,
-    sectionClassName: state.sectionClassName,
-    rowClassName: state.rows[0]?.className || "",
-    rowCount: state.rows.length,
-  });
-  const slug = `${viewportLabel}-${theme}-${fixture.route}`;
-  summary.screenshots[`${slug}-full`] = await saveScreenshot(page, scenarioDir, `${slug}-full.png`);
-  summary.screenshots[`${slug}-connected`] = await saveLocatorShot(
-    page.locator(`${fixture.rootSelector} .light-linked-records-section[data-linked-records-title="connected"]`).first(),
-    scenarioDir,
-    `${slug}-connected.png`
-  );
 }
 
 async function runScenario(page, config, viewport, theme, summary) {
