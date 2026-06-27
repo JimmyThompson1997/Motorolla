@@ -5,16 +5,12 @@
   const NAV_STATE_KEY = "pucky.cover.nav_state.v1";
   const READ_OVERRIDES_KEY = "pucky.cover.read_overrides.v1";
   const THEME_STATE_KEY = "pucky.cover.theme.v1";
-  const BROWSER_DEVICE_STATE_KEY = "pucky.cover.browser_device_id.v1";
   const CALENDAR_TIMEZONE_STATE_KEY = "pucky.cover.calendar_timezone.v1";
   const SELF_CONTACT_ID = "contact-me";
   const COMPLETE_EPSILON_MS = 500;
   const FEED_SYNC_INTERVAL_MS = 15000;
   const CARD_MENU_CLICK_SUPPRESS_MS = 550;
   const TURN_STATUS_POLL_MS = 250;
-  const TURN_STATUS_LIVE_ROUTE_INTERVAL_MS = 1000;
-  const TURN_STATUS_IDLE_ROUTE_INTERVAL_MS = 3000;
-  const PLAYER_STATE_POLL_INTERVAL_MS = 500;
   const ARCHIVE_REVEAL_WIDTH_PX = 88;
   const ARCHIVE_REVEAL_OPEN_THRESHOLD_PX = 44;
   const ARCHIVE_REVEAL_SLOP_PX = 12;
@@ -48,11 +44,8 @@
     "unknown"
   ]);
   const MEETING_STATUS_POLL_MS = 1000;
-  const MEETING_STATUS_IDLE_ROUTE_INTERVAL_MS = 2000;
-  const WORKSPACE_REFRESH_TICK_MS = 1000;
-  const REMINDER_LIVE_UI_TICK_MS = 1000;
-  const WORKSPACE_TASK_STALE_VISIBLE_MS = 15000;
-  const WORKSPACE_REMINDER_STALE_VISIBLE_MS = 15000;
+  const WORKSPACE_TASK_REFRESH_MS = 2000;
+  const WORKSPACE_REMINDER_REFRESH_MS = 15000;
   const CALENDAR_GAP_THRESHOLD_MS = 90 * 60 * 1000;
   const CALENDAR_CLUSTER_WINDOW_MS = 15 * 60 * 1000;
   const CALENDAR_DAY_RAIL_EDGE_THRESHOLD_PX = 180;
@@ -68,24 +61,20 @@
   const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2, 2.5, 3];
   const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];
   const AUDIO_PROBE_EVENT_LIMIT = 48;
-  const PERF_DEBUG_EVENT_LIMIT = 96;
-  const PERF_BRIDGE_CACHE_TTL_MS = 30000;
-  const PERF_DEFERRED_TASK_DELAY_MS = 120;
-  const PERF_CALENDAR_PRELOAD_DELAY_MS = 180;
-  const PERF_BROWSER_SAMPLE_RATE = 0.01;
-  const PERF_ANDROID_SAMPLE_RATE = 0.05;
   const AUDIO_START_CONFIRMATION_TIMEOUT_MS = 1800;
   const AUDIO_EARLY_END_WINDOW_MS = 2000;
   const AUDIO_TERMINAL_RESET_MS = 1600;
   const BROWSER_AUDIO_RUNTIME = "browser_native";
   const DOT = " \u00b7 ";
-  const CALENDAR_DESCRIPTION_URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
   let calendarTimeZoneOptionsCache = null;
   const iconCatalog = window.PUCKY_UI_ICONS && typeof window.PUCKY_UI_ICONS === "object"
     ? window.PUCKY_UI_ICONS
     : {};
   const routeCatalog = window.PUCKY_UI_ROUTES && typeof window.PUCKY_UI_ROUTES === "object"
     ? window.PUCKY_UI_ROUTES
+    : {};
+  const browserStateCatalog = window.PUCKY_UI_BROWSER_STATE && typeof window.PUCKY_UI_BROWSER_STATE === "object"
+    ? window.PUCKY_UI_BROWSER_STATE
     : {};
   const MATERIAL_SYMBOLS = iconCatalog.MATERIAL_SYMBOLS && typeof iconCatalog.MATERIAL_SYMBOLS === "object"
     ? iconCatalog.MATERIAL_SYMBOLS
@@ -149,15 +138,6 @@
     "selectedProjectId",
     "selectedFeedId"
   ];
-  const HOME_APP_BADGE_REGISTRY = Object.freeze({
-    inbox: { kind: "unread" },
-    meetings: { kind: "unread" },
-    "meeting-notes": { kind: "unread" },
-    tasks: { kind: "unread" },
-    reminders: { kind: "active" }
-  });
-  const APP_BADGE_STALE_MS = 15000;
-  let nativeProtectedAuthorization = "";
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -183,7 +163,7 @@
     lightReturnRoute: "",
     previousLightRoute: "home",
     lightRouteHistory: normalizeLightRouteHistory(persistedNavState.light_history),
-    selectedContactId: String(persistedNavState.selected_contact_id || persistedNavState.selectedContactId || "").trim() || "sarah",
+    selectedContactId: "sarah",
     selectedMeetingId: "vendor",
     selectedMeetingNoteId: "demo-meeting-home-refresh",
     selectedReminderId: "demo-reminder-paint-samples",
@@ -199,31 +179,25 @@
     calendarTimeZone: initialCalendarTimeZonePreference,
     taskSectionsExpanded: initialTaskSectionsExpandedValue,
     taskMutationPending: {},
-    taskSelectionMode: false,
-    selectedTaskIds: new Set(),
-    taskBulkArchivePending: false,
     reminderMutationPending: {},
     notesSectionsExpanded: { pinned: true, recent: true },
     notePinPending: {},
     projectsSectionsExpanded: { pinned: true, recent: true },
     projectPinPending: {},
+    taskFilter: "all",
     taskNavOrigin: null,
-    detailNavOrigin: null,
     reminderHistoryExpanded: false,
-    meetingDetailSections: null,
-    meetingDetailSectionCache: {},
     workspace: {
-      notes: initialWorkspaceBucketState(),
-      tasks: initialWorkspaceBucketState(),
-      "calendar-events": initialWorkspaceBucketState(),
-      "feed-items": initialWorkspaceBucketState(),
-      projects: initialWorkspaceBucketState(),
-      contacts: initialWorkspaceBucketState(),
-      messages: initialWorkspaceBucketState(),
-      "meeting-notes": initialWorkspaceBucketState(),
-      reminders: initialWorkspaceBucketState()
+      notes: { items: [], loaded: false, loading: false, error: "" },
+      tasks: { items: [], loaded: false, loading: false, error: "" },
+      "calendar-events": { items: [], loaded: false, loading: false, error: "" },
+      "feed-items": { items: [], loaded: false, loading: false, error: "" },
+      projects: { items: [], loaded: false, loading: false, error: "" },
+      contacts: { items: [], loaded: false, loading: false, error: "" },
+      messages: { items: [], loaded: false, loading: false, error: "" },
+      "meeting-notes": { items: [], loaded: false, loading: false, error: "" },
+      reminders: { items: [], loaded: false, loading: false, error: "" }
     },
-    appBadges: { items: {}, loaded: false, loading: false, error: "", lastRefreshAt: 0 },
     feedScrollTop: scrollNumber(persistedNavState.feed_scroll_top),
     navDetail: normalizeNavDetail(persistedNavState.detail),
     navRestored: false,
@@ -249,7 +223,9 @@
     scrubPreviewByPath: new Map(),
     scrubbingAudioKey: "",
     audioToggleBusyKey: "",
+    queuedAudioToggleKey: "",
     timestampTap: null,
+    threadComposerDrafts: {},
     audioCard: null,
     traceCard: null,
     metaCard: null,
@@ -258,15 +234,6 @@
     feedLastAppliedAt: 0,
     vmFeedSnapshotPromise: null,
     showArchivedFeed: false,
-    inboxManageMode: false,
-    inboxArchiveFilterPendingTarget: null,
-    selectedInboxCardKeys: new Set(),
-    lastInboxManageResult: {
-      action: "",
-      ok: true,
-      count: 0,
-      error: ""
-    },
     openCardMenuSessionId: "",
     openCardMenuThreadId: "",
     cardMenuClickSuppressUntil: 0,
@@ -274,15 +241,7 @@
     lastRenderedTurnVisualState: "",
     lastRenderedTurnId: "",
     waveHistory: new Map(),
-    contacts: {
-      search: "",
-      editMode: false,
-      editDraft: null,
-      editSaving: false,
-      editQueued: false,
-      editStatus: "idle",
-      editError: "",
-    },
+    contacts: { search: "" },
     links: initialLinksState(),
     meetings: initialMeetingsState(),
     meetingRecording: initialMeetingRecordingStatus(),
@@ -292,20 +251,12 @@
   ensureStoredHomeMenuIcons();
 
   const pending = new Map();
-  const bridgeReadCache = new Map();
-  const deferredPerfTasks = new Map();
   let seq = 0;
   let feedSyncIntervalId = 0;
   let audioProbeResetTimerId = 0;
   let sharedBrowserAudio = null;
   let activeArchiveReveal = null;
   let archiveRevealGestureSeq = 0;
-  let scheduledRenderToken = 0;
-  let lastTurnStatusPollAt = 0;
-  let lastPlayerStatePollAt = 0;
-  let lastWakeStatusPollAt = 0;
-  let lastMeetingStatusPollAt = 0;
-  let perfTelemetryInFlight = 0;
   const archiveRevealDebugTrace = [];
   const archiveRevealDebugState = {
     enabled: archiveRevealDebugEnabled(),
@@ -339,7 +290,6 @@
     reason: "",
     trace_count: 0
   };
-  const perfDebugState = initialPerfDebugState(initialRouteValue);
   window.__puckyArchiveRevealDebug = {
     schema: "pucky.archive_reveal_debug.v1",
     push(entry) {
@@ -406,16 +356,6 @@
     },
     getState() {
       return noteFlashDebugSnapshot();
-    }
-  };
-  window.__PUCKY_PERF_DEBUG__ = {
-    schema: "pucky.perf_debug.v1",
-    getState() {
-      return perfDebugMetrics();
-    },
-    clear() {
-      clearPerfDebugState();
-      return perfDebugMetrics();
     }
   };
 
@@ -654,730 +594,10 @@
     return next;
   }
 
-  function perfDebugEnabled() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      return params.get("debug_perf") === "1";
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function initialWorkspaceBucketState() {
-    return {
-      items: [],
-      loaded: false,
-      loading: false,
-      error: "",
-      dirty: false,
-      lastRefreshAt: 0,
-      fingerprint: "",
-      queryKey: "",
-      queryCache: {},
-      recordCache: {},
-      recordLoading: {}
-    };
-  }
-
-  function perfDebugSessionId() {
-    try {
-      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-        return crypto.randomUUID();
-      }
-    } catch (_) {
-      // Ignore crypto unavailability in previews.
-    }
-    return `perf-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  }
-
-  function resolvePerfRunId() {
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      return String(params.get("perf_run_id") || params.get("debug_perf_run_id") || "").trim();
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function perfSurfaceName() {
-    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
-      return "android_webview";
-    }
-    return /^https?:/i.test(String(window.location && window.location.protocol || "")) ? "hosted_browser" : "browser_preview";
-  }
-
-  function perfDeviceClass() {
-    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
-      return "android_webview";
-    }
-    const width = Math.max(0, Number(window.innerWidth || 0));
-    return width && width <= 700 ? "mobile_browser" : "desktop_browser";
-  }
-
-  function perfTelemetrySampleReason() {
-    if (perfDebugEnabled()) {
-      return "debug_perf";
-    }
-    const rate = window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function"
-      ? PERF_ANDROID_SAMPLE_RATE
-      : PERF_BROWSER_SAMPLE_RATE;
-    return Math.random() < rate
-      ? (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function" ? "android_sampled" : "browser_sampled")
-      : "";
-  }
-
-  function initialPerfDebugState(initialRoute = "") {
-    const now = Date.now();
-    const sampleReason = perfTelemetrySampleReason();
-    return {
-      enabled: perfDebugEnabled() || Boolean(sampleReason),
-      session_id: perfDebugSessionId(),
-      run_id: resolvePerfRunId(),
-      sample_reason: sampleReason,
-      surface: perfSurfaceName(),
-      device_class: perfDeviceClass(),
-      boot_phase: "booting",
-      route: String(initialRoute || "home").trim() || "home",
-      route_sequence: 1,
-      route_started_at_ms: now,
-      route_enter_at_ms: now,
-      route_data_start_at_ms: 0,
-      route_data_end_at_ms: 0,
-      route_ready: false,
-      route_ready_reason: "",
-      route_ready_at_ms: 0,
-      route_perf_sent: false,
-      render_count: 0,
-      last_render_ms: 0,
-      bridge_total_ms: 0,
-      shell_launch_elapsed_ms: 0,
-      webview_load_elapsed_ms: 0,
-      asset_delivery_failures: 0,
-      hosted_reload_attempts: 0,
-      bootstrap_snapshot_used: false,
-      bridge_calls_by_command: {},
-      fetches_by_key: {},
-      poll_ticks_by_lane: {},
-      cache_hits_by_key: {},
-      deferred_tasks_started: 0,
-      deferred_tasks_completed: 0,
-      unchanged_refresh_skips: 0,
-      recent_events: []
-    };
-  }
-
-  function perfDebugPushEvent(type, detail = {}) {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    const entry = {
-      type: String(type || "").trim(),
-      route: String(state.route || perfDebugState.route || "home").trim() || "home",
-      ts_ms: Date.now(),
-      detail: detail && typeof detail === "object" ? { ...detail } : { value: detail }
-    };
-    perfDebugState.recent_events.push(entry);
-    if (perfDebugState.recent_events.length > PERF_DEBUG_EVENT_LIMIT) {
-      perfDebugState.recent_events.splice(0, perfDebugState.recent_events.length - PERF_DEBUG_EVENT_LIMIT);
-    }
-  }
-
-  function perfDebugIncrementCounter(storeKey, counterKey, amount = 1) {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    const store = perfDebugState[storeKey] && typeof perfDebugState[storeKey] === "object"
-      ? perfDebugState[storeKey]
-      : {};
-    const key = String(counterKey || "").trim();
-    if (!key) {
-      return;
-    }
-    store[key] = safeNumber(store[key]) + Math.max(1, safeNumber(amount, 1));
-    perfDebugState[storeKey] = store;
-  }
-
-  function clearPerfDebugState() {
-    const next = initialPerfDebugState(state.route);
-    perfDebugState.enabled = next.enabled;
-    perfDebugState.session_id = next.session_id;
-    perfDebugState.run_id = next.run_id;
-    perfDebugState.sample_reason = next.sample_reason;
-    perfDebugState.surface = next.surface;
-    perfDebugState.device_class = next.device_class;
-    perfDebugState.boot_phase = next.boot_phase;
-    perfDebugState.route = next.route;
-    perfDebugState.route_sequence = next.route_sequence;
-    perfDebugState.route_started_at_ms = next.route_started_at_ms;
-    perfDebugState.route_enter_at_ms = next.route_enter_at_ms;
-    perfDebugState.route_data_start_at_ms = next.route_data_start_at_ms;
-    perfDebugState.route_data_end_at_ms = next.route_data_end_at_ms;
-    perfDebugState.route_ready = next.route_ready;
-    perfDebugState.route_ready_reason = next.route_ready_reason;
-    perfDebugState.route_ready_at_ms = next.route_ready_at_ms;
-    perfDebugState.route_perf_sent = next.route_perf_sent;
-    perfDebugState.render_count = next.render_count;
-    perfDebugState.last_render_ms = next.last_render_ms;
-    perfDebugState.bridge_total_ms = next.bridge_total_ms;
-    perfDebugState.shell_launch_elapsed_ms = next.shell_launch_elapsed_ms;
-    perfDebugState.webview_load_elapsed_ms = next.webview_load_elapsed_ms;
-    perfDebugState.asset_delivery_failures = next.asset_delivery_failures;
-    perfDebugState.hosted_reload_attempts = next.hosted_reload_attempts;
-    perfDebugState.bootstrap_snapshot_used = next.bootstrap_snapshot_used;
-    perfDebugState.bridge_calls_by_command = {};
-    perfDebugState.fetches_by_key = {};
-    perfDebugState.poll_ticks_by_lane = {};
-    perfDebugState.cache_hits_by_key = {};
-    perfDebugState.deferred_tasks_started = 0;
-    perfDebugState.deferred_tasks_completed = 0;
-    perfDebugState.unchanged_refresh_skips = 0;
-    perfDebugState.recent_events = [];
-    perfDebugPushEvent("perf_debug_cleared", {});
-    syncPerfDebugState("perf_debug_cleared");
-  }
-
-  function setPerfBootPhase(phase) {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    const nextPhase = String(phase || "").trim();
-    if (!nextPhase || perfDebugState.boot_phase === nextPhase) {
-      return;
-    }
-    perfDebugState.boot_phase = nextPhase;
-    perfDebugPushEvent("boot_phase", { phase: nextPhase });
-  }
-
-  function recordPerfRouteDataStart(label) {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    if (!safeNumber(perfDebugState.route_data_start_at_ms)) {
-      perfDebugState.route_data_start_at_ms = Date.now();
-    }
-    perfDebugPushEvent("route_data_start", { label: String(label || "").trim() || "unknown" });
-  }
-
-  function recordPerfRouteDataEnd(label) {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    perfDebugState.route_data_end_at_ms = Date.now();
-    perfDebugPushEvent("route_data_end", { label: String(label || "").trim() || "unknown" });
-  }
-
-  function recordPerfCacheHit(key) {
-    perfDebugIncrementCounter("cache_hits_by_key", key);
-  }
-
-  function recordPerfUnchangedRefreshSkip(key) {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    perfDebugState.unchanged_refresh_skips = safeNumber(perfDebugState.unchanged_refresh_skips) + 1;
-    perfDebugPushEvent("unchanged_refresh_skip", { key: String(key || "").trim() || "unknown" });
-  }
-
-  function queueDeferredPerfTask(name, work, options = {}) {
-    const taskName = String(name || "").trim();
-    if (!taskName || typeof work !== "function") {
-      return false;
-    }
-    if (deferredPerfTasks.has(taskName)) {
-      return false;
-    }
-    const delayMs = Math.max(0, safeNumber(options.delayMs, PERF_DEFERRED_TASK_DELAY_MS));
-    const token = setTimeout(async () => {
-      deferredPerfTasks.delete(taskName);
-      if (perfDebugState.enabled) {
-        perfDebugState.deferred_tasks_started = safeNumber(perfDebugState.deferred_tasks_started) + 1;
-        perfDebugPushEvent("deferred_task_start", { name: taskName });
-      }
-      try {
-        await work();
-      } catch (error) {
-        perfDebugPushEvent("deferred_task_error", {
-          name: taskName,
-          error: String(error && error.message || error || "unknown")
-        });
-      } finally {
-        if (perfDebugState.enabled) {
-          perfDebugState.deferred_tasks_completed = safeNumber(perfDebugState.deferred_tasks_completed) + 1;
-          perfDebugPushEvent("deferred_task_complete", { name: taskName });
-        }
-      }
-    }, delayMs);
-    deferredPerfTasks.set(taskName, token);
-    return true;
-  }
-
-  function stableJsonFingerprint(value) {
-    try {
-      return JSON.stringify(value) || "";
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function perfNowMs() {
-    try {
-      return typeof performance !== "undefined" && typeof performance.now === "function"
-        ? performance.now()
-        : Date.now();
-    } catch (_) {
-      return Date.now();
-    }
-  }
-
-  function readySelector(selectors) {
-    const candidates = Array.isArray(selectors) ? selectors : [];
-    for (const selector of candidates) {
-      if (selector && document.querySelector(selector)) {
-        return {
-          ready: true,
-          reason: `selector:${selector}`
-        };
-      }
-    }
-    return {
-      ready: false,
-      reason: candidates.length ? `waiting_selector:${candidates[0]}` : "waiting_selector"
-    };
-  }
-
-  function workspaceRouteReadyState(collection, selectors) {
-    const bucket = workspaceBucket(collection);
-    if (!bucket) {
-      return {
-        ready: false,
-        reason: `missing_bucket:${collection}`
-      };
-    }
-    if (bucket.error) {
-      return {
-        ready: true,
-        reason: `error:${collection}`
-      };
-    }
-    if (!bucket.loaded) {
-      return {
-        ready: false,
-        reason: `loading:${collection}`
-      };
-    }
-    if (!workspaceItems(collection).length) {
-      return {
-        ready: true,
-        reason: `empty:${collection}`
-      };
-    }
-    const selectorState = readySelector(selectors);
-    if (selectorState.ready) {
-      return selectorState;
-    }
-    return {
-      ready: true,
-      reason: `loaded:${collection}`
-    };
-  }
-
-  function routeReadyState(route = state.route) {
-    const currentRoute = String(route || "").trim() || "home";
-    switch (currentRoute) {
-      case "home":
-        return readySelector([".light-app-tile", ".light-home-page", '.app-shell[data-view="home"]']);
-      case "inbox":
-        if (state.feedLoadError) {
-          return {
-            ready: true,
-            reason: "error:inbox"
-          };
-        }
-        if (Array.isArray(state.cards) && state.cards.length) {
-          return readySelector(["article[data-card-id] .card-body", "article[data-card-session-id] .card-body"]);
-        }
-        if (document.querySelector(".empty")) {
-          return {
-            ready: true,
-            reason: "empty:inbox"
-          };
-        }
-        return {
-          ready: false,
-          reason: "loading:inbox"
-        };
-      case "meetings":
-        if (state.meetings.error) {
-          return {
-            ready: true,
-            reason: "error:meetings"
-          };
-        }
-        if (!state.meetings.loaded) {
-          return {
-            ready: false,
-            reason: "loading:meetings"
-          };
-        }
-        if (!Array.isArray(state.meetings.records) || !state.meetings.records.length) {
-          return {
-            ready: true,
-            reason: "empty:meetings"
-          };
-        }
-        return readySelector(["article[data-card-session-id] .card-body", ".meetings-list-card article[data-card-session-id] .card-body"]);
-      case "notes":
-        return workspaceRouteReadyState("notes", [".light-note-row"]);
-      case "tasks":
-        return workspaceRouteReadyState("tasks", [".light-task-row", ".light-task-workspace", ".light-task-detail-surface"]);
-      case "calendar":
-        return workspaceRouteReadyState("calendar-events", [".light-event-block", ".light-calendar-page"]);
-      case "projects":
-        return workspaceRouteReadyState("projects", [".light-project-row"]);
-      case "contacts":
-        return workspaceRouteReadyState("contacts", [".light-contact-row"]);
-      case "meeting-notes":
-        return workspaceRouteReadyState("meeting-notes", [".light-graph-row"]);
-      case "reminders":
-        return workspaceRouteReadyState("reminders", [".light-reminder-row"]);
-      case "connect":
-        if (!document.querySelector(".links-search")) {
-          return {
-            ready: false,
-            reason: "waiting_selector:.links-search"
-          };
-        }
-        if (state.links.loading && !state.links.firstPageReady && !state.links.connectedLoaded && !state.links.error && !state.links.message) {
-          return {
-            ready: false,
-            reason: "loading:connect"
-          };
-        }
-        if (state.links.firstPageReady || state.links.connectedLoaded || state.links.error || state.links.message || state.links.token || state.links.userId) {
-          return {
-            ready: true,
-            reason: state.links.error
-              ? "connect_error"
-              : state.links.firstPageReady
-                ? "connect_catalog_ready"
-              : state.links.connectedLoaded
-                ? "connect_connected_loaded"
-                : "connect_session_ready"
-          };
-        }
-        return {
-          ready: false,
-          reason: "waiting_connect_session"
-        };
-      case "task-detail":
-        if (!workspaceBucket("tasks")?.loaded) {
-          return {
-            ready: false,
-            reason: "loading:tasks"
-          };
-        }
-        return readySelector([".light-task-detail-surface", ".light-task-detail-page", ".light-task-detail-pane [data-task-detail-id]"]);
-      case "contact-detail":
-        return readySelector([".light-contact-detail-page"]);
-      case "project-detail":
-        return readySelector([".light-project-detail-page"]);
-      case "reminder-detail":
-        return readySelector([".light-reminder-detail-surface", ".light-reminder-detail-page"]);
-      case "note-detail":
-        return readySelector([".light-note-detail-page"]);
-      case "meeting-detail":
-        return readySelector([".light-event-detail-page", ".light-event-document"]);
-      case "meeting-note-detail":
-        return readySelector([".light-meeting-note-detail-page"]);
-      case "settings":
-        return readySelector([".light-settings-real .settings-card", ".light-settings-real", '.app-shell[data-view="settings"]']);
-      default:
-        return readySelector([`.app-shell[data-view="${currentRoute}"]`]);
-    }
-  }
-
-  function bootstrapDebugState() {
-    const raw = window.__PUCKY_BOOTSTRAP_STATUS__ && typeof window.__PUCKY_BOOTSTRAP_STATUS__ === "object"
-      ? window.__PUCKY_BOOTSTRAP_STATUS__
-      : {};
-    return {
-      shell_launch_elapsed_ms: safeNumber(raw.shell_launch_elapsed_ms),
-      webview_load_elapsed_ms: safeNumber(raw.webview_load_elapsed_ms),
-      asset_delivery_failures: Array.isArray(raw.asset_delivery_failures)
-        ? raw.asset_delivery_failures.length
-        : safeNumber(raw.asset_delivery_failures),
-      hosted_reload_attempts: safeNumber(raw.hosted_reload_attempts || raw.reload_attempts)
-    };
-  }
-
-  function syncPerfDebugRuntimeBudgets() {
-    const bootstrap = bootstrapDebugState();
-    if (safeNumber(bootstrap.shell_launch_elapsed_ms) > 0) {
-      perfDebugState.shell_launch_elapsed_ms = safeNumber(bootstrap.shell_launch_elapsed_ms);
-    }
-    if (safeNumber(bootstrap.webview_load_elapsed_ms) > 0) {
-      perfDebugState.webview_load_elapsed_ms = safeNumber(bootstrap.webview_load_elapsed_ms);
-    }
-    perfDebugState.asset_delivery_failures = Math.max(
-      safeNumber(perfDebugState.asset_delivery_failures),
-      safeNumber(bootstrap.asset_delivery_failures)
-    );
-    perfDebugState.hosted_reload_attempts = Math.max(
-      safeNumber(perfDebugState.hosted_reload_attempts),
-      safeNumber(bootstrap.hosted_reload_attempts)
-    );
-    const surface = state.uiSurface && typeof state.uiSurface === "object" ? state.uiSurface : {};
-    if (safeNumber(surface.shell_launch_elapsed_ms) > 0) {
-      perfDebugState.shell_launch_elapsed_ms = safeNumber(surface.shell_launch_elapsed_ms);
-    }
-    if (safeNumber(surface.webview_load_elapsed_ms) > 0) {
-      perfDebugState.webview_load_elapsed_ms = safeNumber(surface.webview_load_elapsed_ms);
-    }
-    perfDebugState.asset_delivery_failures = Math.max(
-      safeNumber(perfDebugState.asset_delivery_failures),
-      safeNumber(surface.asset_delivery_failures)
-    );
-    perfDebugState.hosted_reload_attempts = Math.max(
-      safeNumber(perfDebugState.hosted_reload_attempts),
-      safeNumber(surface.hosted_reload_attempts)
-    );
-  }
-
-  function syncPerfDebugState(reason = "") {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    syncPerfDebugRuntimeBudgets();
-    const route = String(state.route || "home").trim() || "home";
-    if (perfDebugState.route !== route) {
-      if (perfDebugState.route_ready && !perfDebugState.route_perf_sent) {
-        void flushRoutePerfTelemetry("route_change");
-      }
-      perfDebugState.route = route;
-      perfDebugState.route_sequence += 1;
-      perfDebugState.route_started_at_ms = Date.now();
-      perfDebugState.route_enter_at_ms = perfDebugState.route_started_at_ms;
-      perfDebugState.route_data_start_at_ms = 0;
-      perfDebugState.route_data_end_at_ms = 0;
-      perfDebugState.route_ready = false;
-      perfDebugState.route_ready_reason = "";
-      perfDebugState.route_ready_at_ms = 0;
-      perfDebugState.route_perf_sent = false;
-      perfDebugState.render_count = 0;
-      perfDebugState.last_render_ms = 0;
-      perfDebugState.bridge_total_ms = 0;
-      perfDebugState.bridge_calls_by_command = {};
-      perfDebugState.fetches_by_key = {};
-      perfDebugState.poll_ticks_by_lane = {};
-      perfDebugState.cache_hits_by_key = {};
-      perfDebugState.deferred_tasks_started = 0;
-      perfDebugState.deferred_tasks_completed = 0;
-      perfDebugState.unchanged_refresh_skips = 0;
-      perfDebugState.recent_events = [];
-      perfDebugPushEvent("route_changed", { route, reason: String(reason || "").trim() || "unknown" });
-    }
-    const snapshot = routeReadyState(route);
-    perfDebugState.route_ready_reason = String(snapshot.reason || "").trim();
-    if (snapshot.ready && !perfDebugState.route_ready) {
-      perfDebugState.route_ready = true;
-      perfDebugState.route_ready_at_ms = Date.now();
-      setPerfBootPhase("route_ready");
-      perfDebugPushEvent("route_ready", {
-        route,
-        reason: perfDebugState.route_ready_reason,
-        elapsed_ms: Math.max(0, perfDebugState.route_ready_at_ms - perfDebugState.route_started_at_ms)
-      });
-      queueDeferredPerfTask(`perf_flush:${route}:${safeNumber(perfDebugState.route_sequence)}`, () => flushRoutePerfTelemetry("route_ready"), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS
-      });
-    } else if (!snapshot.ready) {
-      perfDebugState.route_ready = false;
-      perfDebugState.route_ready_at_ms = 0;
-    }
-  }
-
-  function perfDebugMetrics() {
-    syncPerfDebugState("metrics_read");
-    syncPerfDebugRuntimeBudgets();
-    return {
-      schema: "pucky.perf_debug_metrics.v1",
-      enabled: Boolean(perfDebugState.enabled),
-      route: String(perfDebugState.route || state.route || "home").trim() || "home",
-      route_sequence: safeNumber(perfDebugState.route_sequence, 1),
-      route_started_at_ms: safeNumber(perfDebugState.route_started_at_ms),
-      route_enter_at_ms: safeNumber(perfDebugState.route_enter_at_ms),
-      route_data_start_at_ms: safeNumber(perfDebugState.route_data_start_at_ms),
-      route_data_end_at_ms: safeNumber(perfDebugState.route_data_end_at_ms),
-      route_ready: Boolean(perfDebugState.route_ready),
-      route_ready_reason: String(perfDebugState.route_ready_reason || ""),
-      route_ready_at_ms: safeNumber(perfDebugState.route_ready_at_ms),
-      route_ready_elapsed_ms: perfDebugState.route_ready_at_ms
-        ? Math.max(0, safeNumber(perfDebugState.route_ready_at_ms) - safeNumber(perfDebugState.route_started_at_ms))
-        : 0,
-      wall_elapsed_ms: Math.max(0, Date.now() - safeNumber(perfDebugState.route_enter_at_ms)),
-      bridge_total_ms: safeNumber(perfDebugState.bridge_total_ms),
-      shell_launch_elapsed_ms: safeNumber(perfDebugState.shell_launch_elapsed_ms),
-      webview_load_elapsed_ms: safeNumber(perfDebugState.webview_load_elapsed_ms),
-      asset_delivery_failures: safeNumber(perfDebugState.asset_delivery_failures),
-      hosted_reload_attempts: safeNumber(perfDebugState.hosted_reload_attempts),
-      bootstrap_snapshot_used: Boolean(perfDebugState.bootstrap_snapshot_used),
-      render_count: safeNumber(perfDebugState.render_count),
-      last_render_ms: safeNumber(perfDebugState.last_render_ms),
-      boot_phase: String(perfDebugState.boot_phase || ""),
-      session_id: String(perfDebugState.session_id || ""),
-      run_id: String(perfDebugState.run_id || ""),
-      sample_reason: String(perfDebugState.sample_reason || ""),
-      surface: String(perfDebugState.surface || ""),
-      device_class: String(perfDebugState.device_class || ""),
-      bridge_calls_by_command: { ...perfDebugState.bridge_calls_by_command },
-      fetches_by_key: { ...perfDebugState.fetches_by_key },
-      poll_ticks_by_lane: { ...perfDebugState.poll_ticks_by_lane },
-      cache_hits_by_key: { ...perfDebugState.cache_hits_by_key },
-      deferred_tasks_started: safeNumber(perfDebugState.deferred_tasks_started),
-      deferred_tasks_completed: safeNumber(perfDebugState.deferred_tasks_completed),
-      unchanged_refresh_skips: safeNumber(perfDebugState.unchanged_refresh_skips),
-      recent_events: perfDebugState.recent_events.slice(-PERF_DEBUG_EVENT_LIMIT)
-    };
-  }
-
-  function recordPerfBridgeCall(command, startedAt, ok, error = "") {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    const name = String(command || "").trim();
-    if (!name) {
-      return;
-    }
-    perfDebugIncrementCounter("bridge_calls_by_command", name);
-    perfDebugState.bridge_total_ms = safeNumber(perfDebugState.bridge_total_ms) + Math.max(0, perfNowMs() - safeNumber(startedAt));
-    if (!ok || error) {
-      perfDebugPushEvent("bridge_error", {
-        command: name,
-        elapsed_ms: Math.max(0, perfNowMs() - safeNumber(startedAt)),
-        error: String(error || "unknown")
-      });
-    }
-  }
-
-  function recordPerfFetch(key, startedAt, ok, error = "") {
-    if (!perfDebugState.enabled) {
-      return;
-    }
-    const name = String(key || "").trim();
-    if (!name) {
-      return;
-    }
-    perfDebugIncrementCounter("fetches_by_key", name);
-    if (!ok || error) {
-      perfDebugPushEvent("fetch_error", {
-        key: name,
-        elapsed_ms: Math.max(0, perfNowMs() - safeNumber(startedAt)),
-        error: String(error || "unknown")
-      });
-    }
-  }
-
-  function recordPerfPollTick(lane) {
-    perfDebugIncrementCounter("poll_ticks_by_lane", lane);
-  }
-
-  function requestRender(reason = "scheduled_render") {
-    if (scheduledRenderToken) {
-      return false;
-    }
-    const commit = () => {
-      scheduledRenderToken = 0;
-      render();
-    };
-    perfDebugPushEvent("render_scheduled", { reason: String(reason || "").trim() || "scheduled_render" });
-    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-      scheduledRenderToken = window.requestAnimationFrame(commit);
-      return true;
-    }
-    scheduledRenderToken = window.setTimeout(commit, 0);
-    return true;
-  }
-
-  function routeUsesLiveTurnPolling(route = state.route) {
-    return ["home", "inbox", "meetings"].includes(String(route || "").trim());
-  }
-
-  function turnStatusPollIntervalMs(route = state.route) {
-    if (isTurnActive(state.turn) || wakeProofVisualState(state.wakeStatus) !== "idle") {
-      return TURN_STATUS_POLL_MS;
-    }
-    if (playerHasAudioIdentity(state.player) && Boolean(state.player?.is_playing)) {
-      return PLAYER_STATE_POLL_INTERVAL_MS;
-    }
-    return routeUsesLiveTurnPolling(route) ? TURN_STATUS_LIVE_ROUTE_INTERVAL_MS : TURN_STATUS_IDLE_ROUTE_INTERVAL_MS;
-  }
-
-  function shouldPollMeetingStatus(route = state.route) {
-    const currentRoute = String(route || "").trim();
-    if (String(state.meetingRecording?.state || "idle") !== "idle") {
-      return true;
-    }
-    return currentRoute === "meetings" || currentRoute === "meeting-detail";
-  }
-
-  function meetingStatusPollIntervalMs(route = state.route) {
-    const currentRoute = String(route || "").trim();
-    if (String(state.meetingRecording?.state || "idle") !== "idle") {
-      return MEETING_STATUS_POLL_MS;
-    }
-    if (currentRoute === "meetings" || currentRoute === "meeting-detail") {
-      return MEETING_STATUS_IDLE_ROUTE_INTERVAL_MS;
-    }
-    return 0;
-  }
-
-  function workspaceRouteQueryKey(route = state.route, options = {}) {
-    return "";
-  }
-
-  function workspaceBucketNeedsRefresh(collection, staleMs, options = {}) {
-    const bucket = workspaceBucket(collection);
-    if (!bucket) {
-      return false;
-    }
-    const queryKey = String(options.queryKey || "").trim();
-    if (queryKey && String(bucket.queryKey || "").trim() !== queryKey) {
-      return true;
-    }
-    if (!bucket.loaded || bucket.dirty) {
-      return true;
-    }
-    const lastRefreshAt = safeNumber(bucket.lastRefreshAt);
-    if (lastRefreshAt <= 0) {
-      return true;
-    }
-    return (Date.now() - lastRefreshAt) >= Math.max(1000, safeNumber(staleMs, 1000));
-  }
-
-  function markWorkspaceBucketDirty(collection, options = {}) {
-    const bucket = workspaceBucket(collection);
-    if (!bucket) {
-      return;
-    }
-    bucket.dirty = true;
-    perfDebugPushEvent("workspace_bucket_dirty", {
-      collection: String(collection || "").trim(),
-      reason: String(options.reason || "").trim()
-    });
-    if (options.refresh) {
-      void loadWorkspaceCollection(collection, {
-        render: options.render !== false,
-        force: true,
-        reason: String(options.reason || "").trim() || "dirty_refresh"
-      });
-    }
-  }
-
   window.Pucky = {
     request(payload) {
       const command = payload && payload.command;
       const args = payload && payload.args ? payload.args : {};
-      const startedAt = perfNowMs();
       if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
         const id = String(++seq);
         const message = JSON.stringify({ id, command, args });
@@ -1390,24 +610,9 @@
               reject(new Error("Pucky native bridge timed out"));
             }
           }, 15000);
-        }).then(result => {
-          recordPerfBridgeCall(command, startedAt, true);
-          return result;
-        }).catch(error => {
-          recordPerfBridgeCall(command, startedAt, false, error && error.message ? error.message : String(error || ""));
-          throw error;
         });
       }
-      return Promise.resolve()
-        .then(() => browserRequest(command, args))
-        .then(result => {
-          recordPerfBridgeCall(command, startedAt, true);
-          return result;
-        })
-        .catch(error => {
-          recordPerfBridgeCall(command, startedAt, false, error && error.message ? error.message : String(error || ""));
-          throw error;
-        });
+      return browserRequest(command, args);
     },
     __resolve(id, payload) {
       const slot = pending.get(String(id));
@@ -1429,7 +634,7 @@
         rememberPlayerProgress(state.player);
         const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
         if (shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged) {
-          requestRender("native_event_player_state");
+          render();
         }
       }
       if (name === "voice.state") {
@@ -1480,15 +685,14 @@
     const isPlaying = Boolean(audio && !audio.paused && !audio.ended);
     const durationSource = Number.isFinite(audioPlayerNumberValue(audio.duration, 0)) ? audio.duration : 0;
     const positionSource = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
-    const audioElementSource = String(audio.currentSrc || audio.src || "").trim();
     const next = {
       schema: "pucky.player_state.v1",
       loaded: true,
       state: String(overrides.state || "").trim() || (isPlaying ? "playing" : (audio.ended ? "completed" : "paused")),
       is_playing: isPlaying,
       title: String("title" in overrides ? overrides.title : previousPlayer?.title || ""),
-      path: String("path" in overrides ? overrides.path : previousPlayer?.path || audioElementSource || ""),
-      source: String("source" in overrides ? overrides.source : previousPlayer?.source || state.activePath || audioElementSource || ""),
+      path: String("path" in overrides ? overrides.path : previousPlayer?.path || ""),
+      source: String("source" in overrides ? overrides.source : previousPlayer?.source || ""),
       position_ms: Math.max(0, Math.round("position_ms" in overrides ? audioPlayerNumberValue(overrides.position_ms) : positionSource * 1000)),
       duration_ms: Math.max(0, Math.round("duration_ms" in overrides ? audioPlayerNumberValue(overrides.duration_ms) : (hasDuration ? durationSource * 1000 : audioPlayerNumberValue(previousPlayer?.duration_ms, 0)))),
       queue_index: audioPlayerNumberValue("queue_index" in overrides ? overrides.queue_index : previousPlayer?.queue_index, -1),
@@ -1850,21 +1054,9 @@
       if (!nextPath) {
         throw new Error("No audio source available.");
       }
-      const currentElementSource = String(audio.currentSrc || audio.src || "").trim();
-      const switchingSource = Boolean(currentElementSource) && !samePath(currentElementSource, nextPath);
-      if (switchingSource) {
-        audio.pause();
-      }
-      if (switchingSource || !samePath(String(audio.src || ""), nextPath)) {
-        audio.src = nextPath;
-        audio.load();
-      }
+      audio.src = nextPath;
       audio.playbackRate = speed;
-      try {
-        audio.currentTime = Math.max(0, start / 1000);
-      } catch (_) {
-        // Some WebKit builds reject seeks before metadata is available; playback can still begin at 0.
-      }
+      audio.currentTime = Math.max(0, start / 1000);
       state.activePath = nextSource || nextPath;
       await audio.play();
       return syncSharedBrowserPlayerState({
@@ -2002,7 +1194,10 @@
     if (state.links.apiBaseUrl) {
       return state.links.apiBaseUrl;
     }
-    return resolveHostedBrowserApiBaseUrl();
+    if (window.location && /^https?:$/i.test(window.location.protocol || "")) {
+      return String(window.location.origin || "").replace(/\/$/, "");
+    }
+    return DEFAULT_LINKS_API_BASE;
   }
 
   function feedApiPath(options = {}) {
@@ -2016,75 +1211,93 @@
     return `/api/feed?${params.toString()}`;
   }
 
+  function maybeRedirectToSignInOnUnauthorized(response) {
+    if (!response || response.status !== 401 || state.links.apiToken) {
+      return;
+    }
+    if (window.location.pathname === "/sign-in") {
+      return;
+    }
+    window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  }
+
   async function feedApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
-    const startedAt = perfNowMs();
-    const metricKey = String(options.metricKey || `feed:${String(path || "").split("?")[0] || "/"}`).trim();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
       headers: { Accept: "application/json" }
     };
-    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
-    try {
-      const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
-      }
-      recordPerfFetch(metricKey, startedAt, true);
-      return payload;
-    } catch (error) {
-      recordPerfFetch(metricKey, startedAt, false, error && error.message ? error.message : String(error || ""));
-      throw error;
+    const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
+    maybeRedirectToSignInOnUnauthorized(response);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
     }
+    return payload;
+  }
+
+  async function turnTextApiRequest(options = {}) {
+    await ensureLinksApiConfig();
+    const init = {
+      method: "POST",
+      cache: String(options.cache || "no-store"),
+      headers: { Accept: "application/json" }
+    };
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    if (options.formData instanceof FormData) {
+      init.body = options.formData;
+    } else {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.body || {});
+    }
+    const response = await fetch(`${linksApiBaseUrl()}/api/turn/text`, init);
+    maybeRedirectToSignInOnUnauthorized(response);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Text turn failed (${response.status})`));
+    }
+    return payload;
   }
 
   async function workspaceApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
-    const startedAt = perfNowMs();
-    const metricKey = String(options.metricKey || `workspace:${String(path || "").split("?")[0] || "/"}`).trim();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
       headers: { Accept: "application/json" }
     };
-    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
+    if (state.links.apiToken) {
+      init.headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
-    try {
-      const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
-      }
-      recordPerfFetch(metricKey, startedAt, true);
-      return payload;
-    } catch (error) {
-      recordPerfFetch(metricKey, startedAt, false, error && error.message ? error.message : String(error || ""));
-      throw error;
+    const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+    maybeRedirectToSignInOnUnauthorized(response);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
     }
+    return payload;
   }
 
   async function patchWorkspaceRecord(collection, recordId, payload) {
     const id = String(recordId || "").trim();
     return workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`, {
       method: "PATCH",
-      body: payload
-    });
-  }
-
-  async function createWorkspaceAsset(payload) {
-    return workspaceApiRequest("/api/workspace/assets", {
-      method: "POST",
       body: payload
     });
   }
@@ -2103,235 +1316,35 @@
     return WORKSPACE_COLLECTION_LABELS[String(collection || "")] || "workspace records";
   }
 
-  function workspaceCollectionStaleMs(collection) {
-    switch (String(collection || "").trim()) {
-      case "tasks":
-        return WORKSPACE_TASK_STALE_VISIBLE_MS;
-      case "reminders":
-        return WORKSPACE_REMINDER_STALE_VISIBLE_MS;
-      default:
-        return 30000;
-    }
-  }
-
-  function workspaceQueryKey(collection, options = {}) {
-    return "";
-  }
-
-  function workspaceCacheEntry(bucket, queryKey) {
-    if (!bucket || !queryKey || !(bucket.queryCache && typeof bucket.queryCache === "object")) {
-      return null;
-    }
-    const cached = bucket.queryCache[queryKey];
-    return cached && typeof cached === "object" ? cached : null;
-  }
-
-  function rememberWorkspaceCache(bucket, queryKey, items, fingerprint, lastRefreshAt) {
-    if (!bucket || !queryKey) {
-      return;
-    }
-    const nextCache = bucket.queryCache && typeof bucket.queryCache === "object"
-      ? { ...bucket.queryCache }
-      : {};
-    nextCache[queryKey] = {
-      items: Array.isArray(items) ? items.slice() : [],
-      fingerprint: String(fingerprint || ""),
-      lastRefreshAt: safeNumber(lastRefreshAt)
-    };
-    const keys = Object.keys(nextCache).sort((left, right) => {
-      const leftTime = safeNumber(nextCache[left] && nextCache[left].lastRefreshAt);
-      const rightTime = safeNumber(nextCache[right] && nextCache[right].lastRefreshAt);
-      return rightTime - leftTime;
-    });
-    while (keys.length > 5) {
-      const staleKey = keys.pop();
-      if (!staleKey) {
-        break;
-      }
-      delete nextCache[staleKey];
-    }
-    bucket.queryCache = nextCache;
-  }
-
-  function workspaceRecordCacheEntry(bucket, recordId) {
-    const id = String(recordId || "").trim();
-    if (!bucket || !id || !(bucket.recordCache && typeof bucket.recordCache === "object")) {
-      return null;
-    }
-    const cached = bucket.recordCache[id];
-    return cached && typeof cached === "object" ? cached : null;
-  }
-
-  function rememberWorkspaceRecord(bucket, record, lastRefreshAt = Date.now()) {
-    const id = String(record?.id || record?.record_id || "").trim();
-    if (!bucket || !id || !record || typeof record !== "object") {
-      return false;
-    }
-    const nextFingerprint = stableJsonFingerprint(record);
-    const previous = workspaceRecordCacheEntry(bucket, id);
-    if (previous && previous.fingerprint === nextFingerprint) {
-      return false;
-    }
-    const nextCache = bucket.recordCache && typeof bucket.recordCache === "object"
-      ? { ...bucket.recordCache }
-      : {};
-    nextCache[id] = {
-      record,
-      fingerprint: nextFingerprint,
-      lastRefreshAt: safeNumber(lastRefreshAt) || Date.now()
-    };
-    bucket.recordCache = nextCache;
-    return true;
-  }
-
-  async function loadWorkspaceRecord(collection, recordId, options = {}) {
-    const bucket = state.workspace[collection];
-    const id = String(recordId || "").trim();
-    if (!bucket || !id) {
-      return null;
-    }
-    const cached = workspaceRecordCacheEntry(bucket, id);
-    const staleMs = workspaceCollectionStaleMs(collection);
-    if (!options.force && cached && (Date.now() - safeNumber(cached.lastRefreshAt)) < Math.max(1000, staleMs)) {
-      return cached.record || null;
-    }
-    if (!(bucket.recordLoading && typeof bucket.recordLoading === "object")) {
-      bucket.recordLoading = {};
-    }
-    if (bucket.recordLoading[id]) {
-      return cached?.record || null;
-    }
-    bucket.recordLoading = { ...bucket.recordLoading, [id]: true };
-    try {
-      await ensureLinksApiConfig();
-      const payload = await workspaceApiRequest(`/api/workspace/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`, {
-        metricKey: `workspace:${collection}:record`
-      });
-      const changed = rememberWorkspaceRecord(bucket, payload, Date.now());
-      if (options.render && changed) {
-        requestRender(`workspace:${collection}:record:${String(options.reason || "refresh")}`);
-      }
-      return payload;
-    } catch (_) {
-      return cached?.record || null;
-    } finally {
-      const nextLoading = { ...(bucket.recordLoading || {}) };
-      delete nextLoading[id];
-      bucket.recordLoading = nextLoading;
-    }
-  }
-
-  function applyWorkspaceCacheEntry(bucket, queryKey, entry) {
-    if (!bucket || !entry || typeof entry !== "object") {
-      return false;
-    }
-    const nextItems = Array.isArray(entry.items) ? entry.items.slice() : [];
-    const nextFingerprint = String(entry.fingerprint || stableJsonFingerprint(nextItems));
-    const changed = bucket.fingerprint !== nextFingerprint || String(bucket.queryKey || "") !== queryKey || !bucket.loaded;
-    const refreshedAt = safeNumber(entry.lastRefreshAt) || Date.now();
-    nextItems.forEach(item => rememberWorkspaceRecord(bucket, item, refreshedAt));
-    bucket.items = nextItems;
-    bucket.fingerprint = nextFingerprint;
-    bucket.queryKey = String(queryKey || "");
-    bucket.loaded = true;
-    bucket.loading = false;
-    bucket.error = "";
-    bucket.lastRefreshAt = refreshedAt;
-    bucket.dirty = false;
-    return changed;
-  }
-
   async function loadWorkspaceCollection(collection, options = {}) {
     const bucket = state.workspace[collection];
-    if (!bucket || (bucket.loading && options.preload !== true)) {
+    if (!bucket || (bucket.loading && !options.force)) {
       return;
     }
-    const queryKey = workspaceQueryKey(collection, options);
-    const staleMs = workspaceCollectionStaleMs(collection);
-    const cachedEntry = workspaceCacheEntry(bucket, queryKey);
-    const cachedFresh = Boolean(
-      cachedEntry
-      && !bucket.dirty
-      && (Date.now() - safeNumber(cachedEntry.lastRefreshAt)) < Math.max(1000, staleMs)
-    );
-    if (!options.force && cachedEntry && (cachedFresh || options.allowCachedRender === true)) {
-      recordPerfCacheHit(`workspace:${collection}`);
-      recordPerfRouteDataStart(`workspace:${collection}:cache`);
-      const changedFromCache = applyWorkspaceCacheEntry(bucket, queryKey, cachedEntry);
-      recordPerfRouteDataEnd(`workspace:${collection}:cache`);
-      if (options.render && changedFromCache) {
-        requestRender(`workspace:${collection}:${String(options.reason || "cache")}`);
-      }
-      if (cachedFresh) {
-        return changedFromCache;
-      }
-    }
-    const hadError = Boolean(bucket.error);
-    if (options.preload !== true) {
-      bucket.loading = true;
-      bucket.error = "";
-    }
-    let changed = !bucket.loaded || hadError;
+    bucket.loading = true;
+    bucket.error = "";
     try {
       await ensureLinksApiConfig();
-      const date = String(options.date || "");
-      recordPerfRouteDataStart(`workspace:${collection}`);
-      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }), {
-        metricKey: `workspace:${collection}`
-      });
-      const nextItems = Array.isArray(payload && payload.items) ? payload.items : [];
-      const nextFingerprint = stableJsonFingerprint(nextItems);
-      const refreshedAt = Date.now();
-      nextItems.forEach(item => rememberWorkspaceRecord(bucket, item, refreshedAt));
-      rememberWorkspaceCache(bucket, queryKey, nextItems, nextFingerprint, refreshedAt);
-      if (options.preload !== true && (bucket.fingerprint !== nextFingerprint || String(bucket.queryKey || "") !== queryKey)) {
-        bucket.items = nextItems;
-        bucket.fingerprint = nextFingerprint;
-        bucket.queryKey = queryKey;
-        changed = true;
-      } else if (options.preload !== true) {
-        recordPerfUnchangedRefreshSkip(`workspace:${collection}`);
-      }
-      if (options.preload !== true) {
-        bucket.loaded = true;
-        bucket.lastRefreshAt = refreshedAt;
-        bucket.dirty = false;
-        syncLocalAppBadgeState();
-      }
-      recordPerfRouteDataEnd(`workspace:${collection}`);
+      const date = "";
+      const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));
+      bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];
+      bucket.loaded = true;
     } catch (error) {
-      if (options.preload !== true) {
-        bucket.error = String(error && error.message || error || "Workspace request failed");
-        changed = true;
-      }
+      bucket.error = String(error && error.message || error || "Workspace request failed");
     } finally {
-      if (options.preload !== true) {
-        bucket.loading = false;
-      }
+      bucket.loading = false;
     }
-    if (options.render && (changed || options.renderWhenUnchanged === true)) {
-      requestRender(`workspace:${collection}:${String(options.reason || "refresh")}`);
+    if (options.render) {
+      render();
     }
-    return changed;
   }
 
   async function loadWorkspaceForRoute(route = state.route, options = {}) {
-    if (String(route || "").trim() === "home") {
-      await loadWorkspaceCollection("reminders", options);
-      return;
-    }
     const collection = WORKSPACE_ROUTE_COLLECTIONS[String(route || "")];
     if (!collection) {
       return;
     }
-    const queryKey = workspaceRouteQueryKey(route, options);
-    if (!options.force && !workspaceBucketNeedsRefresh(collection, workspaceCollectionStaleMs(collection), { queryKey })) {
-      return false;
-    }
-    return loadWorkspaceCollection(collection, {
-      ...options,
-      queryKey
-    });
+    await loadWorkspaceCollection(collection, options);
   }
 
   function workspaceItems(collection) {
@@ -2345,263 +1358,6 @@
       loading: false,
       error: ""
     };
-  }
-
-  function meetingRecordCardId(record) {
-    return String(record?.card_id || record?.feed_item?.card_id || "").trim();
-  }
-
-  function meetingRecordRead(record) {
-    const read = typeof record?.read === "boolean"
-      ? record.read
-      : Boolean(record?.feed_item?.read);
-    const override = readOverrideForCard({
-      card_id: meetingRecordCardId(record),
-      session_id: String(record?.meeting_id || record?.session_id || "").trim(),
-      read
-    });
-    if (override !== null) {
-      return override;
-    }
-    return read;
-  }
-
-  function unreadInboxBadgeCountLocal() {
-    return state.cards.filter(card => !Boolean(card?.archived) && !Boolean(card?.deleted) && !isCardRead(card)).length;
-  }
-
-  function unreadMeetingsBadgeCountLocal() {
-    return visibleMeetingRecords().filter(meeting => !meetingRecordRead(meeting)).length;
-  }
-
-  function workspaceRecordContentUpdatedAtMs(record) {
-    const candidates = [
-      record?.content_updated_at_ms,
-      record?.metadata?.content_updated_at_ms,
-      record?.updated_at_ms,
-      record?.created_at_ms,
-    ];
-    for (const candidate of candidates) {
-      const value = Number(candidate || 0);
-      if (Number.isFinite(value) && value > 0) {
-        return value;
-      }
-    }
-    return 0;
-  }
-
-  function workspaceRecordSeenAtMs(record) {
-    const candidates = [
-      record?.metadata?.seen_at_ms,
-      record?.seen_at_ms,
-    ];
-    for (const candidate of candidates) {
-      const value = Number(candidate || 0);
-      if (Number.isFinite(value) && value > 0) {
-        return value;
-      }
-    }
-    return 0;
-  }
-
-  function workspaceRecordIsUnread(record) {
-    const contentUpdatedAtMs = workspaceRecordContentUpdatedAtMs(record);
-    if (!contentUpdatedAtMs) {
-      return false;
-    }
-    return contentUpdatedAtMs > workspaceRecordSeenAtMs(record);
-  }
-
-  function unreadMeetingNotesBadgeCountLocal() {
-    return workspaceItems("meeting-notes").filter(record => !Boolean(record?.archived) && !Boolean(record?.deleted) && workspaceRecordIsUnread(record)).length;
-  }
-
-  function unreadTasksBadgeCountLocal() {
-    return workspaceItems("tasks").filter(task =>
-      !Boolean(task?.archived)
-      && !Boolean(task?.deleted)
-      && String(task?.status || "").trim() !== "done"
-      && workspaceRecordIsUnread(task)
-    ).length;
-  }
-
-  function syncLocalAppBadgeState() {
-    const nextItems = state.appBadges.items && typeof state.appBadges.items === "object"
-      ? { ...state.appBadges.items }
-      : {};
-    let changed = false;
-    const applyLocalCount = (route, kind, count) => {
-      const key = String(route || "").trim();
-      if (!key) {
-        return;
-      }
-      const previous = nextItems[key] && typeof nextItems[key] === "object" ? nextItems[key] : {};
-      const normalizedCount = Math.max(0, Number(count || 0) || 0);
-      if (safeNumber(previous.count) === normalizedCount && String(previous.kind || "") === String(kind || "")) {
-        return;
-      }
-      nextItems[key] = { ...previous, kind: String(kind || ""), count: normalizedCount };
-      changed = true;
-    };
-    if (state.feedLastAppliedAt > 0) {
-      applyLocalCount("inbox", "unread", unreadInboxBadgeCountLocal());
-    }
-    if (state.meetings.loaded) {
-      applyLocalCount("meetings", "unread", unreadMeetingsBadgeCountLocal());
-    }
-    if (workspaceBucket("meeting-notes").loaded) {
-      applyLocalCount("meeting-notes", "unread", unreadMeetingNotesBadgeCountLocal());
-    }
-    if (workspaceBucket("tasks").loaded) {
-      applyLocalCount("tasks", "unread", unreadTasksBadgeCountLocal());
-    }
-    if (workspaceBucket("reminders").loaded) {
-      applyLocalCount("reminders", "active", activeReminderCount());
-    }
-    if (changed) {
-      state.appBadges.items = nextItems;
-    }
-    return changed;
-  }
-
-  function mergeWorkspaceRecordMetadata(record, metadataPatch) {
-    const metadata = record?.metadata && typeof record.metadata === "object"
-      ? { ...record.metadata }
-      : {};
-    return {
-      ...(record && typeof record === "object" ? record : {}),
-      metadata: {
-        ...metadata,
-        ...(metadataPatch && typeof metadataPatch === "object" ? metadataPatch : {})
-      }
-    };
-  }
-
-  function replaceWorkspaceRecordLocal(collection, recordId, nextRecord) {
-    const bucket = state.workspace[collection];
-    const normalizedRecordId = String(recordId || nextRecord?.id || nextRecord?.record_id || "").trim();
-    if (!bucket || !normalizedRecordId || !nextRecord || typeof nextRecord !== "object") {
-      return false;
-    }
-    let changed = false;
-    if (Array.isArray(bucket.items) && bucket.items.length) {
-      const nextItems = bucket.items.map(item => {
-        const itemId = String(item?.id || item?.record_id || "").trim();
-        if (itemId !== normalizedRecordId) {
-          return item;
-        }
-        changed = stableJsonFingerprint(item) !== stableJsonFingerprint(nextRecord);
-        return changed ? nextRecord : item;
-      });
-      if (changed) {
-        bucket.items = nextItems;
-        bucket.fingerprint = stableJsonFingerprint(nextItems);
-      }
-    }
-    rememberWorkspaceRecord(bucket, nextRecord, Date.now());
-    if (bucket.queryCache && typeof bucket.queryCache === "object") {
-      const nextCache = { ...bucket.queryCache };
-      Object.keys(nextCache).forEach(key => {
-        const entry = nextCache[key];
-        if (!entry || !Array.isArray(entry.items)) {
-          return;
-        }
-        let entryChanged = false;
-        const nextItems = entry.items.map(item => {
-          const itemId = String(item?.id || item?.record_id || "").trim();
-          if (itemId !== normalizedRecordId) {
-            return item;
-          }
-          entryChanged = stableJsonFingerprint(item) !== stableJsonFingerprint(nextRecord);
-          return entryChanged ? nextRecord : item;
-        });
-        if (!entryChanged) {
-          return;
-        }
-        nextCache[key] = {
-          ...entry,
-          items: nextItems,
-          fingerprint: stableJsonFingerprint(nextItems),
-          lastRefreshAt: Date.now()
-        };
-        changed = true;
-      });
-      bucket.queryCache = nextCache;
-    }
-    return changed;
-  }
-
-  function ensureWorkspaceRecordSeen(collection, record) {
-    const normalizedCollection = String(collection || "").trim();
-    const normalizedRecordId = String(record?.id || record?.record_id || "").trim();
-    if (!normalizedCollection || !normalizedRecordId || !record || typeof record !== "object") {
-      return;
-    }
-    const contentUpdatedAtMs = workspaceRecordContentUpdatedAtMs(record);
-    const seenAtMs = workspaceRecordSeenAtMs(record);
-    if (!contentUpdatedAtMs || contentUpdatedAtMs <= seenAtMs) {
-      return;
-    }
-    applyWorkspaceSeenMutation(normalizedCollection, normalizedRecordId, record, contentUpdatedAtMs);
-  }
-
-  function applyWorkspaceSeenMutation(collection, recordId, record, seenAtMs) {
-    const normalizedCollection = String(collection || "").trim();
-    const normalizedRecordId = String(recordId || "").trim();
-    const normalizedSeenAtMs = Math.max(0, Number(seenAtMs || 0) || 0);
-    if (!normalizedCollection || !normalizedRecordId || !normalizedSeenAtMs) {
-      return;
-    }
-    const previousRecord = workspaceRecordById(normalizedCollection, normalizedRecordId, record) || record;
-    const previousSeenAtMs = workspaceRecordSeenAtMs(previousRecord);
-    if (previousSeenAtMs >= normalizedSeenAtMs) {
-      return;
-    }
-    const optimisticRecord = mergeWorkspaceRecordMetadata(previousRecord, { seen_at_ms: normalizedSeenAtMs });
-    replaceWorkspaceRecordLocal(normalizedCollection, normalizedRecordId, optimisticRecord);
-    syncLocalAppBadgeState();
-    requestRender(`workspace-seen:${normalizedCollection}:${normalizedRecordId}:optimistic`);
-    void patchWorkspaceRecord(normalizedCollection, normalizedRecordId, {
-      metadata: { seen_at_ms: normalizedSeenAtMs }
-    }).then(updated => {
-      if (updated && typeof updated === "object") {
-        replaceWorkspaceRecordLocal(normalizedCollection, normalizedRecordId, updated);
-        syncLocalAppBadgeState();
-        requestRender(`workspace-seen:${normalizedCollection}:${normalizedRecordId}:confirmed`);
-      }
-    }).catch(error => {
-      replaceWorkspaceRecordLocal(normalizedCollection, normalizedRecordId, previousRecord);
-      syncLocalAppBadgeState();
-      requestRender(`workspace-seen:${normalizedCollection}:${normalizedRecordId}:rollback`);
-      showToast(String(error && error.message || error || "Unable to mark item seen"));
-    });
-  }
-
-  function syncMeetingReadStateFromCard(card, read) {
-    const normalizedCardId = String(card?.card_id || "").trim();
-    const normalizedSessionId = String(card?.session_id || "").trim();
-    if (!normalizedCardId && !normalizedSessionId) {
-      return;
-    }
-    state.meetings.records = state.meetings.records.map(item => {
-      const itemCardId = meetingRecordCardId(item);
-      const itemMeetingId = String(item?.meeting_id || "").trim();
-      if (normalizedCardId && itemCardId === normalizedCardId || normalizedSessionId && itemMeetingId === normalizedSessionId) {
-        const nextFeedItem = item?.feed_item && typeof item.feed_item === "object"
-          ? { ...item.feed_item, read: Boolean(read) }
-          : item?.feed_item;
-        const nextCard = item?.card && typeof item.card === "object"
-          ? { ...item.card, read: Boolean(read) }
-          : item?.card;
-        return {
-          ...item,
-          read: Boolean(read),
-          ...(nextFeedItem ? { feed_item: nextFeedItem } : {}),
-          ...(nextCard ? { card: nextCard } : {}),
-        };
-      }
-      return item;
-    });
   }
 
   function normalizeFeedSnapshot(payload, source = "vm") {
@@ -2625,11 +1381,9 @@
     state.feedSource = String(snapshot?.source || "unknown");
     state.feedLastAppliedAt = Date.now();
     state.feedLoadError = "";
-    reconcileInboxManageSelection();
     reconcileReadOverrides();
     reconcileFocusedCardSelection();
     clearMissingFeedIconFilter();
-    syncLocalAppBadgeState();
     if (options.render !== false) {
       render();
     }
@@ -2651,10 +1405,9 @@
   async function syncFeedCards(options = {}) {
     const reason = options.reason || "feed_sync";
     try {
-      recordPerfRouteDataStart("inbox:feed");
-      const snapshot = await fetchVmFeedSnapshot({ includeArchived: Boolean(options.includeArchived || state.showArchivedFeed) });
+      const includeArchived = options.includeArchived ?? state.showArchivedFeed;
+      const snapshot = await fetchVmFeedSnapshot({ includeArchived: Boolean(includeArchived) });
       const applied = applyFeedSnapshot(snapshot, { render: options.render !== false });
-      recordPerfRouteDataEnd("inbox:feed");
       await syncVoiceThreadScope({ reason: `feed_sync:${reason}`, render: true });
       return applied;
     } catch (error) {
@@ -2712,83 +1465,40 @@
     return state.vmFeedSnapshotPromise;
   }
 
-  function cloneCachedBridgeValue(value) {
-    try {
-      return JSON.parse(JSON.stringify(value));
-    } catch (_) {
-      return value;
-    }
-  }
-
-  function bridgeReadCacheKey(command, args = {}) {
-    return `${String(command || "").trim()}\u001f${stableJsonFingerprint(args && typeof args === "object" ? args : {})}`;
-  }
-
-  function readBridgeCache(command, args = {}, ttlMs = PERF_BRIDGE_CACHE_TTL_MS) {
-    const key = bridgeReadCacheKey(command, args);
-    const entry = bridgeReadCache.get(key);
-    if (!entry) {
-      return null;
-    }
-    if ((Date.now() - safeNumber(entry.at)) >= Math.max(1000, safeNumber(ttlMs, PERF_BRIDGE_CACHE_TTL_MS))) {
-      bridgeReadCache.delete(key);
-      return null;
-    }
-    recordPerfCacheHit(`bridge:${String(command || "").trim()}`);
-    return cloneCachedBridgeValue(entry.value);
-  }
-
-  function writeBridgeCache(command, args = {}, value) {
-    const key = bridgeReadCacheKey(command, args);
-    bridgeReadCache.set(key, {
-      at: Date.now(),
-      value: cloneCachedBridgeValue(value)
-    });
-  }
-
-  function invalidateBridgeReadCache(command) {
-    const prefix = `${String(command || "").trim()}\u001f`;
-    for (const key of Array.from(bridgeReadCache.keys())) {
-      if (key.startsWith(prefix)) {
-        bridgeReadCache.delete(key);
-      }
-    }
-  }
-
-  async function cachedBridgeRead(command, args = {}, options = {}) {
-    const ttlMs = Math.max(0, safeNumber(options.ttlMs, PERF_BRIDGE_CACHE_TTL_MS));
-    if (!options.force && ttlMs > 0) {
-      const cached = readBridgeCache(command, args, ttlMs);
-      if (cached !== null) {
-        return cached;
-      }
-    }
-    const snapshot = await Pucky.request({ command, args });
-    if (ttlMs > 0) {
-      writeBridgeCache(command, args, snapshot);
-    }
-    return snapshot;
-  }
-
   async function loadTurnStatus(options = {}) {
-    const before = stableJsonFingerprint(normalizeTurnStatus(state.turn));
     try {
-      const snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
-      applyTurnStatus(snapshot);
-      const changed = before !== stableJsonFingerprint(normalizeTurnStatus(state.turn));
-      if (options.render && changed) {
-        requestRender("turn_status");
+      const currentTurn = normalizeTurnStatus(state.turn);
+      const turnId = turnStatusTurnId(state.turn);
+      let snapshot;
+      if (shouldPollHostedTurnStatus()) {
+        snapshot = await loadHostedTurnStatus(turnId);
+        snapshot = {
+          ...snapshot,
+          composer_managed: true,
+          client_started_at_ms: Number(snapshot?.client_started_at_ms || currentTurn.client_started_at_ms || 0),
+          configured: snapshot?.configured ?? currentTurn.configured,
+          user_transcript: String(snapshot?.user_transcript || currentTurn.user_transcript || ""),
+          requested_thread_id: String(snapshot?.requested_thread_id || currentTurn.requested_thread_id || ""),
+          requested_thread_mode: String(snapshot?.requested_thread_mode || currentTurn.requested_thread_mode || ""),
+          pending_user_attachments: Array.isArray(snapshot?.pending_user_attachments) && snapshot.pending_user_attachments.length
+            ? snapshot.pending_user_attachments
+            : currentTurn.pending_user_attachments,
+        };
+      } else {
+        snapshot = await Pucky.request({ command: "pucky.turn.status", args: {} });
       }
-      return changed;
+      applyTurnStatus(snapshot);
+      if (options.render) {
+        render();
+      }
     } catch (_) {
       // The bridge can be briefly unavailable during WebView startup.
-      return false;
     }
   }
 
   async function loadTurnSettings(options = {}) {
     try {
-      const snapshot = await cachedBridgeRead("pucky.turn.settings.get", {}, options);
+      const snapshot = await Pucky.request({ command: "pucky.turn.settings.get", args: {} });
       state.turnSettings = normalizeTurnSettings(snapshot);
       if (options.render) {
         render();
@@ -2799,26 +1509,21 @@
   }
 
   async function loadWakeStatus(options = {}) {
-    const before = stableJsonFingerprint(normalizeWakeStatus(state.wakeStatus));
     try {
-      const snapshot = await cachedBridgeRead("wake.status", {}, options);
+      const snapshot = await Pucky.request({ command: "wake.status", args: {} });
       state.wakeStatus = normalizeWakeStatus(snapshot);
-      const changed = before !== stableJsonFingerprint(normalizeWakeStatus(state.wakeStatus));
-      if (options.render && changed) {
-        requestRender("wake_status");
+      if (options.render) {
+        render();
       }
-      return changed;
     } catch (_) {
       // Keep the current placeholder wake state if the bridge is not ready yet.
-      return false;
     }
   }
 
   async function loadUiSurfaceStatus(options = {}) {
     try {
-      const snapshot = await cachedBridgeRead("ui.surface.get", {}, options);
+      const snapshot = await Pucky.request({ command: "ui.surface.get", args: {} });
       state.uiSurface = normalizeUiSurfaceStatus(snapshot);
-      syncPerfDebugRuntimeBudgets();
       if (options.render) {
         render();
       }
@@ -2829,7 +1534,7 @@
 
   async function loadDefaultAudioSpeed(options = {}) {
     try {
-      const snapshot = await cachedBridgeRead("ui.default_audio_speed.get", {}, options);
+      const snapshot = await Pucky.request({ command: "ui.default_audio_speed.get", args: {} });
       state.defaultAudioSpeed = clampSpeed(snapshot && snapshot.speed);
       state.defaultAudioSpeedAvailable = true;
     } catch (_) {
@@ -2845,7 +1550,7 @@
     const hasNativeBridge = Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
     if (hasNativeBridge) {
       try {
-        const snapshot = await cachedBridgeRead("phone.role.status", {}, options);
+        const snapshot = await Pucky.request({ command: "phone.role.status", args: {} });
         state.phoneRole = normalizePhoneRoleStatus({
           ...snapshot,
           source: "native_bridge",
@@ -2896,108 +1601,7 @@
     });
   }
 
-  let nativeBootstrapPromise = null;
-
-  function hasNativeBootstrapBridge() {
-    return Boolean(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function");
-  }
-
-  function applyNativeBootstrapSnapshot(snapshot) {
-    const raw = snapshot && typeof snapshot === "object" ? snapshot : {};
-    const config = raw.config && typeof raw.config === "object" ? raw.config : {};
-    const provisioning = raw.provisioning && typeof raw.provisioning === "object" ? raw.provisioning : {};
-    if (raw.ui_surface && typeof raw.ui_surface === "object") {
-      state.uiSurface = normalizeUiSurfaceStatus(raw.ui_surface);
-      writeBridgeCache("ui.surface.get", {}, raw.ui_surface);
-    }
-    if (raw.turn_status && typeof raw.turn_status === "object") {
-      applyTurnStatus(raw.turn_status);
-      writeBridgeCache("pucky.turn.status", {}, raw.turn_status);
-    }
-    if (raw.turn_settings && typeof raw.turn_settings === "object") {
-      state.turnSettings = normalizeTurnSettings(raw.turn_settings);
-      writeBridgeCache("pucky.turn.settings.get", {}, raw.turn_settings);
-    }
-    if (raw.wake_status && typeof raw.wake_status === "object") {
-      state.wakeStatus = normalizeWakeStatus(raw.wake_status);
-      writeBridgeCache("wake.status", {}, raw.wake_status);
-    }
-    if (raw.phone_role && typeof raw.phone_role === "object") {
-      state.phoneRole = normalizePhoneRoleStatus(raw.phone_role);
-      writeBridgeCache("phone.role.status", {}, raw.phone_role);
-    }
-    if (raw.default_audio_speed && typeof raw.default_audio_speed === "object") {
-      state.defaultAudioSpeed = clampSpeed(raw.default_audio_speed && raw.default_audio_speed.speed);
-      state.defaultAudioSpeedAvailable = true;
-      writeBridgeCache("ui.default_audio_speed.get", {}, raw.default_audio_speed);
-    }
-    if (config && typeof config === "object") {
-      state.links.apiBaseUrl = String(config.api_base_url || "").trim().replace(/\/$/, "");
-      state.links.apiToken = String(config.api_token || "").trim();
-      writeBridgeCache("pucky.config.get", {}, config);
-    }
-    if (String(provisioning.device_id || "").trim()) {
-      state.links.deviceId = String(provisioning.device_id || "").trim();
-    }
-    perfDebugState.bootstrap_snapshot_used = true;
-    syncPerfDebugRuntimeBudgets();
-    return raw;
-  }
-
-  async function loadNativeBootstrapSnapshot(options = {}) {
-    if (!hasNativeBootstrapBridge()) {
-      return null;
-    }
-    if (!options.force && nativeBootstrapPromise) {
-      return nativeBootstrapPromise;
-    }
-    nativeBootstrapPromise = (async () => {
-      const snapshot = await cachedBridgeRead("ui.bootstrap.get", {}, {
-        force: Boolean(options.force),
-        ttlMs: Math.max(1000, safeNumber(options.ttlMs, PERF_BRIDGE_CACHE_TTL_MS))
-      });
-      return applyNativeBootstrapSnapshot(snapshot);
-    })();
-    try {
-      const snapshot = await nativeBootstrapPromise;
-      if (options.render) {
-        requestRender("native_bootstrap");
-      }
-      return snapshot;
-    } finally {
-      nativeBootstrapPromise = null;
-    }
-  }
-
   async function loadSettingsState(options = {}) {
-    if (hasNativeBootstrapBridge()) {
-      try {
-        await loadNativeBootstrapSnapshot({ render: false, force: Boolean(options.force) });
-      } catch (_) {
-        // Fall through to explicit bridge reads when bootstrap is unavailable.
-      }
-      if (options.ensureSurface !== false && ensureSettingsSurfaceCurrent()) {
-        return;
-      }
-      if (options.render) {
-        render();
-      }
-      void Promise.all([
-        loadPhoneRoleStatus({ render: false, force: true }),
-        loadDefaultAudioSpeed({ render: false, force: true }),
-        loadTurnSettings({ render: false, force: true }),
-        loadWakeStatus({ render: false, force: true }),
-        loadUiSurfaceStatus({ render: false, force: true })
-      ]).then(() => {
-        if (options.ensureSurface !== false && ensureSettingsSurfaceCurrent()) {
-          return;
-        }
-        if (options.render) {
-          requestRender("settings_quiet_refresh");
-        }
-      });
-      return;
-    }
     await Promise.all([
       loadPhoneRoleStatus({ render: false }),
       loadDefaultAudioSpeed({ render: false }),
@@ -3057,7 +1661,6 @@
     if (!options.force && state.links.firstPageReady && state.links.apps.length) {
       return;
     }
-    recordPerfRouteDataStart("connect:catalog_bundle");
     const payload = bundledLinksCatalogPayload();
     const apps = payload.apps.map(normalizeLinksApp).filter(item => item.slug && item.name);
     apps.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)));
@@ -3081,7 +1684,6 @@
         "route"
       );
     }
-    recordPerfRouteDataEnd("connect:catalog_bundle");
   }
 
   function resetLinksCatalogState(options = {}) {
@@ -3112,74 +1714,6 @@
     return filtered.length || totalAvailable ? String(filtered.length || totalAvailable) : "";
   }
 
-  let linksLogoObserver = null;
-
-  function createLinksIconFallback() {
-    const fallback = el("span", "links-app-icon-fallback");
-    fallback.innerHTML = iconSvg("apps", { filled: false });
-    return fallback;
-  }
-
-  function loadLinksIconImage(icon, app) {
-    if (!icon || icon.dataset.linksLogoLoaded === "1" || icon.dataset.linksLogoLoading === "1") {
-      return;
-    }
-    const logoPath = String(app && app.logo_path || "").trim();
-    if (!logoPath) {
-      return;
-    }
-    icon.dataset.linksLogoLoading = "1";
-    const img = document.createElement("img");
-    img.className = "links-app-logo";
-    img.src = logoPath;
-    img.alt = "";
-    img.loading = "lazy";
-    img.decoding = "async";
-    img.fetchPriority = "low";
-    img.addEventListener("load", () => {
-      icon.classList.add("has-image");
-      icon.dataset.linksLogoLoaded = "1";
-      delete icon.dataset.linksLogoLoading;
-      state.links.logoLoads += 1;
-    });
-    img.addEventListener("error", () => {
-      state.links.logoErrors += 1;
-      delete icon.dataset.linksLogoLoading;
-      img.remove();
-    });
-    icon.append(img);
-  }
-
-  function observeLinksIconImage(icon, app) {
-    const logoPath = String(app && app.logo_path || "").trim();
-    if (!logoPath) {
-      return;
-    }
-    if (typeof IntersectionObserver !== "function") {
-      loadLinksIconImage(icon, app);
-      return;
-    }
-    if (!linksLogoObserver) {
-      linksLogoObserver = new IntersectionObserver(entries => {
-        entries.forEach(entry => {
-          if (!entry.isIntersecting) {
-            return;
-          }
-          const target = entry.target;
-          linksLogoObserver.unobserve(target);
-          const slug = String(target && target.dataset.linksLogoSlug || "").trim();
-          const appRow = Array.isArray(state.links.apps) ? state.links.apps.find(item => String(item.slug || "") === slug) : null;
-          loadLinksIconImage(target, appRow);
-        });
-      }, {
-        root: linksScrollElement(),
-        rootMargin: "240px 0px 240px 0px",
-      });
-    }
-    icon.dataset.linksLogoSlug = String(app && app.slug || "").trim();
-    linksLogoObserver.observe(icon);
-  }
-
   function createLinksRow(app, index, handoffLocked) {
     const row = el("button", "links-app-row");
     row.type = "button";
@@ -3189,8 +1723,23 @@
     row.classList.toggle("is-opening", handoffLocked && state.links.openingSlug === app.slug);
 
     const icon = el("span", "links-app-icon");
-    icon.append(createLinksIconFallback());
-    observeLinksIconImage(icon, app);
+    if (app.logo_path) {
+      const img = document.createElement("img");
+      img.className = "links-app-logo";
+      img.src = String(app.logo_path || "");
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.addEventListener("load", () => {
+        icon.classList.add("has-image");
+        state.links.logoLoads += 1;
+      });
+      img.addEventListener("error", () => {
+        state.links.logoErrors += 1;
+        img.remove();
+      });
+      icon.append(img);
+    }
 
     const name = el("span", "links-app-name", app.name || app.slug);
     const auth = el("span", "links-app-auth", linksAuthLabelForApp(app));
@@ -3200,7 +1749,7 @@
     row.addEventListener("click", () => {
       if (hostedConnectReadOnlyMode() && !String(state.links.apiToken || state.links.token || "").trim()) {
         state.links.error = "";
-        state.links.message = "Open Connect with ?api_token=... to launch app auth flows in browser.";
+        state.links.message = "Add PUCKY_WEB_UI_TOKEN to open app auth flows in browser.";
         state.links.messageKind = "";
         render();
         return;
@@ -3433,14 +1982,6 @@
     if (!state.links.token && !hostedConnectReadOnlyMode()) {
       return;
     }
-    const age = Date.now() - safeNumber(state.links.lastRefreshAt);
-    if (!options.force && state.links.connectedLoaded && age >= 0 && age < PERF_BRIDGE_CACHE_TTL_MS) {
-      recordPerfCacheHit("links:my-apps");
-      if (options.render) {
-        render();
-      }
-      return;
-    }
     linksDebugRecord(
       "my_apps_start",
       {
@@ -3449,7 +1990,6 @@
       },
       "route"
     );
-    recordPerfRouteDataStart("connect:my_apps");
     const query = new URLSearchParams();
     if (state.links.token) {
       query.set("token", state.links.token);
@@ -3478,7 +2018,6 @@
     state.links.connectedLoaded = true;
     state.links.userId = String(payload && payload.user_id || "").trim();
     state.links.lastRefreshAt = Date.now();
-    recordPerfRouteDataEnd("connect:my_apps");
     linksDebugRecord(
       "my_apps_end",
       {
@@ -3906,38 +2445,51 @@
     if (state.links.apiBaseUrl) {
       return state.links.apiBaseUrl;
     }
-    return resolveHostedBrowserApiBaseUrl();
+    if (window.location && /^https?:$/i.test(window.location.protocol || "")) {
+      return String(window.location.origin || "").replace(/\/$/, "");
+    }
+    return DEFAULT_LINKS_API_BASE;
   }
 
-  async function requestNativeLinksConfig(options = {}) {
-    const requireApiToken = options.requireApiToken === true;
+  function shouldPollHostedTurnStatus() {
+    const turnId = turnStatusTurnId(state.turn);
+    return Boolean(turnId) && state.turn && state.turn.composer_managed === true;
+  }
+
+  async function loadHostedTurnStatus(turnId) {
+    const cleanTurnId = String(turnId || "").trim();
+    if (!cleanTurnId) {
+      return state.turn;
+    }
+    await ensureLinksApiConfig();
+    const headers = {};
+    if (state.links.apiToken) {
+      headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    const response = await fetch(
+      `${linksApiBaseUrl()}/api/turn/status?turn_id=${encodeURIComponent(cleanTurnId)}`,
+      { cache: "no-store", headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Turn status failed (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async function requestNativeLinksConfig() {
     const deadlineAt = Date.now() + LINKS_NATIVE_CONFIG_READY_TIMEOUT_MS;
     let lastError = null;
-    let lastConfig = null;
-    const cached = !options.force ? readBridgeCache("pucky.config.get", {}, PERF_BRIDGE_CACHE_TTL_MS) : null;
-    if (cached && (!requireApiToken || Boolean(String(cached && cached.api_token || "").trim()) || cached && cached.has_api_token === true)) {
-      return cached;
-    }
     while (Date.now() < deadlineAt) {
       if (!(window.Pucky && typeof window.Pucky.request === "function")) {
         await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
         continue;
       }
       try {
-        const config = await Pucky.request({ command: "pucky.config.get", args: {} });
-        lastConfig = config && typeof config === "object" ? config : {};
-        const hasApiToken = Boolean(String(config && config.api_token || "").trim()) || config && config.has_api_token === true;
-        if (!requireApiToken || hasApiToken) {
-          writeBridgeCache("pucky.config.get", {}, config);
-          return config;
-        }
+        return await Pucky.request({ command: "pucky.config.get", args: {} });
       } catch (error) {
         lastError = error;
       }
       await new Promise(resolve => setTimeout(resolve, LINKS_NATIVE_CONFIG_RETRY_MS));
-    }
-    if (lastConfig) {
-      return lastConfig;
     }
     if (lastError) {
       throw lastError;
@@ -3945,89 +2497,30 @@
     throw new Error("Native bridge did not expose pucky.config.get.");
   }
 
-  function resolveHostedBrowserApiToken() {
-    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
-      ? window.PUCKY_UI_STATE
-      : null;
-    if (uiState && typeof uiState.resolveBrowserApiToken === "function") {
-      return String(uiState.resolveBrowserApiToken() || "").trim();
-    }
-    try {
-      return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function resolveHostedBrowserApiBaseUrl() {
-    const fallbackApiBaseUrl = window.location && /^https?:$/i.test(window.location.protocol || "")
-      ? String(window.location.origin || "").replace(/\/$/, "")
-      : DEFAULT_LINKS_API_BASE;
-    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
-      ? window.PUCKY_UI_STATE
-      : null;
-    if (uiState && typeof uiState.resolveBrowserApiBaseUrl === "function") {
-      return String(uiState.resolveBrowserApiBaseUrl({ defaultApiBaseUrl: fallbackApiBaseUrl }) || fallbackApiBaseUrl).trim().replace(/\/$/, "");
-    }
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryApiBaseUrl = String(params.get("api_base_url") || params.get("apiBase") || "").trim().replace(/\/$/, "");
-      if (queryApiBaseUrl) {
-        return queryApiBaseUrl;
-      }
-    } catch (_) {
-      return fallbackApiBaseUrl;
-    }
-    return fallbackApiBaseUrl;
-  }
-
-  function resolveHostedBrowserDeviceId() {
-    const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"
-      ? window.PUCKY_UI_STATE
-      : null;
-    if (uiState && typeof uiState.resolveBrowserDeviceId === "function") {
-      return String(uiState.resolveBrowserDeviceId({ deviceStateKey: BROWSER_DEVICE_STATE_KEY }) || "").trim();
-    }
-    try {
-      const params = new URLSearchParams(window.location.search || "");
-      const queryDeviceId = String(params.get("device_id") || "").trim();
-      if (queryDeviceId) {
-        localStorage.setItem(BROWSER_DEVICE_STATE_KEY, queryDeviceId);
-        return queryDeviceId;
-      }
-      return String(localStorage.getItem(BROWSER_DEVICE_STATE_KEY) || "").trim();
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function refreshHostedBrowserAuthState() {
-    if (window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function") {
-      return;
-    }
-    state.links.apiBaseUrl = resolveHostedBrowserApiBaseUrl();
-    state.links.apiToken = resolveHostedBrowserApiToken();
-    state.links.deviceId = resolveHostedBrowserDeviceId();
-  }
-
   async function ensureLinksApiConfig() {
+    const previewApiBase = String(
+      window.location && /^https?:$/i.test(window.location.protocol || "")
+        ? (window.location.origin || "")
+        : ""
+    ).replace(/\/$/, "");
+    const previewApiToken = resolveBrowserPreviewApiToken();
+    if (previewApiBase && previewApiToken) {
+      state.links.apiBaseUrl = previewApiBase;
+      state.links.apiToken = previewApiToken;
+      state.links.deviceId = resolveBrowserPreviewDeviceId();
+      return;
+    }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-      refreshHostedBrowserAuthState();
+      state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+      state.links.apiToken = resolveBrowserPreviewApiToken();
+      state.links.deviceId = resolveBrowserPreviewDeviceId();
       return;
     }
-    if (state.links.apiBaseUrl && state.links.apiToken) {
+    if (state.links.apiBaseUrl) {
       return;
     }
     try {
-      await loadNativeBootstrapSnapshot({ render: false });
-      if (state.links.apiBaseUrl && state.links.apiToken) {
-        return;
-      }
-    } catch (_) {
-      // Fall back to the bounded native-config read below.
-    }
-    try {
-      const config = await requestNativeLinksConfig({ requireApiToken: true });
+      const config = await requestNativeLinksConfig();
       state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
       state.links.apiToken = String(config && config.api_token || "");
       state.links.deviceId = "";
@@ -4038,40 +2531,31 @@
     }
   }
 
-  async function protectedApiAuthorizationHeaders(options = {}) {
-    const method = String(options.method || "GET").toUpperCase();
-    const needsAuthorization = Boolean(options.authorized) || method !== "GET";
-    if (!needsAuthorization) {
-      return {};
-    }
-    if (state.links.apiToken) {
-      return { Authorization: `Bearer ${state.links.apiToken}` };
-    }
-    if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-      refreshHostedBrowserAuthState();
-      return state.links.apiToken ? { Authorization: `Bearer ${state.links.apiToken}` } : {};
-    }
-    if (nativeProtectedAuthorization) {
-      return { Authorization: nativeProtectedAuthorization };
+  function resolveBrowserPreviewApiToken() {
+    if (typeof browserStateCatalog.resolveBrowserApiToken === "function") {
+      return String(browserStateCatalog.resolveBrowserApiToken() || "").trim();
     }
     try {
-      const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });
-      const authorization = String(payload && payload.authorization || "").trim();
-      if (!authorization) {
-        return {};
-      }
-      nativeProtectedAuthorization = authorization;
-      return { Authorization: authorization };
+      return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();
     } catch (_) {
-      return {};
+      return "";
+    }
+  }
+
+  function resolveBrowserPreviewDeviceId() {
+    if (typeof browserStateCatalog.resolveBrowserDeviceId === "function") {
+      return String(browserStateCatalog.resolveBrowserDeviceId() || "").trim();
+    }
+    try {
+      return String(new URLSearchParams(window.location.search || "").get("device_id") || "").trim();
+    } catch (_) {
+      return "";
     }
   }
 
   async function linksApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();
-    const startedAt = perfNowMs();
-    const metricKey = String(options.metricKey || `links:${String(path || "").split("?")[0] || "/"}`).trim();
     const init = {
       method,
       cache: String(options.cache || "no-store"),
@@ -4080,150 +2564,43 @@
     if (state.links.apiToken) {
       init.headers.Authorization = `Bearer ${state.links.apiToken}`;
     }
-    Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
-    try {
-      const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
-      const payload = await response.json().catch(() => ({}));
-      if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-        payload._server_timing = String(response.headers.get("Server-Timing") || "");
-        payload._http_status = response.status;
-      }
-      if (!response.ok) {
-        throw new Error(String(payload && (payload.detail || payload.error) || `Connect request failed (${response.status})`));
-      }
-      recordPerfFetch(metricKey, startedAt, true);
-      return payload;
-    } catch (error) {
-      recordPerfFetch(metricKey, startedAt, false, error && error.message ? error.message : String(error || ""));
-      throw error;
+    const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+    const payload = await response.json().catch(() => ({}));
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      payload._server_timing = String(response.headers.get("Server-Timing") || "");
+      payload._http_status = response.status;
     }
-  }
-
-  function routePerfEventPayload(trigger = "route_ready") {
-    const metrics = perfDebugMetrics();
-    if (!metrics.route_ready || !String(metrics.sample_reason || "").trim()) {
-      return null;
+    if (!response.ok) {
+      throw new Error(String(payload && (payload.detail || payload.error) || `Connect request failed (${response.status})`));
     }
-    return {
-      schema: "pucky.ui_route_perf_event.v1",
-      surface: String(metrics.surface || perfSurfaceName()),
-      route: String(metrics.route || state.route || "home"),
-      cold_start: safeNumber(metrics.route_sequence, 1) === 1,
-      wall_elapsed_ms: safeNumber(metrics.wall_elapsed_ms),
-      route_ready_elapsed_ms: safeNumber(metrics.route_ready_elapsed_ms),
-      bridge_total_ms: safeNumber(metrics.bridge_total_ms),
-      shell_launch_elapsed_ms: safeNumber(metrics.shell_launch_elapsed_ms),
-      webview_load_elapsed_ms: safeNumber(metrics.webview_load_elapsed_ms),
-      asset_delivery_failures: safeNumber(metrics.asset_delivery_failures),
-      hosted_reload_attempts: safeNumber(metrics.hosted_reload_attempts),
-      bootstrap_snapshot_used: Boolean(metrics.bootstrap_snapshot_used),
-      bridge_calls_by_command: { ...(metrics.bridge_calls_by_command || {}) },
-      fetches_by_key: { ...(metrics.fetches_by_key || {}) },
-      poll_ticks_by_lane: { ...(metrics.poll_ticks_by_lane || {}) },
-      cache_hits_by_key: { ...(metrics.cache_hits_by_key || {}) },
-      deferred_tasks_started: safeNumber(metrics.deferred_tasks_started),
-      deferred_tasks_completed: safeNumber(metrics.deferred_tasks_completed),
-      unchanged_refresh_skips: safeNumber(metrics.unchanged_refresh_skips),
-      device_class: String(metrics.device_class || perfDeviceClass()),
-      app_version: "",
-      ui_version: String(state.uiSurface?.ui_version || bundleUiVersion() || ""),
-      sample_reason: String(metrics.sample_reason || ""),
-      boot_phase: String(metrics.boot_phase || ""),
-      route_ready_reason: String(metrics.route_ready_reason || ""),
-      render_count: safeNumber(metrics.render_count),
-      last_render_ms: safeNumber(metrics.last_render_ms),
-      route_enter_at_ms: safeNumber(metrics.route_enter_at_ms),
-      route_data_start_at_ms: safeNumber(metrics.route_data_start_at_ms),
-      route_data_end_at_ms: safeNumber(metrics.route_data_end_at_ms),
-      route_ready_at_ms: safeNumber(metrics.route_ready_at_ms),
-      session_id: String(metrics.session_id || ""),
-      run_id: String(metrics.run_id || ""),
-      trigger: String(trigger || "route_ready")
-    };
-  }
-
-  async function flushRoutePerfTelemetry(trigger = "route_ready") {
-    if (!perfDebugState.enabled || perfDebugState.route_perf_sent || perfTelemetryInFlight > 0) {
-      return false;
-    }
-    const payload = routePerfEventPayload(trigger);
-    if (!payload) {
-      return false;
-    }
-    perfDebugState.route_perf_sent = true;
-    perfTelemetryInFlight += 1;
-    try {
-      await ensureLinksApiConfig();
-      const headers = await protectedApiAuthorizationHeaders({ method: "POST", authorized: true });
-      if (!((headers && headers.Authorization) || state.links.apiToken)) {
-        perfDebugState.route_perf_sent = false;
-        return false;
-      }
-      const response = await fetch(`${linksApiBaseUrl()}/api/ui/route-perf-events`, {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-          "Content-Type": "application/json",
-          ...(headers || {}),
-          ...(state.links.apiToken ? { Authorization: `Bearer ${state.links.apiToken}` } : {})
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) {
-        perfDebugState.route_perf_sent = false;
-        return false;
-      }
-      return true;
-    } catch (_) {
-      perfDebugState.route_perf_sent = false;
-      return false;
-    } finally {
-      perfTelemetryInFlight = Math.max(0, perfTelemetryInFlight - 1);
-    }
+    return payload;
   }
 
   async function loadMeetings(options = {}) {
     if (state.meetings.loading) {
       return;
     }
-    const hadError = Boolean(state.meetings.error);
     state.meetings.loading = true;
     state.meetings.error = "";
-    let changed = !state.meetings.loaded || hadError;
     if (options.render) {
       renderFeed();
     }
     try {
-      recordPerfRouteDataStart("meetings:list");
-      const payload = await linksApiRequest("/api/meetings?compact=1", {
-        cache: "no-store",
-        metricKey: "links:meetings"
-      });
-      const nextRecords = Array.isArray(payload.meetings) ? payload.meetings : [];
-      const nextFingerprint = stableJsonFingerprint(nextRecords);
-      if (state.meetings.fingerprint !== nextFingerprint) {
-        state.meetings.records = nextRecords;
-        state.meetings.fingerprint = nextFingerprint;
-        changed = true;
-      }
-      state.meetings.loaded = true;
+      const payload = await linksApiRequest("/api/meetings?compact=1", { cache: "no-store" });
+      state.meetings.records = Array.isArray(payload.meetings) ? payload.meetings : [];
       state.meetings.lastRefreshAt = Date.now();
-      syncLocalAppBadgeState();
-      recordPerfRouteDataEnd("meetings:list");
     } catch (error) {
       state.meetings.error = meetingsApiErrorMessage(error, "Unable to load meetings");
-      changed = true;
     } finally {
       state.meetings.loading = false;
-      if (options.render && changed) {
-        requestRender(`meetings:${String(options.reason || "refresh")}`);
+      if (options.render) {
+        renderFeed();
       }
     }
-    return changed;
   }
 
   async function loadMeetingDetail(meeting) {
@@ -4239,47 +2616,12 @@
     return detail;
   }
 
-  async function loadAppBadges(options = {}) {
-    if (state.appBadges.loading) {
-      return;
-    }
-    const hadError = Boolean(state.appBadges.error);
-    state.appBadges.loading = true;
-    state.appBadges.error = "";
-    let changed = !state.appBadges.loaded || hadError;
-    try {
-      const payload = await linksApiRequest("/api/app-badges", {
-        cache: "no-store",
-        metricKey: "links:app_badges"
-      });
-      const nextItems = payload && typeof payload.badges === "object" ? payload.badges : {};
-      const nextFingerprint = stableJsonFingerprint(nextItems);
-      if (nextFingerprint !== stableJsonFingerprint(state.appBadges.items || {})) {
-        state.appBadges.items = nextItems;
-        changed = true;
-      }
-      state.appBadges.loaded = true;
-      state.appBadges.lastRefreshAt = Date.now();
-      syncLocalAppBadgeState();
-    } catch (error) {
-      state.appBadges.error = String(error && error.message || error || "App badge request failed");
-      changed = true;
-    } finally {
-      state.appBadges.loading = false;
-      if (options.render && changed) {
-        requestRender(`app-badges:${String(options.reason || "refresh")}`);
-      }
-    }
-    return changed;
-  }
-
   function meetingsApiErrorMessage(error, fallback = "Meetings request failed") {
     const detail = String(error && error.message ? error.message : fallback);
     return detail.replace(/^(Links|Connect) request failed/i, "Meetings request failed");
   }
 
   async function refreshMeetingRecordingStatus(options = {}) {
-    const before = stableJsonFingerprint(normalizeMeetingRecordingStatus(state.meetingRecording));
     try {
       state.meetingRecording = normalizeMeetingRecordingStatus(
         await Pucky.request({ command: "meeting.recording.status", args: {} })
@@ -4287,22 +2629,19 @@
     } catch (_) {
       state.meetingRecording = normalizeMeetingRecordingStatus(state.meetingRecording);
     }
-    const changed = before !== stableJsonFingerprint(normalizeMeetingRecordingStatus(state.meetingRecording));
-    if (options.render && changed) {
+    if (options.render) {
       renderVoiceStatus();
     }
-    return changed;
+    return state.meetingRecording;
   }
 
   function ensureSettingsSurfaceCurrent() {
     if (state.route !== "settings") {
       return false;
     }
-    const bridgeConnected = Boolean(state.uiSurface.bridge_connected);
     const sourceKind = String(state.uiSurface.source_kind || "");
     const entrypointUrl = String(state.uiSurface.entrypoint_url || "");
-    // Hosted browser sessions have no native bundle to swap into, so Settings should stay in-place.
-    if (!bridgeConnected || sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
+    if (sourceKind === "bundle_current" || !entrypointUrl || !window.location || !window.location.replace) {
       try {
         sessionStorage.removeItem(SETTINGS_SURFACE_RELOAD_KEY);
       } catch (_) {
@@ -4324,18 +2663,14 @@
 
 
   function render() {
-    const startedAt = perfNowMs();
     noteFlashDebugRecord("render_start");
     renderVoiceStatus();
     renderThreadScopeBadge();
     renderFeed();
-    renderInboxManageOverlay();
     renderAudioDetail();
     renderDetailAudioContinuity();
+    refreshOpenTranscriptDetail();
     noteFlashDebugRecord("render_end");
-    perfDebugState.render_count = safeNumber(perfDebugState.render_count) + 1;
-    perfDebugState.last_render_ms = Math.max(0, perfNowMs() - startedAt);
-    syncPerfDebugState("render");
   }
 
   function renderVoiceStatus() {
@@ -4567,14 +2902,13 @@
 
   function initialSurfaceKind() {
     const url = String(window.location && window.location.href || "");
-    return /^https:\/\/pucky\.fly\.dev\/ui\/pucky\/latest(?:\/|\/index\.html)/i.test(url)
+    return /^https:\/\/pucky\.fly\.dev\/ui\/pucky\/latest\/index\.html/i.test(url)
       ? "hosted_vm"
       : "bundle_current";
   }
 
   function initialUiSurfaceStatus() {
     const config = bundleConfig();
-    const bootstrap = bootstrapDebugState();
     return {
       schema: "pucky.ui_surface.v1",
       requested_url: window.location.href,
@@ -4587,11 +2921,7 @@
       source_dirty: Boolean(config.source_dirty),
       source_kind: initialSurfaceKind(),
       bridge_connected: hasNativeAudioBridge(),
-      audio_runtime_mode: audioRuntimeMode(),
-      shell_launch_elapsed_ms: safeNumber(bootstrap.shell_launch_elapsed_ms),
-      webview_load_elapsed_ms: safeNumber(bootstrap.webview_load_elapsed_ms),
-      hosted_reload_attempts: safeNumber(bootstrap.hosted_reload_attempts),
-      asset_delivery_failures: safeNumber(bootstrap.asset_delivery_failures)
+      audio_runtime_mode: audioRuntimeMode()
     };
   }
 
@@ -4685,8 +3015,6 @@
     const feedStyle = feed ? window.getComputedStyle(feed) : null;
     const focusedSessionId = String(state.openCardMenuSessionId || "");
     const focusedCard = findFocusedCard();
-    const currentUrl = String(window.location && window.location.href || "");
-    const bridgeConnected = hasNativeAudioBridge();
     const cards = Array.from(document.querySelectorAll("article[data-card-id], article[data-card-session-id]")).map(node => ({
       kind: node.getAttribute("data-card-kind") || "",
       card_id: node.getAttribute("data-card-id") || "",
@@ -4703,9 +3031,6 @@
     }));
     return {
       ...state.uiSurface,
-      requested_url: bridgeConnected ? state.uiSurface.requested_url : currentUrl,
-      active_url: bridgeConnected ? state.uiSurface.active_url : currentUrl,
-      entrypoint_url: bridgeConnected ? state.uiSurface.entrypoint_url : currentUrl,
       audio_runtime_mode: audioRuntimeMode(),
       route: shell?.getAttribute("data-view") || "",
       detail: {
@@ -4769,18 +3094,6 @@
         overflow_y: feedStyle?.overflowY || "",
         direct_card_count: feed ? Array.from(feed.children).filter(node => node?.classList?.contains("card-wrap")).length : 0,
         visible_card_count: cards.length,
-        inbox_manage_mode: Boolean(state.inboxManageMode),
-        inbox_archive_filter_pending: inboxArchiveFilterPending(),
-        inbox_archive_filter_pending_target: inboxArchiveFilterPending()
-          ? Boolean(state.inboxArchiveFilterPendingTarget)
-          : null,
-        inbox_manage_selected_count: state.selectedInboxCardKeys instanceof Set ? state.selectedInboxCardKeys.size : 0,
-        inbox_manage_selected_ids: state.selectedInboxCardKeys instanceof Set ? Array.from(state.selectedInboxCardKeys) : [],
-        open_card_menu_session_id: String(state.openCardMenuSessionId || ""),
-        open_card_menu_thread_id: String(state.openCardMenuThreadId || ""),
-        last_inbox_manage_result: {
-          ...(state.lastInboxManageResult || {})
-        },
         archive_reveal_open_count: document.querySelectorAll(".card-wrap.is-archive-reveal-open").length,
         archive_reveal_active_count: document.querySelectorAll(".card-wrap.is-archive-reveal-active").length,
         last_scroll_sample: {
@@ -4817,16 +3130,6 @@
         action,
         handled: true,
         metrics: linksDebugMetrics(),
-        surface: describeUiSurface()
-      };
-    }
-    if (action === "perf_metrics") {
-      return {
-        schema: "pucky.ui_debug_action.v1",
-        ok: true,
-        action,
-        handled: true,
-        metrics: perfDebugMetrics(),
         surface: describeUiSurface()
       };
     }
@@ -5082,9 +3385,9 @@
       error: "",
       portal_url: "",
       token: "",
-      apiBaseUrl: resolveHostedBrowserApiBaseUrl(),
-      apiToken: resolveHostedBrowserApiToken(),
-      deviceId: resolveHostedBrowserDeviceId(),
+      apiBaseUrl: "",
+      apiToken: resolveBrowserPreviewApiToken(),
+      deviceId: resolveBrowserPreviewDeviceId(),
       userId: "",
       auth_mode: "browser",
       apps: [],
@@ -5116,11 +3419,9 @@
   function initialMeetingsState() {
     return {
       loading: false,
-      loaded: false,
       error: "",
       records: [],
-      lastRefreshAt: 0,
-      fingerprint: ""
+      lastRefreshAt: 0
     };
   }
 
@@ -5267,7 +3568,6 @@
 
   function normalizeUiSurfaceStatus(input) {
     const raw = input && typeof input === "object" ? input : {};
-    const bootstrap = bootstrapDebugState();
     return {
       schema: raw.schema || "pucky.ui_surface.v1",
       requested_url: String(raw.requested_url || window.location.href || ""),
@@ -5280,11 +3580,7 @@
       source_dirty: Boolean(raw.source_dirty ?? bundleConfig().source_dirty),
       source_kind: String(raw.source_kind || "legacy_placeholder"),
       bridge_connected: truthy(raw.bridge_connected ?? !!window.PuckyAndroid),
-      audio_runtime_mode: String(raw.audio_runtime_mode || audioRuntimeMode()),
-      shell_launch_elapsed_ms: safeNumber(raw.shell_launch_elapsed_ms || bootstrap.shell_launch_elapsed_ms),
-      webview_load_elapsed_ms: safeNumber(raw.webview_load_elapsed_ms || bootstrap.webview_load_elapsed_ms),
-      hosted_reload_attempts: safeNumber(raw.hosted_reload_attempts || bootstrap.hosted_reload_attempts),
-      asset_delivery_failures: safeNumber(raw.asset_delivery_failures || bootstrap.asset_delivery_failures)
+      audio_runtime_mode: String(raw.audio_runtime_mode || audioRuntimeMode())
     };
   }
 
@@ -5315,6 +3611,11 @@
 
   function applyVoiceState(input) {
     if (input && typeof input === "object" && input.schema === "pucky.turn_status.v1") {
+      const current = normalizeTurnStatus(state.turn);
+      const incoming = normalizeTurnStatus(input);
+      if (current.composer_managed && isTurnActive(current) && !turnStatusTurnId(incoming) && !turnFailed(incoming)) {
+        return;
+      }
       applyTurnStatus(input);
       return;
     }
@@ -5527,6 +3828,12 @@
       return "failed";
     }
     const normalized = normalizeTurnStatus(status);
+    const startedAtMs = Number(normalized.client_started_at_ms || 0);
+    if (normalized.composer_managed && isTurnActive(normalized) && startedAtMs > 0) {
+      if ((Date.now() - startedAtMs) < 1200) {
+        return "sending";
+      }
+    }
     const stage = String(normalized.stage || "").trim().toLowerCase();
     const visualState = turnVisualState(normalized);
     if (visualState === "thinking" || stage === "codex_running" || stage === "tts_running") {
@@ -5547,9 +3854,6 @@
   function dismissTransientUiForRouteChange() {
     dismissArchiveReveal({ immediate: true, reason: "route_change", context: "route_change" });
     dismissOpenCardMenu(false);
-    state.inboxManageMode = false;
-    inboxManageSelection().clear();
-    clearTaskSelection();
     dismissTraceSheet();
     dismissOriginSheet();
     dismissAdvancedSettingsSheet();
@@ -5594,26 +3898,11 @@
     shell?.setAttribute("data-canonical-route", route || "home");
     shell?.setAttribute("data-embedded-app", embeddedLightApp());
     shell?.setAttribute("data-chrome-mode", chromeMode());
-    shell?.classList.toggle("is-inbox-managing", route === "inbox" && Boolean(state.inboxManageMode));
-    shell?.classList.toggle("is-inbox-archive-filter-loading", route === "inbox" && inboxArchiveFilterPending());
-    if (route === "inbox" && inboxArchiveFilterPending()) {
-      shell?.setAttribute("data-inbox-archive-filter-pending-target", String(Boolean(state.inboxArchiveFilterPendingTarget)));
-    } else {
-      shell?.removeAttribute("data-inbox-archive-filter-pending-target");
-    }
     feed.classList.toggle("is-links-route", route === "connect");
     dismissArchiveReveal({ immediate: true, reason: "unknown", context: "render_feed" });
     syncRouteQueryParam(route);
     if (isHomeShellMockRoute()) {
-      const page = lightMockRoutePage(route) || lightHomePage();
-      const currentView = feed.firstElementChild;
-      if (!(currentView instanceof HTMLElement)
-          || currentView.dataset.homeShellKind !== "mock"
-          || currentView.dataset.lightRoute !== (route || "home")
-          || currentView.firstElementChild !== page
-          || feed.childElementCount !== 1) {
-        feed.replaceChildren(homeShellMockView(route, page));
-      }
+      feed.replaceChildren(lightView());
       return;
     }
     if (route === "settings") {
@@ -5649,16 +3938,6 @@
     const view = el("section", "light-shell");
     view.dataset.lightRoute = route || "home";
     view.dataset.homeShellKind = HOME_SHELL_CANONICAL_ROUTES.has(route) ? "canonical" : "mock";
-    applyLightRouteAccent(view, route);
-    view.append(page);
-    return view;
-  }
-
-  function homeShellMockView(route, page) {
-    const view = el("section", "light-shell");
-    view.dataset.lightRoute = route || "home";
-    view.dataset.homeShellKind = "mock";
-    applyLightRouteAccent(view, route);
     view.append(page);
     return view;
   }
@@ -5685,64 +3964,70 @@
     return cards.map(cardView);
   }
 
-  function lightMockRoutePage(route = state.route) {
-    switch (route) {
+  function lightView() {
+    const view = el("section", "light-shell");
+    view.dataset.lightRoute = state.route || "home";
+    view.dataset.homeShellKind = "mock";
+    switch (state.route) {
       case "inbox-detail":
-        return lightFeedDetailPage();
+        view.append(lightFeedDetailPage());
+        break;
       case "contacts":
-        return lightContactsPage();
+        view.append(lightContactsPage());
+        break;
       case "contact-detail":
-        return lightContactDetailPage();
+        view.append(lightContactDetailPage());
+        break;
       case "calendar":
-        return lightCalendarPage();
+        view.append(lightCalendarPage());
+        break;
       case "meeting-detail":
-        return lightMeetingDetailPage();
+        view.append(lightMeetingDetailPage());
+        break;
       case "meeting-notes":
-        return lightMeetingNotesPage();
+        view.append(lightMeetingNotesPage());
+        break;
       case "meeting-note-detail":
-        return lightMeetingNoteDetailPage();
+        view.append(lightMeetingNoteDetailPage());
+        break;
       case "reminders":
-        return lightRemindersPage();
+        view.append(lightRemindersPage());
+        break;
       case "reminder-detail":
-        return lightReminderDetailPage();
+        view.append(lightReminderDetailPage());
+        break;
       case "notes":
-        return lightNotesPage();
+        view.append(lightNotesPage());
+        break;
       case "note-detail":
-        return lightNoteDetailPage();
+        view.append(lightNoteDetailPage());
+        break;
       case "tasks":
-        return lightTasksPage();
+        view.append(lightTasksPage());
+        break;
       case "task-detail":
-        return lightTaskDetailPage();
+        view.append(lightTaskDetailPage());
+        break;
       case "projects":
-        return lightProjectsPage();
+        view.append(lightProjectsPage());
+        break;
       case "project-detail":
-        return lightProjectDetailPage();
+        view.append(lightProjectDetailPage());
+        break;
       case "home":
       default:
-        return null;
+        state.route = "home";
+        view.append(lightHomePage());
+        break;
     }
-  }
-
-  function lightView() {
-    const route = state.route || "home";
-    const mockPage = lightMockRoutePage(route);
-    const page = mockPage || lightHomePage();
-    if (!mockPage && route !== "home") {
-      state.route = "home";
-      return homeShellMockView("home", page);
-    }
-    return homeShellMockView(route, page);
+    view.dataset.lightRoute = state.route || "home";
+    return view;
   }
 
   function lightHomePage() {
     const reminderBucket = workspaceBucket("reminders");
     if (!reminderBucket.loaded && !reminderBucket.loading) {
       void loadWorkspaceCollection("reminders", { render: true });
-    }
-    if (!state.appBadges.loaded && !state.appBadges.loading) {
-      void loadAppBadges({ render: true });
-    } else if (!state.appBadges.loading && (Date.now() - safeNumber(state.appBadges.lastRefreshAt)) >= APP_BADGE_STALE_MS) {
-      void loadAppBadges({ render: false, reason: "stale_home" });
     }
     const page = el("section", "light-home");
     const grid = el("div", "light-app-grid");
@@ -5761,50 +4046,29 @@
     tile.setAttribute("aria-label", app.label);
     tile.addEventListener("click", () => openLightApp(app.route));
     const icon = lightAppIcon(app);
-    const iconAnchor = el("span", "light-app-icon-badge-anchor");
-    iconAnchor.append(icon);
     const badge = lightAppBadge(app);
+    tile.append(icon, el("span", "light-app-label", app.label));
     if (badge) {
-      iconAnchor.append(badge);
+      tile.append(badge);
     }
-    tile.append(iconAnchor, el("span", "light-app-label", app.label));
     return tile;
   }
 
   function lightAppBadge(app) {
-    const descriptor = lightAppBadgeDescriptor(app);
-    if (!descriptor) {
+    const value = lightAppBadgeValue(app);
+    if (!value) {
       return null;
     }
-    const count = lightAppBadgeCount(descriptor);
-    if (!count) {
-      return null;
-    }
-    const badge = el("span", "light-app-badge", count);
-    badge.setAttribute("aria-label", `${app.label} ${descriptor.kind} count ${count}`);
+    const badge = el("span", "light-app-badge", value);
+    badge.setAttribute("aria-label", `${app.label} active count ${value}`);
     return badge;
   }
 
-  function lightAppBadgeDescriptor(app) {
-    return HOME_APP_BADGE_REGISTRY[String(app?.route || "").trim().toLowerCase()] || null;
-  }
-
-  function lightAppBadgeCount(descriptor) {
-    if (!descriptor) {
+  function lightAppBadgeValue(app) {
+    if (String(app?.route || "") !== "reminders") {
       return "";
     }
-    if (descriptor.kind === "active") {
-      const count = activeReminderCount();
-      if (!count) {
-        return "";
-      }
-      return count > 99 ? "99+" : String(count);
-    }
-    const route = Object.keys(HOME_APP_BADGE_REGISTRY).find(key => HOME_APP_BADGE_REGISTRY[key] === descriptor) || "";
-    const badge = state.appBadges.items && typeof state.appBadges.items === "object"
-      ? state.appBadges.items[route]
-      : null;
-    const count = Math.max(0, Number(badge?.count || 0) || 0);
+    const count = activeReminderCount();
     if (!count) {
       return "";
     }
@@ -5816,13 +4080,6 @@
       state.selectedCalendarDate = calendarTodayDateKey();
     }
     lightNavigate(route);
-  }
-
-  function lightRouteSemanticAccentKey(route) {
-    const value = String(route || "").trim().toLowerCase();
-    if (value === "calendar" || value === "meeting-detail") return "calendar";
-    if (value === "contacts" || value === "contact-detail") return "contacts";
-    return "";
   }
 
   function semanticIconAccentKey(accentKey) {
@@ -5857,12 +4114,6 @@
     node.dataset.appAccent = resolvedKey;
     node.style.setProperty(propertyName, accent);
     return accent;
-  }
-
-  function applyLightRouteAccent(node, route) {
-    const accentKey = lightRouteSemanticAccentKey(route);
-    applySemanticIconAccent(node, accentKey, { propertyName: "--home-shell-accent", allowEmpty: true });
-    applySemanticIconAccent(node, accentKey, { propertyName: "--accent-primary", allowEmpty: true });
   }
 
   function canonicalIconAccentKey(iconKey) {
@@ -5912,67 +4163,16 @@
     return String(contact?.id || contact?.record_id || "").trim() === SELF_CONTACT_ID || Boolean(metadata.is_self);
   }
 
-  function normalizeContactText(value) {
-    return String(value || "").trim();
-  }
-
-  function contactRecordId(contact) {
-    return String(contact?.id || contact?.record_id || "").trim();
-  }
-
-  function contactDisplayNameFromParts(firstName, lastName, fallbackTitle = "") {
-    const first = normalizeContactText(firstName);
-    const last = normalizeContactText(lastName);
-    const parts = [first, last].filter(Boolean);
-    if (parts.length) {
-      return parts.join(" ");
-    }
-    return normalizeContactText(fallbackTitle) || "Unnamed contact";
-  }
-
-  function contactInitialsFromParts(firstName, lastName, fallbackTitle = "") {
-    const displayName = contactDisplayNameFromParts(firstName, lastName, fallbackTitle);
-    const tokens = normalizeContactText(displayName).split(/\s+/).filter(Boolean);
-    if (tokens.length >= 2) {
-      return `${tokens[0].charAt(0)}${tokens[tokens.length - 1].charAt(0)}`.toUpperCase();
-    }
-    if (tokens.length === 1) {
-      return tokens[0].charAt(0).toUpperCase();
-    }
-    return "?";
-  }
-
-  function contactTitleFallback(contact) {
-    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
-      ? contact.metadata
-      : {};
-    return normalizeContactText(contact?.title || meta.display_name || "");
-  }
-
-  function contactDisplayName(contact) {
-    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
-      ? contact.metadata
-      : {};
-    return contactDisplayNameFromParts(meta.first_name, meta.last_name, contactTitleFallback(contact));
-  }
-
-  function contactInitials(contact) {
-    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
-      ? contact.metadata
-      : {};
-    return contactInitialsFromParts(meta.first_name, meta.last_name, contactDisplayName(contact));
-  }
-
   function contactsListItems() {
     return workspaceItems("contacts")
-      .filter(contact => contactRecordId(contact) !== "clinic-front-desk")
       .slice()
       .sort((left, right) => {
-        const compare = contactDisplayName(left).localeCompare(contactDisplayName(right));
-        if (compare !== 0) {
-          return compare;
+        const leftSelf = contactIsSelf(left);
+        const rightSelf = contactIsSelf(right);
+        if (leftSelf !== rightSelf) {
+          return leftSelf ? -1 : 1;
         }
-        return contactRecordId(left).localeCompare(contactRecordId(right));
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
       });
   }
 
@@ -6016,614 +4216,26 @@
     return contactsListItems().filter(contact => contactMatchesSearch(contact));
   }
 
-  function contactNameParts(contact) {
-    const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
-      ? contact.metadata
-      : {};
-    const first = normalizeContactText(meta.first_name);
-    const last = normalizeContactText(meta.last_name);
-    if (first || last) {
-      return { first, last };
-    }
-    const title = contactDisplayName(contact);
-    if (!title) {
-      return { first: "", last: "" };
-    }
-    const parts = title.split(/\s+/).filter(Boolean);
-    if (parts.length <= 1) {
-      return { first: title, last: "" };
-    }
-    return {
-      first: parts.shift() || "",
-      last: parts.join(" "),
-    };
-  }
-
-  function contactDraftDisplayName(draft, fallbackContact = null) {
-    return contactDisplayNameFromParts(
-      draft?.firstName,
-      draft?.lastName,
-      contactTitleFallback(fallbackContact)
-    );
-  }
-
-  function contactDisplayTitle(contact) {
-    return contactDisplayName(contact);
-  }
-
-  function contactAvatarText(contact) {
-    return contactInitials(contact);
-  }
-
-  function contactDraftAvatar(draft, fallbackContact = null) {
-    return contactInitialsFromParts(
-      draft?.firstName,
-      draft?.lastName,
-      contactDraftDisplayName(draft, fallbackContact)
-    );
-  }
-
-  function buildContactEditDraft(contact) {
-    const meta = contact?.metadata || {};
-    const name = contactNameParts(contact);
-    const draft = {
-      contactId: contactRecordId(contact),
-      firstName: name.first,
-      lastName: name.last,
-      summary: String(contact?.summary || "").trim(),
-      email: String(meta.email || "").trim(),
-      phone: String(meta.phone || "").trim(),
-      photo: String(meta.photo || "").trim(),
-      photoAssetId: String(meta.photo_asset_id || "").trim(),
-      activity: Array.isArray(meta.activity) ? meta.activity.map(value => String(value || "")) : [],
-    };
-    draft.initialSnapshot = contactEditDraftSnapshot(draft);
-    return draft;
-  }
-
-  function contactEditDraftSnapshot(draft) {
-    return JSON.stringify({
-      firstName: String(draft?.firstName || "").trim(),
-      lastName: String(draft?.lastName || "").trim(),
-      summary: String(draft?.summary || "").trim(),
-      email: String(draft?.email || "").trim(),
-      phone: String(draft?.phone || "").trim(),
-      photo: String(draft?.photo || "").trim(),
-      photoAssetId: String(draft?.photoAssetId || "").trim(),
-      activity: Array.isArray(draft?.activity) ? draft.activity.map(value => String(value || "")) : [],
-    });
-  }
-
-  function ensureContactEditDraft(contact) {
-    const contactId = contactRecordId(contact);
-    const current = state.contacts.editDraft;
-    if (current && current.contactId === contactId) {
-      return current;
-    }
-    const draft = buildContactEditDraft(contact);
-    state.contacts.editMode = false;
-    state.contacts.editDraft = draft;
-    state.contacts.editQueued = false;
-    state.contacts.editStatus = "saved";
-    state.contacts.editError = "";
-    return draft;
-  }
-
-  function clearContactDetailAutosaveTimer() {
-    if (!contactDetailAutosaveTimer) {
-      return;
-    }
-    clearTimeout(contactDetailAutosaveTimer);
-    contactDetailAutosaveTimer = 0;
-  }
-
-  function clearContactEditDraft() {
-    clearContactDetailAutosaveTimer();
-    state.contacts.editMode = false;
-    state.contacts.editDraft = null;
-    state.contacts.editSaving = false;
-    state.contacts.editQueued = false;
-    state.contacts.editStatus = "idle";
-    state.contacts.editError = "";
-  }
-
-  function contactEditHasUnsavedChanges(draft = state.contacts.editDraft) {
-    if (!draft) {
-      return false;
-    }
-    return contactEditDraftSnapshot(draft) !== String(draft.initialSnapshot || "");
-  }
-
-  function updateContactEditDraft(patch = {}) {
-    if (!state.contacts.editDraft || !patch || typeof patch !== "object") {
-      return;
-    }
-    const nextActivity = Object.prototype.hasOwnProperty.call(patch, "activity")
-      ? (Array.isArray(patch.activity) ? patch.activity.slice() : [])
-      : (Array.isArray(state.contacts.editDraft.activity) ? state.contacts.editDraft.activity.slice() : []);
-    state.contacts.editDraft = {
-      ...state.contacts.editDraft,
-      ...patch,
-      activity: nextActivity,
-    };
-  }
-
-  function contactDraftActivity(draft, fallbackContact = null) {
-    if (Array.isArray(draft?.activity)) {
-      return draft.activity.map(value => String(value || ""));
-    }
-    const activity = fallbackContact?.metadata?.activity;
-    return Array.isArray(activity) ? activity.map(value => String(value || "")) : [];
-  }
-
-  function contactEditPreviewRecord(contact, draft) {
-    const title = contactDraftDisplayName(draft, contact);
-    return {
-      ...contact,
-      title,
-      summary: String(draft?.summary || "").trim(),
-      metadata: {
-        ...(contact?.metadata || {}),
-        display_name: title,
-        first_name: String(draft?.firstName || "").trim(),
-        last_name: String(draft?.lastName || "").trim(),
-        email: String(draft?.email || "").trim(),
-        phone: String(draft?.phone || "").trim(),
-        avatar: contactDraftAvatar(draft, contact),
-        photo: String(draft?.photo || "").trim(),
-        activity: contactDraftActivity(draft, contact),
+  function queueContactsSearchFieldFocus(selectionStart = null, selectionEnd = null) {
+    const restore = () => {
+      const search = document.getElementById("contactsSearch");
+      if (!(search instanceof HTMLInputElement)) {
+        return;
       }
-    };
-  }
-
-  function loadImageElement(src) {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Could not load the selected photo."));
-      image.src = src;
-    });
-  }
-
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Could not read the selected photo."));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function prepareContactPhotoDraft(file) {
-    const sourceDataUrl = await readFileAsDataUrl(file);
-    const image = await loadImageElement(sourceDataUrl);
-    const longestEdge = Math.max(Number(image.naturalWidth || 0), Number(image.naturalHeight || 0), 1);
-    const scale = Math.min(1, 512 / longestEdge);
-    const width = Math.max(1, Math.round(Number(image.naturalWidth || 1) * scale));
-    const height = Math.max(1, Math.round(Number(image.naturalHeight || 1) * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("Canvas is unavailable.");
-    }
-    context.drawImage(image, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-    return {
-      photo: dataUrl,
-      photoAssetId: "",
-    };
-  }
-
-  function mergeContactRecordIntoBucket(record) {
-    const bucket = state.workspace.contacts;
-    const nextId = contactRecordId(record);
-    if (!bucket || !Array.isArray(bucket.items) || !nextId) {
-      return;
-    }
-    let replaced = false;
-    bucket.items = bucket.items.map(item => {
-      if (contactRecordId(item) !== nextId) {
-        return item;
-      }
-      replaced = true;
-      return record;
-    });
-    if (!replaced) {
-      bucket.items.push(record);
-    }
-  }
-
-  function cloneContactEditDraft(draft) {
-    return {
-      ...draft,
-      activity: Array.isArray(draft?.activity) ? draft.activity.slice() : [],
-    };
-  }
-
-  function contactEditStatusLabel() {
-    if (state.contacts.editStatus === "error") {
-      return "Couldn't save";
-    }
-    if (state.contacts.editSaving || state.contacts.editStatus === "saving" || state.contacts.editStatus === "dirty") {
-      return "Saving...";
-    }
-    return "Saved";
-  }
-
-  function resolveContactEditFlushWaiters(result) {
-    const waiters = contactEditFlushWaiters.splice(0, contactEditFlushWaiters.length);
-    waiters.forEach(resolve => resolve(result));
-  }
-
-  function syncContactInputValue(input, value) {
-    if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) {
-      return;
-    }
-    if (document.activeElement === input) {
-      return;
-    }
-    const nextValue = String(value || "");
-    if (input.value !== nextValue) {
-      input.value = nextValue;
-    }
-  }
-
-  function scheduleContactDetailAutosave() {
-    clearContactDetailAutosaveTimer();
-    state.contacts.editStatus = "dirty";
-    syncContactDetailEditor();
-    contactDetailAutosaveTimer = window.setTimeout(() => {
-      contactDetailAutosaveTimer = 0;
-      void flushContactDetailAutosave({ reason: "debounce" });
-    }, 350);
-  }
-
-  function contactEditPayload(contact, draft) {
-    const title = contactDraftDisplayName(draft, contact);
-    const payload = {
-      title,
-      summary: String(draft?.summary || "").trim(),
-      metadata: {
-        display_name: title,
-        first_name: String(draft?.firstName || "").trim(),
-        last_name: String(draft?.lastName || "").trim(),
-        email: String(draft?.email || "").trim(),
-        phone: String(draft?.phone || "").trim(),
-        avatar: contactDraftAvatar(draft, contact),
-        photo: String(draft?.photo || "").trim(),
-        photo_asset_id: String(draft?.photoAssetId || "").trim(),
-        activity: contactDraftActivity(draft, contact),
-      }
-    };
-    return payload;
-  }
-
-  async function flushContactDetailAutosave(options = {}) {
-    clearContactDetailAutosaveTimer();
-    const contact = selectedContact();
-    const draft = state.contacts.editDraft;
-    const contactId = contactRecordId(contact);
-    if (!draft || !contactId) {
-      return true;
-    }
-    if (state.contacts.editSaving) {
-      if (contactEditHasUnsavedChanges(state.contacts.editDraft)) {
-        state.contacts.editQueued = true;
-      }
-      return new Promise(resolve => {
-        contactEditFlushWaiters.push(resolve);
-      });
-    }
-    if (!contactEditHasUnsavedChanges(draft)) {
-      if (state.contacts.editStatus !== "error") {
-        state.contacts.editStatus = "saved";
-        syncContactDetailEditor();
-      }
-      return true;
-    }
-    state.contacts.editSaving = true;
-    state.contacts.editQueued = false;
-    state.contacts.editStatus = "saving";
-    state.contacts.editError = "";
-    syncContactDetailEditor();
-    let lastUpdated = null;
-    let success = false;
-    try {
-      while (true) {
-        state.contacts.editQueued = false;
-        const draftForSave = cloneContactEditDraft(state.contacts.editDraft);
-        const payload = contactEditPayload(selectedContact() || contact, draftForSave);
-        const savedSnapshot = contactEditDraftSnapshot(draftForSave);
-        const updated = await patchWorkspaceRecord("contacts", contactId, payload);
-        mergeContactRecordIntoBucket(updated);
-        state.selectedContactId = contactRecordId(updated) || contactId;
-        lastUpdated = updated;
-        if (state.contacts.editDraft && state.contacts.editDraft.contactId === contactId) {
-          state.contacts.editDraft.photoAssetId = "";
-          state.contacts.editDraft.initialSnapshot = savedSnapshot;
+      search.focus({ preventScroll: true });
+      if (Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
+        try {
+          search.setSelectionRange(selectionStart, selectionEnd);
+        } catch (_error) {
+          // Ignore selection restore failures on search inputs that reject manual ranges.
         }
-        if (!state.contacts.editQueued && !contactEditHasUnsavedChanges(state.contacts.editDraft)) {
-          break;
-        }
-      }
-      success = true;
-      state.contacts.editStatus = "saved";
-      state.contacts.editError = "";
-      return lastUpdated || true;
-    } catch (error) {
-      state.contacts.editStatus = "error";
-      state.contacts.editError = String(error?.message || "Could not save contact.");
-      showToast(state.contacts.editError);
-      return false;
-    } finally {
-      state.contacts.editSaving = false;
-      syncContactDetailEditor();
-      resolveContactEditFlushWaiters(success ? (lastUpdated || true) : false);
-    }
-  }
-
-  function updateContactDetailDraftAndSchedule(patch = {}, options = {}) {
-    updateContactEditDraft(patch);
-    state.contacts.editStatus = "dirty";
-    syncContactDetailEditor();
-    if (options.immediate) {
-      void flushContactDetailAutosave({ reason: options.reason || "immediate" });
-      return;
-    }
-    scheduleContactDetailAutosave();
-  }
-
-  function updateContactDetailActivityValue(index, value) {
-    const nextActivity = contactDraftActivity(state.contacts.editDraft);
-    nextActivity[index] = String(value || "");
-    updateContactDetailDraftAndSchedule({ activity: nextActivity });
-  }
-
-  function addContactDetailActivityRow() {
-    const nextActivity = contactDraftActivity(state.contacts.editDraft);
-    const nextIndex = nextActivity.length;
-    nextActivity.push("");
-    updateContactDetailDraftAndSchedule({ activity: nextActivity }, { immediate: true, reason: "activity_add" });
-    const focusNewRow = () => {
-      const input = document.querySelector(`[data-contact-activity-index="${String(nextIndex)}"]`);
-      if (input instanceof HTMLInputElement) {
-        input.focus({ preventScroll: true });
       }
     };
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(focusNewRow);
+      window.requestAnimationFrame(restore);
       return;
     }
-    focusNewRow();
-  }
-
-  function removeContactDetailActivityRow(index) {
-    const nextActivity = contactDraftActivity(state.contacts.editDraft).filter((_, itemIndex) => itemIndex !== index);
-    updateContactDetailDraftAndSchedule({ activity: nextActivity }, { immediate: true, reason: "activity_remove" });
-  }
-
-  function syncContactActivityRows(refs, draft) {
-    const activity = contactDraftActivity(draft);
-    if (refs.activityRows.childElementCount !== activity.length) {
-      const fragment = document.createDocumentFragment();
-      activity.forEach((value, index) => {
-        const row = el("div", "light-contact-activity-row");
-        const input = el("input", "light-project-input light-contact-edit-input");
-        input.type = "text";
-        input.placeholder = "Activity";
-        input.dataset.contactActivityIndex = String(index);
-        input.value = String(value || "");
-        input.addEventListener("input", () => updateContactDetailActivityValue(index, input.value));
-        input.addEventListener("blur", () => {
-          void flushContactDetailAutosave({ reason: "activity_blur" });
-        });
-        const remove = el("button", "light-reminder-action-button", "Remove");
-        remove.type = "button";
-        remove.dataset.contactActivityRemove = String(index);
-        remove.addEventListener("click", event => {
-          event.preventDefault();
-          removeContactDetailActivityRow(index);
-        });
-        row.append(input, remove);
-        fragment.append(row);
-      });
-      refs.activityRows.replaceChildren(fragment);
-    }
-    Array.from(refs.activityRows.querySelectorAll("input[data-contact-activity-index]")).forEach((input, index) => {
-      syncContactInputValue(input, activity[index] || "");
-    });
-  }
-
-  function bindContactDetailTextField(control, field, blurReason) {
-    control.addEventListener("input", () => updateContactDetailDraftAndSchedule({ [field]: control.value }));
-    control.addEventListener("blur", () => {
-      void flushContactDetailAutosave({ reason: blurReason });
-    });
-  }
-
-  function syncContactDetailFieldRow(refs, value, editMode) {
-    if (!refs) {
-      return;
-    }
-    const text = normalizeContactText(value);
-    refs.row.dataset.contactFieldMode = editMode ? "edit" : "view";
-    refs.value.hidden = editMode;
-    refs.value.textContent = text;
-    refs.input.hidden = !editMode;
-    syncContactInputValue(refs.input, text);
-  }
-
-  function buildContactDetailFieldRow(icon, accentKey, label, field, type = "text") {
-    const row = el("div", "light-info-row light-contact-detail-row");
-    row.dataset.contactField = field;
-    const body = el("div", "light-contact-detail-field-body");
-    const fieldLabel = el("strong", "light-contact-detail-field-label", label);
-    const value = el("span", "light-contact-detail-field-value", "");
-    const input = document.createElement("input");
-    input.className = "light-contact-detail-field-input";
-    input.type = type;
-    input.placeholder = label;
-    input.setAttribute("aria-label", label);
-    input.dataset.contactEditField = field;
-    bindContactDetailTextField(input, field, `${field}_blur`);
-    body.append(fieldLabel, value, input);
-    row.append(lightSmallIcon(icon, accentKey), body);
-    return { row, value, input };
-  }
-
-  function openContactDetailEditMode() {
-    state.contacts.editMode = true;
-    state.contacts.editError = "";
-    syncContactDetailEditor();
-  }
-
-  function finishContactDetailEditMode() {
-    state.contacts.editMode = false;
-    syncContactDetailEditor();
-    void flushContactDetailAutosave({ reason: "done" });
-  }
-
-  function handleContactDetailBack() {
-    state.contacts.editMode = false;
-    syncContactDetailEditor();
-    lightBack();
-  }
-
-  function syncContactDetailEditor() {
-    if (!contactDetailPageRefs) {
-      return;
-    }
-    const contact = workspaceRecordByKind("contact", contactDetailPageContactId) || selectedContact();
-    if (!contact) {
-      return;
-    }
-    const draft = ensureContactEditDraft(contact);
-    const preview = contactEditPreviewRecord(contact, draft);
-    const refs = contactDetailPageRefs;
-    const contactId = contactRecordId(contact);
-    const editMode = Boolean(state.contacts.editMode);
-    const activity = contactDraftActivity(draft, contact).map(item => normalizeContactText(item)).filter(Boolean);
-    const activityKey = JSON.stringify(activity);
-    refs.page.dataset.contactId = contactId;
-    refs.page.dataset.contactDetailId = contactId;
-    refs.page.dataset.contactDetailMode = editMode ? "edit" : "view";
-    const actionButton = editMode
-      ? lightCircleButton("check", "Done editing", finishContactDetailEditMode, "light-contact-detail-done-button")
-      : lightCircleButton("edit", "Edit contact", openContactDetailEditMode, "light-contact-detail-edit-button");
-    actionButton.dataset.contactDetailAction = editMode ? "done" : "edit";
-    refs.actionSlot.replaceChildren(actionButton);
-    refs.avatarMount.replaceChildren(lightAvatar(preview, "large"));
-    refs.photoButton.hidden = !editMode;
-    refs.photoButton.setAttribute("aria-label", preview?.metadata?.photo ? "Change photo" : "Add photo");
-    refs.removePhoto.hidden = !editMode || !preview?.metadata?.photo;
-    refs.titleView.hidden = editMode;
-    refs.titleView.textContent = contactDisplayTitle(preview);
-    refs.nameEdit.hidden = !editMode;
-    syncContactInputValue(refs.firstNameInput, draft.firstName || "");
-    syncContactInputValue(refs.lastNameInput, draft.lastName || "");
-    const summaryText = normalizeContactText(draft.summary);
-    refs.summaryView.hidden = editMode || !summaryText;
-    refs.summaryView.textContent = summaryText;
-    refs.summaryInput.hidden = !editMode;
-    syncContactInputValue(refs.summaryInput, draft.summary || "");
-    refs.saveStatus.hidden = !editMode;
-    refs.saveStatus.textContent = contactEditStatusLabel();
-    refs.saveStatus.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";
-    refs.saveStatus.dataset.contactSaveState = state.contacts.editStatus || "idle";
-    syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);
-    syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);
-    if (refs.activityHost.dataset.activityKey !== activityKey) {
-      refs.activityHost.dataset.activityKey = activityKey;
-      if (!activity.length) {
-        refs.activityHost.replaceChildren();
-      } else {
-        refs.activityHost.replaceChildren(
-          lightInfoSection("Activity", activity.map(item => ({
-            icon: "chat",
-            accentKey: "notes",
-            label: "Activity",
-            value: item,
-          })))
-        );
-      }
-    }
-    if (refs.notesHost.dataset.contactId !== contactId) {
-      refs.notesHost.dataset.contactId = contactId;
-      const notes = lightLinkedNotesSection(contact);
-      refs.notesHost.replaceChildren(...(notes ? [notes] : []));
-    }
-    if (refs.connectedHost.dataset.contactId !== contactId) {
-      refs.connectedHost.dataset.contactId = contactId;
-      refs.connectedHost.replaceChildren(
-        lightLinkedRecordSection(contact, {
-          title: "Connected",
-          showWhenEmpty: true,
-          showChips: false,
-          showChevron: false,
-          variant: "flat",
-          fromRoute: "contact-detail"
-        })
-      );
-    }
-  }
-
-  let contactsPageNode = null;
-  let contactsPageRefs = null;
-  let contactDetailPageNode = null;
-  let contactDetailPageRefs = null;
-  let contactDetailPageContactId = "";
-  let contactDetailAutosaveTimer = 0;
-  const contactEditFlushWaiters = [];
-
-  function syncContactsSearchInput(refs) {
-    if (document.activeElement !== refs.search && refs.search.value !== state.contacts.search) {
-      refs.search.value = String(state.contacts.search || "");
-    }
-  }
-
-  function syncContactsPage() {
-    if (!contactsPageRefs) {
-      return;
-    }
-    const refs = contactsPageRefs;
-    const emptyMessage = "No contacts match your search.";
-    const emptyHint = "Clear the search field to see every contact again.";
-    const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
-    refs.status.replaceChildren();
-    refs.status.hidden = !status;
-    refs.searchWrap.hidden = Boolean(status);
-    if (status) {
-      refs.status.append(status);
-      refs.empty.hidden = true;
-      refs.list.hidden = true;
-      refs.list.replaceChildren();
-      return;
-    }
-    syncContactsSearchInput(refs);
-    const contacts = filteredContactsListItems();
-    refs.empty.dataset.emptyMessage = emptyMessage;
-    refs.empty.dataset.emptyHint = emptyHint;
-    refs.empty.hidden = contacts.length > 0;
-    refs.list.hidden = contacts.length === 0;
-    if (!contacts.length) {
-      refs.list.replaceChildren();
-      return;
-    }
-    const fragment = document.createDocumentFragment();
-    contacts.forEach(contact => {
-      const row = el("button", "light-contact-row light-feed-row is-flat-feed");
-      row.type = "button";
-      row.dataset.contactId = contact.id;
-      row.addEventListener("click", () => {
-        state.selectedContactId = contact.id;
-        lightNavigate("contact-detail", { from: "contacts" });
-      });
-      row.append(lightAvatar(contact), lightContactCopy(contact));
-      fragment.append(row);
-    });
-    refs.list.replaceChildren(fragment);
+    restore();
   }
 
   function lightContactsSearchField() {
@@ -6642,9 +4254,12 @@
       if (String(state.contacts.search || "") === nextValue) {
         return;
       }
+      const selectionStart = search.selectionStart;
+      const selectionEnd = search.selectionEnd;
       state.contacts.search = nextValue;
       resetLightRouteScroll();
-      syncContactsPage();
+      render();
+      queueContactsSearchFieldFocus(selectionStart, selectionEnd);
     };
     search.addEventListener("input", onSearchInput);
     search.addEventListener("search", onSearchInput);
@@ -6653,29 +4268,34 @@
   }
 
   function lightContactsPage() {
-    if (!contactsPageNode) {
-      const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
-      page.classList.add("light-contacts-page");
-      const status = el("div", "light-contacts-status");
-      status.hidden = true;
-      const searchWrap = lightContactsSearchField();
-      const empty = lightEmptyState("search", "No contacts match your search.", "Clear the search field to see every contact again.");
-      empty.hidden = true;
-      const list = el("div", "light-contact-list");
-      page.append(status, searchWrap, empty, list);
-      const search = searchWrap.querySelector(".light-contacts-search");
-      contactsPageRefs = {
-        page,
-        status,
-        searchWrap,
-        search,
-        empty,
-        list,
-      };
-      contactsPageNode = page;
+    const page = lightPage("Contacts", { onBack: () => lightNavigate("home") });
+    page.classList.add("light-contacts-page");
+    const status = lightWorkspaceStatus("contacts", "contacts", "No contacts yet");
+    if (status) {
+      page.append(status);
+      return page;
     }
-    syncContactsPage();
-    return contactsPageNode;
+    const searchWrap = lightContactsSearchField();
+    const contacts = filteredContactsListItems();
+    page.append(searchWrap);
+    if (!contacts.length) {
+      page.append(lightEmptyState("search", "No contacts match your search.", "Clear the search field to see every contact again."));
+      return page;
+    }
+    const list = el("div", "light-contact-list");
+    list.append(...contacts.map(contact => {
+      const row = el("button", "light-contact-row light-feed-row is-flat-feed");
+      row.type = "button";
+      row.dataset.contactId = contact.id;
+      row.addEventListener("click", () => {
+        state.selectedContactId = contact.id;
+        lightNavigate("contact-detail", { from: "contacts" });
+      });
+      row.append(lightAvatar(contact), lightContactCopy(contact));
+      return row;
+    }));
+    page.append(list);
+    return page;
   }
 
   function lightContactDetailPage() {
@@ -6684,136 +4304,40 @@
       return lightPage("Contact", { subtitle: "Contact not found.", detail: true });
     }
     ensureLinkedCollections(contact);
-    const contactId = contactRecordId(contact);
-    if (!contactDetailPageNode || !contactDetailPageRefs || contactDetailPageContactId !== contactId) {
-      const actionSlot = el("div", "light-nav-slot light-contact-detail-action-slot");
-      const page = lightPage("Contact", {
-        detail: true,
-        onBack: handleContactDetailBack,
-        action: actionSlot,
-      });
-      page.classList.add("light-contact-detail-page");
-      page.dataset.contactDetailId = contactId;
-      page.dataset.contactDetailShell = "classic";
-
-      const identity = el("section", "light-contact-detail-identity");
-      const avatarWell = el("div", "light-contact-detail-avatar-well");
-      const avatarMount = el("div", "light-contact-detail-avatar-mount");
-      const photoButton = el("button", "light-contact-detail-photo-button");
-      photoButton.type = "button";
-      photoButton.innerHTML = iconSvg("photo_camera");
-      const photoInput = document.createElement("input");
-      photoInput.className = "light-contact-detail-photo-input";
-      photoInput.type = "file";
-      photoInput.accept = "image/png,image/jpeg,image/webp";
-      photoInput.dataset.contactPhotoInput = "true";
-      photoInput.hidden = true;
-      photoButton.addEventListener("click", () => photoInput.click());
-      photoInput.addEventListener("change", async () => {
-        const file = photoInput.files && photoInput.files[0] ? photoInput.files[0] : null;
-        if (!file) {
-          return;
-        }
-        try {
-          updateContactDetailDraftAndSchedule(await prepareContactPhotoDraft(file), { immediate: true, reason: "photo_add" });
-        } catch (error) {
-          showToast(String(error?.message || "Could not update the selected photo."));
-        } finally {
-          photoInput.value = "";
-        }
-      });
-      const removePhoto = el("button", "light-contact-detail-photo-remove", "Remove photo");
-      removePhoto.type = "button";
-      removePhoto.dataset.contactPhotoRemove = "true";
-      removePhoto.addEventListener("click", () => {
-        updateContactDetailDraftAndSchedule({
-          photo: "",
-          photoAssetId: "",
-        }, { immediate: true, reason: "photo_remove" });
-      });
-      avatarWell.append(avatarMount, photoButton, photoInput, removePhoto);
-
-      const heroCopy = el("div", "light-contact-detail-hero-copy");
-      const titleView = el("h1", "light-contact-detail-title", "");
-      const nameEdit = el("div", "light-contact-detail-name-inputs");
-      const firstNameInput = document.createElement("input");
-      firstNameInput.className = "light-contact-detail-name-input";
-      firstNameInput.type = "text";
-      firstNameInput.placeholder = "First name";
-      firstNameInput.autocomplete = "given-name";
-      firstNameInput.setAttribute("aria-label", "First name");
-      firstNameInput.dataset.contactEditField = "first_name";
-      bindContactDetailTextField(firstNameInput, "firstName", "first_name_blur");
-      const lastNameInput = document.createElement("input");
-      lastNameInput.className = "light-contact-detail-name-input";
-      lastNameInput.type = "text";
-      lastNameInput.placeholder = "Last name";
-      lastNameInput.autocomplete = "family-name";
-      lastNameInput.setAttribute("aria-label", "Last name");
-      lastNameInput.dataset.contactEditField = "last_name";
-      bindContactDetailTextField(lastNameInput, "lastName", "last_name_blur");
-      nameEdit.append(firstNameInput, lastNameInput);
-
-      const summaryView = el("p", "light-contact-detail-summary", "");
-      const summaryInput = document.createElement("textarea");
-      summaryInput.className = "light-contact-detail-summary-input";
-      summaryInput.placeholder = "Description";
-      summaryInput.setAttribute("aria-label", "Description");
-      summaryInput.dataset.contactEditField = "summary";
-      summaryInput.rows = 3;
-      bindContactDetailTextField(summaryInput, "summary", "summary_blur");
-      const saveStatus = el("p", "light-contact-detail-save-status", "Saved");
-      saveStatus.dataset.contactAutosaveStatus = "idle";
-      saveStatus.dataset.contactSaveState = "idle";
-      heroCopy.append(titleView, nameEdit, summaryView, summaryInput, saveStatus);
-      identity.append(avatarWell, heroCopy);
-
-      const contactSection = el("section", "light-info-section");
-      contactSection.append(lightSectionTitle("Contact"));
-      const contactCard = el("div", "light-card light-info-card");
-      const emailField = buildContactDetailFieldRow("mail", "connect", "Email", "email", "email");
-      const phoneField = buildContactDetailFieldRow("phone", "contacts", "Phone", "phone", "tel");
-      contactCard.append(emailField.row, phoneField.row);
-      contactSection.append(contactCard);
-
-      const activityHost = el("div", "light-contact-detail-activity-host");
-      const notesHost = el("div", "light-contact-detail-notes-host");
-      const connectedHost = el("div", "light-contact-detail-connected");
-      page.append(identity, contactSection, activityHost, notesHost, connectedHost);
-      contactDetailPageRefs = {
-        page,
-        actionSlot,
-        avatarMount,
-        photoButton,
-        photoInput,
-        removePhoto,
-        titleView,
-        nameEdit,
-        firstNameInput,
-        lastNameInput,
-        summaryView,
-        summaryInput,
-        saveStatus,
-        emailField,
-        phoneField,
-        activityHost,
-        notesHost,
-        connectedHost,
-      };
-      contactDetailPageNode = page;
-      contactDetailPageContactId = contactId;
+    const page = lightPage("Contact", { detail: true });
+    const hero = el("section", "light-profile-card");
+    hero.append(lightAvatar(contact, "large"), el("h1", "", contact.title), el("p", "", contact.summary));
+    page.append(hero);
+    const meta = contact.metadata || {};
+    page.append(lightInfoSection("Contact", [
+      { icon: "mail", accentKey: "connect", label: "Email", value: meta.email || "" },
+      { icon: "phone", accentKey: "contacts", label: "Phone", value: meta.phone || "" },
+    ]));
+    if (Array.isArray(meta.activity) && meta.activity.length) {
+      page.append(lightInfoSection("Activity", meta.activity.map((item, index) => ({
+      icon: index === 0 ? "chat" : index === 1 ? "clock" : "calendar",
+      accentKey: index === 0 ? "notes" : index === 1 ? "meetings" : "calendar",
+      label: index === 0 ? "Last interaction" : index === 1 ? "Last meeting" : "Upcoming",
+      value: item
+      }))));
     }
-    ensureContactEditDraft(contact);
-    syncContactDetailEditor();
-    return contactDetailPageNode;
+    const notes = lightLinkedNotesSection(contact);
+    if (notes) {
+      page.append(notes);
+    }
+    const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });
+    if (linkedRows.length) {
+      page.append(lightInfoSection("Linked records", linkedRows));
+    }
+    return page;
   }
 
   function lightCalendarPage() {
     const page = lightPage("Calendar", {
-      action: lightIconButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button"),
-      headerChrome: lightDatePicker()
+      action: lightCircleButton("settings", "Calendar settings", openCalendarSettingsSheet, "light-calendar-settings-button")
     });
     page.classList.add("light-calendar-page");
+    page.append(lightDatePicker());
     page.append(lightCalendarAgendaHeading());
     const bucket = workspaceBucket("calendar-events");
     if (bucket.error) {
@@ -6964,23 +4488,22 @@
       return;
     }
     clearCalendarDayRailSelectionAnimation();
-    const targetDayKey = normalizeCalendarDateKey(dayKey) || selectedCalendarDateKey();
-    const monthKeys = calendarDayRailMonthKeys(targetDayKey);
+    const monthKeys = calendarDayRailMonthKeys(dayKey);
     strip.replaceChildren();
     state.calendarDayRailStartMonth = "";
     state.calendarDayRailEndMonth = "";
     monthKeys.forEach(monthKey => appendCalendarDayRailMonth(strip, monthKey));
     const motion = state.pendingCalendarDayRailSelectionMotion
-      && state.pendingCalendarDayRailSelectionMotion.toDayKey === targetDayKey
+      && state.pendingCalendarDayRailSelectionMotion.toDayKey === normalizeCalendarDateKey(dayKey)
       ? state.pendingCalendarDayRailSelectionMotion
       : null;
     state.pendingCalendarDayRailSelectionMotion = null;
     if (motion) {
       strip.dataset.selectionMotionSource = String(motion.source || "selection").trim() || "selection";
-      queueCalendarDayStripSelectionMotion(strip, targetDayKey, motion);
+      queueCalendarDayStripSelectionMotion(strip, dayKey, motion);
     } else {
       delete strip.dataset.selectionMotionSource;
-      queueCalendarDayStripCenter(strip, targetDayKey);
+      queueCalendarDayStripCenter(strip, dayKey);
     }
     queueCalendarDayRailContinuation(strip);
   }
@@ -7262,11 +4785,6 @@
     block.setAttribute("aria-label", event.title || "Open event");
     const openEvent = () => {
       state.selectedMeetingId = event.id;
-      state.meetingDetailSections = resetMeetingDetailSections(event.id);
-      state.meetingDetailSectionCache = {
-        ...state.meetingDetailSectionCache,
-        [String(event.id || "").trim()]: state.meetingDetailSections,
-      };
       lightNavigate("meeting-detail", { from: "calendar" });
     };
     block.addEventListener("click", event => {
@@ -7317,75 +4835,6 @@
       });
   }
 
-  function resetMeetingDetailSections(meetingId = state.selectedMeetingId) {
-    const normalizedMeetingId = String(meetingId || "").trim();
-    return {
-      meetingId: normalizedMeetingId,
-      details: true,
-      connected: false,
-    };
-  }
-
-  function ensureMeetingDetailSections(meetingId = state.selectedMeetingId) {
-    const normalizedMeetingId = String(meetingId || "").trim();
-    const current = state.meetingDetailSections;
-    if (current && current.meetingId === normalizedMeetingId) {
-      return current;
-    }
-    const cached = state.meetingDetailSectionCache?.[normalizedMeetingId];
-    if (cached && cached.meetingId === normalizedMeetingId) {
-      state.meetingDetailSections = {
-        ...cached
-      };
-      return state.meetingDetailSections;
-    }
-    if (!current || current.meetingId !== normalizedMeetingId) {
-      state.meetingDetailSections = resetMeetingDetailSections(normalizedMeetingId);
-    }
-    state.meetingDetailSectionCache = {
-      ...state.meetingDetailSectionCache,
-      [normalizedMeetingId]: state.meetingDetailSections,
-    };
-    return state.meetingDetailSections;
-  }
-
-  function meetingDetailSectionExpanded(sectionKey, meetingId = state.selectedMeetingId) {
-    const normalizedKey = String(sectionKey || "").trim().toLowerCase();
-    const sections = ensureMeetingDetailSections(meetingId);
-    return Boolean(sections?.[normalizedKey]);
-  }
-
-  function setMeetingDetailSectionExpanded(sectionKey, expanded, meetingId = state.selectedMeetingId) {
-    const normalizedKey = String(sectionKey || "").trim().toLowerCase();
-    if (!normalizedKey) {
-      return state.meetingDetailSections;
-    }
-    const sections = ensureMeetingDetailSections(meetingId);
-    state.meetingDetailSections = {
-      ...sections,
-      meetingId: String(meetingId || sections?.meetingId || "").trim(),
-      [normalizedKey]: Boolean(expanded),
-    };
-    state.meetingDetailSectionCache = {
-      ...state.meetingDetailSectionCache,
-      [state.meetingDetailSections.meetingId]: state.meetingDetailSections,
-    };
-    return state.meetingDetailSections;
-  }
-
-  function toggleMeetingDetailSection(sectionKey) {
-    const meetingId = String(state.selectedMeetingId || "").trim();
-    if (!meetingId) {
-      return;
-    }
-    setMeetingDetailSectionExpanded(
-      sectionKey,
-      !meetingDetailSectionExpanded(sectionKey, meetingId),
-      meetingId
-    );
-    render();
-  }
-
   function lightMeetingDetailPage() {
     const meeting = selectedMeeting();
     if (!meeting) {
@@ -7399,11 +4848,21 @@
     if (calendarEventNeedsContacts(meeting) && !contactBucket.loaded && !contactBucket.loading) {
       void loadWorkspaceCollection("contacts", { render: true });
     }
-    ensureMeetingDetailSections(meeting.id);
     const page = lightPage(meeting.title || "Event", { detail: true });
     page.classList.add("light-document-page", "light-event-document", "light-event-detail-page");
     page.append(lightCalendarEventDetailsSection(meeting, attendees));
-    page.append(lightMeetingDetailConnectedSection(meeting));
+    if (String(meeting.summary || "").trim()) {
+      page.append(lightCopySection("Description", meeting.summary));
+    }
+    const chips = lightCalendarEventChips(meeting, { fromRoute: "meeting-detail", excludeContacts: true });
+    if (chips) {
+      const section = el("section", "light-info-section");
+      section.append(lightSectionTitle("Connected"));
+      const card = el("div", `light-card light-attendee-chip-card light-event-connected-card ${calendarEventTone(meeting)}`.trim());
+      card.append(chips);
+      section.append(card);
+      page.append(section);
+    }
     if (Array.isArray(meta.agenda) && meta.agenda.length) {
       page.append(lightListSection("Agenda", meta.agenda));
     }
@@ -7414,278 +4873,52 @@
   }
 
   function lightCalendarEventDetailsSection(event, attendees = calendarEventPeople(event)) {
-    void attendees;
-    const card = el("div", "light-calendar-detail-card light-calendar-event-detail-card");
+    const section = el("section", "light-calendar-detail-section");
+    section.append(lightSectionTitle("Details"));
+    const card = el("div", "light-calendar-detail-card");
     card.append(
-      lightCalendarDetailRow("when", "When", calendarEventCompactWhenLabel(event), { compact: true })
+      lightCalendarDetailRow("when", "When", `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`)
     );
     const recognized = calendarEventChipTargets(event, { contactsOnly: true });
-    if (recognized.length) {
-      const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
-      recognized.forEach(entry => cloud.append(lightCalendarContactChip(entry, { fromRoute: "meeting-detail" })));
-      card.append(lightCalendarDetailRow("who", "Who", cloud, {
-        compact: true,
-        valueClassName: "light-calendar-detail-people",
-      }));
+    const guests = attendees
+      .filter(person => !person.recognized)
+      .map(person => String(person?.fullLabel || person?.label || "").trim())
+      .filter(Boolean);
+    if (recognized.length || guests.length) {
+      const who = el("div", "light-calendar-detail-row");
+      who.dataset.detailRow = "who";
+      const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");
+      if (recognized.length) {
+        const cloud = el("div", "light-attendee-chip-cloud");
+        recognized.forEach(entry => cloud.append(lightRecordChip(entry, { fromRoute: "meeting-detail" })));
+        value.append(cloud);
+      }
+      if (guests.length) {
+        value.append(el("p", "light-calendar-detail-guest-list", guests.join(", ")));
+      }
+      who.append(el("strong", "light-calendar-detail-row-label", "Who"), value);
+      card.append(who);
     }
     const place = String(event?.metadata?.place || "").trim();
-    const address = String(event?.metadata?.address || "").trim();
-    const locationValue = lightCalendarLocationValue(place, address);
-    if (place || address) {
-      card.append(lightCalendarDetailRow("place", "Location", locationValue, {
-        compact: true,
-        valueClassName: "light-calendar-detail-location-value",
-      }));
+    if (place) {
+      card.append(lightCalendarDetailRow("place", "Place", place));
     }
     const eventTimeZone = String(event?.metadata?.time_zone || "").trim();
     if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
-      card.append(lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone, { compact: true }));
+      card.append(lightCalendarDetailRow("time-zone", "Time zone", eventTimeZone));
     }
-    const description = String(event?.summary || "").trim();
-    if (description) {
-      card.append(lightCalendarDetailDescription(description));
-    }
-    return lightMeetingDetailSection("Details", "details", card, {
-      expanded: meetingDetailSectionExpanded("details", event?.id),
-      sectionClassName: "light-calendar-detail-section"
-    });
-  }
-
-  function lightCalendarDetailRow(rowKey, label, value, options = {}) {
-    const row = el("div", "light-calendar-detail-row");
-    if (options.compact) {
-      row.classList.add("is-compact");
-    }
-    const valueClassName = ["light-calendar-detail-row-value", String(options.valueClassName || "").trim()].filter(Boolean).join(" ");
-    const valueNode = el("div", valueClassName);
-    if (value instanceof Node) {
-      valueNode.append(value);
-    } else {
-      valueNode.textContent = String(value ?? "").trim();
-    }
-    row.dataset.detailRow = String(rowKey || label || "").trim().toLowerCase();
-    row.append(
-      el("strong", "light-calendar-detail-row-label", label),
-      valueNode
-    );
-    return row;
-  }
-
-  function lightCalendarLocationValue(place, address) {
-    const primary = String(place || "").trim();
-    const secondary = String(address || "").trim();
-    const block = el("div", "light-calendar-detail-location");
-    if (primary) {
-      block.append(el("span", "light-calendar-detail-location-primary", primary));
-    }
-    if (secondary) {
-      block.append(el("span", "light-calendar-detail-location-address", secondary));
-    }
-    return block;
-  }
-
-  function lightCalendarDetailDescription(description) {
-    const block = el("div", "light-calendar-detail-description");
-    block.dataset.detailRow = "description";
-    const paragraph = el("p", "light-calendar-detail-description-copy");
-    appendCalendarDescriptionNodes(paragraph, description);
-    block.append(paragraph);
-    return block;
-  }
-
-  function normalizeCalendarDescriptionUrl(url) {
-    let href = String(url || "").trim();
-    let trailingText = "";
-    while (href && /[.,!?;:]$/.test(href)) {
-      trailingText = `${href.slice(-1)}${trailingText}`;
-      href = href.slice(0, -1);
-    }
-    if (!href) {
-      return { href: "", trailingText };
-    }
-    try {
-      const parsed = new URL(href, window.location && window.location.href ? window.location.href : undefined);
-      if (!/^https?:$/i.test(String(parsed.protocol || ""))) {
-        return { href: "", trailingText: String(url || "") };
-      }
-      return { href: parsed.toString(), trailingText };
-    } catch (_) {
-      return { href: "", trailingText: String(url || "") };
-    }
-  }
-
-  async function openExternalBrowserUrl(url) {
-    const href = String(url || "").trim();
-    if (!href) {
-      return false;
-    }
-    try {
-      const parsed = new URL(href, window.location && window.location.href ? window.location.href : undefined);
-      if (!/^https?:$/i.test(String(parsed.protocol || ""))) {
-        return false;
-      }
-    } catch (_) {
-      return false;
-    }
-    try {
-      if (
-        window.PuckyAndroid
-        && typeof window.PuckyAndroid.postMessage === "function"
-        && typeof Pucky !== "undefined"
-        && Pucky
-        && typeof Pucky.request === "function"
-      ) {
-        const result = await Pucky.request({ command: "browser.open", args: { url: href } });
-        if (result && result.launched) {
-          return true;
-        }
-      }
-    } catch (_) {
-      // Fall back to the browser APIs below when the bridge is unavailable.
-    }
-    try {
-      if (typeof window.open === "function") {
-        const popup = window.open(href, "_blank", "noopener,noreferrer");
-        if (popup) {
-          return true;
-        }
-      }
-    } catch (_) {
-      // Leave the Pucky shell in place when popup creation is unavailable.
-    }
-    return false;
-  }
-
-  function lightCalendarDescriptionLink(url) {
-    const href = String(url || "").trim();
-    const link = document.createElement("a");
-    link.className = "light-calendar-detail-description-link";
-    link.href = href;
-    link.rel = "noopener noreferrer";
-    link.target = "_blank";
-    link.textContent = href;
-    link.addEventListener("click", event => {
-      if (
-        window.PuckyAndroid
-        && typeof window.PuckyAndroid.postMessage === "function"
-        && typeof Pucky !== "undefined"
-        && Pucky
-        && typeof Pucky.request === "function"
-      ) {
-        event.preventDefault();
-        void openExternalBrowserUrl(href);
-      }
-    });
-    return link;
-  }
-
-  function appendCalendarDescriptionNodes(container, description) {
-    const text = String(description || "").trim();
-    container.replaceChildren();
-    if (!text) {
-      return;
-    }
-    CALENDAR_DESCRIPTION_URL_PATTERN.lastIndex = 0;
-    let cursor = 0;
-    let linked = false;
-    for (const match of text.matchAll(CALENDAR_DESCRIPTION_URL_PATTERN)) {
-      const rawMatch = String(match[0] || "");
-      const start = Number(match.index || 0);
-      if (start > cursor) {
-        container.append(document.createTextNode(text.slice(cursor, start)));
-      }
-      const { href, trailingText } = normalizeCalendarDescriptionUrl(rawMatch);
-      if (href) {
-        container.append(lightCalendarDescriptionLink(href));
-        linked = true;
-      } else {
-        container.append(document.createTextNode(rawMatch));
-      }
-      if (trailingText) {
-        container.append(document.createTextNode(trailingText));
-      }
-      cursor = start + rawMatch.length;
-    }
-    if (!linked) {
-      container.textContent = text;
-      return;
-    }
-    if (cursor < text.length) {
-      container.append(document.createTextNode(text.slice(cursor)));
-    }
-  }
-
-  function lightMeetingDetailConnectedSection(meeting) {
-    const entries = workspaceLinkedEntries(meeting, {
-      excludeKinds: ["contact"],
-    });
-    const list = el("div", "light-linked-record-list light-feed-section-body light-feed-list light-card is-flat-feed");
-    list.dataset.linkedRecordsCount = String(entries.length);
-    if (!entries.length) {
-      list.append(el("div", "light-linked-records-empty-shell is-flat-feed"));
-    } else {
-      entries.forEach(entry => list.append(lightLinkedRecordFeedRow(entry, {
-        fromRoute: "meeting-detail",
-        showChips: false,
-        showChevron: false,
-        variant: "flat",
-      })));
-    }
-    return lightMeetingDetailSection("Connected", "connected", list, {
-      expanded: meetingDetailSectionExpanded("connected", meeting?.id),
-      count: entries.length,
-      sectionClassName: "light-linked-records-section is-flat-feed",
-      linkedRecordsTitle: "connected",
-    });
-  }
-
-  function lightMeetingDetailSection(title, sectionKey, bodyContent, options = {}) {
-    const normalizedTitle = String(title || "").trim();
-    const normalizedKey = String(sectionKey || normalizedTitle).trim().toLowerCase();
-    const expanded = options.expanded !== false;
-    const sectionClassName = `light-feed-section light-meeting-detail-section ${String(options.sectionClassName || "").trim()}`.trim();
-    const section = el("section", sectionClassName);
-    section.dataset.meetingDetailSection = normalizedKey;
-    if (options.linkedRecordsTitle) {
-      section.dataset.linkedRecordsTitle = String(options.linkedRecordsTitle || "").trim().toLowerCase();
-    }
-    const controlsId = `light-meeting-detail-section-${normalizedKey}`;
-    section.append(lightMeetingDetailSectionHeader(normalizedTitle, normalizedKey, options.count, expanded, controlsId));
-    const body = el("div", "light-meeting-detail-section-body");
-    body.id = controlsId;
-    body.hidden = !expanded;
-    if (bodyContent instanceof Node) {
-      body.append(bodyContent);
-    }
-    section.append(body);
+    section.append(card);
     return section;
   }
 
-  function lightMeetingDetailSectionHeader(title, sectionKey, count, expanded, controlsId) {
-    const button = el("button", expanded ? "light-feed-section-header light-meeting-detail-section-header is-expanded" : "light-feed-section-header light-meeting-detail-section-header");
-    button.type = "button";
-    button.dataset.meetingDetailSection = String(sectionKey || "").trim().toLowerCase();
-    button.setAttribute("aria-expanded", String(expanded));
-    button.setAttribute("aria-controls", controlsId);
-    button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${String(title || sectionKey || "section").trim().toLowerCase()}`);
-    button.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleMeetingDetailSection(sectionKey);
-    });
-    const copy = el("span", "light-meeting-detail-section-copy");
-    copy.append(el("span", "light-section-title light-meeting-detail-section-title", String(title || "").trim().toUpperCase()));
-    if (Number.isFinite(Number(count))) {
-      copy.append(el("span", "light-meeting-detail-section-count", String(Number(count))));
-    }
-    const chevron = el("span", "light-meeting-detail-section-chevron");
-    chevron.innerHTML = iconSvg(expanded ? "expand_more" : "chevron_right");
-    button.append(copy, chevron);
-    return button;
-  }
-
-  function lightGuestAttendeeChip(label) {
-    return el("span", "light-attendee-chip light-attendee-chip-guest", String(label || "").trim());
+  function lightCalendarDetailRow(rowKey, label, value) {
+    const row = el("div", "light-calendar-detail-row");
+    row.dataset.detailRow = String(rowKey || label || "").trim().toLowerCase();
+    row.append(
+      el("strong", "light-calendar-detail-row-label", label),
+      el("div", "light-calendar-detail-row-value", value)
+    );
+    return row;
   }
 
   function normalizeUniversalFeedTileDescriptor(descriptor = {}) {
@@ -7750,9 +4983,6 @@
     }
     if (surface === "reminders") {
       return "light-list light-graph-list";
-    }
-    if (surface === "projects") {
-      return "light-list";
     }
     if (surface === "meetings") {
       return "meetings-list-card";
@@ -7870,7 +5100,6 @@
         rowClassName: descriptor.meta?.rowClassName || "",
         showLeadingIcon: descriptor.leading?.show !== false,
         showTrailingChevron: descriptor.trailing?.show !== false,
-        showChips: descriptor.meta?.showChips !== false,
         flatFeed: descriptor.renderMode === "flat",
         icon: descriptor.leading?.icon || graphKindIcon(record?.kind),
         detailRoute: descriptor.meta?.detailRoute || "",
@@ -7936,8 +5165,7 @@
         rowClassName: String(options.rowClassName || "").trim(),
         detailRoute: String(options.detailRoute || "").trim(),
         selectedKey: String(options.selectedKey || "").trim(),
-        collection: String(options.collection || "").trim(),
-        showChips: options.showChips !== false,
+        collection: String(options.collection || "").trim()
       },
       summary: graphListLabel(record),
       chips: graphObjectChipValues(record),
@@ -8044,158 +5272,37 @@
       emptyTitle: "No meeting notes yet",
       rowClassName: "light-graph-row-meeting-notes",
       showLeadingIcon: false,
-      showTrailingChevron: false,
-      showChips: false,
+      showTrailingChevron: false
     });
   }
 
   function lightMeetingNoteDetailPage() {
     const meeting = selectedMeetingNote();
-    if (!meeting) {
-      return lightPage("Meeting Note", { subtitle: "Meeting note not found.", detail: true });
-    }
-    void ensureWorkspaceRecordSeen("meeting-notes", meeting);
-    ensureMeetingNoteSupportingCollections(meeting);
-    const page = lightPage(meeting.title || "Meeting Note", { detail: true });
-    page.classList.add("light-document-page", "light-meeting-note-detail-page");
-    const summary = String(meeting.summary || "").trim();
-    if (summary) {
-      page.append(el("p", "light-event-summary-copy light-meeting-note-summary", summary));
-    }
-    page.append(lightMeetingNoteDetailsSection(meeting));
-    page.append(lightLinkedRecordSection(meeting, {
-      title: "Connected",
-      excludeKinds: ["contact"],
-      showWhenEmpty: true,
-      fromRoute: "meeting-note-detail",
-      dedupeTargets: true,
-      showChips: false,
-      showChevron: false,
-      variant: "flat",
-      detailResolver: meetingNoteConnectedDetail,
-    }));
-    return page;
-  }
-
-  function ensureMeetingNoteSupportingCollections(meeting) {
-    ensureLinkedCollections(meeting);
-    const meta = meeting?.metadata || {};
-    const participants = Array.isArray(meta.participants)
-      ? meta.participants.map(value => String(value || "").trim()).filter(Boolean)
-      : [];
-    const contactBucket = workspaceBucket("contacts");
-    if (participants.length && contactBucket && !contactBucket.loaded && !contactBucket.loading) {
-      void loadWorkspaceCollection("contacts", { render: true });
-    }
-    const sourceKind = String(meta.source_kind || "calendar_event").trim();
-    const sourceId = String(meta.source_id || meta.source || "").trim();
-    const sourceCollection = workspaceCollectionForKind(sourceKind);
-    const sourceBucket = sourceCollection ? workspaceBucket(sourceCollection) : null;
-    if (sourceId && sourceCollection && sourceBucket && !sourceBucket.loaded && !sourceBucket.loading) {
-      void loadWorkspaceCollection(sourceCollection, { render: true });
-    }
-  }
-
-  function lightMeetingNoteDetailsSection(meeting) {
-    const section = el("section", "light-calendar-detail-section light-meeting-note-details-section");
-    section.append(lightSectionTitle("Details"));
-    const card = el("div", "light-calendar-detail-card");
-    card.append(lightMeetingNoteDetailRow("when", "When", meetingTimeLabel(meeting)));
-    const who = lightMeetingNoteWhoRow(meeting);
-    if (who) {
-      card.append(who);
-    }
-    section.append(card);
-    return section;
-  }
-
-  function lightMeetingNoteDetailRow(rowKey, label, value, options = {}) {
-    const target = options?.target || null;
-    const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
-    const row = el(
-      isInteractive ? "button" : "div",
-      [
-        "light-calendar-detail-row",
-        "light-meeting-note-detail-row",
-        isInteractive ? "is-clickable" : "",
-      ].filter(Boolean).join(" ")
-    );
-    row.dataset.detailRow = String(rowKey || label || "").trim().toLowerCase();
-    if (isInteractive) {
-      row.type = "button";
-      row.dataset.workspaceTargetRoute = target.route;
-      row.dataset.workspaceTargetId = target.id;
-      row.dataset.workspaceTargetKind = target.kind || "";
-      row.addEventListener("click", () => openWorkspaceTarget(
-        target,
-        options.fromRoute || state.route || "",
-        options.openOptions || {}
-      ));
-    }
-    row.append(
-      el("strong", "light-calendar-detail-row-label", label),
-      el("div", "light-calendar-detail-row-value", String(value || "").trim())
-    );
-    return row;
-  }
-
-  function meetingNoteAttendeeEntries(meeting) {
-    const participants = Array.isArray(meeting?.metadata?.participants) ? meeting.metadata.participants : [];
-    const seen = new Set();
-    const entries = [];
-    participants.forEach(value => {
-      const label = String(value || "").trim();
-      const key = label.toLowerCase();
-      if (!label || seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      const contact = workspaceContactByName(label);
-      const target = contact ? workspaceTargetForKind("contact", contact.id) : null;
-      entries.push({
-        label: contact ? calendarContactChipLabel(contact) : label,
-        fullLabel: contact ? String(contact.title || contact.metadata?.display_name || label).trim() || label : label,
-        contact: contact || null,
-        target,
-        recognized: Boolean(target),
-      });
+    return lightGraphDetailPage(meeting, {
+      title: "Meeting Note",
+      eyebrow: "Graph meeting",
+      icon: "record_voice_over",
+      rows: meetingNoteDetailRows(meeting),
+      fallback: "No generated meeting note page yet."
     });
-    return entries;
-  }
-
-  function lightMeetingNoteWhoRow(meeting) {
-    const attendees = meetingNoteAttendeeEntries(meeting);
-    if (!attendees.length) {
-      return null;
-    }
-    const row = el("div", "light-calendar-detail-row light-meeting-note-detail-row");
-    row.dataset.detailRow = "who";
-    const value = el("div", "light-calendar-detail-row-value light-calendar-detail-people");
-    const cloud = el("div", "light-chip-cloud light-attendee-chip-cloud");
-    attendees.forEach(entry => {
-      if (entry.target) {
-        cloud.append(lightCalendarContactChip(entry, { fromRoute: "meeting-note-detail" }));
-        return;
-      }
-      cloud.append(lightGuestAttendeeChip(entry.label));
-    });
-    value.append(cloud);
-    row.append(el("strong", "light-calendar-detail-row-label", "Who"), value);
-    return row;
   }
 
   function lightRemindersPage() {
     const status = lightWorkspaceStatus("reminders", "bell", "No reminders yet");
     const reminders = chronologicalReminders();
     const active = reminders.filter(reminder => reminderIsActive(reminder));
-    const live = active.filter(reminder => reminderIsLive(reminder));
-    const upcoming = active.filter(reminder => !reminderIsLive(reminder));
+    const now = active.filter(reminder => reminderIsNow(reminder));
+    const upcoming = active.filter(reminder => !reminderIsNow(reminder));
+    const snoozed = reminders.filter(reminder => reminderIsSnoozed(reminder));
     const sections = [];
-    if (live.length) {
-      sections.push(lightReminderListSection("Live", live, "live"));
+    if (now.length) {
+      sections.push(lightReminderListSection("Now", now, "now"));
     }
     if (upcoming.length) {
       sections.push(lightReminderListSection("Upcoming", upcoming, "upcoming"));
+    }
+    if (snoozed.length) {
+      sections.push(lightReminderListSection("Snoozed", snoozed, "snoozed"));
     }
     return renderUniversalFeedPage({
       title: "Reminders",
@@ -8281,10 +5388,7 @@
     if (leadingIcon) {
       row.append(leadingIcon);
     }
-    row.append(lightTextStack(record.title, graphListLabel(record)));
-    if (options.showChips !== false) {
-      row.append(graphObjectChips(record));
-    }
+    row.append(lightTextStack(record.title, graphListLabel(record)), graphObjectChips(record));
     if (trailingChevron) {
       row.append(trailingChevron);
     }
@@ -8298,7 +5402,6 @@
     const row = el("button", ["light-card", "light-feed-row", "light-reminder-row", group || "", deliveryClass, flatFeed ? "is-flat-feed" : ""].filter(Boolean).join(" "));
     const copy = el("span", "light-text-stack");
     const secondaryCopy = reminderListSecondaryCopy(reminder);
-    const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");
     copy.append(el("strong", "", reminder.title || "Untitled reminder"));
     if (secondaryCopy) {
       copy.append(el("span", "light-reminder-row-summary", secondaryCopy));
@@ -8306,7 +5409,6 @@
     row.type = "button";
     row.dataset.recordId = reminder.id;
     row.dataset.reminderId = reminder.id;
-    row.dataset.reminderState = reminderState;
     row.addEventListener("click", () => {
       state.selectedReminderId = reminder.id;
       lightNavigate("reminder-detail", { from: "reminders" });
@@ -8314,28 +5416,9 @@
     row.append(
       lightSmallIcon("bell", "reminders"),
       copy,
-      lightReminderRowEnd(reminder)
+      el("span", "light-reminder-time", reminderRowLabel(reminder))
     );
     return row;
-  }
-
-  function lightReminderRowEnd(reminder) {
-    const countdown = reminderSnoozeCountdown(reminder);
-    if (countdown) {
-      const wrap = el("span", "light-reminder-countdown");
-      wrap.dataset.reminderCountdown = "true";
-      wrap.dataset.reminderProgress = countdown.progress.toFixed(3);
-      wrap.dataset.reminderRemainingMs = String(countdown.remainingMs);
-      wrap.setAttribute("aria-label", `Snoozed for ${countdown.label} more, until ${countdown.untilLabel}`);
-      wrap.title = `Snoozed until ${countdown.untilLabel}`;
-      wrap.style.setProperty("--progress", countdown.progress.toFixed(3));
-      wrap.append(
-        el("span", "light-reminder-countdown-ring"),
-        el("span", "light-reminder-countdown-label", countdown.label)
-      );
-      return wrap;
-    }
-    return el("span", "light-reminder-time", reminderRowLabel(reminder));
   }
 
   function chronologicalReminders() {
@@ -8433,21 +5516,71 @@
     return rows;
   }
 
-  function meetingNoteConnectedDetail(entry) {
-    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
-    const kindLabel = graphKindLabel(kind);
-    const related = entry?.related || null;
-    if (!related) {
-      return String(entry?.relation || kindLabel).trim() || kindLabel;
+  function meetingNoteDetailRows(meeting) {
+    const meta = meeting?.metadata || {};
+    const participants = Array.isArray(meta.participants) ? meta.participants : [];
+    const sourceKind = String(meta.source_kind || "calendar_event").trim();
+    const sourceId = String(meta.source_id || meta.source || "").trim();
+    const rows = [
+      { icon: "clock", label: "When", value: meetingTimeLabel(meeting) }
+    ];
+    if (sourceId) {
+      rows.push({
+        icon: graphKindIcon(sourceKind),
+        label: "Source",
+        value: workspaceTargetLabel(sourceKind, sourceId),
+        target: workspaceTargetForKind(sourceKind, sourceId)
+      });
     }
-    if (kind === "calendar_event") {
-      return calendarConnectedTileTimestampLabel(related);
+    if (participants.length) {
+      participants.forEach((name, index) => rows.push({
+        icon: "contacts",
+        label: index === 0 ? "Attendees" : "Also",
+        value: name,
+        target: workspaceContactTargetByName(name)
+      }));
+    } else {
+      rows.push({ icon: "contacts", label: "Attendees", value: "No attendees tagged" });
     }
-    const timestamp = kind === "note"
-      ? noteTimestampLabel(related)
-      : workspaceTimestamp(linkedRecordRecencyMs(kind, related), "");
-    const summary = String(related?.summary || "").trim();
-    return [kindLabel, timestamp, summary].filter(Boolean).join(DOT);
+    rows.push({
+      icon: "note",
+      label: "Topics",
+      value: Array.isArray(meta.extracted_topics) && meta.extracted_topics.length ? meta.extracted_topics.join(", ") : "No topics yet"
+    });
+    return rows;
+  }
+
+  function reminderDetailRows(reminder) {
+    return [
+      {
+        icon: "clock",
+        accentKey: "reminders",
+        label: "When",
+        value: reminderScheduleLabel(reminder),
+        className: "light-reminder-detail-tile is-when",
+        dataset: { reminderDetailTile: "when" }
+      }
+    ];
+  }
+
+  function reminderRecipientRows(reminder) {
+    return reminderRecipients(reminder)
+      .slice()
+      .sort((left, right) => {
+        const leftSelf = String(left?.kind || "").trim().toLowerCase() === "self";
+        const rightSelf = String(right?.kind || "").trim().toLowerCase() === "self";
+        if (leftSelf !== rightSelf) {
+          return leftSelf ? -1 : 1;
+        }
+        return reminderRecipientDisplayName(left).localeCompare(reminderRecipientDisplayName(right));
+      })
+      .map(recipient => ({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: reminderRecipientDisplayName(recipient),
+        value: recipient.kind === "self" ? "System notification" : "Reminder recipient",
+        target: workspaceTargetForKind("contact", recipient.kind === "self" ? SELF_CONTACT_ID : (recipient.contactId || recipient.id))
+      }));
   }
 
   function reminderDestinationRows(reminder) {
@@ -8611,7 +5744,7 @@
     const rows = [{
       icon: "clock",
       label: "When",
-      value: calendarEventCompactWhenLabel(event)
+      value: `${calendarEventDayLabel(event)}${DOT}${calendarEventTimeRange(event)}`
     }];
     const place = String(meta.place || "").trim();
     if (place) {
@@ -8621,15 +5754,15 @@
     if (eventTimeZone && eventTimeZone !== calendarEffectiveTimeZone()) {
       rows.push({ icon: "globe", label: "Time zone", value: eventTimeZone });
     }
-    const recognized = attendees
-      .filter(person => person?.recognized && person?.target)
-      .map(person => String(person?.label || person?.fullLabel || "").trim())
+    const guests = attendees
+      .filter(person => !person.recognized)
+      .map(person => String(person?.fullLabel || person?.label || "").trim())
       .filter(Boolean);
-    if (recognized.length) {
+    if (guests.length) {
       rows.push({
         icon: "contacts",
-        label: "Who",
-        value: recognized.join(", ")
+        label: guests.length === 1 ? "Guest" : "Guests",
+        value: guests.join(", ")
       });
     }
     return rows;
@@ -8659,7 +5792,7 @@
     }
     const delta = due - Date.now();
     if (delta < 0) {
-      return "Live";
+      return "Now";
     }
     if (delta <= 60 * 60 * 1000) {
       return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
@@ -8780,18 +5913,6 @@
     return String(recipient.label || contact?.title || contactId || "Contact").trim() || "Contact";
   }
 
-  function reminderRecipientSecondaryCopy(recipient) {
-    if (!recipient) {
-      return "";
-    }
-    if (String(recipient.kind || "").trim().toLowerCase() === "self") {
-      return "";
-    }
-    const contactId = String(recipient.contactId || recipient.id || "").trim();
-    const contact = contactId ? workspaceRecordByKind("contact", contactId) : null;
-    return String(contact?.summary || "").trim();
-  }
-
   function reminderDetailLinkedRows(reminder, options = {}) {
     const currentKind = String(reminder?.kind || "");
     const currentId = String(reminder?.id || reminder?.record_id || "");
@@ -8840,6 +5961,14 @@
     return rows;
   }
 
+  function reminderDetailRecipientFeedRows(reminder) {
+    return reminderRecipientRows(reminder).map(row => ({
+      ...row,
+      className: "light-reminder-detail-tile is-recipient",
+      dataset: { reminderDetailTile: "recipient" },
+    }));
+  }
+
   function reminderDetailLinkedNoteRows(reminder) {
     return reminderDetailLinkedRows(reminder, {
       includeKinds: ["note"],
@@ -8871,6 +6000,8 @@
 
   function reminderDetailFeedRows(reminder) {
     return [
+      ...reminderDetailRows(reminder),
+      ...reminderDetailRecipientFeedRows(reminder),
       ...reminderDetailLinkedNoteRows(reminder),
       ...reminderDetailLinkedRecordRows(reminder),
     ];
@@ -8890,10 +6021,16 @@
     return section;
   }
 
+  function lightReminderStatusRow(reminder) {
+    const row = el("div", "light-reminder-status-row");
+    row.append(
+      el("span", "light-pill", `Status: ${reminderStatusLabel(reminder)}`),
+      el("span", "light-pill", `Delivery: ${reminderDeliveryLabel(reminder)}`)
+    );
+    return row;
+  }
+
   function lightReminderActionRow(reminder) {
-    if (!reminderIsLive(reminder)) {
-      return null;
-    }
     const reminderId = reminderRecordId(reminder);
     const donePending = reminderMutationPending(reminderId, "done");
     const snoozePending = reminderMutationPending(reminderId, "snooze");
@@ -8901,34 +6038,45 @@
     const row = el("div", "light-reminder-action-row");
     row.dataset.reminderActionRow = "true";
 
-    const dismissButton = el("button", "light-pill light-reminder-action-button is-primary", "Dismiss");
-    dismissButton.type = "button";
-    dismissButton.dataset.reminderAction = "dismiss";
-    dismissButton.disabled = pending || reminderIsDismissed(reminder);
-    dismissButton.addEventListener("click", event => {
+    const doneButton = el("button", "light-pill light-reminder-action-button is-primary", "Done");
+    doneButton.type = "button";
+    doneButton.dataset.reminderAction = "done";
+    doneButton.disabled = pending || reminderIsDismissed(reminder);
+    doneButton.addEventListener("click", event => {
       event.preventDefault();
-      void dismissReminder(reminder);
+      void markReminderDone(reminder);
     });
 
-    const snoozeButton = el("button", "light-pill light-reminder-action-button", "Snooze");
+    const snoozeButton = el("button", "light-pill light-reminder-action-button", "Snooze 10 min");
     snoozeButton.type = "button";
-    snoozeButton.dataset.reminderAction = "snooze";
+    snoozeButton.dataset.reminderAction = "snooze_10";
     snoozeButton.disabled = pending || reminderIsDismissed(reminder);
     snoozeButton.addEventListener("click", event => {
       event.preventDefault();
-      void snoozeReminder(reminder, Date.now() + 90_000);
+      void snoozeReminder(reminder, Date.now() + (10 * 60 * 1000));
     });
 
-    row.append(dismissButton, snoozeButton);
+    const selectorButton = el("button", "light-pill light-reminder-action-button is-selector", "Snooze...");
+    selectorButton.type = "button";
+    selectorButton.dataset.reminderAction = "snooze_selector";
+    selectorButton.setAttribute("aria-haspopup", "dialog");
+    selectorButton.disabled = pending || reminderIsDismissed(reminder);
+    selectorButton.addEventListener("click", event => {
+      event.preventDefault();
+      openReminderSnoozeSelector(reminder);
+    });
+
+    row.append(doneButton, snoozeButton, selectorButton);
     return row;
   }
 
   function lightReminderDetailCard(reminder) {
     const card = el("section", `light-card light-reminder-detail-card ${reminderDeliveryClass(reminder)}`.trim());
     card.dataset.reminderDetailCard = "true";
-    card.dataset.reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");
     const identity = el("div", "light-reminder-detail-identity");
     const copy = el("div", "light-reminder-detail-copy");
+    const statusLabel = `Status: ${reminderStatusLabel(reminder)}`;
+    const deliveryLabel = `Delivery: ${reminderDeliveryLabel(reminder)}`;
     copy.append(
       el("span", "light-reminder-detail-eyebrow", reminderDetailEyebrow(reminder)),
       el("strong", "light-reminder-detail-title", reminder.title || "Untitled reminder")
@@ -8938,11 +6086,14 @@
       copy.append(el("p", "light-reminder-detail-summary", summary));
     }
     identity.append(lightSmallIcon("bell", "reminders"), copy);
-    card.append(identity);
-    const actionRow = lightReminderActionRow(reminder);
-    if (actionRow) {
-      card.append(actionRow);
+    const statusRow = lightReminderStatusRow(reminder);
+    if (statusRow?.children?.[0]) {
+      statusRow.children[0].textContent = statusLabel;
     }
+    if (statusRow?.children?.[1]) {
+      statusRow.children[1].textContent = deliveryLabel;
+    }
+    card.append(identity, statusRow, lightReminderActionRow(reminder));
     return card;
   }
 
@@ -8950,25 +6101,25 @@
     if (reminderIsSentHistory(reminder)) {
       return "sent";
     }
-    if (reminderIsLive(reminder)) {
-      return "live";
+    if (reminderIsSnoozed(reminder)) {
+      return "snoozed";
     }
-    if (reminderIsActive(reminder)) {
-      return "upcoming";
+    const due = Number(reminder?.due_at_ms || 0);
+    if (Number.isFinite(due) && due > 0 && due <= Date.now()) {
+      return "now";
+    }
+    if (Number.isFinite(due) && due > 0) {
+      return "active";
     }
     return "unscheduled";
   }
 
-  function reminderIsLive(reminder) {
-    if (!reminderIsActive(reminder) || reminderIsSnoozed(reminder)) {
+  function reminderIsNow(reminder) {
+    if (!reminderIsActive(reminder)) {
       return false;
     }
     const due = Number(reminder?.due_at_ms || 0);
     return Number.isFinite(due) && due > 0 && due <= Date.now();
-  }
-
-  function reminderIsNow(reminder) {
-    return reminderIsLive(reminder);
   }
 
   function reminderClockLabel(ms, options = {}) {
@@ -8995,7 +6146,7 @@
       return summary;
     }
     if (reminderIsSnoozed(reminder)) {
-      return `Snoozed until ${reminderClockLabel(Number(reminder?.due_at_ms || 0))}`;
+      return "Snoozed reminder";
     }
     return "Personal reminder";
   }
@@ -9007,7 +6158,7 @@
     }
     const delta = due - Date.now();
     if (delta <= 0) {
-      return "Live";
+      return "Now";
     }
     if (delta <= 60 * 60 * 1000) {
       return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
@@ -9033,10 +6184,7 @@
 
   function reminderDetailEyebrow(reminder) {
     if (reminderIsSnoozed(reminder)) {
-      return `Snoozed until ${reminderClockLabel(Number(reminder?.due_at_ms || 0))}`;
-    }
-    if (reminderIsLive(reminder)) {
-      return `Live${DOT}${reminderScheduleLabel(reminder)}`;
+      return reminderDueLabel(reminder);
     }
     return reminderScheduleLabel(reminder);
   }
@@ -9060,9 +6208,12 @@
   }
 
   function reminderIsSentHistory(reminder) {
-    void reminder;
-    // Delivered reminders stay in the active/live flow until the user dismisses them.
-    return false;
+    if (reminderIsDismissed(reminder)) {
+      return false;
+    }
+    const meta = reminderMetadata(reminder);
+    const dueAtMs = Number(reminder?.due_at_ms || 0);
+    return meta.deliveryState === "sent" && meta.lastFiredDueAtMs > 0 && meta.lastFiredDueAtMs === dueAtMs;
   }
 
   function reminderIsSnoozed(reminder) {
@@ -9074,76 +6225,7 @@
   }
 
   function reminderIsActive(reminder) {
-    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder);
-  }
-
-  function reminderIsNavigableFromList(reminder) {
-    return reminderIsActive(reminder);
-  }
-
-  function reminderSnoozeCountdown(reminder, nowMs) {
-    if (!reminderIsSnoozed(reminder)) {
-      return null;
-    }
-    const dueAtMs = Number(reminder?.due_at_ms || 0);
-    if (!Number.isFinite(dueAtMs) || dueAtMs <= 0) {
-      return null;
-    }
-    const updatedAtMs = Number(reminder?.updated_at_ms || reminder?.event_at_ms || reminder?.created_at_ms || 0);
-    const fallbackStartAtMs = Math.max(0, dueAtMs - 60_000);
-    const startAtMs = updatedAtMs > 0 ? Math.min(updatedAtMs, fallbackStartAtMs) : fallbackStartAtMs;
-    const totalMs = Math.max(60_000, dueAtMs - startAtMs);
-    const remainingMs = Math.max(0, dueAtMs - Number(nowMs || Date.now()));
-    const progress = Math.max(0, Math.min(1, 1 - (remainingMs / totalMs)));
-    return {
-      totalMs,
-      remainingMs,
-      progress,
-      label: reminderRemainingCompactLabel(remainingMs),
-      untilLabel: reminderClockLabel(dueAtMs),
-    };
-  }
-
-  function reminderRemainingCompactLabel(ms) {
-    const value = Math.max(0, Number(ms || 0));
-    if (!Number.isFinite(value) || value <= 0) {
-      return "0m";
-    }
-    const totalMinutes = Math.max(1, Math.ceil(value / 60000));
-    if (totalMinutes < 60) {
-      return `${totalMinutes}m`;
-    }
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (hours >= 24 && minutes === 0) {
-      return `${Math.round(totalMinutes / (24 * 60))}d`;
-    }
-    if (minutes === 0) {
-      return `${hours}h`;
-    }
-    return `${hours}h ${minutes}m`;
-  }
-
-  function routeUsesReminderLiveUiTick(route = state.route) {
-    return ["home", "reminders", "reminder-detail"].includes(String(route || "").trim());
-  }
-
-  function reminderNeedsLiveUiTick(reminder, nowMs = Date.now()) {
-    if (!reminderIsActive(reminder)) {
-      return false;
-    }
-    const dueAtMs = Number(reminder?.due_at_ms || 0);
-    if (!Number.isFinite(dueAtMs) || dueAtMs <= 0) {
-      return false;
-    }
-    return dueAtMs > nowMs || reminderIsLive(reminder) || reminderIsSnoozed(reminder);
-  }
-
-  function shouldTickReminderLiveUi(route = state.route, nowMs = Date.now()) {
-    if (document.visibilityState !== "visible" || !routeUsesReminderLiveUiTick(route)) {
-      return false;
-    }
-    return workspaceItems("reminders").some(reminder => reminderNeedsLiveUiTick(reminder, nowMs));
+    return !reminderIsDismissed(reminder) && !reminderIsSentHistory(reminder) && !reminderIsSnoozed(reminder);
   }
 
   function activeReminderCount() {
@@ -9193,27 +6275,7 @@
     if (!collection) {
       return null;
     }
-    const recordId = String(id || "").trim();
-    const direct = workspaceItems(collection).find(item => item.id === recordId || item.record_id === recordId);
-    if (direct) {
-      return direct;
-    }
-    const bucket = workspaceBucket(collection);
-    const cached = workspaceRecordCacheEntry(bucket, recordId);
-    if (cached?.record) {
-      return cached.record;
-    }
-    const queryCache = bucket?.queryCache && typeof bucket.queryCache === "object" ? bucket.queryCache : {};
-    for (const entry of Object.values(queryCache)) {
-      const match = Array.isArray(entry?.items)
-        ? entry.items.find(item => item.id === recordId || item.record_id === recordId)
-        : null;
-      if (match) {
-        rememberWorkspaceRecord(bucket, match, safeNumber(entry.lastRefreshAt) || Date.now());
-        return match;
-      }
-    }
-    return null;
+    return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || null;
   }
 
   function workspaceTargetForKind(kind, id) {
@@ -9276,6 +6338,10 @@
       return first;
     }
     const display = String(contact?.title || meta.display_name || "").trim();
+    const parts = display.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2 && /^[A-Z]/i.test(parts[0]) && /^[A-Z]/i.test(parts[1])) {
+      return `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.`;
+    }
     return display || "Contact";
   }
 
@@ -9413,63 +6479,6 @@
     return origin;
   }
 
-  function rememberDetailNavOrigin(origin = null) {
-    if (!origin || typeof origin !== "object") {
-      state.detailNavOrigin = null;
-      return null;
-    }
-    const kind = String(origin.kind || "").trim().toLowerCase();
-    const route = String(origin.route || "").trim().toLowerCase();
-    if (kind === "transcript") {
-      const sessionId = String(origin.sessionId || origin.session_id || "").trim();
-      const threadId = String(origin.threadId || origin.thread_id || "").trim();
-      if (!route || (!sessionId && !threadId)) {
-        state.detailNavOrigin = null;
-        return null;
-      }
-      state.detailNavOrigin = { kind, route, sessionId, threadId };
-      return state.detailNavOrigin;
-    }
-    if (kind === "meeting_detail") {
-      const meetingId = String(origin.meetingId || origin.meeting_id || "").trim();
-      if (!route || !meetingId) {
-        state.detailNavOrigin = null;
-        return null;
-      }
-      state.detailNavOrigin = { kind, route, meetingId };
-      return state.detailNavOrigin;
-    }
-    state.detailNavOrigin = null;
-    return null;
-  }
-
-  function restoreDetailNavOrigin() {
-    const origin = state.detailNavOrigin;
-    if (!origin || typeof origin !== "object") {
-      return false;
-    }
-    state.detailNavOrigin = null;
-    if (String(origin.kind || "") === "transcript") {
-      const card = origin.threadId
-        ? findCardByThreadId(origin.threadId)
-        : findCardBySessionId(origin.sessionId);
-      if (card) {
-        showTranscript(card, { restoring: true });
-        return true;
-      }
-      return false;
-    }
-    if (String(origin.kind || "") === "meeting_detail") {
-      const meetingId = String(origin.meetingId || "").trim();
-      const meeting = state.meetings.records.find(item => String(item?.meeting_id || "").trim() === meetingId);
-      if (meeting) {
-        void showMeetingDetail(meeting);
-        return true;
-      }
-    }
-    return false;
-  }
-
   function openWorkspaceTarget(target, fromRoute = "", options = {}) {
     if (!target || !target.route || !target.selectedKey || !target.id) {
       return false;
@@ -9480,22 +6489,11 @@
         route: String(options.taskOrigin.route || "").trim() || taskDetailReturnRoute()
       };
     }
-    if (options && options.detailOrigin) {
-      rememberDetailNavOrigin(options.detailOrigin);
-    }
-    if (target.route === "meeting-detail") {
-      state.meetingDetailSections = resetMeetingDetailSections(target.id);
-      state.meetingDetailSectionCache = {
-        ...state.meetingDetailSectionCache,
-        [String(target.id || "").trim()]: state.meetingDetailSections,
-      };
-    }
     state[target.selectedKey] = target.id;
     lightNavigate(target.route, {
       from: fromRoute || state.route || "",
       selectionPatch: { [target.selectedKey]: target.id },
       preserveTaskOrigin: Boolean(options && options.taskOrigin),
-      preserveDetailOrigin: Boolean(options && options.detailOrigin),
     });
     return true;
   }
@@ -9508,22 +6506,16 @@
       const relatedKind = String(link.source_kind) === currentKind && String(link.source_id) === currentId
         ? link.target_kind
         : link.source_kind;
-      const relatedId = String(link.source_kind) === currentKind && String(link.source_id) === currentId
-        ? link.target_id
-        : link.source_id;
       const collection = workspaceCollectionForKind(relatedKind);
       const bucket = collection ? workspaceBucket(collection) : null;
-      if (String(relatedKind || "") === "calendar_event" && collection && relatedId && !workspaceRecordByKind(relatedKind, relatedId)) {
-        void loadWorkspaceRecord(collection, relatedId, { render: true, reason: "linked_calendar" });
-      }
       if (bucket && !bucket.loaded && !bucket.loading) {
         void loadWorkspaceCollection(collection, { render: true });
       }
     });
   }
 
-  function workspaceLinkedEntries(record, options = {}) {
-    const currentKind = String(options.currentKind || record?.kind || "");
+  function workspaceLinkedRows(record, options = {}) {
+    const currentKind = String(record?.kind || "");
     const currentId = String(record?.id || record?.record_id || "");
     const links = Array.isArray(record?.links) ? record.links : [];
     const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
@@ -9532,8 +6524,6 @@
     const excludeKinds = new Set(
       Array.isArray(options.excludeKinds) ? options.excludeKinds.map(value => String(value || "").trim()).filter(Boolean) : []
     );
-    const dedupeTargets = options.dedupeTargets === true;
-    const seenTargets = dedupeTargets ? new Set() : null;
     const rows = [];
     links.forEach(link => {
       const isSource = String(link.source_kind) === currentKind && String(link.source_id) === currentId;
@@ -9542,46 +6532,22 @@
       if ((includeKinds && !includeKinds.has(normalizedKind)) || excludeKinds.has(normalizedKind)) {
         return;
       }
-      const relatedId = String(isSource ? link.target_id : link.source_id || "").trim();
+      const relatedId = isSource ? link.target_id : link.source_id;
       const related = workspaceRecordByKind(relatedKind, relatedId);
-      if (seenTargets) {
-        const dedupeKey = `${normalizedKind}:${String(related?.id || relatedId).trim()}`;
-        if (!dedupeKey.endsWith(":") && seenTargets.has(dedupeKey)) {
-          return;
-        }
-        if (!dedupeKey.endsWith(":")) {
-          seenTargets.add(dedupeKey);
-        }
-      }
-      const label = String(related?.title || link.label || relatedId || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind);
+      const label = related?.title || link.label || relatedId || graphKindLabel(relatedKind);
       const relation = link.label && link.label !== label ? `${graphKindLabel(relatedKind)}${DOT}${link.label}` : graphKindLabel(relatedKind);
+      const resolvedValue = typeof options.valueResolver === "function"
+        ? options.valueResolver({ link, related, relatedKind: normalizedKind, relatedId, label, relation })
+        : connectedRecordValue(relatedKind, related, relation);
       rows.push({
-        link,
-        related,
-        kind: normalizedKind,
-        relatedKind: normalizedKind,
-        relatedId,
+        icon: graphKindIcon(relatedKind),
+        accentKey: graphKindAccentKey(relatedKind),
         label,
-        relation,
-        target: workspaceTargetForKind(relatedKind, related?.id || relatedId),
+        value: String(resolvedValue || relation || graphKindLabel(relatedKind)),
+        target: workspaceTargetForKind(relatedKind, related?.id || relatedId)
       });
     });
     return rows;
-  }
-
-  function workspaceLinkedRows(record, options = {}) {
-    return workspaceLinkedEntries(record, options).map(entry => {
-      const resolvedValue = typeof options.valueResolver === "function"
-        ? options.valueResolver(entry)
-        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation);
-      return {
-        icon: graphKindIcon(entry.relatedKind),
-        accentKey: graphKindAccentKey(entry.relatedKind),
-        label: entry.label,
-        value: String(resolvedValue || entry.relation || graphKindLabel(entry.relatedKind)),
-        target: entry.target
-      };
-    });
   }
 
   function lightLinkedRecordRows(record, options = {}) {
@@ -9596,156 +6562,7 @@
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
-  }
-
-  function connectedRecordEntries(records, options = {}) {
-    const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
-      ? new Set(options.includeKinds.map(value => String(value || "").trim()).filter(Boolean))
-      : null;
-    const excludeKinds = new Set(
-      Array.isArray(options.excludeKinds) ? options.excludeKinds.map(value => String(value || "").trim()).filter(Boolean) : []
-    );
-    const dedupeTargets = options.dedupeTargets !== false;
-    const seenTargets = dedupeTargets ? new Set() : null;
-    const entries = [];
-    (Array.isArray(records) ? records : []).forEach(item => {
-      if (!item || typeof item !== "object") {
-        return;
-      }
-      const kind = String(item.kind || "").trim();
-      const relatedId = String(item.id || item.record_id || "").trim();
-      if (!kind || !relatedId || (includeKinds && !includeKinds.has(kind)) || excludeKinds.has(kind)) {
-        return;
-      }
-      if (seenTargets) {
-        const key = `${kind}:${relatedId}`;
-        if (seenTargets.has(key)) {
-          return;
-        }
-        seenTargets.add(key);
-      }
-      const related = workspaceRecordByKind(kind, relatedId);
-      entries.push({
-        link: null,
-        related,
-        kind,
-        relatedKind: kind,
-        relatedId,
-        label: String(related?.title || item.title || relatedId || graphKindLabel(kind)).trim() || graphKindLabel(kind),
-        relation: graphKindLabel(kind),
-        target: workspaceTargetForKind(kind, related?.id || relatedId),
-        snapshot: item,
-      });
-    });
-    return entries;
-  }
-
-  function lightLinkedRecordChips(entry) {
-    if (entry?.related) {
-      return graphObjectChips(entry.related);
-    }
-    const row = el("span", "light-graph-chip-row");
-    row.append(el("span", "light-graph-chip", graphKindLabel(entry?.kind)));
-    return row;
-  }
-
-  function lightLinkedRecordFeedRow(entry, options = {}) {
-    const kind = String(entry?.kind || entry?.relatedKind || "").trim();
-    const target = entry?.target || null;
-    const related = entry?.related || null;
-    const isInteractive = Boolean(target?.route && target?.id && target?.selectedKey);
-    const showChips = options.showChips !== false;
-    const showChevron = options.showChevron !== false;
-    const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
-    const row = el(
-      isInteractive ? "button" : "div",
-      [
-        "light-card",
-        "light-feed-row",
-        "light-graph-row",
-        "light-linked-record-feed-row",
-        showChips ? "" : "is-no-chips",
-        showChevron ? "" : "is-no-chevron",
-        flatFeed ? "is-flat-feed" : "",
-        String(options.rowClassName || "").trim(),
-      ].filter(Boolean).join(" ")
-    );
-    const title = String(related?.title || entry?.label || entry?.relatedId || graphKindLabel(kind)).trim() || graphKindLabel(kind);
-    const detail = typeof options.detailResolver === "function"
-      ? String(options.detailResolver(entry) || "").trim()
-      : related
-        ? graphListLabel(related)
-        : String(entry?.relation || graphKindLabel(kind)).trim() || graphKindLabel(kind);
-    row.dataset.recordId = String(related?.id || entry?.relatedId || "").trim();
-    row.dataset.linkedRecordKind = kind;
-    row.dataset.linkedRecordId = String(entry?.relatedId || "").trim();
-    if (isInteractive) {
-      row.type = "button";
-      row.dataset.workspaceTargetRoute = target.route;
-      row.dataset.workspaceTargetId = target.id;
-      row.dataset.workspaceTargetKind = target.kind || kind;
-      row.addEventListener("click", () => openWorkspaceTarget(
-        target,
-        options.fromRoute || state.route || "",
-        options.openOptions || {}
-      ));
-    }
-    row.append(lightSmallIcon(graphKindIcon(kind), graphKindAccentKey(kind)), lightTextStack(title, detail));
-    if (showChips) {
-      row.append(lightLinkedRecordChips(entry));
-    }
-    if (isInteractive && showChevron) {
-      row.append(el("span", "light-chevron", ">"));
-    }
-    return row;
-  }
-
-  function lightLinkedRecordSection(record, options = {}) {
-    const title = options.title || "Linked records";
-    const showWhenEmpty = options.showWhenEmpty === true;
-    const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";
-    const entries = Array.isArray(options.entries)
-      ? connectedRecordEntries(options.entries, {
-          includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
-          excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
-          dedupeTargets: options.dedupeTargets !== false,
-        })
-      : workspaceLinkedEntries(record, {
-          includeKinds: Array.isArray(options.includeKinds) ? options.includeKinds : [],
-          excludeKinds: Array.isArray(options.excludeKinds) ? options.excludeKinds : [],
-          dedupeTargets: options.dedupeTargets === true,
-        });
-    if (!entries.length && !showWhenEmpty) {
-      return null;
-    }
-    const section = el("section", "light-linked-records-section light-feed-section");
-    if (flatFeed) {
-      section.classList.add("is-flat-feed");
-    }
-    section.dataset.linkedRecordsTitle = String(title || "Linked records").trim().toLowerCase();
-    const header = el("div", "light-feed-section-header");
-    header.append(lightSectionTitle(title));
-    const body = el("div", "light-linked-record-list light-feed-section-body light-feed-list");
-    if (flatFeed) {
-      body.classList.add("light-card", "is-flat-feed");
-    }
-    body.dataset.linkedRecordsCount = String(entries.length);
-    if (!entries.length) {
-      body.append(el("div", flatFeed ? "light-linked-records-empty-shell is-flat-feed" : "light-card light-linked-records-empty-shell"));
-    } else {
-      entries.forEach(entry => body.append(lightLinkedRecordFeedRow(entry, {
-        fromRoute: options.fromRoute || state.route || "",
-        rowClassName: options.rowClassName || "",
-        openOptions: options.openOptions || {},
-        detailResolver: typeof options.detailResolver === "function" ? options.detailResolver : null,
-        showChips: options.showChips !== false,
-        showChevron: options.showChevron !== false,
-        variant: flatFeed ? "flat" : "",
-      })));
-    }
-    section.append(header, body);
-    return section;
+    return lightInfoSection(options.title || "Notes", rows);
   }
 
   function noteContentUpdatedAtMs(note) {
@@ -9782,30 +6599,6 @@
       source: noteSourceLabel(note),
       timestamp: noteTimestampLabel(note),
     };
-  }
-
-  function linkedRecordRecencyMs(relatedKind, related) {
-    const kind = String(relatedKind || "").trim();
-    if (!related || typeof related !== "object") {
-      return 0;
-    }
-    if (kind === "note") {
-      return noteContentUpdatedAtMs(related);
-    }
-    const candidates = [
-      related?.updated_at_ms,
-      related?.created_at_ms,
-      related?.event_at_ms,
-      related?.start_at_ms,
-      related?.due_at_ms,
-    ];
-    for (const candidate of candidates) {
-      const value = Number(candidate || 0);
-      if (Number.isFinite(value) && value > 0) {
-        return value;
-      }
-    }
-    return 0;
   }
 
   function noteRecordId(note) {
@@ -10050,15 +6843,16 @@
     if (taskUsesSplitLayout()) {
       return lightTaskWorkspacePage();
     }
-    const page = lightPage(taskPageTitle(), { action: taskPageHeaderAction() });
+    ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));
+    const page = lightPage("Tasks");
     page.classList.add("light-tasks-page");
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
     if (status) {
       page.append(status);
       return page;
     }
+    page.append(lightTaskFilters());
     renderTaskGroups(page);
-    page.append(lightTaskBulkActionBar());
     return page;
   }
 
@@ -10097,6 +6891,11 @@
     };
   }
 
+  function initialTaskFilter(value) {
+    const normalized = String(value || "").trim();
+    return ["all", "todo", "in_progress", "waiting", "done"].includes(normalized) ? normalized : "all";
+  }
+
   function toggleTaskSection(group) {
     state.taskSectionsExpanded = {
       overdue: taskSectionExpanded("overdue"),
@@ -10106,6 +6905,22 @@
       [group]: !taskSectionExpanded(group)
     };
     render();
+  }
+
+  function lightTaskCounts() {
+    return workspaceItems("tasks").reduce((counts, task) => {
+      const group = String(task.derived_group || "do");
+      if (group === "overdue") {
+        counts.overdue += 1;
+      } else if (group === "done") {
+        counts.done += 1;
+      } else if (group === "do") {
+        counts.due += 1;
+      } else if (group === "soon") {
+        counts.dueSoon += 1;
+      }
+      return counts;
+    }, { due: 0, dueSoon: 0, overdue: 0, done: 0 });
   }
 
   function taskStatusLabel(status) {
@@ -10126,16 +6941,108 @@
     return ["todo", "in_progress", "waiting", "done"].includes(raw) ? raw : "todo";
   }
 
-  function taskStatusSelectorChoices() {
-    return ["todo", "in_progress", "waiting", "done"].map(value => {
-      const leadingNode = el("span", taskStatusCircleClass(value));
-      leadingNode.setAttribute("aria-hidden", "true");
-      return {
-        value,
-        label: taskStatusLabel(value),
-        leadingNode,
-      };
+  function taskStatusFilterChoices() {
+    return [
+      ["all", "All"],
+      ["todo", "To do"],
+      ["in_progress", "In progress"],
+      ["waiting", "Waiting"],
+      ["done", "Done"],
+    ];
+  }
+
+  function currentTaskFilterChoice() {
+    return taskStatusFilterChoices().find(([key]) => key === state.taskFilter) || taskStatusFilterChoices()[0];
+  }
+
+  function taskStatusCounts() {
+    return workspaceItems("tasks").reduce((counts, task) => {
+      const status = normalizedTaskStatus(task);
+      counts.all += 1;
+      counts[status] += 1;
+      return counts;
+    }, {
+      all: 0,
+      todo: 0,
+      in_progress: 0,
+      waiting: 0,
+      done: 0,
     });
+  }
+
+  function taskRecordId(task) {
+    return String(task?.id || task?.record_id || "").trim();
+  }
+
+  function taskById(taskId, fallback = null) {
+    const normalizedTaskId = String(taskId || "").trim();
+    if (!normalizedTaskId) {
+      return fallback;
+    }
+    return workspaceItems("tasks").find(task => taskRecordId(task) === normalizedTaskId) || fallback;
+  }
+
+  function unwrapTaskRecordResponse(payload) {
+    const task = payload && typeof payload === "object" && payload.task && typeof payload.task === "object"
+      ? payload.task
+      : payload;
+    return task && typeof task === "object" ? task : null;
+  }
+
+  function taskStatusChoices() {
+    return taskStatusFilterChoices().filter(([value]) => value !== "all");
+  }
+
+  function deriveTaskGroup(task, status = normalizedTaskStatus(task)) {
+    const normalizedStatus = String(status || "").trim();
+    if (normalizedStatus === "done") {
+      return "done";
+    }
+    const due = Number(task?.due_at_ms || 0);
+    if (!Number.isFinite(due) || due <= 0) {
+      return "do";
+    }
+    const now = Date.now();
+    if (due < now) {
+      return "overdue";
+    }
+    if (due <= now + 24 * 60 * 60 * 1000) {
+      return "do";
+    }
+    return "soon";
+  }
+
+  function taskWithStatus(task, status) {
+    const nextStatus = String(status || "").trim() || "todo";
+    return {
+      ...task,
+      status: nextStatus,
+      derived_group: deriveTaskGroup(task, nextStatus),
+      metadata: {
+        ...(task?.metadata || {}),
+        status: nextStatus,
+      },
+    };
+  }
+
+  function taskWithChecklist(task, checklist) {
+    return {
+      ...task,
+      checklist,
+      metadata: {
+        ...(task?.metadata || {}),
+        checklist,
+      },
+    };
+  }
+
+  function replaceTaskInItems(items, nextTask) {
+    const normalizedTaskId = taskRecordId(nextTask);
+    const source = Array.isArray(items) ? items : [];
+    if (!normalizedTaskId) {
+      return source.slice();
+    }
+    return source.map(task => taskRecordId(task) === normalizedTaskId ? nextTask : task);
   }
 
   function taskMutationKey(taskId, scope) {
@@ -10161,72 +7068,82 @@
     state.taskMutationPending = next;
   }
 
-  function mergeTaskRecordIntoBucket(record) {
-    const bucket = state.workspace.tasks;
-    const nextId = taskRecordId(record);
-    if (!bucket || !Array.isArray(bucket.items) || !nextId) {
-      return;
+  async function applyTaskMutation(taskId, scope, optimisticTask, patchPayload) {
+    const normalizedTaskId = String(taskId || "").trim();
+    const normalizedScope = String(scope || "").trim();
+    const tasksBucket = state.workspace.tasks;
+    if (!normalizedTaskId || !normalizedScope || !tasksBucket || !Array.isArray(tasksBucket.items)) {
+      return null;
     }
-    if (Boolean(record?.archived) || Boolean(record?.deleted)) {
-      bucket.items = bucket.items.filter(item => taskRecordId(item) !== nextId);
-      return;
+    if (taskMutationPending(normalizedTaskId, normalizedScope)) {
+      return null;
     }
-    let replaced = false;
-    bucket.items = bucket.items.map(item => {
-      if (taskRecordId(item) !== nextId) {
-        return item;
+    const previousItems = tasksBucket.items.slice();
+    setTaskMutationPending(normalizedTaskId, normalizedScope, true);
+    tasksBucket.items = replaceTaskInItems(previousItems, optimisticTask);
+    render();
+    try {
+      const response = await patchWorkspaceRecord("tasks", normalizedTaskId, patchPayload);
+      const nextTask = unwrapTaskRecordResponse(response);
+      if (nextTask && taskRecordId(nextTask) === normalizedTaskId) {
+        tasksBucket.items = replaceTaskInItems(tasksBucket.items, nextTask);
       }
-      replaced = true;
-      return record;
-    });
-    if (!replaced) {
-      bucket.items.push(record);
+      return nextTask;
+    } catch (error) {
+      tasksBucket.items = previousItems;
+      showToast(error.message);
+      return null;
+    } finally {
+      setTaskMutationPending(normalizedTaskId, normalizedScope, false);
+      render();
     }
   }
 
-  async function updateTaskStatus(taskId, nextStatus) {
-    const id = String(taskId || "").trim();
-    const status = String(nextStatus || "").trim();
-    const bucket = state.workspace.tasks;
-    if (!id || !["todo", "in_progress", "waiting", "done"].includes(status) || !bucket || !Array.isArray(bucket.items)) {
+  async function updateTaskStatus(task, status) {
+    const currentTask = taskById(taskRecordId(task), task);
+    const nextStatus = taskStatusChoices().some(([value]) => value === String(status || "").trim())
+      ? String(status || "").trim()
+      : "todo";
+    if (!currentTask || !taskRecordId(currentTask) || normalizedTaskStatus(currentTask) === nextStatus) {
+      return null;
+    }
+    const optimisticTask = taskWithStatus(currentTask, nextStatus);
+    return applyTaskMutation(taskRecordId(currentTask), "status", optimisticTask, { status: nextStatus });
+  }
+
+  function openTaskStatusSelector(task) {
+    const currentTask = taskById(taskRecordId(task), task);
+    const currentTaskId = taskRecordId(currentTask);
+    if (!currentTask || !currentTaskId || taskMutationPending(currentTaskId, "status")) {
       return;
     }
-    const current = bucket.items.find(item => taskRecordId(item) === id);
-    if (!current || normalizedTaskStatus(current) === status) {
-      return;
-    }
-    try {
-      const result = await patchWorkspaceRecord("tasks", id, { status });
-      mergeTaskRecordIntoBucket(result);
-      state.selectedTaskId = taskRecordId(result) || id;
-      bucket.error = "";
-      persistNavState();
-      render();
-      markWorkspaceBucketDirty("tasks", { refresh: true, reason: "task_status_update" });
-    } catch (error) {
-      bucket.error = "";
-      showToast(error.message);
-    }
+    openSettingsSelector({
+      title: "Task status",
+      currentValue: normalizedTaskStatus(currentTask),
+      options: taskStatusChoices().map(([value, label]) => ({
+        value,
+        label,
+      })),
+      onSelect: value => {
+        void updateTaskStatus(currentTask, value);
+      },
+    });
   }
 
   async function toggleTaskChecklistItem(task, itemId) {
-    const taskId = taskRecordId(task);
-    const checklistItemId = String(itemId || "").trim();
-    const bucket = state.workspace.tasks;
-    if (!taskId || !checklistItemId || !bucket || !Array.isArray(bucket.items) || taskMutationPending(taskId, checklistItemId)) {
+    const currentTask = taskById(taskRecordId(task), task);
+    const normalizedTaskId = taskRecordId(currentTask);
+    const normalizedItemId = String(itemId || "").trim();
+    if (!currentTask || !normalizedTaskId || !normalizedItemId || taskMutationPending(normalizedTaskId, normalizedItemId)) {
       return null;
     }
-    const current = bucket.items.find(item => taskRecordId(item) === taskId) || task;
-    if (!current) {
-      return null;
-    }
-    const checklist = taskChecklist(current);
-    const target = checklist.find(item => String(item?.id || "").trim() === checklistItemId);
+    const checklist = taskChecklist(currentTask);
+    const target = checklist.find(item => String(item?.id || "").trim() === normalizedItemId);
     if (!target) {
       return null;
     }
     const nextChecklist = checklist.map(item => {
-      if (String(item?.id || "").trim() !== checklistItemId) {
+      if (String(item?.id || "").trim() !== normalizedItemId) {
         return item;
       }
       return {
@@ -10234,283 +7151,8 @@
         done: !Boolean(item?.done),
       };
     });
-    const previousAllDone = checklist.length > 0 && checklist.every(item => Boolean(item?.done));
-    const nextAllDone = nextChecklist.length > 0 && nextChecklist.every(item => Boolean(item?.done));
-    const currentStatus = normalizedTaskStatus(current);
-    const nextStatus = nextAllDone ? "done" : (previousAllDone ? "in_progress" : "");
-    const optimisticStatus = nextStatus || currentStatus;
-    const optimisticDerivedGroup = (() => {
-      if (optimisticStatus === "done") {
-        return "done";
-      }
-      const dueAtMs = Number(current?.due_at_ms || 0);
-      const nowMs = Date.now();
-      if (Number.isFinite(dueAtMs) && dueAtMs > 0) {
-        if (dueAtMs < nowMs) {
-          return "overdue";
-        }
-        if (dueAtMs <= nowMs + 24 * 60 * 60 * 1000) {
-          return "do";
-        }
-        return "soon";
-      }
-      return "do";
-    })();
-    const payload = nextStatus ? { checklist: nextChecklist, status: nextStatus } : { checklist: nextChecklist };
-    const previousItems = bucket.items.slice();
-    const optimistic = {
-      ...current,
-      status: optimisticStatus,
-      derived_group: optimisticDerivedGroup,
-      checklist: nextChecklist,
-      metadata: {
-        ...(current?.metadata || {}),
-        checklist: nextChecklist,
-        status: optimisticStatus,
-      },
-    };
-    setTaskMutationPending(taskId, checklistItemId, true);
-    bucket.items = bucket.items.map(item => taskRecordId(item) === taskId ? optimistic : item);
-    bucket.error = "";
-    render();
-    try {
-      const result = await patchWorkspaceRecord("tasks", taskId, payload);
-      mergeTaskRecordIntoBucket(result);
-      state.selectedTaskId = taskRecordId(result) || taskId;
-      persistNavState();
-      markWorkspaceBucketDirty("tasks", { refresh: true, reason: "task_checklist_toggle" });
-      return result;
-    } catch (error) {
-      bucket.items = previousItems;
-      bucket.error = "";
-      showToast(error.message);
-      return null;
-    } finally {
-      setTaskMutationPending(taskId, checklistItemId, false);
-      render();
-    }
-  }
-
-  function openTaskStatusSelector(task, source) {
-    const taskId = taskRecordId(task);
-    const current = normalizedTaskStatus(task);
-    if (!taskId) {
-      return;
-    }
-    openSettingsSelector({
-      title: source === "list" ? "Update task status" : "Task status",
-      currentValue: current,
-      options: taskStatusSelectorChoices(),
-      onSelect: value => {
-        const nextStatus = String(value || "").trim();
-        void updateTaskStatus(taskId, nextStatus);
-      },
-    });
-  }
-
-  function taskSelectionModeActive() {
-    return state.taskSelectionMode === true;
-  }
-
-  function clearTaskSelection() {
-    state.taskSelectionMode = false;
-    state.selectedTaskIds = new Set();
-  }
-
-  function selectedTaskIdsSet() {
-    return state.selectedTaskIds instanceof Set ? state.selectedTaskIds : new Set();
-  }
-
-  function selectedTaskCount() {
-    return selectedTaskIdsSet().size;
-  }
-
-  function taskSelected(task) {
-    return selectedTaskIdsSet().has(taskRecordId(task));
-  }
-
-  function taskPageTitle() {
-    return taskSelectionModeActive() ? "Select tasks" : "Tasks";
-  }
-
-  function taskPageHeaderAction() {
-    if (!workspaceItems("tasks").length) {
-      return el("div", "light-nav-slot");
-    }
-    const button = el(
-      "button",
-      "light-page-header-action light-task-select-toggle",
-      taskSelectionModeActive() ? "Cancel" : "Select"
-    );
-    button.type = "button";
-    button.addEventListener("click", event => {
-      event.preventDefault();
-      if (taskSelectionModeActive()) {
-        clearTaskSelection();
-      } else {
-        state.taskSelectionMode = true;
-        state.selectedTaskIds = new Set();
-      }
-      render();
-    });
-    return button;
-  }
-
-  function lightTaskRowStatusTrigger(task) {
-    const statusTrigger = el("button", "light-task-row-status-trigger");
-    statusTrigger.type = "button";
-    statusTrigger.dataset.taskStatusTrigger = "true";
-    statusTrigger.setAttribute("aria-label", `Change task status for ${task.title || "task"}`);
-    statusTrigger.append(el("span", taskCheckCircleClass(task)));
-    statusTrigger.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTaskStatusSelector(task, "list");
-    });
-    return statusTrigger;
-  }
-
-  function lightTaskSelectionControl(task) {
-    const selected = taskSelected(task);
-    const trigger = el("button", selected ? "light-task-selection-trigger is-selected" : "light-task-selection-trigger");
-    trigger.type = "button";
-    trigger.setAttribute("aria-label", selected ? `Unselect ${task.title || "task"}` : `Select ${task.title || "task"}`);
-    trigger.setAttribute("aria-pressed", selected ? "true" : "false");
-    trigger.append(el("span", selected ? "light-check-circle done" : "light-check-circle"));
-    trigger.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleTaskSelection(task);
-    });
-    return trigger;
-  }
-
-  function toggleTaskSelection(task) {
-    const taskId = taskRecordId(task);
-    if (!taskId) {
-      return;
-    }
-    const next = new Set(selectedTaskIdsSet());
-    if (next.has(taskId)) {
-      next.delete(taskId);
-    } else {
-      next.add(taskId);
-    }
-    state.taskSelectionMode = true;
-    state.selectedTaskIds = next;
-    render();
-  }
-
-  function lightTaskBulkActionBar() {
-    if (!taskSelectionModeActive()) {
-      return document.createDocumentFragment();
-    }
-    const count = selectedTaskCount();
-    const bar = el("div", "light-task-bulk-bar");
-    bar.append(el("span", "light-task-bulk-count", `${count} selected`));
-    const archive = el("button", "light-task-bulk-archive", "Archive");
-    archive.type = "button";
-    archive.disabled = count === 0 || state.taskBulkArchivePending;
-    archive.addEventListener("click", event => {
-      event.preventDefault();
-      void archiveSelectedTasks();
-    });
-    bar.append(archive);
-    return bar;
-  }
-
-  async function archiveSelectedTasks() {
-    const bucket = state.workspace.tasks;
-    const selectedIds = Array.from(selectedTaskIdsSet());
-    if (!bucket || !Array.isArray(bucket.items) || !selectedIds.length || state.taskBulkArchivePending) {
-      return;
-    }
-    const previousItems = bucket.items.slice();
-    state.taskBulkArchivePending = true;
-    bucket.items = bucket.items.filter(item => !selectedIds.includes(taskRecordId(item)));
-    if (selectedIds.includes(state.selectedTaskId)) {
-      state.selectedTaskId = taskRecordId(bucket.items[0]) || "";
-    }
-    render();
-    try {
-      for (const taskId of selectedIds) {
-        const result = await patchWorkspaceRecord("tasks", taskId, { archived: true });
-        mergeTaskRecordIntoBucket(result);
-      }
-      clearTaskSelection();
-      persistNavState();
-    } catch (error) {
-      bucket.items = previousItems;
-      showToast(error.message);
-    } finally {
-      state.taskBulkArchivePending = false;
-      render();
-    }
-  }
-
-  function lightTaskDetailActionButton(task) {
-    const actionButton = el("button", "light-task-detail-action-trigger");
-    actionButton.type = "button";
-    actionButton.setAttribute("aria-label", "Task actions");
-    actionButton.innerHTML = iconSvg("more_horiz", { filled: true });
-    actionButton.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTaskActions(task);
-    });
-    return actionButton;
-  }
-
-  function openTaskActions(task) {
-    openSettingsSelector({
-      title: "Task actions",
-      currentValue: "",
-      options: [
-        {
-          value: "archive_task",
-          label: "Archive task",
-        },
-      ],
-      onSelect: value => {
-        if (String(value || "") === "archive_task") {
-          void archiveTask(task, { fromDetail: true });
-        }
-      },
-    });
-  }
-
-  async function archiveTask(task, options = {}) {
-    const taskId = taskRecordId(task);
-    const bucket = state.workspace.tasks;
-    if (!taskId || !bucket || !Array.isArray(bucket.items) || taskMutationPending(taskId, "archive")) {
-      return null;
-    }
-    const previousItems = bucket.items.slice();
-    setTaskMutationPending(taskId, "archive", true);
-    bucket.items = bucket.items.filter(item => taskRecordId(item) !== taskId);
-    if (state.selectedTaskId === taskId) {
-      state.selectedTaskId = taskRecordId(bucket.items[0]) || "";
-    }
-    render();
-    try {
-      const result = await patchWorkspaceRecord("tasks", taskId, { archived: true });
-      mergeTaskRecordIntoBucket(result);
-      clearTaskSelection();
-      if (options.fromDetail && !taskUsesSplitLayout()) {
-        state.route = "tasks";
-        state.previousLightRoute = "tasks";
-        state.lightReturnRoute = "home";
-      }
-      persistNavState();
-      return result;
-    } catch (error) {
-      bucket.items = previousItems;
-      showToast(error.message);
-      return null;
-    } finally {
-      setTaskMutationPending(taskId, "archive", false);
-      render();
-    }
+    const optimisticTask = taskWithChecklist(currentTask, nextChecklist);
+    return applyTaskMutation(normalizedTaskId, normalizedItemId, optimisticTask, { checklist: nextChecklist });
   }
 
   function reminderRecordId(reminder) {
@@ -10592,7 +7234,6 @@
       if (nextReminder && reminderRecordId(nextReminder) === normalizedReminderId) {
         remindersBucket.items = replaceReminderInItems(remindersBucket.items, nextReminder);
       }
-      markWorkspaceBucketDirty("reminders", { refresh: true, reason: `reminder_${normalizedScope}` });
       return nextReminder;
     } catch (error) {
       remindersBucket.items = previousItems;
@@ -10639,17 +7280,9 @@
     const optimisticReminder = reminderWithDoneStatus(currentReminder);
     const nextReminder = await applyReminderMutation(normalizedReminderId, "done", optimisticReminder, { status: "done" });
     if (nextReminder && state.route === "reminder-detail") {
-      lightNavigate("reminders", {
-        from: "reminder-detail",
-        replaceHistory: true,
-        selectionPatch: { selectedReminderId: "" },
-      });
+      lightNavigate("reminders", { from: "reminder-detail" });
     }
     return nextReminder;
-  }
-
-  async function dismissReminder(reminder) {
-    return markReminderDone(reminder);
   }
 
   function reminderSnoozePresetTimestamp(preset, nowMs = Date.now()) {
@@ -10761,30 +7394,29 @@
   function lightTaskGroup(tasks, group) {
     const card = el("div", "light-card light-task-card light-task-group");
     tasks.forEach(task => {
-      const selectionMode = taskSelectionModeActive();
-      const selected = taskSelected(task);
       const row = el("div", `light-task-row ${taskRowTone(task)}`);
       row.dataset.taskId = task.id;
       row.dataset.taskStatus = normalizedTaskStatus(task);
-      row.dataset.taskSelected = selected ? "true" : "false";
-      if (selected) {
-        row.classList.add("is-selected");
-      }
-      const leading = selectionMode ? lightTaskSelectionControl(task) : lightTaskRowStatusTrigger(task);
+      const statusTrigger = el("button", "light-task-row-status-trigger");
+      statusTrigger.type = "button";
+      statusTrigger.dataset.taskStatusTrigger = "true";
+      statusTrigger.dataset.taskId = task.id;
+      statusTrigger.setAttribute("aria-haspopup", "dialog");
+      statusTrigger.setAttribute("aria-label", `Task status: ${taskStatusLabel(normalizedTaskStatus(task))}`);
+      statusTrigger.disabled = taskMutationPending(taskRecordId(task), "status");
+      statusTrigger.append(el("span", taskCheckCircleClass(task)));
+      statusTrigger.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openTaskStatusSelector(task);
+      });
       const main = el("button", "light-task-row-main");
       main.type = "button";
-      main.setAttribute("aria-pressed", selectionMode && selected ? "true" : "false");
       main.addEventListener("pointerdown", () => row.classList.add("is-pressed"));
       main.addEventListener("pointerup", () => row.classList.remove("is-pressed"));
       main.addEventListener("pointercancel", () => row.classList.remove("is-pressed"));
       main.addEventListener("blur", () => row.classList.remove("is-pressed"));
-      main.addEventListener("click", () => {
-        if (selectionMode) {
-          void toggleTaskSelection(task);
-          return;
-        }
-        openTaskFromList(task);
-      });
+      main.addEventListener("click", () => openTaskFromList(task));
       const copy = el("span", "light-task-row-copy");
       copy.append(el("strong", "light-task-row-title", task.title || "Untitled task"));
       const trailing = el("span", "light-task-row-trailing");
@@ -10794,10 +7426,47 @@
       }
       trailing.append(el("span", "light-due", taskDueLabel(task)));
       main.append(copy, trailing);
-      row.append(leading, main);
+      row.append(statusTrigger, main);
       card.append(row);
     });
     return card;
+  }
+
+  function lightTaskFilters() {
+    const wrap = el("div", "light-task-filter-strip");
+    const [currentKey, currentLabel] = currentTaskFilterChoice();
+    const counts = taskStatusCounts();
+    const button = el("button", "light-pill is-active light-task-filter-button");
+    button.type = "button";
+    button.dataset.taskFilter = currentKey;
+    button.dataset.taskFilterCurrent = currentKey;
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-label", `Filter tasks: ${currentLabel}`);
+    const icon = el("span", "light-task-filter-button-icon");
+    icon.innerHTML = iconSvg("tune", { filled: true });
+    const copy = el("span", "light-task-filter-button-copy");
+    copy.append(el("span", "light-task-filter-button-label", currentLabel));
+    const chevron = el("span", "light-task-filter-button-chevron");
+    chevron.innerHTML = iconSvg("expand_more", { filled: true });
+    button.append(icon, copy, chevron);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      openSettingsSelector({
+        title: "Filter tasks",
+        currentValue: currentKey,
+        options: taskStatusFilterChoices().map(([value, label]) => ({
+          value,
+          label,
+          meta: String(counts[value] || 0),
+        })),
+        onSelect: value => {
+          state.taskFilter = String(value || "all");
+          render();
+        },
+      });
+    });
+    wrap.append(button);
+    return wrap;
   }
 
   function taskCheckCircleClass(task) {
@@ -10829,6 +7498,10 @@
     return status;
   }
 
+  function taskCreatedBy(task) {
+    return String(task?.created_by || task?.metadata?.created_by || "").trim();
+  }
+
   function taskDescription(task) {
     return String(task?.description || task?.summary || task?.metadata?.description || "").trim();
   }
@@ -10837,8 +7510,22 @@
     return Array.isArray(task?.checklist) ? task.checklist : [];
   }
 
-  function taskRecordId(task) {
-    return String(task?.id || task?.record_id || "").trim();
+  function taskOwners(task) {
+    const owners = [];
+    const append = value => {
+      const name = String(value || "").trim();
+      if (name && !owners.includes(name)) {
+        owners.push(name);
+      }
+    };
+    append(task?.owner);
+    append(task?.metadata?.owner);
+    return owners;
+  }
+
+  function taskPrimaryOwner(task) {
+    const createdBy = taskCreatedBy(task);
+    return taskOwners(task).find(name => name !== createdBy) || "";
   }
 
   function lightTaskStatusBadge(status, options = {}) {
@@ -10901,51 +7588,137 @@
     });
   }
 
-  function taskConnectedRows(task) {
-    const seen = new Set();
+  function taskCreatedByTarget(task) {
+    const createdBy = taskCreatedBy(task);
+    if (!createdBy) {
+      return null;
+    }
+    return workspaceContactTargetByName(createdBy);
+  }
+
+  function ensureTaskPeopleContacts(task) {
+    ensureTaskPeopleContactsLoaded([task]);
+  }
+
+  function ensureTaskPeopleContactsLoaded(tasks) {
+    const items = Array.isArray(tasks) ? tasks : [];
+    if (!items.some(task => taskCreatedBy(task) || taskPrimaryOwner(task))) {
+      return;
+    }
+    const bucket = workspaceBucket("contacts");
+    if (!bucket.loaded && !bucket.loading) {
+      void loadWorkspaceCollection("contacts", { render: true });
+    }
+  }
+
+  function taskDetailRows(task) {
+    return [
+      { icon: "clock", accentKey: "meetings", label: "Created", value: taskDateTimeLabel(task.created_at_ms, "Unknown") },
+      { icon: "calendar", accentKey: "calendar", label: "Due", value: taskDateTimeLabel(task.due_at_ms, "No due date") },
+    ];
+  }
+
+  function lightTaskPeopleSection(task) {
+    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
     const rows = [];
-    const origin = { taskId: taskRecordId(task), route: taskDetailReturnRoute() };
-    workspaceLinkedEntries(task, { currentKind: "task" }).forEach(entry => {
-      const target = entry.target;
-      const key = target?.kind && target?.id
-        ? `${target.kind}:${target.id}`
-        : `${entry.relatedKind}:${entry.relatedId}`;
+    const createdBy = taskCreatedBy(task);
+    if (createdBy) {
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: createdBy,
+        value: "Created by",
+        target: taskCreatedByTarget(task),
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskPersonRole: "created_by" },
+      });
+    }
+    const owner = taskPrimaryOwner(task);
+    if (owner) {
+      rows.push({
+        icon: "contacts",
+        accentKey: "contacts",
+        label: owner,
+        value: "Owner",
+        target: workspaceContactTargetByName(owner),
+        fromRoute: origin.route,
+        openOptions: { taskOrigin: origin },
+        dataset: { taskPersonRole: "owner" },
+      });
+    }
+    if (!rows.length) {
+      return null;
+    }
+    return lightInfoSection("People", rows);
+  }
+
+  function taskAttachmentRows(task) {
+    const links = Array.isArray(task?.links) ? task.links : [];
+    const seen = new Set();
+    const allowedKinds = new Set(["calendar_event", "contact", "project", "meeting_note", "reminder"]);
+    const rows = [];
+    const origin = { taskId: task.id, route: taskDetailReturnRoute() };
+    links.forEach(link => {
+      const isSource = String(link.source_kind) === "task" && String(link.source_id) === String(task?.id || task?.record_id || "");
+      const relatedKind = String(isSource ? link.target_kind : link.source_kind);
+      if (!allowedKinds.has(relatedKind)) {
+        return;
+      }
+      const relatedId = String(isSource ? link.target_id : link.source_id);
+      const related = workspaceRecordByKind(relatedKind, relatedId);
+      const target = workspaceTargetForKind(relatedKind, related?.id || relatedId);
+      const key = target?.kind && target?.id ? `${target.kind}:${target.id}` : `${relatedKind}:${relatedId}`;
       if (!target || seen.has(key)) {
         return;
       }
       seen.add(key);
-      const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);
-      const value = entry.relatedKind === "note"
-        ? String(entry.related?.summary || entry.relation || "Note").trim() || "Note"
-        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true });
+      const relation = link.label && link.label !== related?.title
+        ? `${graphKindLabel(relatedKind)}${DOT}${link.label}`
+        : graphKindLabel(relatedKind);
       rows.push({
-        icon: graphKindIcon(entry.relatedKind),
-        accentKey: graphKindAccentKey(entry.relatedKind),
-        label: String(entry.label || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),
-        value,
+        icon: graphKindIcon(relatedKind),
+        accentKey: graphKindAccentKey(relatedKind),
+        label: String(related?.title || link.label || graphKindLabel(relatedKind)).trim() || graphKindLabel(relatedKind),
+        value: connectedRecordValue(relatedKind, related, relation, { preferSummary: true }),
         target,
-        kind: entry.relatedKind,
-        recencyMs,
+        kind: relatedKind,
         fromRoute: origin.route,
         openOptions: { taskOrigin: origin },
-        dataset: {
-          taskConnectedKind: entry.relatedKind,
-          taskConnectedRecencyMs: String(recencyMs || 0),
-        },
+        dataset: { taskAttachmentKind: relatedKind },
       });
     });
-    rows.sort((left, right) => {
-      const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);
-      if (recencyDelta !== 0) {
-        return recencyDelta;
-      }
-      const kindDelta = String(left.kind || "").localeCompare(String(right.kind || ""));
-      if (kindDelta !== 0) {
-        return kindDelta;
-      }
-      return String(left.label || "").localeCompare(String(right.label || ""));
-    });
+    const order = ["calendar_event", "contact", "project", "meeting_note", "reminder"];
+    rows.sort((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind));
     return rows;
+  }
+
+  function lightTaskNotesSection(task) {
+    return lightLinkedNotesSection(task);
+  }
+
+  function lightTaskStatusControl(task) {
+    const control = el("div", "light-task-status-control");
+    const current = normalizedTaskStatus(task);
+    const button = el("button", "light-pill is-active light-task-status-trigger");
+    button.type = "button";
+    button.dataset.taskStatus = current;
+    button.dataset.taskStatusTrigger = "true";
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-label", `Task status: ${taskStatusLabel(current)}`);
+    button.disabled = taskMutationPending(taskRecordId(task), "status");
+    const icon = el("span", "light-task-status-trigger-icon");
+    icon.append(el("span", taskStatusCircleClass(current)));
+    const copy = el("span", "light-task-status-trigger-copy");
+    copy.append(el("span", "light-task-status-trigger-label", taskStatusLabel(current)));
+    button.append(icon, copy);
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTaskStatusSelector(task);
+    });
+    control.append(button);
+    return control;
   }
 
   function lightTaskChecklistSection(task) {
@@ -10977,19 +7750,12 @@
     return section;
   }
 
-  function lightTaskConnectedSection(task) {
-    const rows = taskConnectedRows(task);
+  function lightTaskAttachmentsSection(task) {
+    const rows = taskAttachmentRows(task);
     if (!rows.length) {
       return null;
     }
-    return lightInfoSection("Connected", rows, { showTrailingChevron: false });
-  }
-
-  function lightChipIcon(icon, accentKey = "") {
-    const wrap = el("span", "light-record-chip-icon");
-    applySemanticIconAccent(wrap, accentKey, { propertyName: "color", allowEmpty: true });
-    wrap.innerHTML = iconSvg(icon, { filled: false });
-    return wrap;
+    return lightInfoSection("Attached", rows);
   }
 
   function resetLightRouteScroll() {
@@ -11019,35 +7785,26 @@
   }
 
   function lightTaskDetailCard(task) {
-    const current = normalizedTaskStatus(task);
-    const card = el("button", `light-card light-task-detail-card ${taskRowTone(task)}`);
-    card.type = "button";
-    card.dataset.taskStatusTrigger = "true";
-    card.dataset.taskStatus = current;
-    card.dataset.taskStatusLabel = taskStatusLabel(current);
-    card.setAttribute("aria-haspopup", "dialog");
-    card.setAttribute("aria-label", `Change task status for ${task.title || "task"}. Current status ${taskStatusLabel(current)}.`);
-    card.addEventListener("click", event => {
+    const card = el("section", `light-card light-task-detail-card ${taskRowTone(task)}`);
+    const statusTrigger = el("button", "light-task-status-circle-trigger");
+    statusTrigger.type = "button";
+    statusTrigger.dataset.taskStatusTrigger = "true";
+    statusTrigger.dataset.taskStatus = normalizedTaskStatus(task);
+    statusTrigger.setAttribute("aria-haspopup", "dialog");
+    statusTrigger.setAttribute("aria-label", `Task status: ${taskStatusLabel(normalizedTaskStatus(task))}`);
+    statusTrigger.disabled = taskMutationPending(taskRecordId(task), "status");
+    statusTrigger.append(el("span", taskCheckCircleClass(task)));
+    statusTrigger.addEventListener("click", event => {
       event.preventDefault();
       event.stopPropagation();
-      openTaskStatusSelector(task, "detail-header");
+      openTaskStatusSelector(task);
     });
-    const statusCircle = el("span", "light-task-status-circle");
-    statusCircle.setAttribute("aria-hidden", "true");
-    statusCircle.append(el("span", taskCheckCircleClass(task)));
-    const createdAt = Number(task?.created_at_ms || 0);
-    const completedAt = Number(task?.completed_at_ms || 0);
-    const headerMetaPrefix = current === "done" ? "Completed" : "Created";
-    const headerMetaAt = current === "done" ? (completedAt > 0 ? completedAt : createdAt) : createdAt;
     const copy = el("div", "light-task-detail-copy");
     copy.append(
       el("strong", "light-task-detail-title", task.title || "Untitled task"),
       el("span", "light-task-detail-due", taskDueLabel(task))
     );
-    if (Number.isFinite(headerMetaAt) && headerMetaAt > 0) {
-      copy.append(el("span", "light-task-detail-created", `${headerMetaPrefix} ${taskDateTimeLabel(headerMetaAt, "")}`));
-    }
-    card.append(statusCircle, copy);
+    card.append(statusTrigger, copy, lightTaskStatusControl(task));
     return card;
   }
 
@@ -11055,28 +7812,36 @@
     const surface = el("div", "light-task-detail-surface");
     surface.dataset.taskDetailId = String(task?.id || "");
     surface.dataset.taskStatus = normalizedTaskStatus(task);
-    const header = el("div", "light-task-detail-header");
-    header.append(lightTaskDetailCard(task), lightTaskDetailActionButton(task));
-    surface.append(header);
+    surface.append(lightTaskDetailCard(task));
+    ensureTaskPeopleContacts(task);
     const description = taskDescription(task);
     if (description) {
       surface.append(lightCopySection("Description", description));
+    }
+    surface.append(lightInfoSection("Details", taskDetailRows(task)));
+    const people = lightTaskPeopleSection(task);
+    if (people) {
+      surface.append(people);
     }
     const checklist = lightTaskChecklistSection(task);
     if (checklist) {
       surface.append(checklist);
     }
-    const connected = lightTaskConnectedSection(task);
-    if (connected) {
-      surface.append(connected);
+    const notes = lightTaskNotesSection(task);
+    if (notes) {
+      surface.append(notes);
+    }
+    const attachments = lightTaskAttachmentsSection(task);
+    if (attachments) {
+      surface.append(attachments);
     }
     return surface;
   }
 
   function renderTaskGroups(container) {
     [
-      ["do", "Today"],
       ["overdue", "Overdue"],
+      ["do", "Today"],
       ["soon", "Upcoming"],
       ["done", "Done"]
     ].forEach(([group, label]) => {
@@ -11087,10 +7852,11 @@
         container.append(lightTaskGroup(tasks, group));
       }
     });
+    ensureTaskPeopleContactsLoaded(workspaceItems("tasks"));
   }
 
   function lightTaskWorkspacePage() {
-    const page = lightPage(taskPageTitle(), { action: taskPageHeaderAction() });
+    const page = lightPage("Tasks");
     page.classList.add("light-tasks-page", "light-task-workspace-page");
     const status = lightWorkspaceStatus("tasks", "checklist", "No tasks yet");
     if (status) {
@@ -11099,14 +7865,11 @@
     }
     const shell = el("div", "light-task-workspace");
     const listPane = el("section", "light-task-list-pane");
+    listPane.append(lightTaskFilters());
     renderTaskGroups(listPane);
-    listPane.append(lightTaskBulkActionBar());
     const detailPane = el("section", "light-task-detail-pane");
     const task = selectedTask();
-    if (taskSelectionModeActive()) {
-      detailPane.append(lightEmptyState("archive", "Select tasks", "Choose one or more tasks to archive from the list."));
-    } else if (task) {
-      void ensureWorkspaceRecordSeen("tasks", task);
+    if (task) {
       ensureLinkedCollections(task);
       detailPane.append(lightTaskDetailSurface(task));
     } else {
@@ -11125,7 +7888,6 @@
     if (!task) {
       return lightPage("Task", { subtitle: "Task not found.", detail: true });
     }
-    void ensureWorkspaceRecordSeen("tasks", task);
     ensureLinkedCollections(task);
     const page = lightPage(task.title || "Task", { detail: true });
     page.classList.add("light-task-detail-page");
@@ -11399,26 +8161,6 @@
     return row;
   }
 
-  function projectConnectedDetail(entry) {
-    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
-    const kindLabel = graphKindLabel(kind);
-    const related = entry?.related || null;
-    if (!related) {
-      return String(entry?.relation || kindLabel).trim() || kindLabel;
-    }
-    if (kind === "calendar_event") {
-      return calendarConnectedTileTimestampLabel(related);
-    }
-    if (kind === "contact") {
-      return [kindLabel, String(related.summary || "").trim()].filter(Boolean).join(DOT);
-    }
-    const timestamp = workspaceTimestamp(
-      related.event_at_ms || related.start_at_ms || related.due_at_ms || related.updated_at_ms,
-      ""
-    );
-    return [kindLabel, timestamp, String(related.summary || "").trim()].filter(Boolean).join(DOT);
-  }
-
   function lightProjectDetailPage() {
     const project = selectedProject();
     if (!project) {
@@ -11426,18 +8168,49 @@
     }
     ensureLinkedCollections(project);
     const page = lightPage(project.title, { detail: true });
-    page.classList.add("light-project-detail-page");
-    page.append(lightLinkedRecordSection(project, {
-      title: "Connected",
-      showWhenEmpty: true,
-      fromRoute: "project-detail",
-      dedupeTargets: true,
-      showChips: false,
-      showChevron: false,
-      variant: "flat",
-      detailResolver: projectConnectedDetail,
-    }));
+    const grid = el("div", "light-project-section-grid");
+    [
+      ["Threads", "chat", projectThreads(project)],
+      ["Meetings", "record_voice_over", projectLinked(project, "meeting_note")],
+      ["Notes", "note", projectLinked(project, "note")],
+      ["Tasks", "checklist", projectLinked(project, "task")],
+      ["Calendar", "calendar", projectLinked(project, "calendar_event")],
+      ["Inbox", "text", projectLinked(project, "feed_item")],
+      ["People", "contacts", projectLinked(project, "contact")],
+      ["Reminders", "bell", projectLinked(project, "reminder")]
+    ].forEach(([title, icon, items]) => grid.append(lightProjectSection(title, icon, items)));
+    page.append(grid);
     return page;
+  }
+
+  function lightProjectSection(title, icon, items) {
+    const section = el("section", "light-card light-project-section");
+    section.append(lightSmallIcon(icon), el("h3", "", title));
+    const list = el("div", "light-project-section-items");
+    const values = Array.isArray(items) && items.length ? items : ["Nothing linked yet"];
+    values.forEach(item => list.append(lightProjectSectionItem(item)));
+    section.append(list);
+    return section;
+  }
+
+  function lightProjectSectionItem(item) {
+    if (!item || typeof item !== "object") {
+      return el("span", "light-project-section-item", String(item || ""));
+    }
+    const interactive = Boolean(item.target?.route && item.target?.id && item.target?.selectedKey);
+    const row = el(interactive ? "button" : "span", interactive ? "light-project-section-item is-clickable" : "light-project-section-item");
+    if (interactive) {
+      row.type = "button";
+      row.dataset.workspaceTargetRoute = item.target.route;
+      row.dataset.workspaceTargetId = item.target.id;
+      row.dataset.workspaceTargetKind = item.target.kind || "";
+      row.addEventListener("click", () => openWorkspaceTarget(item.target, "project-detail"));
+    }
+    row.append(
+      el("span", "", item.label || ""),
+      interactive ? el("span", "light-chevron", ">") : el("span", "", item.detail || "")
+    );
+    return row;
   }
 
   function lightSettingsSurface() {
@@ -11456,34 +8229,57 @@
       title: "Inbox",
       surface: "inbox",
       createPage: () => {
-        const page = lightPage("Inbox", { action: inboxManageHeaderAction() });
+        const pageOptions = { action: inboxHeaderActionCluster(), };
+        const page = lightPage("Inbox", pageOptions);
         page.classList.add("light-canonical-port-page", "light-inbox-page");
         return page;
       },
       surfaceTag: "section",
       surfaceClassName: "light-canonical-port-surface light-inbox-surface",
-      beforeSections: [inboxArchiveFilterLoadingNotice()].filter(Boolean),
       sections: [lightInboxSection()]
     });
   }
 
-  function inboxArchiveFilterLoadingNotice() {
-    if (!inboxArchiveFilterPending()) {
-      return null;
+  function inboxHeaderActionCluster() {
+    const wrap = el("div", "light-header-actions inbox-header-actions");
+    const archive = lightCircleButton(state.showArchivedFeed ? "mail" : "archive_folder", state.showArchivedFeed ? "Show active Inbox" : "Show archived Inbox", () => {
+      void toggleInboxArchivedFeed();
+    }, "inbox-header-action inbox-header-archive");
+    archive.setAttribute("aria-pressed", state.showArchivedFeed ? "true" : "false");
+    const manage = lightCircleButton("checklist", "Manage Inbox", () => {
+      showToast("Inbox manage mode is preserved on master and will be carried through release reconciliation.");
+    }, "inbox-header-action inbox-header-manage");
+    const compose = lightCircleButton("mail", "Compose new chat", () => {
+      showNewInboxThreadComposer();
+    }, "inbox-header-action inbox-header-compose");
+    wrap.append(archive, manage, compose);
+    return wrap;
+  }
+
+  async function toggleInboxArchivedFeed() {
+    const targetArchived = !state.showArchivedFeed;
+    const previousArchived = Boolean(state.showArchivedFeed);
+    state.showArchivedFeed = targetArchived;
+    render();
+    try {
+      await syncFeedCards({
+        reason: targetArchived ? "show_archived_inbox" : "show_active_inbox",
+        includeArchived: targetArchived,
+        silent: false,
+        render: false
+      });
+      state.showArchivedFeed = targetArchived;
+      persistNavState();
+      render();
+    } catch (error) {
+      state.showArchivedFeed = previousArchived;
+      render();
+      showToast(error instanceof Error ? error.message : String(error || "Feed unavailable"));
     }
-    const target = Boolean(state.inboxArchiveFilterPendingTarget);
-    const notice = el("div", "inbox-archive-loading-notice");
-    notice.setAttribute("role", "status");
-    notice.setAttribute("aria-live", "polite");
-    notice.append(
-      el("span", "inbox-header-spinner"),
-      el("span", "", target ? "Loading archived replies..." : "Loading active replies...")
-    );
-    return notice;
   }
 
   function lightMeetingsPage() {
-    const beforeSections = [];
+    const beforeSections = [meetingsEmbeddedToolbar()];
     if (state.meetings.loading && state.meetings.records.length) {
       beforeSections.push(el("div", "meetings-refreshing", "Refreshing..."));
     }
@@ -11521,20 +8317,9 @@
         items: []
       };
     }
-    if (!displayCards.length && !state.feedLastAppliedAt) {
-      return {
-        key: "inbox",
-        label: "",
-        count: 0,
-        collapsible: false,
-        expanded: true,
-        emptyState: el("div", "empty", "Loading inbox..."),
-        items: []
-      };
-    }
     if (!displayCards.length) {
       const empty = el("div", "empty");
-      empty.append("No inbox items yet.", document.createElement("br"), "Replies and meeting summaries will appear here.");
+      empty.append("No replies yet.", document.createElement("br"), "Pucky will place agent replies here.");
       return {
         key: "inbox",
         label: "",
@@ -11555,6 +8340,15 @@
       emptyState: cards.length ? null : filteredFeedEmptyView(),
       items: cards.map(card => universalCanonicalReplyFeedTileDescriptor(card, "inbox"))
     };
+  }
+
+  function meetingsEmbeddedToolbar() {
+    const refresh = el("button", "meetings-refresh", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => loadMeetings({ render: true }));
+    const toolbar = el("div", "meetings-embedded-toolbar");
+    toolbar.append(refresh);
+    return toolbar;
   }
 
   function lightMeetingsSection() {
@@ -11609,12 +8403,6 @@
     }
     header.append(left, heading, right);
     shell.append(header);
-    if (options.headerChrome) {
-      shell.classList.add("has-chrome");
-      const chrome = el("div", "light-page-header-chrome");
-      chrome.append(options.headerChrome);
-      shell.append(chrome);
-    }
     return shell;
   }
 
@@ -11639,19 +8427,6 @@
       "task-detail": "selectedTaskId",
       "project-detail": "selectedProjectId",
       "contact-detail": "selectedContactId"
-    })[String(route || "")] || "";
-  }
-
-  function lightRouteDetailCollection(route) {
-    return ({
-      "inbox-detail": "feed-items",
-      "meeting-detail": "calendar-events",
-      "meeting-note-detail": "meeting-notes",
-      "reminder-detail": "reminders",
-      "note-detail": "notes",
-      "task-detail": "tasks",
-      "project-detail": "projects",
-      "contact-detail": "contacts"
     })[String(route || "")] || "";
   }
 
@@ -11709,36 +8484,6 @@
     return [normalized.route, detailKey, detailId, calendarKey].join("::");
   }
 
-  function lightRouteSnapshotExactRecord(snapshot) {
-    const normalized = normalizeLightRouteSnapshot(snapshot);
-    if (!normalized) {
-      return null;
-    }
-    const detailKey = lightRouteDetailKey(normalized.route);
-    const collection = lightRouteDetailCollection(normalized.route);
-    const recordId = detailKey ? String(normalized[detailKey] || "") : "";
-    if (!detailKey || !collection || !recordId) {
-      return null;
-    }
-    return workspaceRecordById(collection, recordId, null);
-  }
-
-  function lightRouteSnapshotIsRestorable(snapshot) {
-    const normalized = normalizeLightRouteSnapshot(snapshot);
-    if (!normalized) {
-      return false;
-    }
-    if (normalized.route === "reminder-detail") {
-      const reminder = reminderById(normalized.selectedReminderId, null);
-      return Boolean(reminder) && reminderIsNavigableFromList(reminder);
-    }
-    if (!isLightDetailRoute(normalized.route)) {
-      return true;
-    }
-    const exactRecord = lightRouteSnapshotExactRecord(normalized);
-    return Boolean(exactRecord);
-  }
-
   function captureLightRouteSnapshot(route = state.route) {
     const normalizedRoute = normalizeLightHistoryRoute(route);
     if (!normalizedRoute) {
@@ -11782,9 +8527,6 @@
       if (lightRouteSnapshotIdentity(snapshot) === currentIdentity) {
         continue;
       }
-      if (!lightRouteSnapshotIsRestorable(snapshot)) {
-        continue;
-      }
       state.lightRouteHistory = history;
       return snapshot;
     }
@@ -11816,36 +8558,6 @@
     state.contacts.search = "";
   }
 
-  function isContactDetailEditorRoute(route = state.route) {
-    const value = String(route || "").trim();
-    return value === "contact-detail";
-  }
-
-  function runAfterContactDetailFlush(nextRoute, selectionPatch, callback) {
-    if (!isContactDetailEditorRoute(state.route)) {
-      return true;
-    }
-    const currentContactId = String(state.contacts.editDraft?.contactId || state.selectedContactId || "");
-    const nextContactId = Object.prototype.hasOwnProperty.call(selectionPatch || {}, "selectedContactId")
-      ? String(selectionPatch.selectedContactId || "")
-      : String(state.selectedContactId || currentContactId);
-    const stayingOnSameContact = isContactDetailEditorRoute(nextRoute) && nextContactId && nextContactId === currentContactId;
-    if (stayingOnSameContact) {
-      return true;
-    }
-    if (!state.contacts.editSaving && !contactEditHasUnsavedChanges()) {
-      clearContactEditDraft();
-      return true;
-    }
-    void flushContactDetailAutosave({ reason: "route_change" }).then(result => {
-      if (result !== false) {
-        clearContactEditDraft();
-      }
-      callback();
-    });
-    return false;
-  }
-
   function restoreLightRouteScroll(snapshot) {
     const normalized = normalizeLightRouteSnapshot(snapshot);
     if (!normalized) {
@@ -11863,7 +8575,7 @@
 
   function runLightRouteSideEffects(reason = "light_app_click") {
     void syncVoiceThreadScope({ reason, render: true });
-    void loadWorkspaceForRoute(state.route, { render: true, reason });
+    void loadWorkspaceForRoute(state.route, { render: true, force: true });
     if (state.route === "connect") {
       linksDebugStartSession("route", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" });
       linksDebugRecord("links_route_enter", { reason: reason === "light_back" ? "light_back_open" : "light_app_open" }, "route");
@@ -11917,18 +8629,6 @@
     const selectionPatch = options.selectionPatch && typeof options.selectionPatch === "object"
       ? options.selectionPatch
       : null;
-    const replaceHistory = options.replaceHistory === true;
-    if (!options.skipContactDetailFlush) {
-      const continued = runAfterContactDetailFlush(nextRoute, selectionPatch, () => {
-        lightNavigate(route, {
-          ...options,
-          skipContactDetailFlush: true,
-        });
-      });
-      if (!continued) {
-        return;
-      }
-    }
     const targetSnapshot = currentSnapshot
       ? normalizeLightRouteSnapshot({
           ...currentSnapshot,
@@ -11940,10 +8640,7 @@
     if (!options.preserveTaskOrigin) {
       state.taskNavOrigin = null;
     }
-    if (!options.preserveDetailOrigin) {
-      state.detailNavOrigin = null;
-    }
-    if (!replaceHistory && currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
+    if (currentSnapshot && lightRouteSnapshotIdentity(currentSnapshot) !== lightRouteSnapshotIdentity(targetSnapshot)) {
       pushLightRouteHistory(currentSnapshot);
     }
     if (options.from) {
@@ -11983,7 +8680,7 @@
     commitNavigation("light_app_click");
   }
 
-  function lightBack(options = {}) {
+  function lightBack() {
     if (linksHandoffLocked()) {
       releaseLinksHandoff({ render: false, reason: "light_back" });
       return true;
@@ -11991,26 +8688,10 @@
     if (!isHomeShellRoute() || state.route === "home") {
       return false;
     }
-    if (!options.skipContactDetailFlush && isContactDetailEditorRoute(state.route)) {
-      const continued = runAfterContactDetailFlush(
-        LIGHT_ROUTE_PARENTS[state.route] || state.previousLightRoute || "home",
-        {},
-        () => {
-          lightBack({ ...options, skipContactDetailFlush: true });
-        }
-      );
-      if (!continued) {
-        return true;
-      }
-    }
     const snapshot = popLightRouteHistory();
     if (snapshot) {
       state.taskNavOrigin = null;
-      const restored = restoreLightRouteSnapshot(snapshot);
-      if (restored) {
-        restoreDetailNavOrigin();
-      }
-      return restored;
+      return restoreLightRouteSnapshot(snapshot);
     }
     if (state.taskNavOrigin && state.route !== state.taskNavOrigin.route) {
       state.selectedTaskId = state.taskNavOrigin.taskId;
@@ -12083,16 +8764,16 @@
   function lightContactCopy(contact) {
     const meta = contact.metadata || {};
     const activity = Array.isArray(meta.activity) && meta.activity.length ? meta.activity[0] : "";
-    return lightTextStack(contactDisplayName(contact), `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
+    return lightTextStack(contact.title, `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
   }
 
   function lightAvatar(contact, size = "") {
     const meta = contact.metadata || {};
     const photo = String(meta.photo || "");
-    const initials = contactInitials(contact);
+    const initials = String(meta.avatar || contact.title || "?").slice(0, 2).toUpperCase();
     const hasPhoto = Boolean(photo);
     const avatar = el("span", `light-avatar ${hasPhoto ? "has-photo" : ""} ${size}`.trim(), hasPhoto ? "" : initials);
-    avatar.setAttribute("aria-label", contactDisplayName(contact));
+    avatar.setAttribute("aria-label", contact.title);
     avatar.dataset.contactId = contact.id;
     if (hasPhoto) {
       avatar.dataset.photo = photo;
@@ -12148,18 +8829,16 @@
     return section;
   }
 
-  function lightInfoSection(title, rows, options = {}) {
+  function lightInfoSection(title, rows) {
     const section = el("section", "light-info-section");
     section.append(lightSectionTitle(title));
     const card = el("div", "light-card light-info-card");
-    const suppressInteractiveChevron = String(title || "").trim().toLowerCase() === "linked records";
-    const showTrailingChevron = options.showTrailingChevron !== false && !suppressInteractiveChevron;
-    rows.forEach(row => card.append(lightInfoRow(row, { showChevron: showTrailingChevron })));
+    rows.forEach(row => card.append(lightInfoRow(row)));
     section.append(card);
     return section;
   }
 
-  function lightInfoRow(row, options = {}) {
+  function lightInfoRow(row) {
     const isInteractive = Boolean(row?.target?.route && row?.target?.id && row?.target?.selectedKey);
     const className = [
       "light-info-row",
@@ -12183,16 +8862,9 @@
         row.openOptions || {}
       ));
     }
-    const copy = row?.hideDetail
-      ? (() => {
-          const stack = el("span", "light-text-stack");
-          stack.append(el("strong", "", row.label));
-          return stack;
-        })()
-      : lightTextStack(row.label, row.value);
     item.append(
       lightSmallIcon(row.icon, row.accentKey || row.accent || ""),
-      copy
+      lightTextStack(row.label, row.value)
     );
     return item;
   }
@@ -12227,37 +8899,13 @@
     return chip;
   }
 
-  function lightCalendarContactChip(entry, options = {}) {
-    const label = String(entry?.label || entry?.fullLabel || graphKindLabel(entry?.kind)).trim() || "Contact";
-    const target = entry?.target || null;
-    const chip = el(
-      target ? "button" : "span",
-      target ? "light-attendee-chip light-calendar-attendee-chip is-link" : "light-attendee-chip light-calendar-attendee-chip"
-    );
-    applySemanticIconAccent(chip, "contacts", { propertyName: "--calendar-attendee-accent" });
-    const icon = el("span", "light-calendar-attendee-chip-icon");
-    icon.innerHTML = iconSvg("contacts", { filled: true });
-    chip.append(
-      icon,
-      el("span", "light-calendar-attendee-chip-label", label)
-    );
-    if (target) {
-      chip.type = "button";
-      chip.addEventListener("click", event => {
-        event.stopPropagation();
-        openWorkspaceTarget(target, options.fromRoute || state.route || "");
-      });
-    }
-    return chip;
-  }
-
   function lightCalendarEventChips(event, options = {}) {
     const row = el("div", "light-event-chip-row");
     const chipTargets = calendarEventChipTargets(event, options);
     const limit = Math.max(0, Number(options.limit || 0) || 0);
     const visible = limit > 0 ? chipTargets.slice(0, limit) : chipTargets;
     if (visible.length) {
-      visible.forEach(entry => row.append(lightCalendarContactChip(entry, { fromRoute: options.fromRoute || state.route || "" })));
+      visible.forEach(entry => row.append(lightRecordChip(entry, { fromRoute: options.fromRoute || state.route || "" })));
       if (limit > 0 && chipTargets.length > limit) {
         row.append(el("span", "light-attendee-chip light-attendee-overflow", `+${chipTargets.length - limit}`));
       }
@@ -12297,7 +8945,7 @@
         }));
     }
     if (options.contactsOnly === true) {
-      return disambiguateCalendarChipLabels(chips);
+      return chips;
     }
     const currentKind = String(event?.kind || "calendar_event");
     const currentId = String(event?.id || event?.record_id || "");
@@ -12318,31 +8966,7 @@
         kind: relatedKind
       });
     });
-    return disambiguateCalendarChipLabels(chips);
-  }
-
-  function disambiguateCalendarChipLabels(chips) {
-    const duplicateCounts = new Map();
-    chips.forEach(entry => {
-      const label = String(entry?.label || "").trim();
-      const kind = String(entry?.kind || entry?.target?.kind || "").trim();
-      if (!label || kind === "contact") {
-        return;
-      }
-      const key = label.toLowerCase();
-      duplicateCounts.set(key, Number(duplicateCounts.get(key) || 0) + 1);
-    });
-    return chips.map(entry => {
-      const label = String(entry?.label || "").trim();
-      const kind = String(entry?.kind || entry?.target?.kind || "").trim();
-      if (!label || kind === "contact" || Number(duplicateCounts.get(label.toLowerCase()) || 0) < 2) {
-        return entry;
-      }
-      return {
-        ...entry,
-        label: `${label}${DOT}${graphKindLabel(kind)}`
-      };
-    });
+    return chips;
   }
 
   function lightRecordChip(entry, options = {}) {
@@ -12363,10 +8987,7 @@
       chip.dataset.workspaceTargetKind = target.kind || "";
       chip.addEventListener("click", event => {
         event.stopPropagation();
-        openWorkspaceTarget(target, options.fromRoute || state.route || "", {
-          taskOrigin: options.taskOrigin || null,
-          detailOrigin: options.detailOrigin || null,
-        });
+        openWorkspaceTarget(target, options.fromRoute || state.route || "", { taskOrigin: options.taskOrigin || null });
       });
     }
     return chip;
@@ -12443,17 +9064,6 @@
       month: "long",
       day: "numeric"
     });
-  }
-
-  function calendarEventCompactDateLabel(event, timeZone = calendarEffectiveTimeZone()) {
-    return formatCalendarDateKey(calendarEventDateKey(event, timeZone), {
-      month: "long",
-      day: "numeric"
-    });
-  }
-
-  function calendarEventCompactWhenLabel(event, timeZone = calendarEffectiveTimeZone()) {
-    return `${calendarEventCompactDateLabel(event, timeZone)}${DOT}${calendarEventTimeRange(event, timeZone)}`;
   }
 
   function calendarEventTimeRange(event, timeZone = calendarEffectiveTimeZone()) {
@@ -12711,7 +9321,9 @@
   function filteredTasks(group) {
     return workspaceItems("tasks").filter(task => {
       const taskGroup = String(task.derived_group || "do");
-      return taskGroup === group;
+      const byFilter = state.taskFilter === "all"
+        || normalizedTaskStatus(task) === state.taskFilter;
+      return taskGroup === group && byFilter;
     });
   }
 
@@ -12758,6 +9370,27 @@
     return Array.isArray(assets) ? assets.map(String).filter(Boolean) : [];
   }
 
+  function projectLinked(project, kind) {
+    const links = Array.isArray(project?.links) ? project.links : [];
+    return links
+      .filter(link => (
+        String(link.source_kind) === "project" && String(link.target_kind) === kind
+      ) || (
+        String(link.target_kind) === "project" && String(link.source_kind) === kind
+      ))
+      .map(link => {
+        const isSource = String(link.source_kind) === "project";
+        const relatedKind = isSource ? link.target_kind : link.source_kind;
+        const relatedId = isSource ? link.target_id : link.source_id;
+        const related = workspaceRecordByKind(relatedKind, relatedId);
+        return {
+          label: String(related?.title || link.label || relatedId || kind),
+          detail: graphKindLabel(relatedKind),
+          target: workspaceTargetForKind(relatedKind, related?.id || relatedId)
+        };
+      });
+  }
+
   function isLightDetailRoute(route) {
     return [
       "inbox-detail",
@@ -12775,16 +9408,8 @@
     return workspaceItems("feed-items").find(item => item.id === state.selectedFeedId) || workspaceItems("feed-items")[0] || null;
   }
 
-  function workspaceRecordById(collection, id, fallback = null) {
-    const normalizedId = String(id || "").trim();
-    if (!normalizedId) {
-      return fallback;
-    }
-    return workspaceItems(collection).find(item => item.id === normalizedId || item.record_id === normalizedId) || fallback;
-  }
-
   function selectedWorkspaceRecord(collection, id, fallback = null) {
-    return workspaceRecordById(collection, id, workspaceItems(collection)[0] || fallback);
+    return workspaceItems(collection).find(item => item.id === id || item.record_id === id) || workspaceItems(collection)[0] || fallback;
   }
 
   function todayDateKey(offsetDays = 0) {
@@ -13289,12 +9914,6 @@
     if (!active && !failed) {
       return null;
     }
-    const hasPersistedCard = (Array.isArray(cards) ? cards : []).some(card =>
-      cardSessionId(card) === turnId || String(card?.card_id || "").trim() === turnId
-    );
-    if (hasPersistedCard) {
-      return null;
-    }
     const requestedThreadId = turnRequestedThreadId(normalized);
     const timestamp = turnStatusTimestamp(normalized) || new Date().toISOString();
     const pendingState = pendingTurnState(normalized);
@@ -13324,7 +9943,21 @@
   function feedDisplayCards(cards = state.cards) {
     const base = Array.isArray(cards) ? cards.filter(Boolean) : [];
     const pendingCard = pendingTurnCard(state.turn, base);
-    return pendingCard ? [pendingCard, ...base] : base;
+    if (!pendingCard) {
+      return base;
+    }
+    const pendingSessionId = cardSessionId(pendingCard);
+    const pendingThreadId = cardThreadId(pendingCard);
+    const visibleBase = base.filter(card => {
+      if (cardSessionId(card) === pendingSessionId || String(card?.card_id || "").trim() === pendingSessionId) {
+        return false;
+      }
+      if (pendingThreadId && cardThreadId(card) === pendingThreadId) {
+        return false;
+      }
+      return true;
+    });
+    return [pendingCard, ...visibleBase];
   }
 
   function filteredFeedCards(cards) {
@@ -13341,315 +9974,6 @@
         ? archived
         : !archived && isFeedIconIncluded(cardIconKey(card));
     });
-  }
-
-  function inboxManageSelection() {
-    if (!(state.selectedInboxCardKeys instanceof Set)) {
-      state.selectedInboxCardKeys = new Set(Array.isArray(state.selectedInboxCardKeys) ? state.selectedInboxCardKeys : []);
-    }
-    return state.selectedInboxCardKeys;
-  }
-
-  function inboxManageCardKey(card) {
-    const cardId = String(card && card.card_id || "").trim();
-    if (cardId) {
-      return `card:${cardId}`;
-    }
-    const sessionId = cardSessionId(card);
-    return sessionId ? `session:${sessionId}` : "";
-  }
-
-  function canManageInboxCard(card) {
-    if (!card) {
-      return false;
-    }
-    if (!String(card.card_id || "").trim()) {
-      return false;
-    }
-    if (Boolean(card.synthetic_pending) && !isMeetingProcessingCard(card) && !isFailedPendingOutboundCard(card)) {
-      return false;
-    }
-    if (!isPendingOutboundCard(card)) {
-      return true;
-    }
-    return isFailedPendingOutboundCard(card);
-  }
-
-  function isInboxCardSelected(card) {
-    const key = inboxManageCardKey(card);
-    return Boolean(key && inboxManageSelection().has(key));
-  }
-
-  function reconcileInboxManageSelection(cards = filteredFeedCards(feedDisplayCards())) {
-    const selection = inboxManageSelection();
-    const visibleKeys = new Set((Array.isArray(cards) ? cards : [])
-      .filter(canManageInboxCard)
-      .map(inboxManageCardKey)
-      .filter(Boolean));
-    for (const key of Array.from(selection)) {
-      if (!visibleKeys.has(key)) {
-        selection.delete(key);
-      }
-    }
-  }
-
-  function selectedInboxManageCards() {
-    const selection = inboxManageSelection();
-    return filteredFeedCards(feedDisplayCards()).filter(card => {
-      const key = inboxManageCardKey(card);
-      return key && selection.has(key) && canManageInboxCard(card);
-    });
-  }
-
-  function setInboxManageMode(active, options = {}) {
-    state.inboxManageMode = Boolean(active);
-    if (!state.inboxManageMode) {
-      inboxManageSelection().clear();
-    } else {
-      reconcileInboxManageSelection();
-    }
-    dismissOpenCardMenu(false);
-    if (options.render !== false) {
-      render();
-    }
-  }
-
-  function toggleInboxManageSelection(card) {
-    if (!canManageInboxCard(card)) {
-      return;
-    }
-    const key = inboxManageCardKey(card);
-    if (!key) {
-      return;
-    }
-    const selection = inboxManageSelection();
-    if (selection.has(key)) {
-      selection.delete(key);
-    } else {
-      selection.add(key);
-    }
-    render();
-  }
-
-  function clearInboxManageSelection() {
-    inboxManageSelection().clear();
-    render();
-  }
-
-  function inboxArchiveFilterPending() {
-    return state.inboxArchiveFilterPendingTarget !== null && state.inboxArchiveFilterPendingTarget !== undefined;
-  }
-
-  function inboxArchiveFilterLabel(archived) {
-    return archived ? "Archived" : "Active";
-  }
-
-  function inboxHeaderPillButton(config = {}) {
-    const active = Boolean(config.active);
-    const busy = Boolean(config.busy);
-    const button = el("button", `light-pill inbox-header-pill ${config.className || ""}${active ? " is-active" : ""}${busy ? " is-loading" : ""}`.trim());
-    button.type = "button";
-    button.disabled = Boolean(config.disabled);
-    if (config.ariaLabel) {
-      button.setAttribute("aria-label", config.ariaLabel);
-    }
-    if (busy) {
-      button.setAttribute("aria-busy", "true");
-    }
-    if (config.pressed !== undefined) {
-      button.setAttribute("aria-pressed", config.pressed ? "true" : "false");
-    }
-    if (config.pendingTarget !== undefined) {
-      button.dataset.pendingTarget = String(config.pendingTarget);
-    }
-    const icon = el("span", "inbox-header-pill-icon");
-    icon.innerHTML = busy ? "" : iconSvg(config.icon || "archive_folder", { filled: true });
-    if (busy) {
-      icon.append(el("span", "inbox-header-spinner"));
-    }
-    button.append(icon, el("span", "inbox-header-pill-label", String(config.label || "")));
-    if (typeof config.onClick === "function") {
-      button.addEventListener("click", config.onClick);
-    }
-    return button;
-  }
-
-  function inboxManageHeaderAction() {
-    const wrap = el("div", "inbox-header-actions");
-    const filterPending = inboxArchiveFilterPending();
-    const pendingTarget = filterPending ? Boolean(state.inboxArchiveFilterPendingTarget) : undefined;
-    const displayArchived = filterPending ? pendingTarget : Boolean(state.showArchivedFeed);
-    const archive = inboxHeaderPillButton({
-      className: "inbox-archive-toggle",
-      icon: displayArchived ? "archive_folder" : "mail",
-      label: inboxArchiveFilterLabel(displayArchived),
-      ariaLabel: filterPending
-        ? `Loading ${displayArchived ? "archived replies" : "active replies"}`
-        : `Inbox filter: ${displayArchived ? "Archived replies" : "Active replies"}`,
-      active: displayArchived,
-      busy: filterPending,
-      disabled: filterPending,
-      pressed: Boolean(state.showArchivedFeed),
-      pendingTarget,
-      onClick: () => {
-        void toggleInboxArchivedFeed();
-      }
-    });
-    const manage = inboxHeaderPillButton({
-      className: "inbox-manage-toggle",
-      icon: "checklist",
-      label: state.inboxManageMode ? "Done" : "Manage",
-      ariaLabel: state.inboxManageMode ? "Done managing Inbox" : "Manage Inbox",
-      active: Boolean(state.inboxManageMode),
-      disabled: filterPending,
-      pressed: Boolean(state.inboxManageMode),
-      onClick: () => setInboxManageMode(!state.inboxManageMode)
-    });
-    wrap.append(archive, manage);
-    return wrap;
-  }
-
-  async function toggleInboxArchivedFeed() {
-    if (inboxArchiveFilterPending()) {
-      return;
-    }
-    const targetArchived = !state.showArchivedFeed;
-    state.inboxArchiveFilterPendingTarget = targetArchived;
-    state.inboxManageMode = false;
-    inboxManageSelection().clear();
-    dismissOpenCardMenu(false);
-    render();
-    try {
-      await syncFeedCards({
-        reason: targetArchived ? "show_archived_inbox" : "show_active_inbox",
-        includeArchived: targetArchived,
-        silent: false,
-        render: false
-      });
-      state.showArchivedFeed = targetArchived;
-      state.inboxArchiveFilterPendingTarget = null;
-      reconcileInboxManageSelection();
-      render();
-    } catch (error) {
-      state.inboxArchiveFilterPendingTarget = null;
-      render();
-      showToast(error instanceof Error ? error.message : String(error || "Feed unavailable"));
-    }
-  }
-
-  function inboxManageToolbar() {
-    if (!state.inboxManageMode) {
-      return null;
-    }
-    reconcileInboxManageSelection();
-    const count = inboxManageSelection().size;
-    const actionLabel = state.showArchivedFeed ? "Unarchive" : "Archive";
-    const bar = el("div", "inbox-manage-bar");
-    bar.dataset.inboxManageSelectedCount = String(count);
-    const status = el("div", "inbox-manage-count", `${count} selected`);
-    const actions = el("div", "inbox-manage-actions");
-    const archive = el("button", "inbox-manage-action is-primary", actionLabel);
-    archive.type = "button";
-    archive.disabled = count === 0;
-    archive.addEventListener("click", () => {
-      void archiveSelectedInboxCards();
-    });
-    const clear = el("button", "inbox-manage-action", "Clear");
-    clear.type = "button";
-    clear.disabled = count === 0;
-    clear.addEventListener("click", clearInboxManageSelection);
-    const cancel = el("button", "inbox-manage-action", "Cancel");
-    cancel.type = "button";
-    cancel.addEventListener("click", () => setInboxManageMode(false));
-    actions.append(archive, clear, cancel);
-    bar.append(status, actions);
-    return bar;
-  }
-
-  function renderInboxManageOverlay() {
-    const shell = document.querySelector(".app-shell");
-    document.getElementById("inboxManageOverlay")?.remove();
-    if (!shell || effectiveRoute() !== "inbox" || !state.inboxManageMode) {
-      return;
-    }
-    const toolbar = inboxManageToolbar();
-    if (!toolbar) {
-      return;
-    }
-    const overlay = el("section", "inbox-manage-overlay");
-    overlay.id = "inboxManageOverlay";
-    overlay.setAttribute("aria-label", "Inbox management actions");
-    overlay.append(toolbar);
-    shell.append(overlay);
-  }
-
-  function applyOptimisticInboxBatchAction(cards, action) {
-    const previousCards = state.cards.slice();
-    const previousSelection = new Set(inboxManageSelection());
-    const targetKeys = new Set((Array.isArray(cards) ? cards : []).map(inboxManageCardKey).filter(Boolean));
-    const nextArchived = action === "archive";
-    state.cards = state.cards.map(card => {
-      const key = inboxManageCardKey(card);
-      return key && targetKeys.has(key) ? { ...card, archived: nextArchived } : card;
-    });
-    inboxManageSelection().clear();
-    reconcileFocusedCardSelection();
-    reconcileReadOverrides();
-    clearMissingFeedIconFilter();
-    render();
-    return () => {
-      state.cards = previousCards;
-      state.selectedInboxCardKeys = previousSelection;
-      reconcileFocusedCardSelection();
-      reconcileReadOverrides();
-      clearMissingFeedIconFilter();
-      render();
-    };
-  }
-
-  async function archiveSelectedInboxCards() {
-    const targets = selectedInboxManageCards();
-    const action = state.showArchivedFeed ? "unarchive" : "archive";
-    if (!targets.length) {
-      return null;
-    }
-    dismissOpenCardMenu(false);
-    const rollback = applyOptimisticInboxBatchAction(targets, action);
-    try {
-      const results = [];
-      for (const card of targets) {
-        const result = await postFeedAction(card, action);
-        if (result === null || result && result.ok === false) {
-          throw new Error(String(result && (result.error || result.detail) || "Feed action failed"));
-        }
-        results.push(result);
-      }
-      state.lastInboxManageResult = {
-        action,
-        ok: true,
-        count: targets.length,
-        error: ""
-      };
-      render();
-      void syncFeedCards({
-        reason: `inbox_manage_${action}`,
-        includeArchived: state.showArchivedFeed,
-        silent: true,
-        render: true
-      });
-      return results;
-    } catch (error) {
-      rollback();
-      state.lastInboxManageResult = {
-        action,
-        ok: false,
-        count: targets.length,
-        error: error instanceof Error ? error.message : String(error || "Feed action failed")
-      };
-      render();
-      showToast(state.lastInboxManageResult.error);
-      return null;
-    }
   }
 
   function uniqueFeedIcons() {
@@ -13775,9 +10099,35 @@
       modelSettingsCard(),
       reasoningEffortSettingsCard()
     ];
-    cards.push(phoneRoleSettingsCard(), advancedSettingsCard());
+    cards.push(phoneRoleSettingsCard(), authSessionSettingsCard(), advancedSettingsCard());
     page.append(...cards);
     return page;
+  }
+
+  function authSessionSettingsCard() {
+    return settingsSelectorCard({
+      settingId: "auth-session",
+      accent: "#0f766e",
+      icon: "person",
+      title: "Account",
+      detail: "End this signed-in browser session and return to the auth gate.",
+      valueLabel: "Signed in",
+      onOpen: () => Promise.resolve(),
+      actionLabel: "Sign out",
+      action: performSessionSignOut
+    });
+  }
+
+  async function performSessionSignOut() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { Accept: "application/json" }
+      });
+    } catch (_error) {
+      // Redirect even when the logout request fails so the auth gate stays reachable.
+    }
+    window.location.assign("/sign-in");
   }
 
   function appearanceSettingsCard() {
@@ -13905,7 +10255,7 @@
 
   function calendarTimeZoneSettingsCard() {
     const row = el("article", "settings-card settings-native-select-card");
-    row.style.setProperty("--accent", "#3f6df6");
+    row.style.setProperty("--accent", "#ff6c5f");
     row.setAttribute("data-setting-id", "calendar-time-zone");
     const iconEl = el("div", "settings-card-icon");
     iconEl.innerHTML = iconSvg("calendar", { filled: true });
@@ -14108,13 +10458,20 @@
   function meetingsPageView(options = {}) {
     const embedded = Boolean(options && options.embedded);
     const page = el("section", embedded ? "meetings-page is-embedded-light" : "meetings-page");
+    const refresh = el("button", "meetings-refresh", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => loadMeetings({ render: true }));
     if (embedded) {
+      const toolbar = el("div", "meetings-embedded-toolbar");
+      toolbar.append(refresh);
+      page.append(toolbar);
     } else {
       const header = el("div", "meetings-header");
       header.append(
         el("div", "meetings-kicker", "Meeting Recording Mode"),
         el("h2", "meetings-title", "Meetings")
       );
+      header.append(refresh);
       page.append(header);
     }
 
@@ -14155,8 +10512,7 @@
         showTranscript(meetingCardFromRecord(record), options);
         return true;
       }
-      showMeetingRuntimeDetail(record, options);
-      return true;
+      return openMeetingSummaryDetail(record, options);
     };
     if (stateName === "completed") {
       openDetail(meeting, { scrollTop: state.navDetail?.scroll_top });
@@ -14175,6 +10531,10 @@
     try {
       const detail = await loadMeetingDetail(meeting);
       const panel = document.getElementById("detail");
+      if (stateName === "completed") {
+        openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
+        return;
+      }
       if (panel?.classList.contains("is-open") && panel.getAttribute("data-detail-session-id") === meetingId) {
         openDetail(detail, { scrollTop: state.navDetail?.scroll_top });
       }
@@ -14196,125 +10556,6 @@
     }
     showTranscript(card, options);
     return false;
-  }
-
-  function meetingConnectedRecords(meeting) {
-    const sources = [
-      meeting?.connected_records,
-      meeting?.card?.connected_records,
-      meeting?.feed_item?.connected_records,
-    ];
-    for (const source of sources) {
-      if (Array.isArray(source) && source.length) {
-        return source.map(item => ({ ...(item && typeof item === "object" ? item : {}) }));
-      }
-    }
-    const assistant = Array.isArray(meeting?.feed_item?.transcript_messages)
-      ? meeting.feed_item.transcript_messages.find(item => String(item?.role || "").toLowerCase() === "assistant")
-      : null;
-    return Array.isArray(assistant?.connected_records)
-      ? assistant.connected_records.map(item => ({ ...(item && typeof item === "object" ? item : {}) }))
-      : [];
-  }
-
-  function meetingRuntimeStatusLabel(meeting) {
-    const stateName = meetingState(meeting);
-    if (stateName === "completed") return "Completed";
-    if (stateName === "failed") return "Failed";
-    if (stateName === "processing") return "Processing";
-    return "Uploaded";
-  }
-
-  function meetingRuntimeWhenLabel(meeting) {
-    const raw = String(meeting?.started_at || meeting?.created_at || "").trim();
-    const timestamp = smartTimestamp(raw, "");
-    const duration = formatMeetingDuration(safeNumber(meeting?.duration_ms));
-    return [timestamp, duration].filter(Boolean).join(DOT) || "Unknown";
-  }
-
-  function meetingRuntimeAudioRow(meeting) {
-    const duration = formatMeetingDuration(safeNumber(meeting?.duration_ms));
-    const hasAudioSource = Boolean(meetingPlayablePath(meeting) || String(meeting?.audio_url || "").trim());
-    if (!hasAudioSource) {
-      return lightMeetingNoteDetailRow("audio", "Audio", duration || "Unavailable");
-    }
-    const row = el("button", "light-calendar-detail-row light-meeting-note-detail-row is-clickable");
-    row.type = "button";
-    row.dataset.detailRow = "audio";
-    row.addEventListener("click", () => {
-      void showMeetingAudioDetail(meeting);
-    });
-    row.append(
-      el("strong", "light-calendar-detail-row-label", "Audio"),
-      el("div", "light-calendar-detail-row-value", [duration, "Open recording"].filter(Boolean).join(DOT) || "Open recording")
-    );
-    return row;
-  }
-
-  function meetingRuntimeConnectedDetail(entry) {
-    if (entry?.related) {
-      return meetingNoteConnectedDetail(entry);
-    }
-    const kind = String(entry?.relatedKind || entry?.kind || "").trim();
-    const kindLabel = graphKindLabel(kind);
-    const summary = String(entry?.snapshot?.summary || "").trim();
-    return [kindLabel, summary].filter(Boolean).join(DOT) || kindLabel;
-  }
-
-  function meetingRuntimeConnectedSection(meeting) {
-    return lightLinkedRecordSection(meeting, {
-      title: "Connected",
-      entries: meetingConnectedRecords(meeting),
-      showWhenEmpty: true,
-      fromRoute: "meeting-detail",
-      dedupeTargets: true,
-      showChips: false,
-      showChevron: false,
-      variant: "flat",
-      detailResolver: meetingRuntimeConnectedDetail,
-      openOptions: {
-        detailOrigin: {
-          kind: "meeting_detail",
-          route: "meetings",
-          meetingId: String(meeting?.meeting_id || "").trim(),
-        }
-      },
-    });
-  }
-
-  function meetingRuntimeDetailContent(meeting) {
-    const content = el("div", "detail-content light-document-page light-meeting-runtime-detail");
-    const summary = String(meeting?.card?.summary || meeting?.summary || "").trim();
-    if (summary) {
-      content.append(el("p", "light-event-summary-copy light-meeting-runtime-summary", summary));
-    }
-    const detailsSection = el("section", "light-calendar-detail-section light-meeting-note-details-section light-meeting-runtime-details-section");
-    detailsSection.append(lightSectionTitle("Details"));
-    const card = el("div", "light-calendar-detail-card");
-    card.append(
-      lightMeetingNoteDetailRow("when", "When", meetingRuntimeWhenLabel(meeting)),
-      lightMeetingNoteDetailRow("status", "Status", meetingRuntimeStatusLabel(meeting)),
-      meetingRuntimeAudioRow(meeting),
-    );
-    detailsSection.append(card);
-    content.append(detailsSection, meetingRuntimeConnectedSection(meeting));
-    return content;
-  }
-
-  function showMeetingRuntimeDetail(meeting, options = {}) {
-    state.audioCard = null;
-    const panel = document.getElementById("detail");
-    const detailCard = meetingCardFromRecord(meeting);
-    if (!options.restoring) {
-      markCardRead(detailCard);
-    }
-    const content = meetingRuntimeDetailContent(meeting);
-    applyDetailDataAttributes(panel, "meeting_runtime", detailCard, { viewer: "meeting_runtime" });
-    openSideDetail(panel, meetingTitle(meeting), content, dismissDetail);
-    rememberNavDetail("meeting_runtime", detailCard, options);
-    installDetailScrollPersistence(content, "meeting_runtime");
-    restoreScrollPosition(content, options.scrollTop);
-    void syncVoiceThreadScope({ reason: "show_meeting_runtime_detail", render: true });
   }
 
   async function showMeetingAudioDetail(meeting) {
@@ -14376,26 +10617,19 @@
       : [];
     const persistedAssistant = persistedMessages.find(item => String(item?.role || "").toLowerCase() === "assistant") || null;
     const assistantAttachments = Array.isArray(persistedAssistant?.attachments) ? persistedAssistant.attachments : [];
-    const connectedRecords = meetingConnectedRecords(meeting);
-    return assistantAttachments.length > 0 || connectedRecords.length > 0;
+    return assistantAttachments.length > 0;
   }
 
   function meetingCardFromRecord(meeting) {
     const card = meeting && typeof meeting === "object" ? meeting : {};
-    const feedItem = card.feed_item && typeof card.feed_item === "object" ? card.feed_item : {};
-    const agentCard = card.card && typeof card.card === "object"
-      ? card.card
-      : feedItem.card && typeof feedItem.card === "object"
-        ? feedItem.card
-        : {};
+    const agentCard = card.card && typeof card.card === "object" ? card.card : {};
     const attachments = meetingRecordAttachments(card);
     return {
       session_id: String(card.meeting_id || agentCard.session_id || ""),
-      card_id: String(card.card_id || feedItem.card_id || ""),
       title: meetingTitle(card),
       icon: "mic",
       accent: "#72c2ff",
-      read: typeof card.read === "boolean" ? card.read : Boolean(feedItem.read),
+      read: true,
       created_at: String(card.started_at || card.created_at || ""),
       updated_at: String(card.updated_at || card.stopped_at || ""),
       summary: String(agentCard.summary || card.transcript_text || (meetingState(card) === "processing" ? "Processing..." : "")),
@@ -14404,7 +10638,6 @@
       audio_mime_type: String(card.mime_type || "audio/mp4"),
       audio_duration_ms: safeNumber(card.duration_ms),
       attachments,
-      connected_records: meetingConnectedRecords(card),
       transcript_messages: meetingTranscriptMessages(card),
       is_meeting_recording: true,
       render_profile: "meeting_list",
@@ -14414,9 +10647,47 @@
 
   function meetingRecordAttachments(meeting) {
     const record = meeting && typeof meeting === "object" ? meeting : {};
+    const card = record.card && typeof record.card === "object" ? record.card : {};
     const meetingId = String(record.meeting_id || "").trim();
     const attachments = [];
+    const summaryArtifactId = meetingId ? `pucky_card_${meetingId}:html` : "";
     const transcriptArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript` : "";
+    const transcriptHtmlArtifactId = meetingId ? `pucky_card_${meetingId}:meeting_transcript_html` : "";
+    const summaryHtmlBase64 = String(card.html_base64 || "").trim();
+    const summaryHtmlText = decodeMeetingSummaryBase64(summaryHtmlBase64);
+    const transcriptHtmlUrl = extractMeetingSummaryLink(summaryHtmlText, /<a\b[^>]*href=["']([^"']*\/api\/shared\/artifacts\/[^"']+)["'][^>]*>/i);
+    const signedAudioUrl = extractMeetingSummaryLink(summaryHtmlText, /<a\b[^>]*href=["']([^"']*\/api\/shared\/meetings\/[^"']*\/audio[^"']*)["'][^>]*>/i);
+    if (summaryHtmlBase64) {
+      attachments.push({
+        id: `meeting-summary-${meetingId || "current"}`,
+        title: "Meeting Summary",
+        kind: "html",
+        mime_type: String(card.html_mime_type || "text/html"),
+        data_url: `data:text/html;base64,${summaryHtmlBase64}`,
+        viewer_src: `data:text/html;base64,${summaryHtmlBase64}`,
+        html_src: `data:text/html;base64,${summaryHtmlBase64}`,
+        artifact: summaryArtifactId,
+        viewer_artifact: summaryArtifactId,
+        html_artifact: summaryArtifactId,
+        meeting_id: meetingId
+      });
+    }
+    const transcriptHtmlPath = String(record.transcript_html_path || "").trim();
+    if (transcriptHtmlPath || transcriptHtmlArtifactId) {
+      attachments.push({
+        id: `meeting-transcript-html-${meetingId || "current"}`,
+        title: "Transcript",
+        kind: "html",
+        mime_type: "text/html",
+        path: transcriptHtmlPath,
+        viewer_url: transcriptHtmlUrl,
+        html_url: transcriptHtmlUrl,
+        artifact: transcriptHtmlArtifactId,
+        viewer_artifact: transcriptHtmlArtifactId,
+        html_artifact: transcriptHtmlArtifactId,
+        meeting_id: meetingId
+      });
+    }
     const transcriptPath = String(record.transcript_path || "").trim();
     const transcriptText = meetingTranscriptText(record);
     if (transcriptText || transcriptPath || transcriptArtifactId) {
@@ -14431,7 +10702,7 @@
         meeting_id: meetingId
       });
     }
-    const audioUrl = String(record.audio_url || "").trim();
+    const audioUrl = signedAudioUrl || String(record.audio_url || "").trim();
     const audioPath = String(record.audio_path || "").trim();
     if (audioUrl || audioPath) {
       attachments.push({
@@ -14564,7 +10835,7 @@
   function meetingTitle(meeting) {
     const raw = meeting && typeof meeting === "object" ? meeting : {};
     const card = raw.card && typeof raw.card === "object" ? raw.card : {};
-    return String(raw.title || card.title || raw.recording_title || card.recording_title || raw.meeting_id || "Meeting Recording");
+    return String(raw.recording_title || card.recording_title || raw.title || raw.meeting_id || "Meeting Recording");
   }
 
   function meetingState(meeting) {
@@ -14629,7 +10900,6 @@
           arrival_cue_mode: state.turnSettings.arrival_cue_mode
         }
       });
-      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -14690,7 +10960,6 @@
         command: enabled ? "wake.start" : "wake.stop",
         args: { enabled }
       });
-      invalidateBridgeReadCache("wake.status");
       state.wakeStatus = normalizeWakeStatus(updated);
       render();
     } catch (_) {
@@ -14713,7 +10982,6 @@
           arrival_cue_mode: arrivalCueMode
         }
       });
-      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -14765,7 +11033,6 @@
           model: nextModel
         }
       });
-      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -14809,7 +11076,6 @@
           reasoning_effort: nextEffort
         }
       });
-      invalidateBridgeReadCache("pucky.turn.settings.get");
       state.turnSettings = normalizeTurnSettings(updated);
       render();
     } catch (_) {
@@ -15125,137 +11391,6 @@
   }
 
 
-  function inboxManageSelectButton(card) {
-    const selected = isInboxCardSelected(card);
-    const select = el("button", selected ? "inbox-manage-select is-selected" : "inbox-manage-select");
-    select.type = "button";
-    applyCardActionData(select, "manage_select", card, "reply");
-    select.setAttribute("aria-label", `${selected ? "Deselect" : "Select"} ${card?.title || "Inbox tile"}`);
-    select.setAttribute("aria-pressed", selected ? "true" : "false");
-    select.innerHTML = selected ? iconSvg("check", { filled: true }) : "";
-    select.addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleInboxManageSelection(card);
-    });
-    return select;
-  }
-
-  function isInboxCardMenuOpen(card) {
-    const sessionId = cardSessionId(card);
-    const threadId = cardThreadId(card);
-    return Boolean(
-      (sessionId && state.openCardMenuSessionId === sessionId)
-      || (!sessionId && threadId && state.openCardMenuThreadId === threadId)
-    );
-  }
-
-  function openInboxCardMenu(card) {
-    state.cardMenuClickSuppressUntil = Date.now() + CARD_MENU_CLICK_SUPPRESS_MS;
-    state.openCardMenuSessionId = cardSessionId(card);
-    state.openCardMenuThreadId = cardThreadId(card);
-    renderFeed();
-    void syncVoiceThreadScope({ reason: "inbox_card_menu_open", render: true, force: true });
-  }
-
-  function inboxCardMenuButton(card) {
-    const open = isInboxCardMenuOpen(card);
-    const menuButton = el("button", open ? "inbox-card-menu-button is-open" : "inbox-card-menu-button");
-    menuButton.type = "button";
-    applyCardActionData(menuButton, "manage_menu", card, "reply");
-    menuButton.setAttribute("aria-label", `More actions for ${card?.title || "Inbox tile"}`);
-    menuButton.setAttribute("aria-expanded", open ? "true" : "false");
-    menuButton.innerHTML = iconSvg("more_vert", { filled: true });
-    menuButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (isInboxCardMenuOpen(card)) {
-        dismissOpenCardMenu(false);
-        return;
-      }
-      openInboxCardMenu(card);
-    });
-    return menuButton;
-  }
-
-  function shouldShowInboxCardEscapeMenu(card) {
-    if (!canManageInboxCard(card)) {
-      return false;
-    }
-    if (state.showArchivedFeed || Boolean(card?.archived)) {
-      return true;
-    }
-    if (isMeetingProcessingCard(card) || isFailedPendingOutboundCard(card)) {
-      return true;
-    }
-    const origin = card?.origin && typeof card.origin === "object" ? card.origin : {};
-    const text = [
-      card?.card_kind,
-      card?.meeting_state,
-      card?.status,
-      card?.state,
-      card?.workflow_state,
-      card?.processing_state,
-      card?.error_code,
-      card?.error,
-      card?.failure_reason,
-      card?.transcript_error,
-      card?.title,
-      card?.summary,
-      origin.card_kind,
-      origin.meeting_state,
-      origin.status,
-      origin.state,
-      origin.error_code,
-      origin.failure_reason,
-      origin.transcript_error
-    ].map(value => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
-    return /\b(failed|failure|error|errored|stalled|blocked|upload_blocked|needs review|needs_review|processing)\b/.test(text);
-  }
-
-  function cardOverflowMenu(card) {
-    const menu = el("div", "card-longpress-menu inbox-card-menu");
-    menu.setAttribute("role", "menu");
-    const addItem = (label, icon, actionName, handler) => {
-      const item = el("button", "inbox-card-menu-item");
-      item.type = "button";
-      item.setAttribute("role", "menuitem");
-      item.dataset.cardMenuAction = actionName;
-      item.innerHTML = `${iconSvg(icon, { filled: true })}<span>${label}</span>`;
-      item.addEventListener("click", (event) => {
-        event.stopPropagation();
-        handler();
-      });
-      menu.append(item);
-    };
-    addItem("Open transcript", "chat", "open_transcript", () => {
-      dismissOpenCardMenu(false);
-      showTranscript(card);
-    });
-    if (isCardRead(card)) {
-      addItem("Mark unread", "checklist", "mark_unread", () => {
-        dismissOpenCardMenu(false);
-        setCardReadOverride(card, false);
-        render();
-      });
-    } else {
-      addItem("Mark read", "checklist", "mark_read", () => {
-        dismissOpenCardMenu(false);
-        markCardRead(card);
-      });
-    }
-    if (state.showArchivedFeed) {
-      addItem("Unarchive", "archive_folder", "unarchive", () => {
-        dismissOpenCardMenu(false);
-        void requestFeedAction(card, "unarchive", { silent: false });
-      });
-    } else {
-      addItem("Archive", "archive_folder", "archive", () => {
-        dismissOpenCardMenu(false);
-        void requestFeedAction(card, "archive", { silent: false });
-      });
-    }
-    return menu;
-  }
-
   function cardView(card, options = {}) {
     const flatFeed = Boolean(options.flatFeed);
     const surface = String(options.surface || "").trim().toLowerCase();
@@ -15269,22 +11404,6 @@
     setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
     const isMeetingList = isMeetingsListCard(card);
-    const inboxSurface = surface === "inbox" && !isMeetingList;
-    const manageableInboxCard = inboxSurface && canManageInboxCard(card);
-    const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
-    const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);
-    if (inboxSurface) {
-      wrapper.classList.add("is-inbox-card");
-    }
-    if (inboxManageMode || inboxEscapeMenu) {
-      wrapper.classList.add("has-inbox-menu");
-    }
-    if (inboxManageMode) {
-      wrapper.classList.add("is-inbox-manage-mode");
-    }
-    if (manageableInboxCard && isInboxCardSelected(card)) {
-      wrapper.classList.add("is-inbox-manage-selected");
-    }
     const cardClassName = isMeetingList
       ? meetingListCardClass(card)
       : isCardRead(card)
@@ -15309,10 +11428,6 @@
       identity.setAttribute("aria-label", isCardRead(card) ? `${card.title} is read` : `Mark ${card.title} read`);
       identity.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (inboxManageMode) {
-          toggleInboxManageSelection(card);
-          return;
-        }
         toggleCardRead(card);
       });
     }
@@ -15337,19 +11452,13 @@
           void showMeetingDetail(card.meeting_record);
         }
       });
-      const copy = el("div", "card-meeting-copy");
-      copy.append(el("h2", "title", card.title || "Pucky"));
-      body.append(copy);
+      body.append(el("h2", "title", card.title || "Pucky"));
     } else {
       const title = el("button", "card-title-trigger title", card.title || "Pucky");
       title.type = "button";
       applyCardActionData(title, "transcript_title", card, "reply");
       title.setAttribute("aria-label", `Open transcript for ${card.title || "reply"}`);
       title.addEventListener("click", () => {
-        if (inboxManageMode) {
-          toggleInboxManageSelection(card);
-          return;
-        }
         if (!shouldSuppressCardActivation()) {
           showTranscript(card);
         }
@@ -15362,10 +11471,6 @@
         inlineAudio.setAttribute("aria-label", `Open audio controls for ${card.title || "reply"}`);
         inlineAudio.append(audioTileStatus(card));
         inlineAudio.addEventListener("click", () => {
-          if (inboxManageMode) {
-            toggleInboxManageSelection(card);
-            return;
-          }
           if (!shouldSuppressCardActivation()) {
             showAudioDetail(resolveAudioControlsTargetCard(card));
           }
@@ -15378,10 +11483,6 @@
         summary.setAttribute("aria-label", `Open transcript for ${card.title || "reply"}`);
         summary.append(el("p", "preview", card.summary || card.transcript || ""));
         summary.addEventListener("click", () => {
-          if (inboxManageMode) {
-            toggleInboxManageSelection(card);
-            return;
-          }
           if (!shouldSuppressCardActivation()) {
             showTranscript(card);
           }
@@ -15415,10 +11516,6 @@
               : `Play ${card.title}`);
       audio.addEventListener("click", async (event) => {
         event.stopPropagation();
-        if (inboxManageMode) {
-          toggleInboxManageSelection(card);
-          return;
-        }
         if (isMeetingList) {
           void showMeetingAudioDetail(card.meeting_record);
           return;
@@ -15427,23 +11524,40 @@
       });
       actions.append(audio);
     }
+    if (!isMeetingList) {
+      const attachmentInfo = firstDisplayableAttachmentInfo(card);
+      if (hasRichPage(card)) {
+        const page = el("button", `action ${actionStateClass(card, "page")}`);
+        page.type = "button";
+        applyCardActionData(page, "page", card, "reply");
+        page.innerHTML = iconSvg("attachment", { filled: true });
+        page.setAttribute("aria-label", `Open page for ${card.title}`);
+        page.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showRichPage(card);
+        });
+        actions.append(page);
+      } else if (attachmentInfo) {
+        const file = el("button", `action ${actionStateClass(card, "attachment")}`);
+        file.type = "button";
+        applyCardActionData(file, "attachment", card, "reply");
+        file.innerHTML = iconSvg("attachment", { filled: true });
+        file.setAttribute("aria-label", `Open file for ${card.title}`);
+        file.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showAttachmentViewer(card, attachmentInfo.attachments, { initialIndex: attachmentInfo.index });
+        });
+        actions.append(file);
+      }
+    }
     actions.classList.add(`action-count-${Math.min(2, actions.childElementCount)}`);
 
     if (identity) {
       cardEl.append(identity, body, actions);
-    } else if (isMeetingList) {
-      const meta = el("div", "card-meeting-meta");
-      if (cardStamp) {
-        const stamp = el("time", "card-timestamp", cardStamp.text);
-        stamp.dateTime = cardStamp.iso;
-        meta.append(stamp);
-      }
-      meta.append(actions);
-      cardEl.append(body, meta);
     } else {
       cardEl.append(body, actions);
     }
-    if (cardStamp && !isMeetingList) {
+    if (cardStamp) {
       const stamp = el("time", "card-timestamp", cardStamp.text);
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
@@ -15459,23 +11573,13 @@
       });
       return wrapper;
     }
-    const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);
-    if (inboxManageMode) {
-      wrapper.append(inboxManageSelectButton(card));
-    }
-    if (revealArchiveEnabled) {
+    if (canArchiveHomeCard(card)) {
       appendArchiveRevealAction(wrapper, {
         label: `Archive ${card.title || "reply"}`
       });
     }
     wrapper.append(cardEl);
-    if (inboxEscapeMenu && !inboxManageMode) {
-      wrapper.append(inboxCardMenuButton(card));
-      if (isInboxCardMenuOpen(card)) {
-        wrapper.append(cardOverflowMenu(card));
-      }
-    }
-    if (revealArchiveEnabled) {
+    if (canArchiveHomeCard(card)) {
       installArchiveReveal(wrapper, card, {
         canReveal: canRevealHomeArchive,
         performArchive: () => performHomeArchive(card)
@@ -15513,22 +11617,6 @@
     const wrapper = el("div", flatFeed ? "card-wrap card-wrap-meeting-processing is-flat-feed" : "card-wrap card-wrap-meeting-processing");
     setDataAttribute(wrapper, "data-card-surface", surface);
     wrapper.style.setProperty("--accent", card.accent || "#72c2ff");
-    const inboxSurface = surface === "inbox";
-    const manageableInboxCard = inboxSurface && canManageInboxCard(card);
-    const inboxManageMode = manageableInboxCard && Boolean(state.inboxManageMode);
-    const inboxEscapeMenu = manageableInboxCard && shouldShowInboxCardEscapeMenu(card);
-    if (inboxSurface) {
-      wrapper.classList.add("is-inbox-card");
-    }
-    if (inboxManageMode || inboxEscapeMenu) {
-      wrapper.classList.add("has-inbox-menu");
-    }
-    if (inboxManageMode) {
-      wrapper.classList.add("is-inbox-manage-mode");
-    }
-    if (manageableInboxCard && isInboxCardSelected(card)) {
-      wrapper.classList.add("is-inbox-manage-selected");
-    }
     const cardEl = el("article", flatFeed ? "card card-meeting-processing is-flat-feed" : "card card-meeting-processing");
     setDataAttribute(cardEl, "data-card-surface", surface);
     applyCardDataAttributes(cardEl, card, "meeting_processing");
@@ -15544,16 +11632,7 @@
       stamp.dateTime = cardStamp.iso;
       cardEl.append(stamp);
     }
-    if (inboxManageMode) {
-      wrapper.append(inboxManageSelectButton(card));
-    }
     wrapper.append(cardEl);
-    if (inboxEscapeMenu && !inboxManageMode) {
-      wrapper.append(inboxCardMenuButton(card));
-      if (isInboxCardMenuOpen(card)) {
-        wrapper.append(cardOverflowMenu(card));
-      }
-    }
     return wrapper;
   }
 
@@ -15601,14 +11680,13 @@
     }
     meta.append(metaCopy);
     cardEl.append(copy, meta);
-    const revealArchiveEnabled = surface !== "inbox" && canArchiveHomeCard(card);
-    if (revealArchiveEnabled) {
+    if (canArchiveHomeCard(card)) {
       appendArchiveRevealAction(wrapper, {
         label: `Archive ${card.title || "reply"}`
       });
     }
     wrapper.append(cardEl);
-    if (revealArchiveEnabled) {
+    if (canArchiveHomeCard(card)) {
       installArchiveReveal(wrapper, card, {
         canReveal: canRevealHomeArchive,
         performArchive: () => performHomeArchive(card)
@@ -15833,8 +11911,15 @@
   async function toggleAudio(card) {
     const busyKey = audioStateKey(card);
     const phaseBefore = currentTileAudioPhase(card);
-    if (state.audioToggleBusyKey === busyKey || ["starting", "pause_pending"].includes(phaseBefore)) {
+    if (state.audioToggleBusyKey === busyKey && phaseBefore !== "pause_pending") {
+      queueSameCardToggle(busyKey, phaseBefore);
       return;
+    }
+    if (["starting", "pause_pending"].includes(phaseBefore)) {
+      return;
+    }
+    if (state.queuedAudioToggleKey && !samePath(state.queuedAudioToggleKey, busyKey)) {
+      clearQueuedSameCardToggle(state.queuedAudioToggleKey);
     }
     recordAudioProbeEvent("click_received", {
       target_key: busyKey,
@@ -16008,11 +12093,23 @@
       showToast(message);
       render();
     } finally {
+      const replayQueuedSameCardToggle = shouldReplayQueuedSameCardToggle(card, busyKey);
       if (state.audioToggleBusyKey === busyKey) {
         state.audioToggleBusyKey = "";
         recordAudioProbeEvent("busy_end", { target_key: busyKey });
       }
+      if (!replayQueuedSameCardToggle) {
+        clearQueuedSameCardToggle(busyKey);
+      }
       render();
+      if (replayQueuedSameCardToggle) {
+        clearQueuedSameCardToggle(busyKey);
+        recordAudioProbeEvent("busy_same_card_toggle_replayed", {
+          target_key: busyKey,
+          phase_before_replay: currentTileAudioPhase(card)
+        });
+        await toggleAudio(card);
+      }
     }
   }
 
@@ -16026,62 +12123,35 @@
       restoreFeedScroll();
     }
     const panel = document.getElementById("detail");
-    const messages = messagesForCard(card);
-    const content = el("div", "detail-content chat-detail");
-    const stack = el("div", "chat-stack");
-    messages.forEach((message, index) => {
-      const images = messageImages(card, message, index, messages);
-      if (message.role !== "user" && images.length) {
-        stack.append(chatMediaBubble(card, images));
-      }
-      const bubble = el("div", [
-        "bubble",
-        message.role === "user" ? "user" : "assistant",
-        message.pending_placeholder ? "is-thinking" : "",
-        message.pending_failed ? "is-failed" : "",
-      ].filter(Boolean).join(" "));
-      const attachments = messageAttachmentRow(card, message, index);
-      if (attachments) {
-        bubble.append(attachments);
-      }
-      const connected = messageConnectedRecordRow(card, message);
-      if (connected) {
-        bubble.append(connected);
-      }
-      bubble.append(document.createTextNode(message.text || ""));
-      if (message.role !== "user" && !message.synthetic) {
-        const actions = el("div", "bubble-actions");
-        const meta = el("button", "bubble-origin-action");
-        meta.type = "button";
-        meta.innerHTML = iconSvg("settings", { filled: false });
-        meta.setAttribute("aria-label", "Open reply details");
-        meta.addEventListener("click", (event) => {
-          event.stopPropagation();
-          showOriginSheet(card);
-        });
-        const trace = el("button", "bubble-trace-action");
-        trace.type = "button";
-        trace.innerHTML = iconSvg("lightbulb_2", { filled: false });
-        trace.setAttribute("aria-label", "Open thinking logs");
-        trace.addEventListener("click", (event) => {
-          event.stopPropagation();
-          showTurnTrace(card, message, index);
-        });
-        actions.append(meta, trace);
-        bubble.append(actions);
-      }
-      const stamp = messageTimestamp(message);
-      if (stamp) {
-        bubble.append(el("span", "bubble-meta", stamp));
-      }
-      stack.append(bubble);
-    });
-    content.append(stack);
-    applyDetailDataAttributes(panel, "transcript", card);
-    openSideDetail(panel, card.title || "Transcript", content, dismissDetail);
-    rememberNavDetail("transcript", card, options);
+    const content = renderTranscriptDetailContent(card);
+    const pendingNewThreadDetail = isPendingOutboundCard(card) && turnRequestedThreadMode(state.turn) === "new" && !cardThreadId(card);
+    const detailType = pendingNewThreadDetail ? "transcript_new" : "transcript";
+    applyDetailDataAttributes(panel, detailType, card);
+    openSideDetail(panel, card.title || "Transcript", content, dismissDetail, { audioCard: hasAudio(card) ? card : null });
+    rememberNavDetail(detailType, card, options);
     installDetailScrollPersistence(content, "transcript");
     void syncVoiceThreadScope({ reason: "show_transcript", render: true });
+    if (options.restoring) {
+      restoreScrollPosition(content, options.scrollTop);
+    } else {
+      scrollTranscriptToLatest(content);
+    }
+  }
+
+  function showNewInboxThreadComposer(options = {}) {
+    state.audioCard = null;
+    renderFeed();
+    if (options.restoring) {
+      restoreFeedScroll();
+    }
+    const panel = document.getElementById("detail");
+    const card = inboxNewThreadComposerCard();
+    const content = renderTranscriptDetailContent(card);
+    applyDetailDataAttributes(panel, "transcript_new", card);
+    openSideDetail(panel, card.title || "New chat", content, dismissDetail);
+    rememberNavDetail("transcript_new", card, options);
+    installDetailScrollPersistence(content, "transcript");
+    void syncVoiceThreadScope({ reason: "show_new_inbox_thread_composer", render: true });
     if (options.restoring) {
       restoreScrollPosition(content, options.scrollTop);
     } else {
@@ -16194,27 +12264,6 @@
     return row.childElementCount ? row : null;
   }
 
-  function messageConnectedRecordRow(card, message) {
-    const entries = connectedRecordEntries(message?.connected_records, { dedupeTargets: true });
-    if (!entries.length) {
-      return null;
-    }
-    const row = el("div", "bubble-attachment-row bubble-connected-record-row");
-    const detailOrigin = {
-      kind: "transcript",
-      route: "inbox",
-      sessionId: cardSessionId(card),
-      threadId: cardThreadId(card),
-    };
-    entries.forEach(entry => {
-      row.append(lightRecordChip(entry, {
-        fromRoute: "inbox",
-        detailOrigin,
-      }));
-    });
-    return row.childElementCount ? row : null;
-  }
-
   async function showRichPage(card, options = {}) {
     state.audioCard = null;
     if (!options.restoring) {
@@ -16241,7 +12290,7 @@
       content.append(el("p", "preview", `Page unavailable: ${error.message}`));
     }
     applyDetailDataAttributes(panel, "page", card, { viewer: "html_iframe" });
-    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { fullBleed: true });
+    openSideDetail(panel, card.title || "Page", content, dismissWithCleanup, { audioCard: hasAudio(card) ? card : null, fullBleed: true });
     rememberNavDetail("page", card, options);
     installDetailScrollPersistence(content, "page");
     void syncVoiceThreadScope({ reason: "show_page", render: true });
@@ -16782,7 +12831,7 @@
       });
     }
     applyDetailDataAttributes(panel, "images", card, { viewer: "image_gallery" });
-    openSideDetail(panel, card.title || "Images", content, dismissGallery);
+    openSideDetail(panel, card.title || "Images", content, dismissGallery, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("images", card, { ...restoreOptions, imageIndex: startIndex });
     installDetailScrollPersistence(content, "images");
     void syncVoiceThreadScope({ reason: "show_images", render: true });
@@ -16927,7 +12976,7 @@
     frame.append(shell);
     content.append(frame);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: "video_player" });
-    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment);
+    openSideDetail(panel, item.title || card.title || "Video", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     void syncVoiceThreadScope({ reason: "show_video_attachment", render: true });
@@ -16962,7 +13011,7 @@
     wrap.append(audio);
     content.append(wrap);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: "audio_player" });
-    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment);
+    openSideDetail(panel, item.title || card.title || "Audio", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("attachment", card, options);
     void syncVoiceThreadScope({ reason: "show_audio_attachment", render: true });
     try {
@@ -16981,7 +13030,7 @@
     const viewer = await documentViewer(card, item, options);
     content.append(viewer);
     applyDetailDataAttributes(panel, "attachment", card, { viewer: attachmentViewerType(item) });
-    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment);
+    openSideDetail(panel, item.title || card.title || "Attachment", content, dismissAttachment, { audioCard: hasAudio(card) ? card : null });
     rememberNavDetail("attachment", card, options);
     installDetailScrollPersistence(content, "attachment");
     void syncVoiceThreadScope({ reason: "show_document_attachment", render: true });
@@ -17314,7 +13363,12 @@
       throw new Error("artifact url is missing");
     }
     await ensureLinksApiConfig();
-    const response = await fetch(apiUrl, { cache: "no-store", headers: {} });
+    const headers = {};
+    if (state.links.apiToken && !/[?&]token=/i.test(apiUrl)) {
+      headers.Authorization = `Bearer ${state.links.apiToken}`;
+    }
+    const response = await fetch(apiUrl, { cache: "no-store", headers });
+    maybeRedirectToSignInOnUnauthorized(response);
     if (!response.ok) {
       throw new Error(`${label} unavailable: HTTP ${response.status}`);
     }
@@ -17712,7 +13766,7 @@
 
   function openSideDetail(panel, title, content, onDismiss, options = {}) {
     const shell = el("div", "detail-shell");
-    const audioCard = options.showAudioContinuity === true && hasAudio(options.audioCard) ? options.audioCard : null;
+    const audioCard = hasAudio(options.audioCard) ? options.audioCard : null;
     const fullBleed = Boolean(options.fullBleed);
     const header = lightHeader(title, { onBack: onDismiss, detail: true });
     const body = el("div", "detail-content");
@@ -17768,9 +13822,6 @@
       const back = detail.querySelector(".light-back-button, .detail-back");
       if (back) {
         back.click();
-        if (detail.classList.contains("is-open")) {
-          dismissDetail();
-        }
       } else {
         dismissDetail();
       }
@@ -18543,7 +14594,6 @@
         event.stopPropagation();
         if (isSetting) {
           const result = await Pucky.request({ command: "ui.default_audio_speed.set", args: { speed } });
-          invalidateBridgeReadCache("ui.default_audio_speed.get");
           state.defaultAudioSpeed = clampSpeed(result && result.speed);
           state.defaultAudioSpeedAvailable = true;
         } else {
@@ -19069,8 +15119,7 @@
       }
       const target = event.target instanceof Element ? event.target : null;
       const menu = target?.closest(".card-longpress-menu");
-      const menuButton = target?.closest(".inbox-card-menu-button");
-      if (menu || menuButton) {
+      if (menu) {
         return;
       }
       dismissOpenCardMenu(true);
@@ -19312,6 +15361,9 @@
   }
 
   function messagesForCard(card) {
+    if (isNewThreadComposerCard(card)) {
+      return [];
+    }
     if (isPendingOutboundCard(card)) {
       return pendingOutboundMessages(card);
     }
@@ -19323,7 +15375,6 @@
         timestamp: item.timestamp || "",
         created_at: item.created_at || "",
         attachments: normalizedAttachments(item.attachments),
-        connected_records: Array.isArray(item.connected_records) ? item.connected_records.slice() : [],
         images: normalizedImages(item.images)
       }));
     }
@@ -19333,11 +15384,7 @@
         return { role: user ? "user" : "assistant", text: line.replace(/^(user|pucky|assistant):\s*/i, "") };
       });
     }
-    return [{
-      role: "assistant",
-      text: card.summary || "No transcript is attached to this reply.",
-      connected_records: Array.isArray(card?.connected_records) ? card.connected_records.slice() : [],
-    }];
+    return [{ role: "assistant", text: card.summary || "No transcript is attached to this reply." }];
   }
 
   function pendingOutboundMessages(card) {
@@ -19350,6 +15397,7 @@
         role: "user",
         text: transcript,
         created_at: createdAt,
+        attachments: normalizedAttachments(card?.pending_user_attachments),
         synthetic: true
       },
       {
@@ -19361,6 +15409,630 @@
         pending_failed: failed
       }
     ];
+  }
+
+  function threadComposerDraft(threadId) {
+    const key = String(threadId || "").trim();
+    const raw = key && state.threadComposerDrafts && typeof state.threadComposerDrafts === "object"
+      ? state.threadComposerDrafts[key]
+      : null;
+    return {
+      text: String(raw?.text || ""),
+      files: Array.isArray(raw?.files) ? raw.files.filter(Boolean) : []
+    };
+  }
+
+  function setThreadComposerDraft(threadId, draft = {}) {
+    const key = String(threadId || "").trim();
+    if (!key) {
+      return;
+    }
+    const text = String(draft.text || "");
+    const files = Array.isArray(draft.files) ? draft.files.filter(Boolean) : [];
+    const next = { ...state.threadComposerDrafts };
+    if (!text.trim() && !files.length) {
+      delete next[key];
+    } else {
+      next[key] = { text, files };
+    }
+    state.threadComposerDrafts = next;
+  }
+
+  function threadComposerDraftKeyForCard(card) {
+    if (isNewThreadComposerCard(card)) {
+      return "thread:new";
+    }
+    const threadId = String(cardThreadId(card) || "").trim();
+    if (threadId) {
+      return `thread:${threadId}`;
+    }
+    const sessionId = String(cardSessionId(card) || "").trim();
+    if (sessionId) {
+      return `session:${sessionId}`;
+    }
+    const cardId = String(card?.card_id || "").trim();
+    return cardId ? `card:${cardId}` : "";
+  }
+
+  function migrateThreadComposerDraftKey(fromKey, toKey) {
+    const sourceKey = String(fromKey || "").trim();
+    const targetKey = String(toKey || "").trim();
+    if (!sourceKey || !targetKey || sourceKey === targetKey) {
+      return;
+    }
+    const sourceDraft = threadComposerDraft(sourceKey);
+    const targetDraft = threadComposerDraft(targetKey);
+    const hasSourceDraft = Boolean(String(sourceDraft.text || "").trim()) || sourceDraft.files.length > 0;
+    if (!hasSourceDraft) {
+      delete state.threadComposerDrafts[sourceKey];
+      return;
+    }
+    setThreadComposerDraft(targetKey, {
+      text: String(targetDraft.text || "").trim() ? targetDraft.text : sourceDraft.text,
+      files: targetDraft.files.length ? targetDraft.files : sourceDraft.files
+    });
+    if (state.threadComposerDrafts && typeof state.threadComposerDrafts === "object") {
+      delete state.threadComposerDrafts[sourceKey];
+    }
+  }
+
+  function inboxNewThreadComposerCard() {
+    return {
+      card_id: "inbox:new_thread_composer",
+      session_id: "inbox:new_thread_composer",
+      local_session_id: "inbox:new_thread_composer",
+      title: "New chat",
+      summary: "",
+      transcript: "",
+      transcript_messages: [],
+      synthetic_new_thread: true,
+      origin: {
+        thread_id: ""
+      }
+    };
+  }
+
+  function isNewThreadComposerCard(card) {
+    return Boolean(card?.synthetic_new_thread) || String(card?.card_id || "").trim() === "inbox:new_thread_composer";
+  }
+
+  function composerTurnMatchesCard(card, threadId = "") {
+    if (!isTurnActive(state.turn)) {
+      return false;
+    }
+    if (isNewThreadComposerCard(card)) {
+      return turnRequestedThreadMode(state.turn) === "new";
+    }
+    return turnRequestedThreadId(state.turn) === String(threadId || "").trim();
+  }
+
+  function threadComposerAttachmentKind(mimeType, name = "") {
+    const mime = String(mimeType || "").trim().toLowerCase();
+    const lowerName = String(name || "").trim().toLowerCase();
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("video/")) return "video";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime === "text/html" || mime === "application/xhtml+xml" || /\.html?$/i.test(lowerName)) return "html";
+    if (mime === "text/csv" || mime === "text/tab-separated-values" || /\.csv$/i.test(lowerName) || /\.tsv$/i.test(lowerName)) return "table";
+    if (
+      mime.startsWith("text/")
+      || mime === "application/json"
+      || mime === "application/xml"
+      || mime === "text/xml"
+      || /\.md$/i.test(lowerName)
+      || /\.txt$/i.test(lowerName)
+      || /\.json$/i.test(lowerName)
+    ) {
+      return "text";
+    }
+    if (mime === "application/pdf") return "document";
+    return "unknown";
+  }
+
+  async function queuedThreadComposerFile(file) {
+    const name = String(file?.name || "attachment").trim() || "attachment";
+    const mimeType = String(file?.type || "").trim() || "application/octet-stream";
+    const kind = threadComposerAttachmentKind(mimeType, name);
+    let textExcerpt = "";
+    if (kind === "text" || kind === "table" || kind === "html") {
+      try {
+        textExcerpt = String(await file.text()).slice(0, 4000);
+      } catch (_) {
+        textExcerpt = "";
+      }
+    }
+    return {
+      id: `queued:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      name,
+      mimeType,
+      kind,
+      sizeBytes: Number(file?.size || 0),
+      textExcerpt,
+      previewUrl: kind === "image" ? URL.createObjectURL(file) : ""
+    };
+  }
+
+  function queuedThreadComposerAttachment(queued) {
+    if (!queued || typeof queued !== "object") {
+      return null;
+    }
+    const attachment = {
+      id: String(queued.id || ""),
+      title: String(queued.name || "Attachment"),
+      filename: String(queued.name || "attachment"),
+      mime_type: String(queued.mimeType || "application/octet-stream"),
+      kind: String(queued.kind || "unknown"),
+      size_bytes: Number(queued.sizeBytes || 0),
+      text: String(queued.textExcerpt || "")
+    };
+    if (queued.previewUrl) {
+      attachment.src = String(queued.previewUrl || "");
+      attachment.preview_src = String(queued.previewUrl || "");
+    }
+    return normalizeAttachment(attachment);
+  }
+
+  function composerProofReplyDelayMs() {
+    const explicit = Number(window.PuckyComposerProofReplyDelayMs || 0);
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return Math.max(0, Math.round(explicit));
+    }
+    try {
+      const value = Number(new URLSearchParams(window.location.search || "").get("proof_reply_delay_ms") || 0);
+      return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function optimisticComposerTurnStatus({ turnId, threadId, transcript, attachments = [], threadMode = "existing" }) {
+    return {
+      schema: "pucky.turn_status.v1",
+      turn_id: turnId,
+      stage: "upload_received",
+      status: "running",
+      requested_thread_mode: threadMode,
+      requested_thread_id: String(threadId || ""),
+      thread_scope_source: "thread_transcript",
+      user_transcript: String(transcript || ""),
+      pending_user_attachments: attachments,
+      client_started_at_ms: Date.now(),
+      composer_managed: true,
+      configured: Boolean(String(state.links.apiToken || "").trim()),
+      indicator: {
+        schema: "pucky.turn_indicator.v1",
+        state: "uploading",
+        visual_state: "uploading",
+        mic_on: false,
+        speech_detected: false,
+        uploading: true,
+        stt_running: false,
+        codex_running: false,
+        tts_running: false,
+        speaking: false,
+        failed: false,
+        remote_stage: "upload_received",
+        active: true
+      }
+    };
+  }
+
+  function scheduleComposerTurnThinkingFallback(turnId) {
+    const scheduledTurnId = String(turnId || "").trim();
+    if (!scheduledTurnId) {
+      return;
+    }
+    window.setTimeout(() => {
+      const current = normalizeTurnStatus(state.turn);
+      if (turnStatusTurnId(current) !== scheduledTurnId || !current.composer_managed) {
+        return;
+      }
+      if (!isTurnActive(current) || turnFailed(current) || pendingTurnState(current) !== "sending") {
+        return;
+      }
+      const indicator = turnIndicatorFromStatus(current);
+      applyTurnStatus({
+        ...current,
+        stage: "codex_running",
+        status: "running",
+        indicator: {
+          ...indicator,
+          state: "thinking",
+          visual_state: "thinking",
+          uploading: false,
+          stt_running: false,
+          codex_running: true,
+          tts_running: false,
+          speaking: false,
+          failed: false,
+          active: true,
+          remote_stage: "codex_running"
+        }
+      });
+      render();
+    }, 900);
+  }
+
+  function transcriptDetailMessages(card) {
+    const messages = messagesForCard(card);
+    if (!card || isPendingOutboundCard(card)) {
+      return messages;
+    }
+    if (turnRequestedThreadId(state.turn) !== cardThreadId(card)) {
+      return messages;
+    }
+    const pendingCard = pendingTurnCard(state.turn, state.cards);
+    if (!pendingCard) {
+      return messages;
+    }
+    const pendingMessages = pendingOutboundMessages(pendingCard);
+    return messages.concat(pendingMessages);
+  }
+
+  function autoSizeComposerTextarea(textarea) {
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(180, Math.max(44, textarea.scrollHeight));
+    textarea.style.height = `${nextHeight}px`;
+  }
+
+  function threadComposerStateForCard(card) {
+    const threadScope = isNewThreadComposerCard(card) ? null : threadScopeForCard(card, "thread_transcript");
+    const threadId = String(threadScope?.thread_id || "").trim();
+    const draftKey = threadComposerDraftKeyForCard(card);
+    const draft = threadComposerDraft(draftKey);
+    const apiBaseUrl = String(state.links.apiBaseUrl || linksApiBaseUrl() || "").trim();
+    const apiTokenPresent = Boolean(String(state.links.apiToken || "").trim());
+    const inFlight = composerTurnMatchesCard(card, threadId);
+    const hasDraftContent = Boolean(String(draft.text || "").trim()) || draft.files.length > 0;
+    let disabledReason = "";
+    if (String(state.route || "").trim() !== "inbox") {
+      disabledReason = "Inbox chat replies are only enabled from the Inbox feed.";
+    } else if (!threadId && !isNewThreadComposerCard(card)) {
+      disabledReason = "Draft only until this transcript is backed by a live thread.";
+    } else if (!apiBaseUrl || !apiTokenPresent) {
+      disabledReason = "Draft only until this browser session has an authenticated live lane.";
+    } else if (inFlight) {
+      disabledReason = "This thread is still waiting on a reply.";
+    } else if (!hasDraftContent) {
+      disabledReason = "Write a message or attach a file to send.";
+    }
+    return {
+      mode: isNewThreadComposerCard(card) ? "new_thread" : "existing_thread",
+      threadId,
+      thread_id: threadId,
+      draftKey,
+      draft,
+      apiBaseUrl,
+      apiBaseUrlPresent: Boolean(apiBaseUrl),
+      apiTokenPresent: Boolean(String(state.links.apiToken || "").trim()),
+      inFlight: composerTurnMatchesCard(card, threadId),
+      sendEnabled: !disabledReason && hasDraftContent,
+      disabledReason,
+      hasDraftContent
+    };
+  }
+
+  function renderThreadComposer(card) {
+    const composerState = threadComposerStateForCard(card);
+    const shell = el("div", "thread-composer-shell");
+    const composer = el("section", "thread-composer");
+    const textarea = document.createElement("textarea");
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.className = "thread-composer-file-input";
+    input.setAttribute("aria-label", "Attach files");
+    textarea.className = "thread-composer-input";
+    textarea.placeholder = "Type a reply";
+    textarea.value = composerState.draft.text;
+    textarea.rows = 1;
+    textarea.setAttribute("aria-label", "Thread reply");
+    textarea.disabled = false;
+    const queued = el("div", "thread-composer-queued");
+    const controls = el("div", "thread-composer-controls");
+    const attach = el("label", "thread-composer-attach", "Attach");
+    attach.append(input);
+    const status = el("div", "thread-composer-status", composerState.disabledReason || "Ready to send.");
+    const send = el("button", "thread-composer-send", "Send");
+    send.type = "button";
+    send.disabled = !composerState.sendEnabled;
+    const syncComposerUi = () => {
+      const nextState = threadComposerStateForCard(card);
+      send.disabled = !nextState.sendEnabled;
+      status.textContent = nextState.disabledReason || "Ready to send.";
+    };
+    textarea.addEventListener("input", () => {
+      setThreadComposerDraft(composerState.draftKey, {
+        text: textarea.value,
+        files: threadComposerDraft(composerState.draftKey).files
+      });
+      autoSizeComposerTextarea(textarea);
+      syncComposerUi();
+    });
+    textarea.addEventListener("keydown", event => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void sendThreadComposerTurn(card);
+      }
+    });
+    input.addEventListener("change", async () => {
+      const selected = Array.from(input.files || []);
+      if (!selected.length) {
+        input.value = "";
+        return;
+      }
+      const current = threadComposerDraft(composerState.draftKey);
+      const nextFiles = current.files.concat(await Promise.all(selected.map(file => queuedThreadComposerFile(file))));
+      setThreadComposerDraft(composerState.draftKey, { text: current.text, files: nextFiles });
+      input.value = "";
+      syncComposerUi();
+      refreshOpenTranscriptDetail();
+    });
+    composerState.draft.files.forEach(file => {
+      const chip = el("div", "thread-composer-chip");
+      chip.append(el("span", "thread-composer-chip-label", file.name || "Attachment"));
+      const remove = el("button", "thread-composer-chip-remove", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", event => {
+        event.preventDefault();
+        const current = threadComposerDraft(composerState.draftKey);
+        setThreadComposerDraft(composerState.draftKey, {
+          text: current.text,
+          files: current.files.filter(item => item.id !== file.id)
+        });
+        refreshOpenTranscriptDetail();
+      });
+      chip.append(remove);
+      queued.append(chip);
+    });
+    send.addEventListener("click", () => {
+      void sendThreadComposerTurn(card);
+    });
+    controls.append(attach, status, send);
+    composer.append(textarea);
+    if (queued.childElementCount) {
+      composer.append(queued);
+    }
+    composer.append(controls);
+    shell.append(composer);
+    requestAnimationFrame(() => autoSizeComposerTextarea(textarea));
+    syncComposerUi();
+    return shell;
+  }
+
+  function renderTranscriptDetailContent(card) {
+    const content = el("div", "detail-content chat-detail");
+    const stack = el("div", "chat-stack");
+    const messages = transcriptDetailMessages(card);
+    messages.forEach((message, index) => {
+      const images = messageImages(card, message, index, messages);
+      if (message.role !== "user" && images.length) {
+        stack.append(chatMediaBubble(card, images));
+      }
+      const bubble = el("div", [
+        "bubble",
+        message.role === "user" ? "user" : "assistant",
+        message.pending_placeholder ? "is-thinking" : "",
+        message.pending_failed ? "is-failed" : "",
+      ].filter(Boolean).join(" "));
+      const attachments = messageAttachmentRow(card, message, index);
+      if (attachments) {
+        bubble.append(attachments);
+      }
+      bubble.append(document.createTextNode(message.text || ""));
+      if (message.role !== "user" && !message.synthetic) {
+        const actions = el("div", "bubble-actions");
+        const meta = el("button", "bubble-origin-action");
+        meta.type = "button";
+        meta.innerHTML = iconSvg("settings", { filled: false });
+        meta.setAttribute("aria-label", "Open reply details");
+        meta.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showOriginSheet(card);
+        });
+        const trace = el("button", "bubble-trace-action");
+        trace.type = "button";
+        trace.innerHTML = iconSvg("lightbulb_2", { filled: false });
+        trace.setAttribute("aria-label", "Open thinking logs");
+        trace.addEventListener("click", (event) => {
+          event.stopPropagation();
+          showTurnTrace(card, message, index);
+        });
+        actions.append(meta, trace);
+        bubble.append(actions);
+      }
+      const stamp = messageTimestamp(message);
+      if (stamp) {
+        bubble.append(el("span", "bubble-meta", stamp));
+      }
+      stack.append(bubble);
+    });
+    const composer = renderThreadComposer(card);
+    content.append(stack, composer);
+    return content;
+  }
+
+  async function sendThreadComposerTurn(card) {
+    await ensureLinksApiConfig();
+    const composerState = threadComposerStateForCard(card);
+    if (!composerState.sendEnabled) {
+      refreshOpenTranscriptDetail();
+      return null;
+    }
+    const draft = {
+      text: String(composerState.draft.text || "").trim(),
+      files: Array.isArray(composerState.draft.files) ? composerState.draft.files.slice() : []
+    };
+    const turnId = `thread-compose-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    setThreadComposerDraft(composerState.draftKey, { text: "", files: [] });
+    const pendingUserAttachments = draft.files
+      .map(file => queuedThreadComposerAttachment(file))
+      .filter(Boolean);
+    const threadMode = composerState.mode === "new_thread" ? "new" : "existing";
+    applyTurnStatus(optimisticComposerTurnStatus({
+      turnId,
+      threadId: composerState.threadId,
+      transcript: draft.text,
+      attachments: pendingUserAttachments,
+      threadMode
+    }));
+    render();
+    scheduleComposerTurnThinkingFallback(turnId);
+    try {
+      const proofReplyDelayMs = composerProofReplyDelayMs();
+      let response;
+      if (draft.files.length) {
+        const form = new FormData();
+        form.append("text", draft.text);
+        form.append("turn_id", turnId);
+        form.append("thread_mode", threadMode);
+        if (composerState.threadId) {
+          form.append("thread_id", composerState.threadId);
+        }
+        form.append("thread_scope_source", "thread_transcript");
+        form.append("thread_card_id", String(card?.card_id || ""));
+        if (proofReplyDelayMs > 0) {
+          form.append("proof_reply_delay_ms", String(proofReplyDelayMs));
+        }
+        draft.files.forEach(queued => {
+          form.append("files", queued.file, queued.name);
+        });
+        response = await turnTextApiRequest({ formData: form });
+      } else {
+        const body = {
+          text: draft.text,
+          turn_id: turnId,
+          thread_mode: threadMode,
+          thread_scope_source: "thread_transcript",
+          thread_card_id: String(card?.card_id || ""),
+          proof_reply_delay_ms: proofReplyDelayMs
+        };
+        if (composerState.threadId) {
+          body.thread_id = composerState.threadId;
+        }
+        response = await turnTextApiRequest({
+          body
+        });
+      }
+      const responseThreadId = String(
+        response?.origin?.thread_id
+        || response?.card?.origin?.thread_id
+        || response?.telemetry?.origin_thread_id
+        || ""
+      ).trim();
+      if (responseThreadId && composerState.mode === "new_thread") {
+        migrateThreadComposerDraftKey(composerState.draftKey, `thread:${responseThreadId}`);
+        const detail = normalizeNavDetail(state.navDetail);
+        if (detail && detail.type === "transcript_new") {
+          state.navDetail = normalizeNavDetail({
+            ...detail,
+            thread_id: responseThreadId,
+          });
+          persistNavState();
+        }
+      }
+      applyTurnStatus({
+        ...state.turn,
+        stage: "completed",
+        status: "ok",
+        origin_thread_id: responseThreadId,
+        requested_thread_mode: threadMode,
+        requested_thread_id: composerState.threadId,
+        indicator: {
+          ...normalizeTurnStatus(state.turn).indicator,
+          state: "idle",
+          visual_state: "idle",
+          uploading: false,
+          stt_running: false,
+          codex_running: false,
+          tts_running: false,
+          speaking: false,
+          failed: false,
+          active: false,
+          remote_stage: "completed"
+        }
+      });
+      await refreshCardsFromVmSnapshot({ reason: "thread_composer_send", render: false });
+      const rebound = syncOpenThreadDetailAfterCards();
+      if (!rebound) {
+        refreshOpenTranscriptDetail();
+      }
+      render();
+      return turnId;
+    } catch (error) {
+      const current = threadComposerDraft(composerState.draftKey);
+      if (!String(current.text || "").trim() && !current.files.length) {
+        setThreadComposerDraft(composerState.draftKey, draft);
+      }
+      applyTurnStatus({
+        ...state.turn,
+        stage: "failed",
+        status: "failed",
+        error_message: String(error?.message || "Thread send failed."),
+        pending_error: String(error?.message || "Thread send failed."),
+        indicator: {
+          ...normalizeTurnStatus(state.turn).indicator,
+          state: "failed",
+          visual_state: "failed",
+          uploading: false,
+          stt_running: false,
+          codex_running: false,
+          tts_running: false,
+          speaking: false,
+          failed: true,
+          active: false,
+          remote_stage: "failed"
+        }
+      });
+      showToast(String(error?.message || "Thread send failed."));
+      render();
+      return null;
+    }
+  }
+
+  function refreshOpenTranscriptDetail() {
+    const detail = normalizeNavDetail(state.navDetail);
+    if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {
+      return false;
+    }
+    const panel = document.getElementById("detail");
+    if (!panel || !panel.classList.contains("is-open")) {
+      return false;
+    }
+    const existing = panel.querySelector(".chat-detail");
+    if (!existing) {
+      return false;
+    }
+    const card = resolveNavDetailCard(detail);
+    if (!card) {
+      return false;
+    }
+    const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(existing);
+    const previousScrollTop = existing.scrollTop;
+    const activeTextarea = existing.querySelector(".thread-composer-input");
+    const shouldRestoreFocus = activeTextarea instanceof HTMLTextAreaElement && activeTextarea === document.activeElement;
+    const selectionStart = shouldRestoreFocus ? activeTextarea.selectionStart : 0;
+    const selectionEnd = shouldRestoreFocus ? activeTextarea.selectionEnd : 0;
+    const next = renderTranscriptDetailContent(card);
+    existing.replaceWith(next);
+    installDetailScrollPersistence(next, "transcript");
+    if (shouldStickToLatest) {
+      scrollTranscriptToLatest(next);
+    } else {
+      restoreScrollPosition(next, previousScrollTop);
+    }
+    if (shouldRestoreFocus) {
+      const textarea = next.querySelector(".thread-composer-input");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.focus();
+        textarea.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+    return true;
   }
 
   function scrollTranscriptToLatest(content) {
@@ -19385,14 +16057,40 @@
       return null;
     }
     const detail = normalizeNavDetail(state.navDetail);
-    if (!detail || detail.type !== "transcript") {
+    if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {
       return null;
     }
     const panel = document.getElementById("detail");
     if (!panel || !panel.classList.contains("is-open")) {
       return null;
     }
-    const nextCard = resolveNavDetailCard(detail);
+    if (detail.type === "transcript_new") {
+      const createdCard = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;
+      if (!createdCard) {
+        return null;
+      }
+      const content = panel.querySelector(".detail-content");
+      captureCurrentDetailScroll();
+      const shouldStickToLatest = isTurnActive(state.turn) || isNearBottom(content);
+      showTranscript(createdCard, shouldStickToLatest
+        ? {}
+        : { restoring: true, scrollTop: state.navDetail?.scroll_top });
+      recordTurnUiEvent("thread_detail_rebound", {
+        turn_id: turnStatusTurnId(state.turn),
+        detail_type: detail.type,
+        thread_id: cardThreadId(createdCard),
+        session_id: cardSessionId(createdCard),
+        stick_to_latest: shouldStickToLatest
+      });
+      return { type: "transcript", thread_id: cardThreadId(createdCard), session_id: cardSessionId(createdCard) };
+    }
+    let nextCard = resolveNavDetailCard(detail);
+    if (!nextCard && !detail.thread_id) {
+      const originThreadId = String(state.turn?.origin_thread_id || state.turn?.telemetry?.origin_thread_id || "").trim();
+      if (originThreadId) {
+        nextCard = findCardByThreadId(originThreadId);
+      }
+    }
     const nextSessionId = cardSessionId(nextCard);
     if (!nextCard || !nextSessionId || nextSessionId === detail.session_id) {
       return null;
@@ -20093,6 +16791,7 @@
       return false;
     }
     clearAudioProbeResetTimer();
+    clearQueuedSameCardToggle(targetKey);
     const now = Date.now();
     const value = String(outcome || "").trim() || "idle";
     const phase = ["start_failed", "ended_immediately"].includes(value) ? value : "idle";
@@ -20122,6 +16821,42 @@
       scheduleAudioProbeReset(extra.reset_delay_ms || AUDIO_TERMINAL_RESET_MS);
     }
     return true;
+  }
+
+  function queueSameCardToggle(targetKey, phase) {
+    if (!samePath(state.audioToggleBusyKey, targetKey)) {
+      return false;
+    }
+    if (!["starting", "playing_confirmed"].includes(String(phase || ""))) {
+      return false;
+    }
+    if (samePath(state.queuedAudioToggleKey, targetKey)) {
+      return false;
+    }
+    state.queuedAudioToggleKey = targetKey;
+    recordAudioProbeEvent("busy_same_card_toggle_queued", {
+      target_key: targetKey,
+      phase_before: String(phase || "")
+    });
+    return true;
+  }
+
+  function clearQueuedSameCardToggle(targetKey = "") {
+    if (targetKey && !samePath(state.queuedAudioToggleKey, targetKey)) {
+      return false;
+    }
+    if (!state.queuedAudioToggleKey) {
+      return false;
+    }
+    state.queuedAudioToggleKey = "";
+    return true;
+  }
+
+  function shouldReplayQueuedSameCardToggle(card, targetKey) {
+    return samePath(state.queuedAudioToggleKey, targetKey)
+      && currentTileAudioPhase(card) === "playing_confirmed"
+      && activePlayerMatchesCard(card)
+      && Boolean(state.player?.is_playing);
   }
 
   function prefersHostedDirectAudio(card) {
@@ -20357,18 +17092,6 @@
       return false;
     }
     if (phase === "playing_confirmed" && !isPlaying) {
-      const durationMs = Number(nextPlayer?.duration_ms || 0);
-      const positionMs = Number(nextPlayer?.position_ms || 0);
-      const completedNaturally = matchesTarget && (
-        String(nextPlayer?.state || "") === "completed"
-        || (durationMs > 0 && positionMs >= Math.max(0, durationMs - 250))
-      );
-      if (completedNaturally) {
-        return setAudioProbeTerminalByKey(targetKey, "completed", {
-          reason: "playback_completed",
-          immediate_reset: true
-        });
-      }
       const confirmedAtMs = Number(state.audioProbe.confirmed_at_ms || 0);
       if (confirmedAtMs && now - confirmedAtMs <= AUDIO_EARLY_END_WINDOW_MS) {
         return setAudioProbeTerminalByKey(targetKey, "ended_immediately", {
@@ -20588,39 +17311,28 @@
     persistAudioState();
   }
 
-  async function postFeedAction(card, action) {
+  async function requestFeedAction(card, action, options = {}) {
     const cardId = String(card && card.card_id || "");
+    const sessionId = cardSessionId(card);
     if (!cardId) {
       return null;
     }
     const clientActionId = `feed_${action}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-    return feedApiRequest("/api/feed/actions", {
-      method: "POST",
-      body: {
-        client_action_id: clientActionId,
-        card_id: cardId,
-        action
-      }
-    });
-  }
-
-  async function requestFeedAction(card, action, options = {}) {
-    const cardId = String(card && card.card_id || "");
-    if (!cardId) {
-      return null;
-    }
     try {
-      const result = await postFeedAction(card, action);
+      const result = await feedApiRequest("/api/feed/actions", {
+        method: "POST",
+        body: {
+          client_action_id: clientActionId,
+          card_id: cardId,
+          action
+        }
+      });
       state.cards = result && result.ok === false
         ? state.cards
         : applyLocalFeedAction(state.cards, card, action);
-      if (action === "mark_read") {
-        syncMeetingReadStateFromCard(card, true);
-      }
       reconcileFocusedCardSelection();
       reconcileReadOverrides();
       clearMissingFeedIconFilter();
-      syncLocalAppBadgeState();
       render();
       if (result && result.ok === false && !options.silent) {
         showToast(result.error || "Feed refreshed");
@@ -20649,8 +17361,6 @@
       return;
     }
     setCardReadOverride(card, true);
-    syncMeetingReadStateFromCard(card, true);
-    syncLocalAppBadgeState();
     render();
     requestMarkRead(card);
   }
@@ -20661,8 +17371,6 @@
     }
     if (isCardRead(card)) {
       setCardReadOverride(card, false);
-      syncMeetingReadStateFromCard(card, false);
-      syncLocalAppBadgeState();
       render();
       return;
     }
@@ -20890,7 +17598,6 @@
   function syncRouteQueryParam(route) {
     try {
       const url = new URL(window.location.href || "");
-      url.searchParams.delete("reset_nav");
       url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");
       window.history.replaceState(window.history.state || null, "", `${url.pathname}${url.search}${url.hash}`);
     } catch (_) {
@@ -20908,7 +17615,7 @@
       return null;
     }
     const type = String(detail.type || "");
-    if (!["audio", "transcript", "page", "images", "attachment", "meeting_failed", "meeting_runtime"].includes(type)) {
+    if (!["audio", "transcript", "transcript_new", "page", "images", "attachment"].includes(type)) {
       return null;
     }
     const sessionId = String(detail.session_id || "");
@@ -20941,6 +17648,9 @@
   function resolveNavDetailCard(detail) {
     if (!detail) {
       return null;
+    }
+    if (detail.type === "transcript_new") {
+      return inboxNewThreadComposerCard();
     }
     const byThread = detail.thread_id ? findCardByThreadId(detail.thread_id) : null;
     if (byThread) {
@@ -21185,7 +17895,6 @@
       localStorage.setItem(NAV_STATE_KEY, JSON.stringify({
         route: state.route,
         light_history: normalizeLightRouteHistory(state.lightRouteHistory),
-        selected_contact_id: state.selectedContactId || null,
         selected_task_id: state.selectedTaskId || null,
         selected_project_id: state.selectedProjectId || null,
         task_sections_expanded: initialTaskSectionsExpanded(state.taskSectionsExpanded),
@@ -21467,6 +18176,10 @@
       showTranscript(card, { restoring: true, scrollTop: detail.scroll_top });
       return;
     }
+    if (detail.type === "transcript_new") {
+      showNewInboxThreadComposer({ restoring: true, scrollTop: detail.scroll_top });
+      return;
+    }
     if (detail.type === "page" && hasRichPage(card)) {
       showRichPage(card, { restoring: true, scrollTop: detail.scroll_top });
       return;
@@ -21711,9 +18424,6 @@
         if (action === "archive") {
           return { ...card, archived: true };
         }
-        if (action === "unarchive") {
-          return { ...card, archived: false };
-        }
         if (action === "mark_read") {
           return { ...card, read: true };
         }
@@ -21859,22 +18569,14 @@
     }
     let changed = false;
     try {
-      const now = Date.now();
-      const turnInterval = turnStatusPollIntervalMs(state.route);
-      if ((now - lastTurnStatusPollAt) >= turnInterval) {
-        recordPerfPollTick("turn_status");
-        lastTurnStatusPollAt = now;
-        const wasTurnActive = isTurnActive(state.turn);
-        const turnChanged = await loadTurnStatus({ render: false });
-        const turnActive = isTurnActive(state.turn);
-        if (state.route === "inbox" && (turnActive || wasTurnActive)) {
-          await refreshCardsFromVmSnapshot({ render: false });
-        }
-        changed = changed || turnChanged || turnActive || wasTurnActive;
+      const wasTurnActive = isTurnActive(state.turn);
+      await loadTurnStatus({ render: false });
+      const turnActive = isTurnActive(state.turn);
+      if (state.route === "inbox" && (turnActive || wasTurnActive)) {
+        await refreshCardsFromVmSnapshot({ render: false });
       }
-      if (state.activePath && (now - lastPlayerStatePollAt) >= PLAYER_STATE_POLL_INTERVAL_MS) {
-        recordPerfPollTick("player_state");
-        lastPlayerStatePollAt = now;
+      changed = changed || turnActive || wasTurnActive;
+      if (state.activePath) {
         const previousPlayer = state.player;
         state.player = stampPlayerState(await Pucky.request({ command: "player.state", args: {} }));
         syncActivePathFromPlayer(state.player);
@@ -21884,14 +18586,12 @@
         const audioProbeChanged = syncAudioProbeFromPlayerState(previousPlayer, state.player);
         changed = changed || shouldRenderForPlayerState(previousPlayer, state.player) || audioProbeChanged;
       }
-      if ((wakeProofVisualState(state.wakeStatus) !== "idle" || state.route === "settings")
-          && (now - lastWakeStatusPollAt) >= TURN_STATUS_LIVE_ROUTE_INTERVAL_MS) {
-        recordPerfPollTick("wake_status");
-        lastWakeStatusPollAt = now;
-        changed = (await loadWakeStatus({ render: false })) || changed;
+      if (wakeProofVisualState(state.wakeStatus) !== "idle") {
+        await loadWakeStatus({ render: false });
+        changed = true;
       }
       if (changed) {
-        requestRender("visible_poll");
+        render();
       }
     } catch (_) {
       // Keep cached state visible if the bridge temporarily fails.
@@ -21905,53 +18605,22 @@
   }, 90);
 
   setInterval(() => {
-    if (shouldTickReminderLiveUi(state.route, Date.now())) {
-      requestRender("reminder_live_ui_tick");
-    }
-  }, REMINDER_LIVE_UI_TICK_MS);
-
-  setInterval(() => {
     if (document.visibilityState === "visible") {
-      const interval = meetingStatusPollIntervalMs(state.route);
-      if (!interval) {
-        return;
-      }
-      const now = Date.now();
-      if ((now - lastMeetingStatusPollAt) < interval) {
-        return;
-      }
-      recordPerfPollTick("meeting_status");
-      lastMeetingStatusPollAt = now;
       void refreshMeetingRecordingStatus({ render: true });
     }
   }, MEETING_STATUS_POLL_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible"
-        && (state.route === "tasks" || state.route === "task-detail")
-        && workspaceBucketNeedsRefresh("tasks", WORKSPACE_TASK_STALE_VISIBLE_MS)) {
-      recordPerfPollTick("workspace_tasks_visible");
-      void loadWorkspaceCollection("tasks", {
-        render: true,
-        force: true,
-        reason: "visible_stale"
-      });
+    if (document.visibilityState === "visible" && state.route === "tasks") {
+      void loadWorkspaceCollection("tasks", { render: true, force: true });
     }
-  }, WORKSPACE_REFRESH_TICK_MS);
+  }, WORKSPACE_TASK_REFRESH_MS);
 
   setInterval(() => {
-    if (document.visibilityState === "visible"
-        && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")
-        && workspaceBucketNeedsRefresh("reminders", WORKSPACE_REMINDER_STALE_VISIBLE_MS)) {
-      recordPerfPollTick("workspace_reminders_visible");
-      void loadWorkspaceCollection("reminders", {
-        render: true,
-        renderWhenUnchanged: true,
-        force: true,
-        reason: "visible_stale"
-      });
+    if (document.visibilityState === "visible" && (state.route === "home" || state.route === "reminders" || state.route === "reminder-detail")) {
+      void loadWorkspaceCollection("reminders", { render: true, force: true });
     }
-  }, WORKSPACE_REFRESH_TICK_MS);
+  }, WORKSPACE_REMINDER_REFRESH_MS);
 
   window.addEventListener("pagehide", persistNavState);
   let previousTaskSplitLayout = taskUsesSplitLayout();
@@ -21975,7 +18644,6 @@
         linksDebugRecord("document_hidden", { slug: String(state.links.openingSlug || "") }, "click");
         releaseLinksHandoff({ render: false, reason: "document_hidden" });
       }
-      void flushRoutePerfTelemetry("pagehide");
       persistNavState();
       return;
     }
@@ -21989,7 +18657,7 @@
     }
     if (state.route === "meetings") {
       refreshMeetingRecordingStatus({ render: true });
-      loadMeetings({ render: true, reason: "visibility_visible" });
+      loadMeetings({ render: true });
       return;
     }
     if (state.route === "settings") {
@@ -21997,102 +18665,41 @@
       return;
     }
     if (state.route === "home") {
-      if (workspaceBucketNeedsRefresh("reminders", WORKSPACE_REMINDER_STALE_VISIBLE_MS)) {
-        void loadWorkspaceCollection("reminders", {
-          render: true,
-          renderWhenUnchanged: true,
-          force: true,
-          reason: "visibility_visible"
-        });
-      }
+      void loadWorkspaceCollection("reminders", { render: true, force: true });
       return;
     }
     if (state.route === "task-detail") {
-      if (workspaceBucketNeedsRefresh("tasks", WORKSPACE_TASK_STALE_VISIBLE_MS)) {
-        void loadWorkspaceCollection("tasks", { render: true, force: true, reason: "visibility_visible" });
-      }
       return;
     }
-    void loadWorkspaceForRoute(state.route, { render: true, force: true, reason: "visibility_visible" });
+    void loadWorkspaceForRoute(state.route, { render: true, force: true });
   });
-
-  function runBootRouteSideEffects() {
-    const route = String(state.route || "home").trim() || "home";
-    const hasNativeBootstrap = hasNativeBootstrapBridge();
-    const bootstrapTask = hasNativeBootstrap
-      ? loadNativeBootstrapSnapshot({ render: route === "settings" }).catch(() => null)
-      : Promise.resolve(null);
-    setPerfBootPhase("boot_critical_dispatch");
-    void syncVoiceThreadScope({ reason: "boot", render: true });
-    if (route === "connect") {
-      linksDebugStartSession("route", { reason: "boot_route" });
-      linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
-      void bootstrapTask.then(() => loadLinksPortal({ render: true }));
-    } else if (route === "meetings") {
-      loadTurnStatus({ render: false });
-      refreshMeetingRecordingStatus({ render: true });
-      loadMeetings({ render: true, reason: "boot" });
-    } else if (route === "settings") {
-      loadSettingsState({ render: false, ensureSurface: true });
-    } else if (route === "inbox") {
-      loadTurnStatus({ render: false });
-      loadCardIconRegistry({ render: false });
-      loadCards();
-    } else if (route !== "home" && WORKSPACE_ROUTE_COLLECTIONS[route]) {
-      void loadWorkspaceForRoute(route, { render: true, force: true, reason: "boot" });
-    }
-    queueDeferredPerfTask("boot:home:reminders", async () => {
-      if (route === "home") {
-        await loadWorkspaceCollection("reminders", { render: true, force: true, reason: "boot_deferred" });
-      }
-    }, { delayMs: PERF_DEFERRED_TASK_DELAY_MS });
-    queueDeferredPerfTask("boot:ambient:turn_status", async () => {
-      if (route !== "inbox" && route !== "meetings") {
-        await loadTurnStatus({ render: false });
-      }
-    }, { delayMs: PERF_DEFERRED_TASK_DELAY_MS });
-    if (!hasNativeBootstrap) {
-      queueDeferredPerfTask("boot:ambient:ui_surface", () => loadUiSurfaceStatus({ render: false }), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
-      });
-      queueDeferredPerfTask("boot:ambient:turn_settings", () => loadTurnSettings({ render: false }), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
-      });
-      queueDeferredPerfTask("boot:ambient:default_audio_speed", () => loadDefaultAudioSpeed({ render: false }), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 2
-      });
-      if (route !== "settings") {
-        queueDeferredPerfTask("boot:ambient:phone_role", () => loadPhoneRoleStatus({ render: false }), {
-          delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
-        });
-        queueDeferredPerfTask("boot:ambient:wake_status", () => loadWakeStatus({ render: false }), {
-          delayMs: PERF_DEFERRED_TASK_DELAY_MS * 3
-        });
-      }
-    }
-    if (route !== "inbox") {
-      queueDeferredPerfTask("boot:idle:feed", () => loadCards(), {
-        delayMs: PERF_DEFERRED_TASK_DELAY_MS * 5
-      });
-    }
-    setPerfBootPhase("boot_deferred_queued");
-  }
 
   window.PuckyHandleAndroidBack = handleAndroidBack;
   window.PuckyUiDebug = {
     describe: describeUiSurface,
     dispatch: uiDebugDispatch,
-    linksMetrics: linksDebugMetrics,
-    perfMetrics: perfDebugMetrics
+    linksMetrics: linksDebugMetrics
   };
   syncThemeQueryParam(state.theme);
   syncRouteQueryParam(state.route);
   render();
-  setPerfBootPhase("initial_render");
-  syncPerfDebugState("boot");
   installFeedScrollPersistence();
   installFeedSyncLoop();
   installCardMenuOutsideDismiss();
   installArchiveRevealOutsideDismiss();
-  runBootRouteSideEffects();
+  void syncVoiceThreadScope({ reason: "boot", render: true });
+  loadTurnStatus({ render: false });
+  refreshMeetingRecordingStatus({ render: true });
+  loadSettingsState({ render: false, ensureSurface: state.route === "settings" });
+  loadCardIconRegistry({ render: false });
+  loadCards();
+  void loadWorkspaceForRoute(state.route, { render: true, force: true });
+  if (state.route === "connect") {
+    linksDebugStartSession("route", { reason: "boot_route" });
+    linksDebugRecord("links_route_enter", { reason: "boot_route" }, "route");
+    loadLinksPortal({ render: true });
+  } else if (state.route === "meetings") {
+    refreshMeetingRecordingStatus({ render: true });
+    loadMeetings({ render: true });
+  }
 })();

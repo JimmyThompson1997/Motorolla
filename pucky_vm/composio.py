@@ -77,8 +77,10 @@ class ComposioClient:
         self.base_url = str(base_url or DEFAULT_COMPOSIO_BASE_URL).rstrip("/")
         self.action_logger = action_logger
         self._toolkits_cache: tuple[float, list[dict[str, Any]]] | None = None
+        self._tool_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._connected_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._toolkits_cache_ttl_s = 600.0
+        self._tool_cache_ttl_s = 600.0
         self._connected_cache_ttl_s = 20.0
 
     @property
@@ -319,6 +321,23 @@ class ComposioClient:
             payload=payload,
             base_url=self._tools_base_url(),
         )
+
+    def get_tool(self, tool_slug: str) -> dict[str, Any]:
+        clean_tool_slug = _safe_name(tool_slug)
+        if not clean_tool_slug:
+            return {}
+        cache_key = clean_tool_slug.upper()
+        cached = self._tool_cache.get(cache_key)
+        if cached and (time.time() - cached[0]) < self._tool_cache_ttl_s:
+            return dict(cached[1])
+        tool = self._request_json(
+            "GET",
+            f"/tools/{urllib.parse.quote(clean_tool_slug, safe='_-')}",
+            base_url=self._tools_base_url(),
+        )
+        normalized = dict(tool) if isinstance(tool, dict) else {}
+        self._tool_cache[cache_key] = (time.time(), normalized)
+        return dict(normalized)
 
     def _list_auth_configs(self, toolkit_slug: str) -> dict[str, Any]:
         return self._request_json(

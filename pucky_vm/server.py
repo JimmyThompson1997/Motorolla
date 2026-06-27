@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import contextvars
 import hashlib
 import html
 import hmac
@@ -14,7 +16,6 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
@@ -23,6 +24,7 @@ from typing import Callable, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .action_ledger import ActionLedger
+from .auth_store import AuthStore, normalize_email
 from .attachment_manifest import normalize_attachment
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
@@ -31,6 +33,7 @@ from .http_handler import make_handler as _build_http_handler
 from .http_surface import (
     cors_header_items,
     inline_content_disposition,
+    is_any_bearer_authorized,
     is_bearer_authorized,
     json_body,
     parse_content_length,
@@ -51,27 +54,24 @@ from .prompt_context import (
 )
 from .providers import DeepgramSTT, KokoroTTS
 from .sqlite_utils import SQLITE_LOCK_RETRY_DELAYS_SECONDS, sqlite_lock_error
-from .ui_route_perf_ledger import UiRoutePerfLedger
 from .ui_runtime_surface import latest_ui_bundle_path, latest_ui_manifest, runtime_reply_cards_fixture_text
 from .ui_bundle import UI_SRC, bundle_config_script
-from .workspace_store import KIND_COLLECTIONS, SELF_CONTACT_ID, WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
+from .workspace_store import SELF_CONTACT_ID, WORKSPACE_COLLECTIONS, WorkspaceStore, _normalize_reminder_metadata
 
 
 DEFAULT_DEVELOPER_INSTRUCTIONS = (
     "You are Pucky, a concise voice assistant. Return only strict JSON with keys "
-    "reply_text, card_title, card_icon, recording_title, attachments, graph_records, graph_links, and connected_records. "
-    "reply_text is the spoken user-facing answer. card_title is a short title. card_icon is a lowercase slug using only "
-    "letters, numbers, and underscores. attachments is either null or an array of true file/media payloads with path, "
-    "mime_type, title, optional kind, optional viewer_path, optional preview_path, and optional text. Do not use reply-level "
-    "HTML pages as the primary output surface. Instead, create or update workspace records in graph_records, connect them with "
-    "graph_links, and list the ordered durable outputs in connected_records. Each graph_record may include record_key plus either "
-    "kind or collection, along with payload fields or a nested payload object. Each graph_link must include source and target refs "
-    "using either record_key or explicit kind/collection + id. connected_records should reference created or existing workspace "
-    "records in the order they should appear in the UI. Notes remain the only rich-content owner, so any durable HTML should live "
-    "inside a note record rather than a reply page. Available reply-card icons can be listed from {local_api_base}/api/card-icons. "
-    "If none fit, you may add one by POSTing JSON to {local_api_base}/api/card-icons with Authorization: Bearer from the local "
-    "PUCKY_API_TOKEN environment variable, then use that slug in card_icon. Do not include markdown fences or any text outside "
-    "the JSON object."
+    "reply_text, card_title, card_icon, html, and attachments. reply_text is the spoken user-facing answer. "
+    "card_title is a short title. card_icon is a lowercase slug using only letters, numbers, and underscores. "
+    "html is either null or an object with title and content, where content is a complete HTML document. "
+    "attachments is either null or an array of objects with path, mime_type, title, optional kind, "
+    "optional viewer_path, optional preview_path, and optional text. If you create a browser-displayable file, "
+    "do not only mention its filesystem path in reply_text. You must return it in attachments. "
+    "If the result is inline HTML, html must not be null. "
+    "Available reply-card icons can be listed from {local_api_base}/api/card-icons. "
+    "If none fit, you may add one by POSTing JSON to {local_api_base}/api/card-icons with Authorization: "
+    "Bearer from the local PUCKY_API_TOKEN environment variable, then use that slug in card_icon. "
+    "Do not include markdown fences or any text outside the JSON object."
 )
 ALLOWED_CONTENT_TYPES = {"audio/mp4", "audio/wav", "audio/x-wav", "audio/mpeg", "application/octet-stream"}
 DEFAULT_CARD_ICON = "mail"
@@ -259,7 +259,6 @@ def _failure_reason_from_exception(exc: BaseException) -> str:
 
 _BROKER_MODULE = None
 _BROKER_DB_PATH: str | None = None
-_BROKER_INIT_LOCK = threading.RLock()
 DEFAULT_CARD_ICONS = {
     "clock": {
         "name": "clock",
@@ -356,11 +355,27 @@ class ReplyEnvelope:
     card_icon: str
     recording_title: str = ""
     transcript_text: str = ""
+    html_title: str = ""
+    html_content: str = ""
     attachments: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    graph_records: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    graph_links: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    connected_records: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    legacy_html_requested: bool = False
+
+
+@dataclass(frozen=True)
+class RequestIdentity:
+    kind: str = "anonymous"
+    user_id: str = ""
+    workspace_id: str = ""
+    email: str = ""
+    session_id: str = ""
+    auth_via: str = ""
+
+
+class _ScopedStoreProxy:
+    def __init__(self, resolver: Callable[[], object]) -> None:
+        self._resolver = resolver
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._resolver(), name)
 
 
 @dataclass(frozen=True)
@@ -387,6 +402,7 @@ class Config:
     codex_base_instructions: str | None = None
     action_ledger_path: str = ""
     workspace_db_path: str = ""
+    auth_db_path: str = ""
     turn_status_ttl_seconds: float = 900.0
     codex_home: str | None = None
     codex_sandbox: str = "danger-full-access"
@@ -406,7 +422,12 @@ class Config:
     self_email: str = ""
     self_phone_number: str = ""
     public_base_url: str | None = None
-    ui_route_perf_ledger_path: str = ""
+    pucky_web_ui_token: str = ""
+    strict_browser_user_auth: bool = False
+    strict_composio_user_scoping: bool = False
+    auth_session_cookie_name: str = "pucky_session"
+    auth_otp_ttl_seconds: int = 15 * 60
+    auth_session_ttl_seconds: int = 30 * 24 * 60 * 60
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -414,6 +435,7 @@ class Config:
             host=os.environ.get("PUCKY_HOST", "0.0.0.0"),
             port=int(os.environ.get("PORT", os.environ.get("PUCKY_PORT", "8080"))),
             pucky_api_token=os.environ.get("PUCKY_API_TOKEN", ""),
+            pucky_web_ui_token=os.environ.get("PUCKY_WEB_UI_TOKEN", "").strip(),
             deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", ""),
             deepinfra_api_key=os.environ.get("DEEPINFRA_API_KEY", ""),
             max_audio_bytes=int(os.environ.get("PUCKY_MAX_AUDIO_BYTES", str(32 * 1024 * 1024))),
@@ -444,6 +466,10 @@ class Config:
                 "PUCKY_WORKSPACE_DB_PATH",
                 str((Path.cwd() / "pucky_workspace.sqlite3").resolve()),
             ),
+            auth_db_path=os.environ.get(
+                "PUCKY_AUTH_DB_PATH",
+                str((Path.cwd() / "pucky_auth.sqlite3").resolve()),
+            ),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
             codex_home=os.environ.get("CODEX_HOME") or None,
             codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
@@ -471,10 +497,15 @@ class Config:
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
             public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
-            ui_route_perf_ledger_path=os.environ.get(
-                "PUCKY_UI_ROUTE_PERF_LEDGER_PATH",
-                str((Path.cwd() / "pucky_ui_route_perf.sqlite3").resolve()),
+            strict_browser_user_auth=(
+                os.environ.get("PUCKY_STRICT_BROWSER_USER_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
             ),
+            strict_composio_user_scoping=(
+                os.environ.get("PUCKY_STRICT_COMPOSIO_USER_SCOPING", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
+            auth_session_cookie_name=os.environ.get("PUCKY_AUTH_SESSION_COOKIE_NAME", "pucky_session").strip() or "pucky_session",
+            auth_otp_ttl_seconds=max(60, int(os.environ.get("PUCKY_AUTH_OTP_TTL_SECONDS", str(15 * 60)))),
+            auth_session_ttl_seconds=max(300, int(os.environ.get("PUCKY_AUTH_SESSION_TTL_SECONDS", str(30 * 24 * 60 * 60)))),
         )
 
 
@@ -492,22 +523,21 @@ def _load_broker_module():
 
 def ensure_broker_initialized(db_path: str | None = None):
     global _BROKER_DB_PATH
-    with _BROKER_INIT_LOCK:
-        broker = _load_broker_module()
-        resolved = str(db_path or os.environ.get("PUCKY_DB_PATH") or broker.DEFAULT_DB_PATH)
-        if getattr(broker, "DB", None) is not None and _BROKER_DB_PATH == resolved:
-            return broker
-        existing = getattr(broker, "DB", None)
-        if existing is not None:
-            try:
-                existing.close()
-            except Exception:
-                pass
-            broker.DB = None
-        broker.DEVICES.clear()
-        broker.init_db(resolved)
-        _BROKER_DB_PATH = resolved
+    broker = _load_broker_module()
+    resolved = str(db_path or os.environ.get("PUCKY_DB_PATH") or broker.DEFAULT_DB_PATH)
+    if getattr(broker, "DB", None) is not None and _BROKER_DB_PATH == resolved:
         return broker
+    existing = getattr(broker, "DB", None)
+    if existing is not None:
+        try:
+            existing.close()
+        except Exception:
+            pass
+        broker.DB = None
+    broker.DEVICES.clear()
+    broker.init_db(resolved)
+    _BROKER_DB_PATH = resolved
+    return broker
 
 
 def reset_broker_for_tests(db_path: str):
@@ -645,11 +675,7 @@ class PuckyVoiceService:
     ) -> None:
         self.config = config
         ledger_path = config.action_ledger_path or str(Path(config.feed_db_path).with_suffix(".actions.sqlite3"))
-        self.action_ledger = ActionLedger(ledger_path)
-        ui_route_perf_ledger_path = config.ui_route_perf_ledger_path or str(
-            Path(config.feed_db_path).with_suffix(".ui-route-perf.sqlite3")
-        )
-        self.ui_route_perf_ledger = UiRoutePerfLedger(ui_route_perf_ledger_path)
+        self._default_action_ledger = ActionLedger(ledger_path)
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
         self.tts = tts or KokoroTTS(
             config.deepinfra_api_key,
@@ -659,9 +685,25 @@ class PuckyVoiceService:
         )
         self.codex = codex or self._build_codex_client(meeting=False)
         self.meeting_codex = meeting_codex or self._build_codex_client(meeting=True)
-        self.feed = FeedStore(config.feed_db_path)
+        self._default_feed = FeedStore(config.feed_db_path)
         workspace_path = config.workspace_db_path or str(Path(config.feed_db_path).with_name("pucky_workspace.sqlite3"))
-        self.workspace = WorkspaceStore(workspace_path)
+        self._default_workspace = WorkspaceStore(workspace_path)
+        self.auth = AuthStore(
+            config.auth_db_path or str(Path(config.feed_db_path).with_name("pucky_auth.sqlite3")),
+            otp_ttl_seconds=config.auth_otp_ttl_seconds,
+            session_ttl_seconds=config.auth_session_ttl_seconds,
+        )
+        self._store_lock = threading.Lock()
+        self._feed_by_workspace: dict[str, FeedStore] = {}
+        self._workspace_by_workspace: dict[str, WorkspaceStore] = {}
+        self._action_ledger_by_workspace: dict[str, ActionLedger] = {}
+        self._request_identity_var: contextvars.ContextVar[RequestIdentity] = contextvars.ContextVar(
+            "pucky_request_identity",
+            default=RequestIdentity(),
+        )
+        self.feed = _ScopedStoreProxy(self._feed_store)
+        self.workspace = _ScopedStoreProxy(self._workspace_store)
+        self.action_ledger = _ScopedStoreProxy(self._action_ledger_store)
         self.composio = composio or ComposioClient(
             config.composio_api_key,
             config.composio_base_url,
@@ -676,13 +718,110 @@ class PuckyVoiceService:
         self._card_icon_lock = threading.Lock()
         self._card_icons_path = Path(self.config.feed_db_path).with_name("pucky_card_icons.json")
         self._meetings_lock = threading.Lock()
-        self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
-        self._meetings_index_path = self._meetings_dir / "meetings.json"
         self._meeting_agent_state_lock = threading.Lock()
         self._meeting_agent_state_by_id: dict[str, dict[str, object]] = {}
         self._reminder_poll_lock = threading.Lock()
         self._reminder_stop_event = threading.Event()
         self._reminder_poll_thread: threading.Thread | None = None
+
+    @contextlib.contextmanager
+    def request_identity_context(self, identity: RequestIdentity | None):
+        token = self._request_identity_var.set(identity or RequestIdentity())
+        try:
+            yield
+        finally:
+            self._request_identity_var.reset(token)
+
+    def current_request_identity(self) -> RequestIdentity:
+        return self._request_identity_var.get()
+
+    def _current_workspace_key(self) -> str:
+        identity = self.current_request_identity()
+        return str(identity.workspace_id or "").strip() or "default"
+
+    def _workspace_root(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).resolve().parent
+        return Path(self.config.feed_db_path).resolve().parent / "pucky_workspaces" / workspace_key
+
+    def _workspace_store_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.workspace_db_path or str(Path(self.config.feed_db_path).with_name("pucky_workspace.sqlite3"))).resolve()
+        return self._workspace_root(workspace_key) / "workspace.sqlite3"
+
+    def _feed_store_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).resolve()
+        return self._workspace_root(workspace_key) / "feed.sqlite3"
+
+    def _action_ledger_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.action_ledger_path or str(Path(self.config.feed_db_path).with_suffix(".actions.sqlite3"))).resolve()
+        return self._workspace_root(workspace_key) / "actions.sqlite3"
+
+    def _hydrate_self_contact_into_store(self, store: WorkspaceStore) -> None:
+        email = str(self.config.self_email or "").strip()
+        phone = str(self.config.self_phone_number or "").strip()
+        if not email and not phone:
+            store.ensure_self_contact()
+            return
+        contact = store.ensure_self_contact()
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        next_metadata = dict(metadata)
+        if email:
+            next_metadata["email"] = email
+        if phone:
+            next_metadata["phone"] = phone
+        next_metadata.pop("endpoints", None)
+        store.patch_record("contacts", SELF_CONTACT_ID, {"metadata": next_metadata})
+
+    def _feed_store(self) -> FeedStore:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_feed
+        with self._store_lock:
+            existing = self._feed_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = FeedStore(str(self._feed_store_path(workspace_key)))
+            self._feed_by_workspace[workspace_key] = store
+            return store
+
+    def _workspace_store(self) -> WorkspaceStore:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_workspace
+        with self._store_lock:
+            existing = self._workspace_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = WorkspaceStore(str(self._workspace_store_path(workspace_key)))
+            self._hydrate_self_contact_into_store(store)
+            self._workspace_by_workspace[workspace_key] = store
+            return store
+
+    def _action_ledger_store(self) -> ActionLedger:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_action_ledger
+        with self._store_lock:
+            existing = self._action_ledger_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = ActionLedger(self._action_ledger_path(workspace_key))
+            self._action_ledger_by_workspace[workspace_key] = store
+            return store
+
+    @property
+    def _meetings_dir(self) -> Path:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).with_name("pucky_meetings")
+        return self._workspace_root(workspace_key) / "meetings"
+
+    @property
+    def _meetings_index_path(self) -> Path:
+        return self._meetings_dir / "meetings.json"
 
     def _build_codex_client(self, *, meeting: bool) -> CodexAppServerClient:
         role = "meeting" if meeting else "default"
@@ -714,9 +853,6 @@ class PuckyVoiceService:
         self.codex.start()
         if self.meeting_codex is not self.codex:
             self.meeting_codex.start()
-        ensure_broker_initialized()
-        self._recover_stale_meeting_runtime_records()
-        self._sync_archived_meeting_feed_cards()
         if self._reminder_poll_thread is None or not self._reminder_poll_thread.is_alive():
             self._reminder_stop_event.clear()
             self._reminder_poll_thread = threading.Thread(
@@ -725,355 +861,6 @@ class PuckyVoiceService:
                 daemon=True,
             )
             self._reminder_poll_thread.start()
-
-    def _meeting_runtime_recovery_threshold_seconds(self) -> float:
-        return max(360.0, float(self.config.codex_turn_timeout) + 60.0)
-
-    def _meeting_runtime_recovery_transcript_attachment(
-        self,
-        record: dict[str, object],
-    ) -> tuple[dict[str, object], str]:
-        attachment = _meeting_fallback_transcript_attachment(record)
-        if attachment:
-            return attachment, "existing_record"
-        meeting_id = _safe_meeting_id(record.get("meeting_id"))
-        if not meeting_id:
-            return {}, ""
-        tool_result = self.meeting_deepgram_transcribe_tool(
-            {"meeting_id": meeting_id},
-            thread_id=meeting_id,
-            turn_id=meeting_id,
-        )
-        latest = self._meeting_record_by_id(meeting_id)
-        if isinstance(latest, dict):
-            for key in (
-                "tool_transcript_text",
-                "tool_transcript_attachment_text",
-                "tool_speaker_turns",
-                "transcript_text",
-                "speaker_turns",
-                "speaker_labels",
-                "agent",
-            ):
-                if key in latest:
-                    record[key] = latest[key]
-        attachment = _meeting_fallback_transcript_attachment(record)
-        if attachment:
-            return attachment, "meeting_deepgram_transcribe"
-        if bool(tool_result.get("ok")):
-            return {
-                "title": "Transcript (Plain Text)",
-                "kind": "text",
-                "text": "[No clear speech detected.]",
-            }, "no_speech_placeholder"
-        return {}, ""
-
-    def _complete_meeting_from_transcript_fallback(
-        self,
-        record: dict[str, object],
-        audio: bytes,
-        mime_type: str,
-        *,
-        fallback_reason: str,
-        recovery_reason: str,
-    ) -> bool:
-        meeting_id = _safe_meeting_id(record.get("meeting_id"))
-        if not meeting_id:
-            return False
-        transcript_attachment, transcript_source = self._meeting_runtime_recovery_transcript_attachment(record)
-        transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
-        if not transcript_text:
-            return False
-        title = _meeting_fallback_display_title(record)
-        no_speech = "no clear speech detected" in transcript_text.lower()
-        note_summary = (
-            "The recording was saved, but no clear speech was detected."
-            if no_speech
-            else _meeting_transcript_preview(transcript_text) or "Transcript-backed meeting note."
-        )
-        reply_text = (
-            "Meeting saved. No clear speech was detected, so I stored the recording as a note."
-            if no_speech
-            else "Meeting saved. I stored a transcript-backed note because the meeting agent was unavailable."
-        )
-        note_id = f"meeting-note-{meeting_id}"
-        note_html = _meeting_transcript_html_document(
-            {
-                **record,
-                "title": title,
-                "recording_title": title,
-            },
-            transcript_text,
-        )
-        envelope = ReplyEnvelope(
-            reply_text=reply_text,
-            card_title=title,
-            card_icon="mic",
-            recording_title=title,
-            transcript_text=transcript_text,
-            attachments=(),
-            graph_records=(
-                {
-                    "record_key": "meeting_note",
-                    "kind": "note",
-                    "payload": {
-                        "id": note_id,
-                        "title": title,
-                        "summary": note_summary,
-                        "html": note_html,
-                        "metadata": {
-                            "source_kind": "meeting",
-                            "source_id": meeting_id,
-                            "meeting_id": meeting_id,
-                            "fallback_reason": recovery_reason,
-                        },
-                    },
-                },
-            ),
-            graph_links=(),
-            connected_records=(
-                {
-                    "record_key": "meeting_note",
-                },
-            ),
-        )
-        connected_records = self._resolve_reply_graph_outputs(envelope)
-        self._validate_meeting_graph_outputs(record, envelope, connected_records)
-        attachments, _attachment_meta = self._prepare_meeting_reply_attachments(
-            meeting_id=meeting_id,
-            record=record,
-            envelope=envelope,
-        )
-        transcript_messages = [
-            _user_transcript_message(
-                text="Meeting recording",
-                created_at=str(record.get("created_at") or _iso_time(time.time())),
-                turn_id=meeting_id,
-                request_audio_mime_type=mime_type,
-                has_request_audio=True,
-                request_audio_attachment=_meeting_request_audio_attachment(record),
-            ),
-            _assistant_transcript_message(
-                text=reply_text,
-                created_at=_iso_time(time.time()),
-                attachments=attachments,
-                connected_records=connected_records,
-            ),
-        ]
-        result = _run_staged_operation(
-            "feed_persist",
-            lambda: self.feed.upsert_turn_result(
-                turn_id=meeting_id,
-                session_id=meeting_id,
-                reply_mode=REPLY_MODE_CARD_ONLY,
-                reply_text=reply_text,
-                title=title,
-                summary=reply_text,
-                icon="mic",
-                origin=_normalize_origin(
-                    {
-                        "runtime": "pucky",
-                        "thread_id": meeting_id,
-                        "source": "meeting_recording",
-                        "meeting_id": meeting_id,
-                        "card_kind": "meeting_result",
-                        "meeting_state": "completed",
-                    },
-                    meeting_id,
-                ),
-                telemetry={
-                    "event": "pucky.meeting.agent_fallback_note",
-                    "status": "ok",
-                    "stage": "meeting_agent_fallback_note",
-                    "meeting_id": meeting_id,
-                    "fallback_reason": fallback_reason,
-                    "recovery_reason": recovery_reason,
-                    "transcript_source": transcript_source,
-                    "request_audio_bytes": len(audio),
-                    "content_type": mime_type,
-                },
-                transcript_messages=transcript_messages,
-                request_audio_mime_type=mime_type,
-                request_audio_base64=base64.b64encode(audio).decode("ascii"),
-                audio_mime_type="",
-                audio_base64="",
-                html_mime_type="",
-                html_base64="",
-                force_unread=True,
-            ),
-            sqlite_retry=True,
-        )
-        result = self._decorate_feed_item(result)
-        result["transcript_messages"] = transcript_messages
-        result["recording_title"] = title
-        result["transcript_text"] = transcript_text
-        result["connected_records"] = connected_records
-        record["state"] = "completed"
-        record["updated_at"] = _iso_time(time.time())
-        record["card_id"] = str(result.get("card_id") or "")
-        record["card"] = result.get("card") if isinstance(result.get("card"), dict) else {}
-        record["feed_item"] = result
-        record["failure_reason"] = ""
-        record["failure_stage"] = ""
-        self._apply_meeting_agent_reply(record, result)
-        agent = dict(record.get("agent") or {}) if isinstance(record.get("agent"), dict) else {}
-        fallback_agent_state = {
-            "label": "Meeting Mode Agent",
-            "fallback_mode": "transcript_note",
-            "fallback_reason": recovery_reason,
-            "fallback_transcript_source": transcript_source,
-            "last_tool_error": fallback_reason,
-        }
-        agent.update(fallback_agent_state)
-        record["agent"] = agent
-        self._remember_meeting_agent_state(meeting_id, fallback_agent_state)
-        self._apply_meeting_agent_state(record)
-        self._apply_meeting_agent_state_to_feed_item(record)
-        _run_staged_operation(
-            "meeting_index_write",
-            lambda: self._upsert_meeting(record),
-            sqlite_retry=True,
-        )
-        return True
-
-    def _finalize_meeting_runtime_failure(
-        self,
-        record: dict[str, object],
-        audio: bytes,
-        mime_type: str,
-        *,
-        failure_stage: str,
-        failure_reason: str,
-    ) -> None:
-        record["state"] = "failed"
-        record["updated_at"] = _iso_time(time.time())
-        record["failure_stage"] = failure_stage
-        record["failure_reason"] = failure_reason
-        record["transcript_status"] = "failed"
-        record["transcript_error"] = str(failure_reason)
-        record["diarization_status"] = "failed"
-        try:
-            failed = _run_staged_operation(
-                "meeting_failed_card_upsert",
-                lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
-                sqlite_retry=True,
-            )
-            record["card_id"] = str(failed.get("card_id") or "")
-            record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
-            record["feed_item"] = failed
-        except Exception as failed_exc:
-            failed_stage = failed_exc.stage if isinstance(failed_exc, _StagedOperationError) else "meeting_failed_card_upsert"
-            record["failed_card_error"] = str(
-                failed_exc.original if isinstance(failed_exc, _StagedOperationError) else failed_exc
-            )
-            record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
-        self._apply_meeting_agent_state(record)
-        self._apply_meeting_agent_state_to_feed_item(record)
-        _run_staged_operation(
-            "meeting_index_write",
-            lambda: self._upsert_meeting(record),
-            sqlite_retry=True,
-        )
-
-    def _recover_stale_meeting_runtime_records(self) -> None:
-        now_epoch = time.time()
-        threshold = self._meeting_runtime_recovery_threshold_seconds()
-        for item in self._load_meetings():
-            record = dict(item or {})
-            meeting_id = _safe_meeting_id(record.get("meeting_id"))
-            if not meeting_id or bool(record.get("archived")):
-                continue
-            state = str(record.get("state") or "").strip().lower()
-            updated_epoch = _parse_iso_time_epoch_seconds(record.get("updated_at") or record.get("created_at") or "")
-            stale_processing = bool(
-                state == "processing"
-                and updated_epoch is not None
-                and now_epoch - updated_epoch >= threshold
-            )
-            recover_failed = bool(
-                state == "failed"
-                and str(record.get("failure_stage") or "").strip() == "meeting_agent_call"
-                and not list(record.get("connected_records") or [])
-                and (
-                    "codex turn failed" in str(record.get("failure_reason") or "").lower()
-                    or "usagelimitexceeded" in str(record.get("failure_reason") or "").lower()
-                    or "codexappservererror" in str(record.get("failure_reason") or "").lower()
-                )
-            )
-            if not stale_processing and not recover_failed:
-                continue
-            audio_payload = self.meeting_audio(meeting_id)
-            if audio_payload is None:
-                if stale_processing:
-                    self._finalize_meeting_runtime_failure(
-                        record,
-                        b"",
-                        str(record.get("mime_type") or "audio/mp4"),
-                        failure_stage="meeting_agent_timeout",
-                        failure_reason="TimeoutError: Meeting processing exceeded the runtime recovery window.",
-                    )
-                continue
-            audio, resolved_mime_type, _filename = audio_payload
-            recovery_reason = "stale_processing_recovery" if stale_processing else "meeting_agent_call_recovery"
-            if self._complete_meeting_from_transcript_fallback(
-                record,
-                audio,
-                resolved_mime_type,
-                fallback_reason=str(record.get("failure_reason") or "").strip(),
-                recovery_reason=recovery_reason,
-            ):
-                continue
-            if stale_processing:
-                self._finalize_meeting_runtime_failure(
-                    record,
-                    audio,
-                    resolved_mime_type,
-                    failure_stage="meeting_agent_timeout",
-                    failure_reason="TimeoutError: Meeting processing exceeded the runtime recovery window.",
-                )
-
-    def _sync_meeting_feed_archive_state(self, record: dict[str, object]) -> bool:
-        if not bool(record.get("archived")):
-            return False
-        meeting_id = _safe_meeting_id(record.get("meeting_id"))
-        card_id = str(record.get("card_id") or "").strip()
-        if not card_id and meeting_id:
-            card_id = f"pucky_card_{meeting_id}"
-        if not card_id:
-            return False
-        item = self.feed.get_item(card_id)
-        if item is None:
-            return False
-        synced_item = dict(item)
-        if not bool(item.get("archived")):
-            try:
-                response = self.feed.apply_action(
-                    client_action_id=f"meeting_archive_sync:{meeting_id or card_id}",
-                    card_id=card_id,
-                    action="archive",
-                )
-            except (KeyError, ValueError):
-                return False
-            synced_item = dict(response.get("item") or {})
-        if not synced_item:
-            return False
-        record["card_id"] = str(synced_item.get("card_id") or card_id)
-        record["feed_item"] = synced_item
-        if isinstance(synced_item.get("card"), dict):
-            record["card"] = dict(synced_item.get("card") or {})
-        return True
-
-    def _sync_archived_meeting_feed_cards(self) -> None:
-        for item in self._load_meetings():
-            record = dict(item or {})
-            if not bool(record.get("archived")):
-                continue
-            if self._sync_meeting_feed_archive_state(record):
-                _run_staged_operation(
-                    "meeting_index_write",
-                    lambda record=record: self._upsert_meeting(record),
-                    sqlite_retry=True,
-                )
 
     def health(self) -> dict[str, object]:
         return {
@@ -1088,7 +875,14 @@ class PuckyVoiceService:
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
+            "pucky_web_ui_token": "present" if self.config.pucky_web_ui_token else "missing",
             "composio": "present" if self.config.composio_api_key else "missing",
+            "browser_user_read_mode": "strict_auth" if self.config.strict_browser_user_auth else "legacy_public",
+            "composio_read_scope_mode": (
+                "strict_workspace_token"
+                if self.config.strict_composio_user_scoping
+                else "legacy_default_user_fallback"
+            ),
         }
 
     def _reminder_poll_loop(self) -> None:
@@ -1128,140 +922,6 @@ class PuckyVoiceService:
                 validate_delivery_targets=not action_only_patch,
             ),
         )
-
-    @staticmethod
-    def _reply_graph_collection(value: object) -> str:
-        raw = str(value or "").strip()
-        if not raw:
-            return ""
-        lower = raw.lower()
-        if lower in WORKSPACE_COLLECTIONS:
-            return lower
-        return KIND_COLLECTIONS.get(lower, "")
-
-    @staticmethod
-    def _reply_graph_record_payload(item: dict[str, object]) -> dict[str, object]:
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else None
-        if payload is None:
-            payload = {
-                key: value
-                for key, value in dict(item or {}).items()
-                if key not in {"record_key", "collection", "kind", "payload"}
-            }
-        payload = dict(payload)
-        explicit_id = str(item.get("id") or payload.get("id") or payload.get("record_id") or "").strip()
-        if explicit_id and "id" not in payload and "record_id" not in payload:
-            payload["id"] = explicit_id
-        return payload
-
-    @staticmethod
-    def _workspace_record_snapshot(record: dict[str, object]) -> dict[str, object]:
-        kind = str(record.get("kind") or "").strip()
-        collection = str(record.get("collection") or KIND_COLLECTIONS.get(kind, "")).strip()
-        record_id = str(record.get("id") or record.get("record_id") or "").strip()
-        return {
-            "kind": kind,
-            "collection": collection,
-            "id": record_id,
-            "title": str(record.get("title") or "").strip(),
-            "summary": str(record.get("summary") or "").strip(),
-        }
-
-    def _lookup_reply_graph_record(self, ref: dict[str, object]) -> dict[str, object] | None:
-        collection = self._reply_graph_collection(ref.get("collection") or ref.get("kind"))
-        record_id = str(ref.get("id") or ref.get("record_id") or "").strip()
-        kind = str(ref.get("kind") or WORKSPACE_COLLECTIONS.get(collection, "")).strip()
-        if not collection or not record_id or not kind:
-            return None
-        record = self.workspace.get_record(collection, record_id)
-        if isinstance(record, dict):
-            return self._workspace_record_snapshot(record)
-        fallback_title = str(ref.get("title") or ref.get("label") or record_id or kind.replace("_", " ").title()).strip()
-        fallback_summary = str(ref.get("summary") or "").strip()
-        return {
-            "kind": kind,
-            "collection": collection,
-            "id": record_id,
-            "title": fallback_title,
-            "summary": fallback_summary,
-        }
-
-    def _resolve_reply_graph_ref(
-        self,
-        ref: object,
-        created_records: dict[str, dict[str, object]],
-    ) -> dict[str, object] | None:
-        if not isinstance(ref, dict):
-            return None
-        record_key = str(ref.get("record_key") or "").strip()
-        if record_key:
-            resolved = created_records.get(record_key)
-            if resolved:
-                return dict(resolved)
-        return self._lookup_reply_graph_record(ref)
-
-    def _resolve_reply_graph_outputs(self, envelope: ReplyEnvelope) -> list[dict[str, object]]:
-        created_records: dict[str, dict[str, object]] = {}
-        created_order: list[dict[str, object]] = []
-        for raw in envelope.graph_records:
-            item = dict(raw or {})
-            collection = self._reply_graph_collection(item.get("collection") or item.get("kind"))
-            if not collection:
-                raise ValueError("graph_record_collection_required")
-            payload = self._reply_graph_record_payload(item)
-            record = self.workspace_upsert_record(collection, payload)
-            snapshot = self._workspace_record_snapshot(record)
-            record_key = str(item.get("record_key") or "").strip() or f"{snapshot['kind']}:{snapshot['id']}"
-            created_records[record_key] = snapshot
-            created_order.append(snapshot)
-        for raw in envelope.graph_links:
-            item = dict(raw or {})
-            source = self._resolve_reply_graph_ref(item.get("source"), created_records)
-            target = self._resolve_reply_graph_ref(item.get("target"), created_records)
-            if not source or not target:
-                raise ValueError("graph_link_record_ref_required")
-            self.workspace.upsert_link(
-                {
-                    "id": item.get("id") or item.get("link_id"),
-                    "source_kind": source["kind"],
-                    "source_id": source["id"],
-                    "target_kind": target["kind"],
-                    "target_id": target["id"],
-                    "label": str(item.get("label") or "").strip(),
-                    "metadata": dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {},
-                }
-            )
-        raw_connected = envelope.connected_records or tuple(created_order)
-        connected_records: list[dict[str, object]] = []
-        seen: set[tuple[str, str]] = set()
-        for ref in raw_connected:
-            snapshot = self._resolve_reply_graph_ref(ref, created_records)
-            if not snapshot:
-                raise ValueError("connected_record_ref_required")
-            key = (str(snapshot.get("kind") or "").strip(), str(snapshot.get("id") or "").strip())
-            if not key[0] or not key[1] or key in seen:
-                continue
-            seen.add(key)
-            connected_records.append(snapshot)
-        return connected_records
-
-    @staticmethod
-    def _validate_meeting_graph_outputs(
-        _record: dict[str, object],
-        envelope: ReplyEnvelope,
-        connected_records: list[dict[str, object]],
-    ) -> None:
-        note_records = [
-            item for item in envelope.graph_records
-            if PuckyVoiceService._reply_graph_collection(item.get("collection") or item.get("kind")) == "notes"
-        ]
-        if len(note_records) != 1:
-            raise ValueError("meeting_primary_note_required")
-        if not connected_records or str(connected_records[0].get("kind") or "").strip() != "note":
-            raise ValueError("meeting_primary_note_must_be_first")
-        note_targets = [item for item in connected_records if str(item.get("kind") or "").strip() == "note"]
-        if len(note_targets) != 1:
-            raise ValueError("meeting_connected_note_count_invalid")
 
     def _prepare_reminder_write_payload(
         self,
@@ -1842,11 +1502,11 @@ class PuckyVoiceService:
         label = str(recipient.get("label") or "").strip()
         if label:
             return label
+        if str(recipient.get("kind") or "").strip().lower() == "self":
+            return "Me"
         contact = self._reminder_contact_record(recipient)
         if isinstance(contact, dict):
             return str(contact.get("title") or contact.get("display_name") or recipient.get("id") or "Contact").strip()
-        if str(recipient.get("kind") or "").strip().lower() == "self":
-            return "Me"
         return str(recipient.get("id") or "Contact").strip() or "Contact"
 
     def _reminder_human_due_label(self, reminder: dict[str, object]) -> str:
@@ -2281,7 +1941,20 @@ class PuckyVoiceService:
             self._reminder_poll_lock.release()
 
     def composio_user_id(self) -> str:
+        identity = self.current_request_identity()
+        workspace_id = str(identity.workspace_id or "").strip()
+        if workspace_id and (identity.kind == "session" or self.config.strict_composio_user_scoping):
+            return f"ws_{workspace_id.removeprefix('ws_')}"
+        if self.config.strict_composio_user_scoping:
+            return "ws_default"
         return self.config.composio_default_user_id
+
+    def public_browser_reads_enabled(self) -> bool:
+        return not bool(self.config.strict_browser_user_auth)
+
+    def composio_default_user_read_enabled(self) -> bool:
+        identity = self.current_request_identity()
+        return not bool(self.config.strict_composio_user_scoping) and not str(identity.workspace_id or "").strip()
 
     def composio_auth_mode(self, value: str | None = None) -> str:
         candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()
@@ -2289,33 +1962,6 @@ class PuckyVoiceService:
 
     def agent_runtime_catalog(self) -> dict[str, object]:
         return agent_runtime_catalog_payload()
-
-    def record_ui_route_perf_event(self, payload: dict[str, object]) -> dict[str, object]:
-        if not isinstance(payload, dict):
-            raise ValueError("ui_route_perf_payload_must_be_object")
-        schema = str(payload.get("schema") or "").strip()
-        if schema != "pucky.ui_route_perf_event.v1":
-            raise ValueError("unsupported_ui_route_perf_schema")
-        self.ui_route_perf_ledger.record(
-            user_id=self.composio_user_id(),
-            payload=payload,
-        )
-        return {
-            "ok": True,
-            "schema": "pucky.ui_route_perf_ingest.v1",
-            "recorded": 1,
-        }
-
-    def recent_ui_route_perf_events(self, *, run_id: str = "", limit: int = 250) -> dict[str, object]:
-        return {
-            "ok": True,
-            "schema": "pucky.ui_route_perf_events.v1",
-            "items": self.ui_route_perf_ledger.recent(
-                self.composio_user_id(),
-                run_id=str(run_id or ""),
-                limit=limit,
-            ),
-        }
 
     def agent_runtime_call(self, payload: dict[str, object]) -> dict[str, object]:
         method = str(payload.get("method") or payload.get("action") or "").strip()
@@ -2915,6 +2561,73 @@ class PuckyVoiceService:
             ],
         }
 
+    def request_auth_code(self, email: str) -> dict[str, object]:
+        result = self.auth.issue_code(normalize_email(email))
+        return {
+            "ok": True,
+            "schema": "pucky.auth.request_code.v1",
+            "challenge_id": result["challenge_id"],
+            "email": result["email"],
+            "expires_at": result["expires_at"],
+            "delivery": "local_otp",
+            "test_code": result["code"],
+        }
+
+    def verify_auth_code(self, email: str, code: str, *, base_url: str) -> dict[str, object]:
+        identity = self.auth.verify_code(email, code)
+        session = self.auth.create_session(
+            user_id=str(identity["user_id"]),
+            workspace_id=str(identity["workspace_id"]),
+            email=str(identity["email"]),
+        )
+        landing_url = self.workspace_landing_url(base_url, workspace_id=str(identity["workspace_id"]))
+        return {
+            "ok": True,
+            "schema": "pucky.auth.verify_code.v1",
+            "session_token": session["token"],
+            "session_id": session["session_id"],
+            "expires_at": session["expires_at"],
+            "user_id": identity["user_id"],
+            "workspace_id": identity["workspace_id"],
+            "workspace_slug": identity["workspace_slug"],
+            "workspace_url": landing_url,
+            "landing_url": landing_url,
+            "email": identity["email"],
+        }
+
+    def resolve_auth_session(self, token: str) -> RequestIdentity:
+        session = self.auth.resolve_session(token)
+        if session is None:
+            return RequestIdentity()
+        return RequestIdentity(
+            kind="session",
+            user_id=str(session["user_id"]),
+            workspace_id=str(session["workspace_id"]),
+            email=str(session["email"]),
+            session_id=str(session["session_id"]),
+            auth_via="cookie",
+        )
+
+    def revoke_auth_session(self, token: str) -> bool:
+        return self.auth.revoke_session(token)
+
+    def workspace_landing_url(self, base_url: str, *, workspace_id: str = "") -> str:
+        prefix = str(base_url or "").rstrip("/")
+        path = "/ui/pucky/latest/?route=home"
+        return f"{prefix}{path}" if prefix else path
+
+    def auth_session_payload(self, identity: RequestIdentity, *, base_url: str) -> dict[str, object]:
+        active = bool(identity and identity.kind == "session" and identity.workspace_id)
+        return {
+            "ok": True,
+            "schema": "pucky.auth.session.v1",
+            "signed_in": active,
+            "user_id": str(identity.user_id or "") if active else "",
+            "workspace_id": str(identity.workspace_id or "") if active else "",
+            "email": str(identity.email or "") if active else "",
+            "landing_url": self.workspace_landing_url(base_url, workspace_id=str(identity.workspace_id or "")) if active else "",
+        }
+
     def _portal_token_secret(self) -> str:
         return str(self.config.connect_portal_secret or "").strip()
 
@@ -3017,6 +2730,9 @@ class PuckyVoiceService:
         clean_token = str(token or "").strip()
         if clean_token:
             return self._resolve_links_portal_user(clean_token)
+        identity = self.current_request_identity()
+        if str(identity.workspace_id or "").strip():
+            return self.composio_user_id()
         if allow_default_user:
             user_id = self.composio_user_id()
             if user_id:
@@ -3466,19 +3182,6 @@ class PuckyVoiceService:
             "meetings": meetings,
         }
 
-    def app_badges(self) -> dict[str, object]:
-        return {
-            "schema": "pucky.app_badges.v1",
-            "generated_at_ms": round(time.time() * 1000),
-            "badges": {
-                "inbox": {"count": self.feed.unread_group_count(include_archived=False), "kind": "unread"},
-                "meetings": {"count": self._unread_meeting_badge_count(), "kind": "unread"},
-                "meeting-notes": {"count": self._workspace_unread_badge_count("meeting-notes"), "kind": "unread"},
-                "tasks": {"count": self._workspace_unread_badge_count("tasks", exclude_done=True), "kind": "unread"},
-                "reminders": {"count": self._active_reminder_badge_count(), "kind": "active"},
-            },
-        }
-
     def meeting_detail(self, meeting_id: str) -> dict[str, object]:
         clean_id = _safe_meeting_id(meeting_id)
         if not clean_id:
@@ -3491,41 +3194,6 @@ class PuckyVoiceService:
                     "meeting": self._normalize_meeting_for_client(meeting, compact=False),
                 }
         raise KeyError(meeting_id)
-
-    def _workspace_unread_badge_count(self, collection: str, *, exclude_done: bool = False) -> int:
-        payload = self.workspace.list_records(collection, include_archived=False, include_deleted=False)
-        items = payload.get("items") if isinstance(payload, dict) else []
-        if not isinstance(items, list):
-            return 0
-        count = 0
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if exclude_done and str(item.get("status") or "").strip() == "done":
-                continue
-            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-            seen_at_ms = int(metadata.get("seen_at_ms") or 0)
-            content_updated_at_ms = int(item.get("content_updated_at_ms") or metadata.get("content_updated_at_ms") or 0)
-            if content_updated_at_ms > seen_at_ms:
-                count += 1
-        return count
-
-    def _active_reminder_badge_count(self) -> int:
-        payload = self.workspace.list_records("reminders", include_archived=False, include_deleted=False)
-        items = payload.get("items") if isinstance(payload, dict) else []
-        if not isinstance(items, list):
-            return 0
-        return sum(1 for item in items if isinstance(item, dict) and str(item.get("status") or "").strip() != "done")
-
-    def _unread_meeting_badge_count(self) -> int:
-        count = 0
-        for meeting in self._load_meetings():
-            if bool(meeting.get("archived")):
-                continue
-            feed_item = self._meeting_feed_item_for_client(meeting)
-            if isinstance(feed_item, dict) and not bool(feed_item.get("read")):
-                count += 1
-        return count
 
     def meeting_action(self, client_action_id: str, meeting_id: str, action: str) -> dict[str, object]:
         clean_action = str(action or "").strip().lower()
@@ -3541,7 +3209,6 @@ class PuckyVoiceService:
                 updated["updated_at"] = _iso_time(time.time())
                 if client_action_id:
                     updated["last_action_id"] = str(client_action_id)
-                self._sync_meeting_feed_archive_state(updated)
                 self._upsert_meeting(updated)
                 return {
                     "schema": "pucky.meeting_action_result.v1",
@@ -4176,20 +3843,6 @@ class PuckyVoiceService:
         item["failure_stage"] = failure_stage
         return item
 
-    @staticmethod
-    def _meeting_failure_stage(stage: object, error: BaseException | None = None) -> str:
-        clean_stage = str(stage or "meeting_agent_call").strip() or "meeting_agent_call"
-        if clean_stage != "meeting_agent_call":
-            return clean_stage
-        message = str(error or "").strip().lower()
-        if isinstance(error, TimeoutError) or "timed out" in message or "timeout" in message:
-            return "meeting_agent_timeout"
-        return clean_stage
-
-    @staticmethod
-    def _meeting_transcript_validation_reason(record: dict[str, object]) -> str:
-        return str(record.get("transcript_error") or "").strip() or "Meeting Transcript attachment missing or empty."
-
     def _process_meeting_record(self, record: dict[str, object], audio: bytes, mime_type: str) -> None:
         record["updated_at"] = _iso_time(time.time())
         record["transcript_status"] = "agent_pending"
@@ -4248,11 +3901,6 @@ class PuckyVoiceService:
                     record=record,
                     envelope=envelope,
                 ),
-                graph_output_validator=lambda envelope, connected_records: self._validate_meeting_graph_outputs(
-                    record,
-                    envelope,
-                    connected_records,
-                ),
                 codex_stage="meeting_agent_call",
                 feed_persist_stage="feed_persist",
             )
@@ -4267,48 +3915,50 @@ class PuckyVoiceService:
             self._apply_meeting_agent_state(record)
             self._apply_meeting_agent_state_to_feed_item(record)
             if record.get("transcript_status") == "missing_transcript_attachment":
-                failure_reason = self._meeting_transcript_validation_reason(record)
-                self._finalize_meeting_runtime_failure(
-                    record,
-                    audio,
-                    mime_type,
-                    failure_stage="meeting_transcript_validation",
-                    failure_reason=failure_reason,
+                record["state"] = "completed_with_missing_result"
+                record["failure_reason"] = "meeting_agent_missing_transcript_attachment"
+                record["failure_stage"] = "meeting_transcript_validation"
+                blocker = _run_staged_operation(
+                    "meeting_missing_result_card_upsert",
+                    lambda: self._upsert_meeting_missing_result_card(record, audio, mime_type),
+                    sqlite_retry=True,
                 )
+                record["card_id"] = str(blocker.get("card_id") or "")
+                record["card"] = blocker.get("card") if isinstance(blocker.get("card"), dict) else {}
+                record["feed_item"] = blocker
         except Exception as exc:
             stage = exc.stage if isinstance(exc, _StagedOperationError) else "meeting_agent_call"
             root = exc.original if isinstance(exc, _StagedOperationError) else exc
-            failure_stage = self._meeting_failure_stage(stage, root)
-            failure_reason = f"{root.__class__.__name__}: {root}"
-            recovered = False
-            if failure_stage == "meeting_agent_call" and any(
-                token in failure_reason.lower()
-                for token in ("codex turn failed", "usagelimitexceeded", "codexappservererror")
-            ):
-                recovered = self._complete_meeting_from_transcript_fallback(
-                    record,
-                    audio,
-                    mime_type,
-                    fallback_reason=failure_reason,
-                    recovery_reason="meeting_agent_call_fallback",
+            record["state"] = "failed"
+            record["updated_at"] = _iso_time(time.time())
+            record["failure_stage"] = str(stage or "meeting_agent_call")
+            record["failure_reason"] = f"{root.__class__.__name__}: {root}"
+            record["transcript_status"] = "failed"
+            record["transcript_error"] = str(record["failure_reason"])
+            record["diarization_status"] = "failed"
+            try:
+                failed = _run_staged_operation(
+                    "meeting_failed_card_upsert",
+                    lambda: self._upsert_meeting_failed_card(record, audio, mime_type),
+                    sqlite_retry=True,
                 )
-            if not recovered:
-                self._finalize_meeting_runtime_failure(
-                    record,
-                    audio,
-                    mime_type,
-                    failure_stage=failure_stage,
-                    failure_reason=failure_reason,
+                record["card_id"] = str(failed.get("card_id") or "")
+                record["card"] = failed.get("card") if isinstance(failed.get("card"), dict) else {}
+                record["feed_item"] = failed
+            except Exception as failed_exc:
+                failed_stage = failed_exc.stage if isinstance(failed_exc, _StagedOperationError) else "meeting_failed_card_upsert"
+                record["failed_card_error"] = str(
+                    failed_exc.original if isinstance(failed_exc, _StagedOperationError) else failed_exc
                 )
+                record["failed_card_stage"] = str(failed_stage or "meeting_failed_card_upsert")
             result = {}
-        if str(record.get("state") or "").strip().lower() != "failed":
-            self._apply_meeting_agent_state(record)
-            self._apply_meeting_agent_state_to_feed_item(record)
-            _run_staged_operation(
-                "meeting_index_write",
-                lambda: self._upsert_meeting(record),
-                sqlite_retry=True,
-            )
+        self._apply_meeting_agent_state(record)
+        self._apply_meeting_agent_state_to_feed_item(record)
+        _run_staged_operation(
+            "meeting_index_write",
+            lambda: self._upsert_meeting(record),
+            sqlite_retry=True,
+        )
 
     @staticmethod
     def _apply_meeting_agent_reply(record: dict[str, object], result: dict[str, object]) -> None:
@@ -4332,7 +3982,7 @@ class PuckyVoiceService:
         transcript_text = _meeting_transcript_text_from_attachment(transcript_attachment)
         parsed_turns = _parse_meeting_transcript_turns(transcript_text)
         card = result.get("card") if isinstance(result.get("card"), dict) else {}
-        title = str(record.get("title") or card.get("title") or result.get("title") or "").strip()
+        title = str(card.get("title") or result.get("title") or record.get("title") or "").strip()
         if title:
             record["title"] = title
         recording_title = str(result.get("recording_title") or record.get("recording_title") or "").strip()
@@ -4374,9 +4024,6 @@ class PuckyVoiceService:
             }
         )
         record["agent"] = agent
-        connected_records = [dict(item) for item in list(result.get("connected_records") or []) if isinstance(item, dict)]
-        if connected_records:
-            record["connected_records"] = connected_records
 
     def _apply_meeting_agent_state_to_feed_item(self, record: dict[str, object]) -> None:
         feed_item = record.get("feed_item")
@@ -4564,8 +4211,11 @@ class PuckyVoiceService:
         transcript_html_path = ""
         transcript_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript"
         transcript_html_artifact_id = f"pucky_card_{meeting_id}:meeting_transcript_html"
+        summary_artifact_id = f"pucky_card_{meeting_id}:html"
+        transcript_href = self.meeting_artifact_signed_url(transcript_html_artifact_id)
         transcript_plain_href = self.meeting_artifact_signed_url(transcript_artifact_id)
         audio_href = self.meeting_audio_signed_url(meeting_id)
+        finalized_summary_html = ""
         if transcript_source:
             transcript_path = str(self._write_meeting_text_artifact(meeting_id, canonical_basename, "transcript.txt", transcript_text))
             record["transcript_path"] = transcript_path
@@ -4595,6 +4245,56 @@ class PuckyVoiceService:
                     }
                 )
             )
+            prepared.append(
+                normalize_attachment(
+                    {
+                        "id": f"{meeting_id}:transcript_html",
+                        "path": transcript_html_path,
+                        "artifact": transcript_html_artifact_id,
+                        "viewer_artifact": transcript_html_artifact_id,
+                        "html_artifact": transcript_html_artifact_id,
+                        "viewer_url": transcript_href,
+                        "html_url": transcript_href,
+                        "mime_type": "text/html",
+                        "title": "Transcript",
+                        "kind": "html",
+                        "meeting_id": meeting_id,
+                        "canonical_basename": canonical_basename,
+                        "recording_title": recording_title,
+                        "transcript_path": transcript_path,
+                    }
+                )
+            )
+        if envelope.html_content:
+            html_title = "Meeting Summary"
+            html_artifact = summary_artifact_id
+            finalized_summary_html = _meeting_summary_html_with_vm_links(
+                envelope.html_content,
+                transcript_href,
+                audio_href,
+            )
+            prepared.append(
+                normalize_attachment(
+                    {
+                        "id": f"{meeting_id}:html",
+                        "artifact": html_artifact,
+                        "viewer_artifact": html_artifact,
+                        "html_artifact": html_artifact,
+                        "viewer_url": self.meeting_artifact_signed_url(html_artifact),
+                        "html_url": self.meeting_artifact_signed_url(html_artifact),
+                        "mime_type": "text/html",
+                        "title": html_title,
+                        "kind": "html",
+                        "meeting_id": meeting_id,
+                        "canonical_basename": canonical_basename,
+                        "recording_title": recording_title,
+                        "started_at": str(record.get("started_at") or record.get("created_at") or ""),
+                        "mime_type_audio": str(record.get("mime_type") or ""),
+                        "transcript_path": transcript_path,
+                        "transcript_html_path": transcript_html_path,
+                    }
+                )
+            )
         audio_attachment = _meeting_audio_attachment_payload(record, canonical_basename)
         if audio_attachment:
             if audio_href:
@@ -4614,6 +4314,7 @@ class PuckyVoiceService:
             "recording_title": recording_title,
             "recording_title_source": recording_title_source,
             "canonical_basename": canonical_basename,
+            "summary_html_content": finalized_summary_html,
         }
 
     def _write_meeting_text_artifact(self, meeting_id: str, canonical_basename: str, suffix: str, content: str) -> Path:
@@ -4692,71 +4393,6 @@ class PuckyVoiceService:
                 return dict(meeting)
         return None
 
-    def _meeting_feed_item_for_client(self, meeting: dict[str, object]) -> dict[str, object] | None:
-        card_id = str(meeting.get("card_id") or "").strip()
-        meeting_id = str(meeting.get("meeting_id") or "").strip()
-        if not card_id and meeting_id:
-            card_id = f"pucky_card_{meeting_id}"
-        persisted = meeting.get("feed_item") if isinstance(meeting.get("feed_item"), dict) else None
-        reconciled: dict[str, object] | None = None
-        if card_id:
-            current_item = self.feed.get_item(card_id)
-            if isinstance(current_item, dict):
-                reconciled = dict(self._reconcile_meeting_feed_item(current_item))
-                self._decorate_feed_item(reconciled)
-        if isinstance(persisted, dict) and isinstance(reconciled, dict):
-            merged = dict(persisted)
-            for key in (
-                "card_id",
-                "title",
-                "summary",
-                "icon",
-                "archived",
-                "read",
-                "deleted",
-                "card_kind",
-                "meeting_state",
-                "failure_stage",
-                "failure_reason",
-            ):
-                if key in reconciled:
-                    merged[key] = reconciled[key]
-            if isinstance(merged.get("card"), dict) or isinstance(reconciled.get("card"), dict):
-                merged_card = dict(merged.get("card") or {})
-                live_card = dict(reconciled.get("card") or {})
-                for key in (
-                    "title",
-                    "summary",
-                    "icon",
-                    "accent",
-                    "archived",
-                    "read",
-                    "deleted",
-                    "card_kind",
-                    "meeting_state",
-                    "failure_stage",
-                ):
-                    if key in live_card:
-                        merged_card[key] = live_card[key]
-                merged["card"] = merged_card
-            if isinstance(reconciled.get("origin"), dict):
-                merged_origin = dict(merged.get("origin") or {})
-                for key in ("card_kind", "meeting_state", "failure_stage"):
-                    if key in reconciled["origin"]:
-                        merged_origin[key] = reconciled["origin"][key]
-                merged["origin"] = merged_origin
-            self._decorate_feed_item(merged)
-            return merged
-        if isinstance(reconciled, dict):
-            return reconciled
-        if isinstance(persisted, dict):
-            reconciled = dict(persisted)
-            if card_id:
-                reconciled.setdefault("card_id", card_id)
-            self._decorate_feed_item(reconciled)
-            return reconciled
-        return None
-
     def _meeting_failed_card_payload(self, meeting: dict[str, object]) -> dict[str, object]:
         meeting_id = str(meeting.get("meeting_id") or "")
         reason = str(meeting.get("failure_reason") or "unknown error").strip()
@@ -4822,19 +4458,6 @@ class PuckyVoiceService:
                     patched_origin.pop("failure_stage", None)
                 patched_feed["origin"] = patched_origin
                 normalized["feed_item"] = patched_feed
-        feed_item = self._meeting_feed_item_for_client(normalized)
-        if isinstance(feed_item, dict):
-            normalized["feed_item"] = feed_item
-            normalized["card_id"] = str(feed_item.get("card_id") or normalized.get("card_id") or "")
-            normalized["read"] = bool(feed_item.get("read"))
-            if isinstance(feed_item.get("card"), dict):
-                normalized["card"] = dict(feed_item.get("card") or {})
-        elif "read" not in normalized:
-            normalized["read"] = bool(
-                normalized.get("feed_item", {}).get("read")
-                if isinstance(normalized.get("feed_item"), dict)
-                else False
-            )
         return self._compact_meeting(normalized) if compact else normalized
 
     @staticmethod
@@ -4866,9 +4489,7 @@ class PuckyVoiceService:
             "diarization_status",
             "agent",
             "card_id",
-            "read",
             "card",
-            "connected_records",
             "failure_stage",
             "failure_reason",
             "archived",
@@ -4905,17 +4526,6 @@ class PuckyVoiceService:
         card = item.get("card")
         if isinstance(card, dict):
             icon = card.get("icon") or icon
-        origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
-        card_origin = card.get("origin") if isinstance(card, dict) and isinstance(card.get("origin"), dict) else {}
-        for key in ("card_kind", "meeting_state", "failure_stage"):
-            value = (
-                item.get(key)
-                or (card.get(key) if isinstance(card, dict) else "")
-                or origin.get(key)
-                or card_origin.get(key)
-            )
-            if value not in (None, ""):
-                item[key] = value
         accent = self._card_icon_accent(icon)
         item["accent"] = accent
         if isinstance(card, dict):
@@ -4947,7 +4557,6 @@ class PuckyVoiceService:
             reconciled["meeting_state"] = "failed"
             reconciled["failure_stage"] = str(failed_card.get("failure_stage") or "")
             reconciled["origin"] = dict(failed_card.get("origin") or {})
-            reconciled["archived"] = bool(meeting.get("archived")) or bool(reconciled.get("archived"))
             return reconciled
 
         if state in {"completed", "completed_with_missing_result"}:
@@ -4957,7 +4566,7 @@ class PuckyVoiceService:
                 reconciled.setdefault("card_id", item.get("card_id"))
                 reconciled.setdefault("turn_id", item.get("turn_id"))
                 reconciled.setdefault("session_id", item.get("session_id"))
-                reconciled["archived"] = bool(meeting.get("archived")) or bool(item.get("archived", reconciled.get("archived", False)))
+                reconciled["archived"] = item.get("archived", reconciled.get("archived", False))
                 reconciled["read"] = item.get("read", reconciled.get("read", False))
                 reconciled["deleted"] = item.get("deleted", reconciled.get("deleted", False))
                 return reconciled
@@ -5116,6 +4725,7 @@ class PuckyVoiceService:
         thread_scope_source: str | None = None,
         thread_card_id: str | None = None,
         proof_reply_delay_ms: str | int | None = None,
+        user_attachments: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         transcript = str(text or "").strip()
         if not transcript:
@@ -5155,19 +4765,26 @@ class PuckyVoiceService:
             telemetry["requested_reasoning_effort"] = requested_reasoning_effort
         telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
         telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
+        normalized_user_attachments, prompt_attachment_context = self._prepare_user_turn_attachments(
+            turn_id,
+            user_attachments or [],
+        )
+        telemetry["user_attachment_count"] = len(normalized_user_attachments)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         try:
             return self._handle_transcript_turn(
                 turn_id=turn_id,
                 session_id=session_id,
                 reply_mode=reply_mode,
-                transcript=transcript,
+                transcript=f"{transcript}\n\n{prompt_attachment_context}".strip() if prompt_attachment_context else transcript,
                 telemetry=telemetry,
                 total_start=total_start,
                 request_audio_mime_type="",
                 request_audio_base64="",
+                display_transcript_text=transcript,
                 model=requested_model or None,
                 reasoning_effort=requested_reasoning_effort or None,
+                user_attachments=normalized_user_attachments,
             )
         except Exception as exc:
             failed_stage, root = _unwrap_staged_exception(exc, fallback_stage="codex_running")
@@ -5201,9 +4818,9 @@ class PuckyVoiceService:
         model: str | None = None,
         reasoning_effort: str | None = None,
         force_unread: bool = False,
+        user_attachments: list[dict[str, object]] | None = None,
         codex_client: CodexProvider | None = None,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
-        graph_output_validator: Callable[[ReplyEnvelope, list[dict[str, object]]], None] | None = None,
         codex_stage: str = "codex_turn",
         feed_persist_stage: str = "feed_persist",
     ) -> dict[str, object]:
@@ -5310,8 +4927,7 @@ class PuckyVoiceService:
         telemetry["reply_chars"] = len(envelope.reply_text)
         telemetry["card_icon"] = envelope.card_icon
         telemetry["recording_title"] = envelope.recording_title
-        telemetry["graph_record_count"] = len(envelope.graph_records)
-        telemetry["graph_link_count"] = len(envelope.graph_links)
+        telemetry["has_html"] = bool(envelope.html_content)
         try:
             client.set_thread_title(envelope.card_title, thread_id=codex_result.used_thread_id)
             telemetry["codex_thread_title_synced"] = True
@@ -5327,12 +4943,6 @@ class PuckyVoiceService:
         telemetry["origin_thread_id"] = origin.get("thread_id", "")
         telemetry["origin_model"] = origin.get("model", "")
         telemetry["origin_reasoning_effort"] = origin.get("reasoning_effort", "")
-        if envelope.legacy_html_requested:
-            raise ValueError("legacy_reply_html_not_supported")
-        connected_records = self._resolve_reply_graph_outputs(envelope)
-        if graph_output_validator is not None:
-            graph_output_validator(envelope, connected_records)
-        telemetry["connected_record_count"] = len(connected_records)
 
         if attachment_builder is not None:
             attachments, attachment_meta = attachment_builder(envelope)
@@ -5365,12 +4975,12 @@ class PuckyVoiceService:
                 request_audio_mime_type=request_audio_mime_type,
                 has_request_audio=bool(request_audio_base64),
                 request_audio_attachment=request_audio_attachment,
+                attachments=user_attachments,
             ),
             _assistant_transcript_message(
                 text=envelope.reply_text,
                 created_at=_iso_time(time.time()),
                 attachments=attachments,
-                connected_records=connected_records,
             )
         ]
         card: dict[str, object] = {
@@ -5379,8 +4989,17 @@ class PuckyVoiceService:
             "icon": envelope.card_icon,
             "accent": self._card_icon_accent(envelope.card_icon),
             "origin": origin,
-            "connected_records": connected_records,
         }
+        html_mime_type = ""
+        html_base64 = ""
+        final_html_content = str(attachment_meta.get("summary_html_content") or envelope.html_content or "")
+        if final_html_content:
+            html_bytes = final_html_content.encode("utf-8")
+            if len(html_bytes) <= self.config.max_html_bytes:
+                html_mime_type = "text/html"
+                html_base64 = base64.b64encode(html_bytes).decode("ascii")
+                card["html_mime_type"] = html_mime_type
+                card["html_base64"] = html_base64
         telemetry["total_ms"] = _elapsed_ms(total_start)
         telemetry["status"] = "ok"
         telemetry["feed_db_path"] = self.feed.db_path
@@ -5402,8 +5021,8 @@ class PuckyVoiceService:
                 request_audio_base64=request_audio_base64,
                 audio_mime_type=audio_mime_type,
                 audio_base64=audio_base64,
-                html_mime_type="",
-                html_base64="",
+                html_mime_type=html_mime_type,
+                html_base64=html_base64,
                 force_unread=force_unread,
             ),
             sqlite_retry=True,
@@ -5431,7 +5050,6 @@ class PuckyVoiceService:
             result["recording_title"] = envelope.recording_title
         if envelope.transcript_text:
             result["transcript_text"] = envelope.transcript_text
-        result["connected_records"] = connected_records
         result["telemetry"] = _public_turn_telemetry(telemetry)
         self._apply_proof_reply_delay(telemetry)
         telemetry["total_ms"] = _elapsed_ms(total_start)
@@ -5456,6 +5074,62 @@ class PuckyVoiceService:
         telemetry["proof_reply_delay_ms_applied"] = requested_ms
         telemetry["proof_reply_delay_elapsed_ms"] = _elapsed_ms(start)
 
+    def _user_turn_upload_dir(self, turn_id: str) -> Path:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            base = Path(self.config.feed_db_path).with_name("pucky_uploaded_attachments")
+        else:
+            base = self._workspace_root(workspace_key) / "uploaded_attachments"
+        target = base / _normalize_turn_id(turn_id)
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _prepare_user_turn_attachments(
+        self,
+        turn_id: str,
+        uploaded_files: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], str]:
+        if not uploaded_files:
+            return [], ""
+        prepared: list[dict[str, object]] = []
+        prompt_lines: list[str] = []
+        upload_dir = self._user_turn_upload_dir(turn_id)
+        for index, raw in enumerate(uploaded_files[: max(1, int(self.config.max_attachment_count or 1))]):
+            filename = re.sub(r"[^A-Za-z0-9._-]+", "-", str(raw.get("filename") or "attachment")).strip("-") or f"attachment-{index + 1}"
+            mime_type = str(raw.get("content_type") or _guess_attachment_mime(filename) or "application/octet-stream").strip() or "application/octet-stream"
+            content = raw.get("content") or b""
+            if isinstance(content, bytearray):
+                content = bytes(content)
+            if not isinstance(content, bytes):
+                content = bytes(str(content), "utf-8")
+            if len(content) > max(1, int(self.config.max_attachment_bytes)):
+                raise ValueError(f"attachment_too_large:{filename}")
+            stored_path = upload_dir / f"{index + 1:02d}-{filename}"
+            stored_path.write_bytes(content)
+            attachment: dict[str, object] = {
+                "id": f"{turn_id}:user_attachment:{index + 1}",
+                "path": str(stored_path),
+                "artifact": f"pucky_card_{turn_id}:user_attachment:{index + 1}:original",
+                "mime_type": mime_type,
+                "title": filename,
+                "size_bytes": len(content),
+            }
+            excerpt = ""
+            if _is_inline_text_mime(mime_type) or mime_type in {"text/html", "application/xhtml+xml"}:
+                excerpt = content.decode("utf-8", errors="replace")[:4000]
+                if excerpt:
+                    attachment["text"] = excerpt
+            normalized = normalize_attachment(attachment)
+            prepared.append(normalized)
+            line = f"- {filename} ({mime_type}, {len(content)} bytes)"
+            if excerpt:
+                line += f":\n{excerpt[:1200]}"
+            prompt_lines.append(line)
+        prompt = ""
+        if prompt_lines:
+            prompt = "User attached files:\n" + "\n".join(prompt_lines)
+        return prepared, prompt
+
     def _prepare_reply_attachments(
         self,
         *,
@@ -5471,6 +5145,18 @@ class PuckyVoiceService:
                 raw_items = [{"path": path, "title": Path(path).name} for path in fallback_paths]
                 meta["fallback_from_reply_text"] = True
         prepared: list[dict[str, object]] = []
+        if envelope.html_content:
+            prepared.append(
+                normalize_attachment(
+                    {
+                        "id": f"{turn_id}:html",
+                        "artifact": f"pucky_card_{turn_id}:html",
+                        "mime_type": "text/html",
+                        "title": envelope.html_title or envelope.card_title or "HTML page",
+                        "kind": "html",
+                    }
+                )
+            )
         for index, item in enumerate(raw_items):
             normalized = self._prepare_one_reply_attachment(turn_id=turn_id, index=index, item=item)
             if normalized is not None:
@@ -5604,37 +5290,26 @@ def parse_reply_envelope(raw: str) -> ReplyEnvelope:
     card_title = (str(data.get("card_title") or "").strip() or fallback_title(reply_text))[:MAX_CARD_TITLE_CHARS].strip() or "Pucky"
     recording_title = str(data.get("recording_title") or "").strip()[:MAX_CARD_TITLE_CHARS].strip()
     transcript_text = str(data.get("transcript_text") or "").replace("\r\n", "\n").strip()
+    html_title = ""
+    html_content = ""
+    html = data.get("html")
+    if isinstance(html, dict):
+        html_title = str(html.get("title") or "").strip()
+        html_content = str(html.get("content") or "").strip()
     attachments: list[dict[str, object]] = []
     if isinstance(data.get("attachments"), list):
         for item in data.get("attachments") or []:
             if isinstance(item, dict):
                 attachments.append(dict(item))
-    graph_records: list[dict[str, object]] = []
-    if isinstance(data.get("graph_records"), list):
-        for item in data.get("graph_records") or []:
-            if isinstance(item, dict):
-                graph_records.append(dict(item))
-    graph_links: list[dict[str, object]] = []
-    if isinstance(data.get("graph_links"), list):
-        for item in data.get("graph_links") or []:
-            if isinstance(item, dict):
-                graph_links.append(dict(item))
-    connected_records: list[dict[str, object]] = []
-    if isinstance(data.get("connected_records"), list):
-        for item in data.get("connected_records") or []:
-            if isinstance(item, dict):
-                connected_records.append(dict(item))
     return ReplyEnvelope(
-        reply_text=reply_text,
-        card_title=card_title,
-        card_icon=normalize_card_icon(data.get("card_icon")),
-        recording_title=recording_title,
-        transcript_text=transcript_text,
-        attachments=tuple(attachments),
-        graph_records=tuple(graph_records),
-        graph_links=tuple(graph_links),
-        connected_records=tuple(connected_records),
-        legacy_html_requested=isinstance(data.get("html"), dict) and bool(str((data.get("html") or {}).get("content") or "").strip()),
+        reply_text,
+        card_title,
+        normalize_card_icon(data.get("card_icon")),
+        recording_title,
+        transcript_text,
+        html_title,
+        html_content,
+        tuple(attachments),
     )
 
 
@@ -5657,6 +5332,15 @@ def reply_output_schema() -> dict[str, object]:
             "card_title": {"type": "string"},
             "card_icon": {"type": "string"},
             "recording_title": {"type": ["string", "null"]},
+            "html": {
+                "type": ["object", "null"],
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["title", "content"],
+            },
             "attachments": {
                 "type": ["array", "null"],
                 "items": {
@@ -5674,54 +5358,8 @@ def reply_output_schema() -> dict[str, object]:
                     "required": ["path", "mime_type", "title", "kind", "viewer_path", "preview_path", "text"],
                 },
             },
-            "graph_records": {
-                "type": ["array", "null"],
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "record_key": {"type": ["string", "null"]},
-                        "collection": {"type": ["string", "null"]},
-                        "kind": {"type": ["string", "null"]},
-                        "payload": {"type": ["object", "null"]},
-                        "id": {"type": ["string", "null"]},
-                    },
-                    "additionalProperties": True,
-                },
-            },
-            "graph_links": {
-                "type": ["array", "null"],
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "id": {"type": ["string", "null"]},
-                        "link_id": {"type": ["string", "null"]},
-                        "label": {"type": ["string", "null"]},
-                        "metadata": {"type": ["object", "null"]},
-                        "source": {"type": ["object", "null"], "additionalProperties": True},
-                        "target": {"type": ["object", "null"], "additionalProperties": True},
-                    },
-                    "required": ["id", "link_id", "label", "metadata", "source", "target"],
-                },
-            },
-            "connected_records": {
-                "type": ["array", "null"],
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "record_key": {"type": ["string", "null"]},
-                        "collection": {"type": ["string", "null"]},
-                        "kind": {"type": ["string", "null"]},
-                        "id": {"type": ["string", "null"]},
-                        "record_id": {"type": ["string", "null"]},
-                        "title": {"type": ["string", "null"]},
-                        "summary": {"type": ["string", "null"]},
-                    },
-                    "additionalProperties": True,
-                },
-            },
         },
-        "required": ["reply_text", "card_title", "card_icon", "recording_title", "attachments", "graph_records", "graph_links", "connected_records"],
+        "required": ["reply_text", "card_title", "card_icon", "recording_title", "html", "attachments"],
     }
 
 
@@ -5781,7 +5419,6 @@ def _assistant_transcript_message(
     text: str,
     created_at: str,
     attachments: list[dict[str, object]],
-    connected_records: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     message = {
         "role": "assistant",
@@ -5790,8 +5427,6 @@ def _assistant_transcript_message(
     }
     if attachments:
         message["attachments"] = attachments
-    if connected_records:
-        message["connected_records"] = [dict(item) for item in connected_records if isinstance(item, dict)]
     return message
 
 
@@ -5821,12 +5456,15 @@ def _user_transcript_message(
     request_audio_mime_type: str,
     has_request_audio: bool,
     request_audio_attachment: dict[str, object] | None = None,
+    attachments: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     message: dict[str, object] = {
         "role": "user",
         "text": text,
         "created_at": created_at,
     }
+    if attachments:
+        message["attachments"] = attachments
     return message
 
 
@@ -5892,7 +5530,7 @@ Meeting metadata:
 - duration_ms: {record.get("duration_ms") or 0}
 - audio_bytes: {record.get("audio_bytes") or 0}
 
-Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish transcript artifacts from transcript_text. Do not emit reply-level HTML. Instead, create exactly one primary regular note in graph_records containing the merged durable meeting output, optionally create any extra task/project/reminder/contact/note updates in graph_records, connect them with graph_links, and list the final durable outputs in connected_records with the primary note first. Use due dates only when the meeting explicitly states them.
+Produce both a card_title for the feed tile and a separate recording_title for the canonical saved meeting audio/transcript basename. recording_title may differ from card_title. Use Deepgram for the meeting transcript and diarization. Relabel diarized speakers to real participant names when the transcript clearly supports that mapping, and keep distinct anonymous speakers separated as neutral labels when identities are unclear. Return the cleaned labeled transcript in transcript_text. The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text. Use due dates only when the meeting explicitly states them. The summary HTML is invalid unless it includes the literal placeholders {{{{PUCKY_MEETING_TRANSCRIPT_LINK}}}} and {{{{PUCKY_MEETING_AUDIO_LINK}}}} as standalone tokens. Do not wrap those placeholders in your own <a> tags, and do not replace them with raw VM URLs, /tmp paths, inline JavaScript, or custom playback UI.
 """.strip()
 
 
@@ -5977,50 +5615,6 @@ def _elapsed_ms(start: float) -> int:
 
 def _iso_time(epoch_seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
-
-
-def _parse_iso_time_epoch_seconds(value: object) -> float | None:
-    clean = str(value or "").strip()
-    if not clean:
-        return None
-    try:
-        return datetime.fromisoformat(clean.replace("Z", "+00:00")).timestamp()
-    except Exception:
-        return None
-
-
-def _meeting_fallback_display_title(record: dict[str, object]) -> str:
-    meeting_id = str(record.get("meeting_id") or "").strip()
-    for key in ("title", "recording_title"):
-        candidate = str(record.get(key) or "").strip()
-        if (
-            candidate
-            and _meeting_title_quality(candidate, meeting_id) == "human_like"
-            and candidate.lower() not in {"processing meeting recording", "meeting processing failed"}
-        ):
-            return candidate
-    for raw in (record.get("started_at"), record.get("created_at"), record.get("updated_at")):
-        epoch = _parse_iso_time_epoch_seconds(raw)
-        if epoch is None:
-            continue
-        return f"Meeting Note {time.strftime('%Y-%m-%d %H:%M', time.gmtime(epoch))}"
-    return "Meeting Note"
-
-
-def _meeting_transcript_preview(transcript_text: object, *, max_chars: int = 140) -> str:
-    for raw_line in str(transcript_text or "").splitlines():
-        clean_line = str(raw_line or "").strip()
-        if not clean_line:
-            continue
-        match = MEETING_TRANSCRIPT_LINE_RE.match(clean_line)
-        if match:
-            clean_line = str(match.group("text") or "").strip()
-        if not clean_line:
-            continue
-        if len(clean_line) <= max_chars:
-            return clean_line
-        return clean_line[: max(0, max_chars - 1)].rstrip() + "…"
-    return ""
 
 
 def _normalize_turn_id(raw: str | None) -> str:
@@ -6696,6 +6290,7 @@ def make_handler(service: PuckyVoiceService):
 
 def serve(service: PuckyVoiceService) -> None:
     service.start()
+    ensure_broker_initialized()
     server = ThreadingHTTPServer((service.config.host, service.config.port), make_handler(service))
     print(f"Pucky voice service listening on {service.config.host}:{service.config.port}", flush=True)
     server.serve_forever()

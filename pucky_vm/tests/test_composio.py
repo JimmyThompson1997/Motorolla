@@ -239,3 +239,33 @@ def test_composio_client_start_oauth_creates_managed_auth_config_then_links(monk
             },
         ),
     ]
+
+
+def test_composio_client_get_tool_fetches_from_tools_api_and_caches_result() -> None:
+    client = ComposioClient("test-api-key")
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_request_json(
+        method: str,
+        path: str,
+        payload: dict[str, object] | None = None,
+        query: dict[str, object] | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, object]:
+        calls.append((method, path, str(base_url or "")))
+        return {
+            "slug": "GMAIL_FETCH_EMAILS",
+            "toolkit": {"slug": "gmail"},
+            "input_parameters": {"type": "object", "required": []},
+        }
+
+    client._request_json = fake_request_json  # type: ignore[method-assign]
+
+    first = client.get_tool("GMAIL_FETCH_EMAILS")
+    second = client.get_tool("gmail_fetch_emails")
+
+    assert first["slug"] == "GMAIL_FETCH_EMAILS"
+    assert second["slug"] == "GMAIL_FETCH_EMAILS"
+    assert calls == [
+        ("GET", "/tools/GMAIL_FETCH_EMAILS", "https://backend.composio.dev/api/v3.1"),
+    ]

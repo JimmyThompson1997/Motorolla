@@ -329,6 +329,34 @@ def default_ffmpeg(*, environment: Optional[dict[str, str]] = None) -> Optional[
     return which_path("ffmpeg", environment=env)
 
 
+def default_flyctl(
+    *,
+    environment: Optional[dict[str, str]] = None,
+    home: Optional[Path] = None,
+) -> Optional[Path]:
+    env = environment or os.environ
+    explicit = path_from_env("FLYCTL_BIN", environment=env)
+    if explicit is not None and explicit.exists():
+        return explicit
+    local_flyctl = local_bin("flyctl", environment=env, home=home)
+    if local_flyctl.exists():
+        return local_flyctl
+    found = which_path("flyctl", environment=env)
+    if found is not None:
+        return found
+    home_dir = home or Path.home()
+    install_root = path_from_env("FLYCTL_INSTALL", environment=env) or (home_dir / ".fly")
+    candidate = install_root / "bin" / "flyctl"
+    if candidate.exists():
+        return candidate
+    prefix = brew_prefix("flyctl", environment=env)
+    if prefix is not None:
+        brewed = prefix / "bin" / "flyctl"
+        if brewed.exists():
+            return brewed
+    return None
+
+
 def default_system_image(*, system: Optional[str] = None, machine: Optional[str] = None) -> str:
     platform_name = system or host_system()
     architecture = (machine or host_machine()).lower()

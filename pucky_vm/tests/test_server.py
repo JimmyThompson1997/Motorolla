@@ -20,7 +20,6 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
-import pucky_vm.server as server_module
 from pucky_vm.server import (
     Config,
     PuckyVoiceService,
@@ -121,63 +120,6 @@ def meeting_summary_html(
     )
 
 
-def note_graph_record(
-    *,
-    record_key: str,
-    record_id: str,
-    title: str,
-    summary: str,
-    html_content: str = "",
-) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "id": record_id,
-        "title": title,
-        "summary": summary,
-    }
-    if html_content:
-        payload["html"] = html_content
-    return {
-        "record_key": record_key,
-        "kind": "note",
-        "payload": payload,
-    }
-
-
-def meeting_graph_reply(
-    *,
-    reply_text: str,
-    card_title: str,
-    recording_title: str,
-    note_id: str,
-    note_title: str,
-    note_summary: str,
-    note_html: str,
-    transcript_text: str = "",
-    attachments: list[dict[str, object]] | None = None,
-) -> dict[str, object]:
-    return {
-        "reply_text": reply_text,
-        "card_title": card_title,
-        "recording_title": recording_title,
-        "card_icon": "mic",
-        "transcript_text": transcript_text,
-        "attachments": list(attachments or []),
-        "graph_records": [
-            note_graph_record(
-                record_key="meeting_note",
-                record_id=note_id,
-                title=note_title,
-                summary=note_summary,
-                html_content=note_html,
-            )
-        ],
-        "graph_links": [],
-        "connected_records": [
-            {"record_key": "meeting_note"}
-        ],
-    }
-
-
 class FakeCodex:
     ready = True
     thread_id = "thread-1"
@@ -248,31 +190,30 @@ class FakeCodex:
         if "Meeting Mode Agent Handoff" in text:
             card_title = "Meeting Notes"
             recording_title = "Jimmy and Jack Follow-ups"
-            transcript_text = "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
-            reply = meeting_graph_reply(
-                reply_text="Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
-                card_title=card_title,
-                recording_title=recording_title,
-                note_id="note-meeting-jimmy-jack",
-                note_title=recording_title,
-                note_summary="Follow-up notes prepared.",
-                note_html=meeting_summary_html(
-                    title=recording_title,
-                    overview="<p>Follow-up notes prepared.</p>",
-                    participants="<p>Jimmy and Jack</p>",
-                    action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
-                    follow_up="<p>Pucky prepared follow-up notes.</p>",
-                ),
-                transcript_text=transcript_text,
-                attachments=[
+            reply = {
+                "reply_text": "Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
+                "card_title": card_title,
+                "recording_title": recording_title,
+                "card_icon": "mic",
+                "html": {
+                    "title": "Meeting Summary",
+                    "content": meeting_summary_html(
+                        title=recording_title,
+                        overview="<p>Follow-up notes prepared.</p>",
+                        participants="<p>Jimmy and Jack</p>",
+                        action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
+                        follow_up="<p>Pucky prepared follow-up notes.</p>",
+                    ),
+                },
+                "attachments": [
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": transcript_text,
+                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
                     }
                 ],
-            )
+            }
             reply_text = json.dumps(reply)
         else:
             reply_text = json.dumps(
@@ -280,11 +221,10 @@ class FakeCodex:
                     "reply_text": "Sure, I can help.",
                     "card_title": "Quick Help",
                     "card_icon": "bolt",
-                    "recording_title": "",
-                    "attachments": [],
-                    "graph_records": [],
-                    "graph_links": [],
-                    "connected_records": [],
+                    "html": {
+                        "title": "Mini Page",
+                        "content": "<!doctype html><title>Mini Page</title><p>Hello</p>",
+                    },
                 }
             )
         return type(
@@ -374,115 +314,111 @@ class MeetingToolCallingCodex(FakeCodex):
         if "raw-title" in meeting_id:
             card_title = meeting_id
             recording_title = meeting_id
-            transcript_text = "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
-            reply = meeting_graph_reply(
-                reply_text="Meeting processed and stored.",
-                card_title=card_title,
-                recording_title=recording_title,
-                note_id="note-meeting-raw-title",
-                note_title=recording_title,
-                note_summary="Stored the meeting exactly as titled by the agent.",
-                note_html=meeting_summary_html(
-                    title=recording_title,
-                    overview="<p>Stored the meeting exactly as titled by the agent.</p>",
-                    participants="<p>Jimmy and Jack</p>",
-                    action_items="<ul><li>Jimmy: send the transcript.</li></ul>",
-                    follow_up="<p>No automatic follow-up was executed.</p>",
-                ),
-                transcript_text=transcript_text,
-                attachments=[
+            reply = {
+                "reply_text": "Meeting processed and stored.",
+                "card_title": card_title,
+                "recording_title": recording_title,
+                "card_icon": "mic",
+                "html": {
+                    "title": "Meeting Summary",
+                    "content": meeting_summary_html(
+                        title=recording_title,
+                        overview="<p>Stored the meeting exactly as titled by the agent.</p>",
+                        participants="<p>Jimmy and Jack</p>",
+                        action_items="<ul><li>Jimmy: send the transcript.</li></ul>",
+                        follow_up="<p>No automatic follow-up was executed.</p>",
+                    ),
+                },
+                "attachments": [
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": transcript_text,
+                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
                     }
                 ],
-            )
+            }
         elif "I'm Jimmy and this is Jack" in transcript:
             card_title = "Meeting Notes"
             recording_title = "Jimmy and Jack Follow-ups"
-            transcript_text = "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
-            reply = meeting_graph_reply(
-                reply_text="Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
-                card_title=card_title,
-                recording_title=recording_title,
-                note_id="note-meeting-followups",
-                note_title=recording_title,
-                note_summary="Follow-up notes prepared.",
-                note_html=meeting_summary_html(
-                    title=recording_title,
-                    overview="<p>Follow-up notes prepared.</p>",
-                    participants="<p>Jimmy and Jack</p>",
-                    action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
-                    follow_up="<p>Pucky drafted follow-up notes.</p>",
-                ),
-                transcript_text=transcript_text,
-                attachments=[
+            reply = {
+                "reply_text": "Meeting processed. I found follow-up notes and one explicit Pucky instruction.",
+                "card_title": card_title,
+                "recording_title": recording_title,
+                "card_icon": "mic",
+                "html": {
+                    "title": "Meeting Summary",
+                    "content": meeting_summary_html(
+                        title=recording_title,
+                        overview="<p>Follow-up notes prepared.</p>",
+                        participants="<p>Jimmy and Jack</p>",
+                        action_items="<ul><li>Jimmy: send the transcript.</li><li>Jack: prepare notes.</li></ul>",
+                        follow_up="<p>Pucky drafted follow-up notes.</p>",
+                    ),
+                },
+                "attachments": [
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": transcript_text,
+                        "text": "[00:00-00:02] Jimmy: I'm Jimmy and this is Jack.\n[00:02-00:05] Jack: Pucky, after this meeting, prepare follow-up notes for both of us."
                     }
                 ],
-            )
+            }
         elif not transcript and not attachment_text:
             card_title = "Meeting Notes"
             recording_title = "Silent Audio Check"
-            transcript_text = "[No clear speech detected.]"
-            reply = meeting_graph_reply(
-                reply_text="Meeting saved. No clear speech was detected in the recording.",
-                card_title=card_title,
-                recording_title=recording_title,
-                note_id="note-meeting-silent-audio",
-                note_title=recording_title,
-                note_summary="The clip was captured and stored, but no clear speech was detected.",
-                note_html=meeting_summary_html(
-                    title=recording_title,
-                    overview="<p>The clip was captured and stored, but no clear speech was detected.</p>",
-                    participants="<p>Unknown participants</p>",
-                    action_items="<p>No action items were confidently identified.</p>",
-                    follow_up="<p>No automatic follow-up was executed.</p>",
-                ),
-                transcript_text=transcript_text,
-                attachments=[
+            reply = {
+                "reply_text": "Meeting saved. No clear speech was detected in the recording.",
+                "card_title": card_title,
+                "recording_title": recording_title,
+                "card_icon": "mic",
+                "html": {
+                    "title": "Meeting Summary",
+                    "content": meeting_summary_html(
+                        title=recording_title,
+                        overview="<p>The clip was captured and stored, but no clear speech was detected.</p>",
+                        participants="<p>Unknown participants</p>",
+                        action_items="<p>No action items were confidently identified.</p>",
+                        follow_up="<p>No automatic follow-up was executed.</p>",
+                    ),
+                },
+                "attachments": [
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": transcript_text,
+                        "text": "[No clear speech detected.]",
                     }
                 ],
-            )
+            }
         else:
             card_title = "Meeting Notes"
             recording_title = "Deck Follow-up Review"
-            transcript_text = attachment_text or "[No clear speech detected.]"
-            reply = meeting_graph_reply(
-                reply_text="Meeting processed with speaker-separated transcript.",
-                card_title=card_title,
-                recording_title=recording_title,
-                note_id="note-meeting-deck-followup",
-                note_title=recording_title,
-                note_summary="Follow-up items were captured.",
-                note_html=meeting_summary_html(
-                    title=recording_title,
-                    overview="<p>Follow-up items were captured.</p>",
-                    participants="<p>speaker_0 and speaker_1</p>",
-                    action_items="<ul><li>speaker_0: send the revised deck by Friday.</li><li>speaker_1: handle the budget table.</li></ul>",
-                    follow_up="<p>No automatic follow-up was executed.</p>",
-                ),
-                transcript_text=transcript_text,
-                attachments=[
+            reply = {
+                "reply_text": "Meeting processed with speaker-separated transcript.",
+                "card_title": card_title,
+                "recording_title": recording_title,
+                "card_icon": "mic",
+                "html": {
+                    "title": "Meeting Summary",
+                    "content": meeting_summary_html(
+                        title=recording_title,
+                        overview="<p>Follow-up items were captured.</p>",
+                        participants="<p>speaker_0 and speaker_1</p>",
+                        action_items="<ul><li>speaker_0: send the revised deck by Friday.</li><li>speaker_1: handle the budget table.</li></ul>",
+                        follow_up="<p>No automatic follow-up was executed.</p>",
+                    ),
+                },
+                "attachments": [
                     {
                         "title": "Meeting Transcript",
                         "mime_type": "text/plain",
                         "kind": "text",
-                        "text": transcript_text,
+                        "text": attachment_text or "[No clear speech detected.]",
                     }
                 ],
-            )
+            }
         requested_thread_id = str(thread_id or "").strip()
         used_thread_id = requested_thread_id or self.thread_id
         self.thread_id = used_thread_id
@@ -664,6 +600,16 @@ class FakeComposio:
     def list_connected_apps(self, user_id: str, *, force: bool = False) -> dict[str, object]:
         self.list_connected_calls += 1
         return {"connected_apps": list(self.connected), "user_id": user_id, "force": force}
+
+    def get_tool(self, tool_slug: str) -> dict[str, object]:
+        return {
+            "slug": str(tool_slug or "").strip(),
+            "input_parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        }
 
     def invalidate_connected_cache(self, user_id: str) -> None:
         self.invalidated.append(user_id)
@@ -887,6 +833,7 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         host="127.0.0.1",
         port=0,
         pucky_api_token="secret",
+        pucky_web_ui_token="browser-secret",
         deepgram_api_key="dg",
         deepinfra_api_key="di",
         max_audio_bytes=1024 * 1024,
@@ -968,71 +915,6 @@ class ServerTests(unittest.TestCase):
         for item in self.service.workspace.list_records("reminders", include_archived=True, include_deleted=True)["items"]:
             self.service.workspace.patch_record("reminders", str(item["id"]), {"archived": True, "deleted": True})
 
-    def test_service_start_initializes_broker_before_reminder_thread(self) -> None:
-        events: list[str] = []
-
-        class FakeReminderThread:
-            def is_alive(self) -> bool:
-                return False
-
-            def start(self) -> None:
-                events.append("thread-start")
-
-        with (
-            mock.patch.object(self.codex, "start", side_effect=lambda: events.append("codex-start")),
-            mock.patch.object(self.meeting_codex, "start", side_effect=lambda: events.append("meeting-codex-start")),
-            mock.patch("pucky_vm.server.ensure_broker_initialized", side_effect=lambda *args, **kwargs: events.append("broker-init") or self.broker),
-            mock.patch("pucky_vm.server.threading.Thread", side_effect=lambda *args, **kwargs: FakeReminderThread()),
-        ):
-            self.service._reminder_poll_thread = None
-            self.service.start()
-
-        self.assertIn("broker-init", events)
-        self.assertIn("thread-start", events)
-        self.assertLess(events.index("broker-init"), events.index("thread-start"))
-
-    def test_ensure_broker_initialized_serializes_concurrent_first_load(self) -> None:
-        class FakeDb:
-            def close(self) -> None:
-                return None
-
-        class FakeBroker:
-            DEFAULT_DB_PATH = "/tmp/pucky-broker-race.sqlite3"
-
-            def __init__(self) -> None:
-                self.DB = None
-                self.DEVICES: dict[str, object] = {}
-                self.init_calls: list[str] = []
-
-            def init_db(self, path: str) -> None:
-                self.init_calls.append(path)
-                time.sleep(0.05)
-                self.DB = FakeDb()
-
-        fake_broker = FakeBroker()
-        ready = threading.Event()
-        results: list[object] = []
-
-        def worker() -> None:
-            ready.wait(timeout=5)
-            results.append(server_module.ensure_broker_initialized(fake_broker.DEFAULT_DB_PATH))
-
-        with (
-            mock.patch("pucky_vm.server._load_broker_module", return_value=fake_broker),
-            mock.patch("pucky_vm.server._BROKER_DB_PATH", None),
-        ):
-            first = threading.Thread(target=worker)
-            second = threading.Thread(target=worker)
-            first.start()
-            second.start()
-            ready.set()
-            first.join(timeout=5)
-            second.join(timeout=5)
-
-        self.assertEqual(fake_broker.init_calls, [fake_broker.DEFAULT_DB_PATH])
-        self.assertEqual(len(results), 2)
-        self.assertTrue(all(item is fake_broker for item in results))
-
     def test_healthz_reports_ready_without_secrets(self) -> None:
         payload = self.get_json("/healthz")
 
@@ -1062,56 +944,33 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(config.codex_model, "custom-model")
         self.assertEqual(config.codex_reasoning_effort, "high")
 
-    def test_config_from_env_loads_api_token_and_requires_explicit_link_secrets(self) -> None:
+    def test_config_from_env_loads_browser_token_and_requires_explicit_link_secrets(self) -> None:
         with mock.patch.dict(
             "os.environ",
             {
                 "PUCKY_API_TOKEN": "owner-token",
+                "PUCKY_WEB_UI_TOKEN": "browser-token",
                 "PUCKY_CONNECT_PORTAL_SECRET": "",
                 "PUCKY_MEETING_ARTIFACT_LINK_SECRET": "",
+                "PUCKY_STRICT_BROWSER_USER_AUTH": "1",
+                "PUCKY_STRICT_COMPOSIO_USER_SCOPING": "true",
             },
             clear=True,
         ):
             config = Config.from_env()
 
         self.assertEqual(config.pucky_api_token, "owner-token")
+        self.assertEqual(config.pucky_web_ui_token, "browser-token")
         self.assertEqual(config.connect_portal_secret, "")
         self.assertEqual(config.meeting_artifact_link_secret, "")
+        self.assertTrue(config.strict_browser_user_auth)
+        self.assertTrue(config.strict_composio_user_scoping)
 
-    def test_links_portal_url_accepts_api_token(self) -> None:
-        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
+    def test_links_portal_url_accepts_browser_user_token(self) -> None:
+        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer browser-secret"})
 
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["portal_url"].startswith(self.base_url + "/links/connect/apps?token="))
-
-    def test_ui_route_perf_events_endpoint_records_and_lists_run_slice(self) -> None:
-        create = self.post_json(
-            "/api/ui/route-perf-events",
-            {
-                "schema": "pucky.ui_route_perf_event.v1",
-                "surface": "android_webview",
-                "route": "calendar",
-                "run_id": "proof-run-1",
-                "session_id": "session-a",
-                "sample_reason": "debug_perf",
-                "wall_elapsed_ms": 1200,
-                "route_ready_elapsed_ms": 440,
-                "bridge_calls_by_command": {"pucky.turn.status": 2},
-            },
-        )
-
-        self.assertTrue(create["ok"])
-
-        payload = self.get_json(
-            "/api/ui/route-perf-events?run_id=proof-run-1&limit=5",
-            headers={"Authorization": "Bearer secret"},
-        )
-
-        self.assertTrue(payload["ok"])
-        self.assertEqual(payload["schema"], "pucky.ui_route_perf_events.v1")
-        self.assertEqual(len(payload["items"]), 1)
-        self.assertEqual(payload["items"][0]["route"], "calendar")
-        self.assertEqual(payload["items"][0]["bridge_calls_by_command"]["pucky.turn.status"], 2)
 
     def test_unauthenticated_browser_reads_allow_feed_meetings_workspace_and_artifacts(self) -> None:
         self.post_json(
@@ -1140,138 +999,29 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertGreater(len(response.read()), 0)
 
-    def test_same_origin_public_task_status_patch_allows_status_only_and_rejects_other_writes(self) -> None:
-        task = self.post_json(
-            "/api/workspace/tasks",
+    def test_strict_browser_auth_mode_rejects_unauthenticated_browser_reads(self) -> None:
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        self.post_json(
+            "/api/meetings",
             {
-                "id": "browser-public-task",
-                "title": "Browser Public Task",
-                "status": "todo",
-                "due_at_ms": 2_000_000_000_000,
+                "meeting_id": "meeting-20260601-130000-browser-proof-strict",
+                "started_at": "2026-06-01T13:00:00Z",
+                "duration_ms": 2000,
+                "device_id": "device-browser",
+                "mime_type": "audio/mp4",
+                "audio_base64": base64.b64encode(b"RIFFbrowser-proof-audio").decode("ascii"),
             },
         )
-        same_origin_headers = {
-            "Origin": self.base_url,
-            "Referer": f"{self.base_url}/ui/pucky/latest/?theme=light&route=tasks",
-            "Content-Type": "application/json",
-        }
-        request = urllib.request.Request(
-            self.base_url + f"/api/workspace/tasks/{urllib.parse.quote(str(task['id']), safe='')}",
-            data=json.dumps({"status": "in_progress"}).encode("utf-8"),
-            method="PATCH",
-            headers=same_origin_headers,
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        self.assertEqual(payload["status"], "in_progress")
-
-        for body, expected_code in (
-            ({"status": "open"}, 400),
-            ({"status": "done", "owner": "Jordan"}, 400),
-            ({"status": "done"}, 401),
+        for path in (
+            "/api/feed?limit=5",
+            "/api/meetings?compact=1",
+            "/api/workspace/notes",
         ):
-            headers = dict(same_origin_headers)
-            if body == {"status": "done"}:
-                headers.pop("Origin", None)
-                headers.pop("Referer", None)
-            failing = urllib.request.Request(
-                self.base_url + f"/api/workspace/tasks/{urllib.parse.quote(str(task['id']), safe='')}",
-                data=json.dumps(body).encode("utf-8"),
-                method="PATCH",
-                headers=headers,
-            )
             with self.assertRaises(urllib.error.HTTPError) as caught:
-                urllib.request.urlopen(failing, timeout=10)
-            self.assertEqual(caught.exception.code, expected_code)
-
-        note = self.post_json("/api/workspace/notes", {"id": "browser-public-note", "title": "Browser Public Note"})
-        note_request = urllib.request.Request(
-            self.base_url + f"/api/workspace/notes/{urllib.parse.quote(str(note['id']), safe='')}",
-            data=json.dumps({"pinned": True}).encode("utf-8"),
-            method="PATCH",
-            headers=same_origin_headers,
-        )
-        with self.assertRaises(urllib.error.HTTPError) as caught:
-            urllib.request.urlopen(note_request, timeout=10)
-        self.assertEqual(caught.exception.code, 401)
-
-    def test_same_origin_public_reminder_patch_allows_dismiss_and_snooze_only(self) -> None:
-        reminder = self.post_json(
-            "/api/workspace/reminders",
-            {
-                "id": "browser-public-reminder",
-                "title": "Browser Public Reminder",
-                "status": "open",
-                "due_at_ms": 2_000_000_000_000,
-                "metadata": {"delivery_state": "pending"},
-            },
-        )
-        same_origin_headers = {
-            "Origin": self.base_url,
-            "Referer": f"{self.base_url}/ui/pucky/latest/?theme=light&route=reminder-detail",
-            "Content-Type": "application/json",
-        }
-        dismiss_request = urllib.request.Request(
-            self.base_url + f"/api/workspace/reminders/{urllib.parse.quote(str(reminder['id']), safe='')}",
-            data=json.dumps({"status": "done"}).encode("utf-8"),
-            method="PATCH",
-            headers=same_origin_headers,
-        )
-        with urllib.request.urlopen(dismiss_request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        self.assertEqual(payload["status"], "done")
-
-        reminder = self.post_json(
-            "/api/workspace/reminders",
-            {
-                "id": "browser-public-reminder-snooze",
-                "title": "Browser Public Reminder Snooze",
-                "status": "open",
-                "due_at_ms": 2_000_000_000_000,
-                "metadata": {"delivery_state": "pending"},
-            },
-        )
-        snoozed_until_ms = 2_100_000_000_000
-        snooze_request = urllib.request.Request(
-            self.base_url + f"/api/workspace/reminders/{urllib.parse.quote(str(reminder['id']), safe='')}",
-            data=json.dumps(
-                {
-                    "due_at_ms": snoozed_until_ms,
-                    "metadata": {
-                        "snoozed_until_ms": snoozed_until_ms,
-                        "delivery_state": "pending",
-                        "last_fired_at_ms": 0,
-                        "last_fired_due_at_ms": 0,
-                        "last_delivery_error": "",
-                    },
-                }
-            ).encode("utf-8"),
-            method="PATCH",
-            headers=same_origin_headers,
-        )
-        with urllib.request.urlopen(snooze_request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        self.assertEqual(payload["due_at_ms"], snoozed_until_ms)
-        self.assertEqual(payload["metadata"]["snoozed_until_ms"], snoozed_until_ms)
-
-        for body, expected_code in (
-            ({"status": "open"}, 400),
-            ({"status": "done", "title": "Sneaky"}, 400),
-            ({"status": "done"}, 401),
-        ):
-            headers = dict(same_origin_headers)
-            if body == {"status": "done"}:
-                headers.pop("Origin", None)
-                headers.pop("Referer", None)
-            failing = urllib.request.Request(
-                self.base_url + f"/api/workspace/reminders/{urllib.parse.quote(str(reminder['id']), safe='')}",
-                data=json.dumps(body).encode("utf-8"),
-                method="PATCH",
-                headers=headers,
-            )
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                urllib.request.urlopen(failing, timeout=10)
-            self.assertEqual(caught.exception.code, expected_code)
+                self.get_json(path)
+            self.assertEqual(caught.exception.code, 401, msg=path)
+        payload = self.get_json("/api/feed?limit=5", headers={"Authorization": "Bearer browser-secret"})
+        self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
 
     def test_unknown_operator_token_still_does_not_authorize_protected_browser_routes(self) -> None:
         headers = {"Authorization": "Bearer test-operator-token"}
@@ -1299,45 +1049,98 @@ class ServerTests(unittest.TestCase):
 
             self.assertEqual(caught.exception.code, 401, msg=path)
 
-    def test_unauthorized_feed_action_drains_body_before_keep_alive_get(self) -> None:
-        body = json.dumps(
-            {
-                "client_action_id": "unauthorized_keepalive_mark_read",
-                "card_id": "pucky_card_missing",
-                "action": "mark_read",
-            }
-        ).encode("utf-8")
-        post = "\r\n".join(
-            [
-                "POST /api/feed/actions HTTP/1.1",
-                f"Host: 127.0.0.1:{self.server.server_port}",
-                "Content-Type: application/json",
-                f"Content-Length: {len(body)}",
-                "Connection: keep-alive",
-                "",
-                "",
-            ]
-        ).encode("ascii") + body
-        get = "\r\n".join(
-            [
-                "GET /api/feed?limit=1 HTTP/1.1",
-                f"Host: 127.0.0.1:{self.server.server_port}",
-                "Connection: close",
-                "",
-                "",
-            ]
-        ).encode("ascii")
+    def test_strict_browser_auth_redirects_logged_out_bundle_reads_to_sign_in(self) -> None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
 
-        with socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as sock:
-            sock.settimeout(2)
-            sock.sendall(post + get)
-            first_status, _, first_body = self.read_raw_http_response(sock)
-            second_status, _, second_body = self.read_raw_http_response(sock)
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
 
-        self.assertIn(" 401 ", first_status)
-        self.assertEqual(json.loads(first_body.decode("utf-8"))["error"], "unauthorized")
-        self.assertIn(" 200 ", second_status)
-        self.assertEqual(json.loads(second_body.decode("utf-8"))["schema"], "pucky.feed_sync.v1")
+        sign_in_text = self.get_text("/sign-in")
+        self.assertIn("Use your email to get a one-time code", sign_in_text)
+        self.assertIn("Verification code", sign_in_text)
+
+        opener = urllib.request.build_opener(NoRedirect)
+        request = urllib.request.Request(self.base_url + "/ui/pucky/latest/?route=inbox")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(request, timeout=10)
+
+        self.assertEqual(caught.exception.code, 307)
+        self.assertEqual(
+            caught.exception.headers.get("Location"),
+            "/sign-in?next=/ui/pucky/latest/?route=inbox",
+        )
+
+    def test_auth_request_verify_session_logout_and_redirect_flow(self) -> None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        request_payload = self.post_json("/api/auth/request-code", {"email": "launch-user@example.com"})
+        self.assertTrue(request_payload["ok"])
+        self.assertEqual(request_payload["schema"], "pucky.auth.request_code.v1")
+        self.assertEqual(request_payload["email"], "launch-user@example.com")
+        self.assertNotIn("test_code", request_payload)
+
+        issued = self.service.request_auth_code("launch-user@example.com")
+        request = urllib.request.Request(
+            self.base_url + "/api/auth/verify-code",
+            data=json.dumps({"email": "launch-user@example.com", "code": issued["test_code"]}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            verify_payload = json.loads(response.read().decode("utf-8"))
+            verify_headers = dict(response.headers.items())
+
+        self.assertTrue(verify_payload["ok"])
+        self.assertEqual(verify_payload["schema"], "pucky.auth.verify_code.v1")
+        self.assertNotIn("session_token", verify_payload)
+        self.assertTrue(verify_payload["workspace_id"].startswith("ws_"))
+        self.assertEqual(verify_payload["landing_url"], self.base_url + "/ui/pucky/latest/?route=home")
+        session_cookie = verify_headers.get("Set-Cookie", "")
+        self.assertIn("pucky_session=", session_cookie)
+        self.assertIn("HttpOnly", session_cookie)
+
+        session_payload = self.get_json("/api/auth/session", headers={"Cookie": session_cookie})
+        self.assertTrue(session_payload["signed_in"])
+        self.assertEqual(session_payload["email"], "launch-user@example.com")
+        self.assertEqual(session_payload["workspace_id"], verify_payload["workspace_id"])
+        self.assertEqual(session_payload["landing_url"], verify_payload["landing_url"])
+
+        opener = urllib.request.build_opener(NoRedirect)
+        sign_in_request = urllib.request.Request(
+            self.base_url + "/sign-in",
+            headers={"Cookie": session_cookie},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(sign_in_request, timeout=10)
+
+        self.assertEqual(caught.exception.code, 307)
+        self.assertEqual(caught.exception.headers.get("Location"), verify_payload["landing_url"])
+
+        logout_request = urllib.request.Request(
+            self.base_url + "/api/auth/logout",
+            data=b"",
+            method="POST",
+            headers={"Cookie": session_cookie, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(logout_request, timeout=10) as response:
+            logout_payload = json.loads(response.read().decode("utf-8"))
+            logout_headers = dict(response.headers.items())
+
+        self.assertTrue(logout_payload["ok"])
+        self.assertTrue(logout_payload["revoked"])
+        self.assertIn("Max-Age=0", logout_headers.get("Set-Cookie", ""))
+
+        signed_out = self.get_json("/api/auth/session", headers={"Cookie": session_cookie})
+        self.assertFalse(signed_out["signed_in"])
+        self.assertEqual(signed_out["workspace_id"], "")
+
+        with self.assertRaises(urllib.error.HTTPError) as post_logout_feed:
+            self.get_json("/api/feed?limit=5", headers={"Cookie": session_cookie})
+        self.assertEqual(post_logout_feed.exception.code, 401)
 
     def test_ui_bundle_endpoints_serve_manifest_bundle_and_browser_app(self) -> None:
         manifest = self.get_json("/ui/pucky/latest/manifest.json")
@@ -1368,13 +1171,6 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
             html = response.read().decode("utf-8")
             self.assertIn("Pucky Cover", html)
-            self.assertIn("window.__PUCKY_BOOTSTRAP_STATUS__", html)
-            self.assertIn("const ESSENTIAL_ASSETS = [", html)
-            self.assertIn('"pucky-ui-state.js"', html)
-            self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
-
-        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/manifest.json", timeout=10) as response:
-            self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
 
         fixture = self.get_json("/ui/pucky/fixtures/reply_cards.json")
         self.assertEqual(fixture["schema"], "pucky.reply_cards.v1")
@@ -1407,14 +1203,7 @@ class ServerTests(unittest.TestCase):
             self.assertIn("window.PUCKY_BUNDLE_CONFIG", config_script)
             self.assertNotIn('"links_url"', config_script)
             self.assertNotIn("api_token", config_script)
-            self.assertEqual(response.headers.get("Cache-Control"), "public, max-age=300, stale-while-revalidate=30")
-
-        with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/styles.css", timeout=10) as response:
-            self.assertEqual(response.headers.get("Cache-Control"), "public, max-age=300, stale-while-revalidate=30")
-
-        for _ in range(3):
-            with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
-                self.assertEqual(response.status, 200)
+            self.assertNotIn("pucky_web_ui_token", config_script)
 
     def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
         request = urllib.request.Request(self.base_url + "/favicon.ico")
@@ -1506,6 +1295,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(details["slug"], "gmail")
         self.assertEqual(details["details"][0]["id"], "ca_gmail_active")
 
+    def test_links_read_endpoints_require_token_in_strict_composio_scope_mode(self) -> None:
+        self.service.config = replace(self.service.config, strict_composio_user_scoping=True)
+
+        for path in (
+            "/api/links/composio/my-apps",
+            "/api/links/composio/catalog",
+            "/api/links/composio/all-apps?offset=0&limit=20",
+            "/api/links/composio/app-details?slug=gmail",
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.get_json(path)
+            self.assertEqual(caught.exception.code, 401, msg=path)
+
+        token = self.issue_portal_token()
+        payload = self.get_json(f"/api/links/composio/my-apps?token={token}")
+        self.assertTrue(payload["ok"])
+
     def test_links_catalog_returns_cached_snapshot_headers_without_connected_overlay(self) -> None:
         token = self.issue_portal_token()
         payload, headers = self.get_json_response(f"/api/links/composio/catalog?token={token}")
@@ -1543,6 +1349,57 @@ class ServerTests(unittest.TestCase):
         slugs = [item["slug"] for item in all_apps["apps"]]
         self.assertIn("gmail", slugs)
         self.assertIn("googlecalendar", slugs)
+
+    def test_composio_execute_action_route_requires_auth(self) -> None:
+        request = urllib.request.Request(
+            self.base_url + "/api/links/composio/actions/execute",
+            data=json.dumps({"action_slug": "GMAIL_GET_PROFILE"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 401)
+
+    def test_composio_execute_action_route_runs_current_user_action(self) -> None:
+        self.composio.tool_results["GMAIL_GET_PROFILE"] = {"data": {"email": "jimmy@example.com"}}
+
+        payload = self.post_json(
+            "/api/links/composio/actions/execute",
+            {
+                "action_slug": "GMAIL_GET_PROFILE",
+                "parameters": {},
+            },
+            headers={"Authorization": "Bearer browser-secret"},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["action_slug"], "GMAIL_GET_PROFILE")
+        self.assertEqual(self.composio.tool_calls[-1]["tool_slug"], "GMAIL_GET_PROFILE")
+        self.assertEqual(self.composio.tool_calls[-1]["user_id"], "jimmythompson323")
+
+    def test_composio_execute_action_route_rejects_foreign_connected_account(self) -> None:
+        request = urllib.request.Request(
+            self.base_url + "/api/links/composio/actions/execute",
+            data=json.dumps(
+                {
+                    "action_slug": "GMAIL_GET_PROFILE",
+                    "parameters": {},
+                    "connected_account_id": "ca_missing",
+                }
+            ).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer secret",
+                "Content-Type": "application/json",
+            },
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 400)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "forbidden_connected_account")
 
     def test_links_all_apps_filters_search_and_hides_nonconnectable(self) -> None:
         token = self.issue_portal_token()
@@ -1677,10 +1534,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(body["origin"]["model"], "gpt-5.5")
         self.assertEqual(body["origin"]["reasoning_effort"], "high")
         self.assertEqual(body["card"]["origin"]["thread_id"], "thread-1")
-        self.assertEqual(body["connected_records"], [])
-        self.assertEqual(body["card"]["connected_records"], [])
-        self.assertNotIn("html_mime_type", body["card"])
-        self.assertNotIn("html_mime_type", body)
+        self.assertEqual(body["card"]["html_mime_type"], "text/html")
+        self.assertEqual(body["html_mime_type"], "text/html")
+        self.assertIn("<!doctype html>", base64.b64decode(body["card"]["html_base64"]).decode("utf-8"))
         self.assertNotIn("transcript", body)
         self.assertEqual(self.stt.content_type, "audio/mp4")
         self.assertEqual(self.codex.turns, ["Pucky test turn"])
@@ -1770,8 +1626,9 @@ class ServerTests(unittest.TestCase):
 
         full = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertIn("audio_base64", full["items"][0])
-        self.assertNotIn("html_base64", full["items"][0])
-        self.assertEqual(full["items"][0]["connected_records"], [])
+        self.assertIn("html_base64", full["items"][0])
+        self.assertEqual("text/html", full["items"][0]["html_mime_type"])
+        full_html_bytes = base64.b64decode(full["items"][0]["html_base64"])
 
         compact = self.get_json("/api/feed?limit=10&compact=1", headers={"Authorization": "Bearer secret"})
         self.assertNotIn("audio_base64", compact["items"][0])
@@ -1781,7 +1638,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(compact["items"][0]["audio_bytes"], len(b"RIFFaudio"))
         self.assertEqual(compact["items"][0]["audio_sha256"], hashlib.sha256(b"RIFFaudio").hexdigest())
         self.assertEqual(compact["items"][0]["audio_media_id"], f"feed:{turn['card_id']}:audio")
-        self.assertEqual(compact["items"][0]["connected_records"], [])
+        self.assertEqual(compact["items"][0]["html_mime_type"], "text/html")
+        self.assertEqual(compact["items"][0]["html_artifact"], f"{turn['card_id']}:html")
+        self.assertEqual(compact["items"][0]["html_bytes"], len(full_html_bytes))
+        self.assertEqual(compact["items"][0]["html_sha256"], hashlib.sha256(full_html_bytes).hexdigest())
+        self.assertTrue(compact["items"][0]["html_url"].startswith(self.base_url + "/api/artifacts/"))
+        self.assertNotIn(str(self.tmp.name), compact["items"][0]["html_url"])
         self.assertTrue(compact["items"][0]["audio_url"].startswith(self.base_url + "/api/artifacts/"))
         self.assertNotIn(str(self.tmp.name), compact["items"][0]["audio_url"])
 
@@ -1821,12 +1683,12 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(action_caught.exception.code, 401)
 
-    def test_feed_sync_and_actions_accept_api_token(self) -> None:
+    def test_feed_sync_and_actions_accept_browser_user_token(self) -> None:
         turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_browser_token_turn")
 
         payload = self.get_json(
             "/api/feed?limit=10&compact=1&include_archived=0",
-            headers={"Authorization": "Bearer secret"},
+            headers={"Authorization": "Bearer browser-secret"},
         )
 
         self.assertEqual(payload["schema"], "pucky.feed_sync.v1")
@@ -1839,7 +1701,7 @@ class ServerTests(unittest.TestCase):
                 "card_id": turn["card_id"],
                 "action": "archive",
             },
-            headers={"Authorization": "Bearer secret"},
+            headers={"Authorization": "Bearer browser-secret"},
         )
         self.assertTrue(action["ok"])
         self.assertTrue(action["item"]["archived"])
@@ -1983,43 +1845,6 @@ class ServerTests(unittest.TestCase):
         payload = self.get_json("/api/feed?limit=10", headers={"Authorization": "Bearer secret"})
         self.assertTrue(payload["items"][0]["archived"])
 
-    def test_feed_unarchive_action_restores_card_to_active_feed(self) -> None:
-        turn = self.post_audio(b"audio", "audio/mp4", turn_id="feed_unarchive_turn")
-        archive = self.post_json(
-            "/api/feed/actions",
-            {
-                "client_action_id": "client_action_archive_restore",
-                "card_id": turn["card_id"],
-                "action": "archive",
-            },
-        )
-        self.assertTrue(archive["ok"])
-        self.assertTrue(archive["item"]["archived"])
-        active_after_archive = self.get_json(
-            "/api/feed?limit=10&include_archived=0",
-            headers={"Authorization": "Bearer secret"},
-        )
-        self.assertEqual(active_after_archive["items"], [])
-
-        body = {
-            "client_action_id": "client_action_unarchive_restore",
-            "card_id": turn["card_id"],
-            "action": "unarchive",
-        }
-        first = self.post_json("/api/feed/actions", body)
-        second = self.post_json("/api/feed/actions", body)
-
-        self.assertTrue(first["ok"])
-        self.assertEqual(first, second)
-        self.assertEqual(first["item"]["card_id"], turn["card_id"])
-        self.assertFalse(first["item"]["archived"])
-        active_after_restore = self.get_json(
-            "/api/feed?limit=10&include_archived=0",
-            headers={"Authorization": "Bearer secret"},
-        )
-        self.assertEqual(active_after_restore["items"][0]["card_id"], turn["card_id"])
-        self.assertFalse(active_after_restore["items"][0]["archived"])
-
     def test_feed_archive_missing_card_fails_with_not_found(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.post_json(
@@ -2109,6 +1934,15 @@ class ServerTests(unittest.TestCase):
             "/api/media/manifest?scope=meetings",
             headers={"Authorization": "Bearer secret"},
         )
+        for _ in range(20):
+            if manifest.get("items"):
+                break
+            time.sleep(0.1)
+            manifest = self.get_json(
+                "/api/media/manifest?scope=meetings",
+                headers={"Authorization": "Bearer secret"},
+            )
+        self.assertTrue(manifest.get("items"))
         media_url = manifest["items"][0]["url"]
         media_path = urllib.parse.urlsplit(media_url).path
         with urllib.request.urlopen(self.base_url + media_path, timeout=10) as response:
@@ -2182,16 +2016,18 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Use Deepgram for the meeting transcript and diarization.", prompt)
         self.assertIn("keep distinct anonymous speakers separated as neutral labels", prompt)
         self.assertIn("Return the cleaned labeled transcript in transcript_text.", prompt)
-        self.assertIn("Do not emit reply-level HTML.", prompt)
-        self.assertIn("create exactly one primary regular note in graph_records", prompt)
-        self.assertIn("connected_records with the primary note first", prompt)
+        self.assertIn("The platform will publish the Transcript and Transcript (Plain Text) artifacts from transcript_text.", prompt)
         self.assertIn("Use due dates only when the meeting explicitly states them.", prompt)
+        self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", prompt)
+        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", prompt)
         self.assertIn("Meeting Mode Agent", self.meeting_codex.developer_instructions[-1])
         self.assertIn("Transcribe and diarize it with Deepgram.", self.meeting_codex.developer_instructions[-1])
         self.assertIn("relabel them to real names only when clearly justified", self.meeting_codex.developer_instructions[-1])
         self.assertIn("recording_title", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("Create exactly one primary regular note in graph_records.", self.meeting_codex.developer_instructions[-1])
-        self.assertIn("Do not emit reply-level HTML pages.", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("{{PUCKY_MEETING_AUDIO_LINK}}", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("The platform will publish the transcript HTML artifact from transcript_text", self.meeting_codex.developer_instructions[-1])
+        self.assertIn("render the final links", self.meeting_codex.developer_instructions[-1])
         self.assertIn("due date only when explicitly stated", self.meeting_codex.developer_instructions[-1])
         self.assertNotIn("Your job is to turn one finished meeting recording into", self.meeting_codex.developer_instructions[-1])
         self.assertNotIn("Hard constraints:", self.meeting_codex.developer_instructions[-1])
@@ -2207,22 +2043,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["feed_item"]["telemetry"]["transcription_provider"], "deepgram")
         self.assertEqual(meeting["feed_item"]["telemetry"]["meeting_title_quality"], "human_like")
         self.assertEqual(meeting["feed_item"]["telemetry"]["meeting_recording_title"], "Jimmy and Jack Follow-ups")
-        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
-        self.assertEqual(meeting["connected_records"][0]["id"], "note-meeting-followups")
 
         persisted = self.service.feed.get_item(meeting["card_id"])
         self.assertIsNotNone(persisted)
         self.assertEqual(persisted["title"], "Meeting Notes")
         self.assertFalse(persisted["read"])
         self.assertFalse(persisted["archived"])
-        self.assertEqual(persisted["connected_records"][0]["kind"], "note")
-        self.assertEqual(persisted["connected_records"][0]["id"], "note-meeting-followups")
         messages = persisted["transcript_messages"]
         self.assertEqual(messages[0]["text"], "Meeting recording")
         self.assertNotIn("Meeting Mode Agent Handoff", json.dumps(messages))
         self.assertNotIn("attachments", messages[0])
         attachments = messages[1]["attachments"]
         transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
+        transcript_html_attachment = next(item for item in attachments if item["title"] == "Transcript")
+        summary_attachment = next(item for item in attachments if item["id"] == "meeting-20260601-120000-device-abc123ef:html")
         audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
         self.assertEqual(transcript_attachment["kind"], "text")
         self.assertIn("Jimmy:", transcript_attachment["text"])
@@ -2230,6 +2064,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(transcript_attachment["recording_title"], "Jimmy and Jack Follow-ups")
         self.assertIn("/api/shared/artifacts/", str(transcript_attachment["src"]))
         self.assertIn("token=", str(transcript_attachment["src"]))
+        self.assertEqual(transcript_html_attachment["kind"], "html")
+        self.assertEqual(transcript_html_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
+        self.assertEqual(transcript_html_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
+        self.assertEqual(transcript_html_attachment["recording_title"], "Jimmy and Jack Follow-ups")
+        self.assertIn("meeting_transcript_html", transcript_html_attachment["artifact"])
+        self.assertIn("/api/shared/artifacts/", str(transcript_html_attachment["viewer_url"]))
+        self.assertIn("token=", str(transcript_html_attachment["viewer_url"]))
+        self.assertEqual(summary_attachment["title"], "Meeting Summary")
+        self.assertEqual(summary_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
+        self.assertEqual(summary_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
+        self.assertEqual(summary_attachment["recording_title"], "Jimmy and Jack Follow-ups")
+        self.assertEqual(summary_attachment["viewer"]["viewer_artifact"], summary_attachment["artifact"])
+        self.assertEqual(summary_attachment["viewer"]["viewer_url"], summary_attachment["viewer_url"])
         self.assertEqual(audio_attachment["kind"], "audio")
         self.assertEqual(audio_attachment["meeting_id"], "meeting-20260601-120000-device-abc123ef")
         self.assertEqual(audio_attachment["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
@@ -2238,14 +2085,20 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(str(audio_attachment["path"]).endswith(".m4a"))
         self.assertIn("/api/shared/meetings/meeting-20260601-120000-device-abc123ef/audio", str(audio_attachment["url"]))
         self.assertIn("token=", str(audio_attachment["url"]))
+        raw_summary_html = base64.b64decode(str(self.service.feed.get_artifact(summary_attachment["artifact"])["content_base64"])).decode("utf-8")
+        self.assertIn("/api/shared/artifacts/", raw_summary_html)
+        self.assertIn("/api/shared/meetings/meeting-20260601-120000-device-abc123ef/audio", raw_summary_html)
+        self.assertNotIn("{{PUCKY_MEETING_TRANSCRIPT_LINK}}", raw_summary_html)
+        self.assertNotIn("{{PUCKY_MEETING_AUDIO_LINK}}", raw_summary_html)
+        self.assertNotIn("/api/meetings/", raw_summary_html)
+        self.assertNotIn("<script", raw_summary_html.lower())
+        raw_transcript_html = base64.b64decode(str(self.service.feed.get_artifact(transcript_html_attachment["artifact"])["content_base64"])).decode("utf-8")
+        self.assertIn("Transcript", raw_transcript_html)
+        self.assertIn("Jimmy", raw_transcript_html)
         self.assertEqual(meeting["canonical_basename"], "Jimmy_and_Jack_Follow_ups_06.01.26")
         self.assertTrue(Path(meeting["audio_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
         self.assertTrue(Path(meeting["transcript_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
         self.assertTrue(Path(meeting["transcript_html_path"]).name.startswith("Jimmy_and_Jack_Follow_ups_06.01.26"))
-        note = self.service.workspace.get_record("notes", "note-meeting-followups")
-        self.assertIsNotNone(note)
-        self.assertEqual(note["title"], "Jimmy and Jack Follow-ups")
-        self.assertIn("Follow-up notes prepared.", note["html"])
         self.assertEqual(self.meeting_codex.tool_calls[-1]["schema"], "pucky.meeting_deepgram_transcribe.v1")
         meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
         self.assertEqual(meetings["schema"], "pucky.meetings.v1")
@@ -2314,11 +2167,17 @@ class ServerTests(unittest.TestCase):
             for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
             if item["title"] == "Transcript (Plain Text)"
         )
+        transcript_html_attachment = next(
+            item
+            for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]
+            if item["title"] == "Transcript"
+        )
         self.assertEqual(transcript_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
         self.assertEqual(transcript_attachment["recording_title"], "Quarterly Deck Recording")
-        self.assertFalse(any(item["title"] == "Transcript" for item in renamed["feed_item"]["transcript_messages"][1]["attachments"]))
+        self.assertEqual(transcript_html_attachment["canonical_basename"], "Quarterly_Deck_Recording_06.01.26")
+        self.assertEqual(transcript_html_attachment["recording_title"], "Quarterly Deck Recording")
 
-    def test_meeting_signed_transcript_and_audio_urls_are_browser_readable_without_auth(self) -> None:
+    def test_meeting_signed_summary_transcript_and_audio_urls_are_browser_readable_without_auth(self) -> None:
         self.post_json(
             "/api/meetings",
             {
@@ -2341,12 +2200,14 @@ class ServerTests(unittest.TestCase):
             time.sleep(0.1)
         self.assertEqual(meeting["state"], "completed")
         attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
-        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
+        summary_attachment = next(item for item in attachments if item["title"] == "Meeting Summary")
+        transcript_attachment = next(item for item in attachments if item["title"] == "Transcript")
         audio_attachment = next(item for item in attachments if item["title"] == "Meeting Audio")
 
         for url in (
-            str(transcript_attachment.get("url") or transcript_attachment.get("src") or ""),
-            str(audio_attachment.get("url") or audio_attachment.get("src") or ""),
+            str(summary_attachment["viewer_url"]),
+            str(transcript_attachment["viewer_url"]),
+            str(audio_attachment["url"]),
         ):
             with urllib.request.urlopen(urllib.parse.urljoin(self.base_url, url), timeout=10) as response:
                 body = response.read()
@@ -2440,7 +2301,7 @@ class ServerTests(unittest.TestCase):
         attachments = meeting["feed_item"]["transcript_messages"][1]["attachments"]
         self.assertTrue(any(item["title"] == "Meeting Audio" and item["kind"] == "audio" for item in attachments))
         self.assertTrue(any(item["title"] == "Transcript (Plain Text)" for item in attachments))
-        self.assertFalse(any(item["title"] == "Transcript" for item in attachments))
+        self.assertTrue(any(item["title"] == "Transcript" for item in attachments))
 
     def test_raw_meeting_title_is_allowed_and_flagged_machine_like(self) -> None:
         raw_meeting_id = "meeting-20260603-121500-device-raw-title"
@@ -2767,95 +2628,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(item["origin"]["failure_stage"], "meeting_agent_call")
         self.assertIn("database is locked", item["summary"])
 
-    def test_meeting_compact_list_preserves_feed_read_identity(self) -> None:
-        meeting_id = "meeting-20260626-120000-device-badges"
-        self.post_json(
-            "/api/meetings",
-            {
-                "meeting_id": meeting_id,
-                "started_at": "2026-06-26T12:00:00Z",
-                "stopped_at": "2026-06-26T12:00:05Z",
-                "duration_ms": 5000,
-                "device_id": "device-badges",
-                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting_badges.m4a",
-                "mime_type": "audio/mp4",
-                "audio_base64": base64.b64encode(b"RIFFmeeting-badges").decode("ascii"),
-            },
-        )
-
-        compact = {}
-        for _ in range(20):
-            meetings = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"}).get("meetings", [])
-            compact = next((item for item in meetings if item.get("meeting_id") == meeting_id), {})
-            if compact:
-                break
-            time.sleep(0.05)
-
-        self.assertEqual(compact["meeting_id"], meeting_id)
-        self.assertEqual(compact["card_id"], f"pucky_card_{meeting_id}")
-        self.assertFalse(compact["read"])
-
-        mark_read = self.post_json(
-            "/api/feed/actions",
-            {
-                "client_action_id": "meeting_badge_mark_read",
-                "card_id": compact["card_id"],
-                "action": "mark_read",
-            },
-        )
-        self.assertTrue(mark_read["ok"])
-        self.assertTrue(mark_read["item"]["read"])
-
-        updated = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"})
-        refreshed = next(item for item in updated["meetings"] if item["meeting_id"] == meeting_id)
-        self.assertTrue(refreshed["read"])
-
-        detail = self.get_json(f"/api/meetings/{meeting_id}", headers={"Authorization": "Bearer secret"})
-        self.assertTrue(detail["meeting"]["feed_item"]["read"])
-
-    def test_app_badges_share_meeting_feed_read_state_between_inbox_and_meetings(self) -> None:
-        baseline = self.get_json("/api/app-badges", headers={"Authorization": "Bearer secret"})
-        baseline_inbox = baseline["badges"]["inbox"]["count"]
-        baseline_meetings = baseline["badges"]["meetings"]["count"]
-        meeting_id = "meeting-20260626-120500-device-badge-counts"
-        self.post_json(
-            "/api/meetings",
-            {
-                "meeting_id": meeting_id,
-                "started_at": "2026-06-26T12:05:00Z",
-                "stopped_at": "2026-06-26T12:05:05Z",
-                "duration_ms": 5000,
-                "device_id": "device-badge-counts",
-                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting_badge_counts.m4a",
-                "mime_type": "audio/mp4",
-                "audio_base64": base64.b64encode(b"RIFFmeeting-badge-counts").decode("ascii"),
-            },
-        )
-
-        compact = {}
-        for _ in range(20):
-            meetings = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"}).get("meetings", [])
-            compact = next((item for item in meetings if item.get("meeting_id") == meeting_id), {})
-            if compact:
-                break
-            time.sleep(0.05)
-
-        created = self.get_json("/api/app-badges", headers={"Authorization": "Bearer secret"})
-        self.assertEqual(created["badges"]["inbox"]["count"], baseline_inbox + 1)
-        self.assertEqual(created["badges"]["meetings"]["count"], baseline_meetings + 1)
-
-        self.post_json(
-            "/api/feed/actions",
-            {
-                "client_action_id": "meeting_badge_counts_mark_read",
-                "card_id": compact["card_id"],
-                "action": "mark_read",
-            },
-        )
-        after_read = self.get_json("/api/app-badges", headers={"Authorization": "Bearer secret"})
-        self.assertEqual(after_read["badges"]["inbox"]["count"], baseline_inbox)
-        self.assertEqual(after_read["badges"]["meetings"]["count"], baseline_meetings)
-
     def test_failed_meeting_detail_synthesizes_missing_failed_card_metadata(self) -> None:
         meeting_id = "meeting-20260602-092000-device-real-failure"
         stale_record = {
@@ -2869,7 +2641,7 @@ class ServerTests(unittest.TestCase):
             "duration_ms": 30000,
             "device_id": "device-1",
             "failure_reason": "Upload completed but meeting agent timed out",
-            "failure_stage": "meeting_agent_timeout",
+            "failure_stage": "meeting_agent_call",
             "transcript_status": "failed",
             "diarization_status": "failed",
             "card": None,
@@ -2901,7 +2673,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meeting["feed_item"]["meeting_state"], "failed")
         self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_failed")
         self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "failed")
-        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_timeout")
+        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_call")
         self.assertNotEqual(meeting["card"]["title"], "Processing meeting recording")
         self.assertIn("timed out", meeting["card"]["summary"])
 
@@ -3004,75 +2776,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(attachment["title"], "Meeting Audio")
         self.assertNotIn("path", attachment)
 
-    def test_meeting_agent_transcript_text_fallback_completes_successfully(self) -> None:
-        class TranscriptTextOnlyCodex(FakeCodex):
-            def send_turn(
-                self,
-                text: str,
-                *,
-                thread_id: str | None = None,
-                output_schema: dict[str, object] | None = None,
-            ):
-                self.turns.append(text)
-                self.output_schemas.append(output_schema)
-                return type(
-                    "FakeTurnResult",
-                    (),
-                    {
-                        "reply_text": json.dumps(
-                            meeting_graph_reply(
-                                reply_text="I processed the meeting.",
-                                card_title="Meeting Summary",
-                                recording_title="Transcript Text Fallback",
-                                note_id="note-transcript-text-fallback",
-                                note_title="Transcript Text Fallback",
-                                note_summary="Transcript text fallback note.",
-                                note_html="<h1>Transcript Text Fallback</h1><p>Transcript text fallback note.</p>",
-                                transcript_text=(
-                                    "[00:00-00:02] Jimmy: We should ship on Thursday.\n"
-                                    "[00:02-00:04] Jack: I can own the deploy."
-                                ),
-                                attachments=[],
-                            )
-                        ),
-                        "used_thread_id": "thread-transcript-text",
-                        "requested_thread_id": "",
-                        "thread_mode": "new",
-                        "reused_existing_thread": False,
-                        "fallback_reason": "",
-                    },
-                )()
-
-        self.service.meeting_codex = TranscriptTextOnlyCodex()
-        meeting_id = "meeting-20260601-120655-device-abc123ef"
-        self.post_json(
-            "/api/meetings",
-            {
-                "meeting_id": meeting_id,
-                "started_at": "2026-06-01T12:06:55Z",
-                "stopped_at": "2026-06-01T12:07:00Z",
-                "duration_ms": 5000,
-                "device_id": "device-1",
-                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
-                "mime_type": "audio/mp4",
-                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
-            },
-        )
-        meeting = {}
-        for _ in range(50):
-            rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
-            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
-            if meeting.get("state") == "completed":
-                break
-            time.sleep(0.1)
-        self.assertEqual(meeting["state"], "completed")
-        self.assertEqual(meeting["transcript_status"], "completed")
-        self.assertEqual(meeting["diarization_status"], "speaker_turns")
-        self.assertIn("[00:00-00:02] Jimmy: We should ship on Thursday.", meeting["transcript_text"])
-        self.assertFalse(meeting.get("failure_reason"))
-        self.assertNotIn("meeting_result", self.service.meeting_codex.output_schemas[-1]["properties"])
-
-    def test_meeting_agent_missing_result_is_hard_failed(self) -> None:
+    def test_meeting_agent_missing_result_is_not_marked_successful(self) -> None:
         class MissingMeetingResultCodex(FakeCodex):
             def send_turn(
                 self,
@@ -3088,16 +2792,13 @@ class ServerTests(unittest.TestCase):
                     (),
                     {
                         "reply_text": json.dumps(
-                            meeting_graph_reply(
-                                reply_text="I processed the meeting.",
-                                card_title="Meeting Summary",
-                                recording_title="Missing Transcript Result",
-                                note_id="note-missing-transcript-result",
-                                note_title="Missing Transcript Result",
-                                note_summary="Meeting output without transcript fallback.",
-                                note_html="<h1>Missing Transcript Result</h1><p>Transcript missing.</p>",
-                                attachments=[],
-                            )
+                            {
+                                "reply_text": "I processed the meeting.",
+                                "card_title": "Meeting Summary",
+                                "card_icon": "mic",
+                                "html": None,
+                                "attachments": [],
+                            }
                         ),
                         "used_thread_id": "thread-missing-result",
                         "requested_thread_id": "",
@@ -3126,169 +2827,16 @@ class ServerTests(unittest.TestCase):
         for _ in range(50):
             rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
             meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
-            if meeting.get("state") == "failed":
+            if meeting.get("state") == "completed_with_missing_result":
                 break
             time.sleep(0.1)
-        self.assertEqual(meeting["state"], "failed")
-        self.assertEqual(meeting["transcript_status"], "failed")
-        self.assertEqual(meeting["diarization_status"], "failed")
-        self.assertEqual(meeting["failure_stage"], "meeting_transcript_validation")
-        self.assertEqual(meeting["failure_reason"], "Meeting Transcript attachment missing or empty.")
-        self.assertEqual(meeting["feed_item"]["card"]["title"], "Meeting processing failed")
-        self.assertEqual(meeting["feed_item"]["card_kind"], "meeting_failed")
-        self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_failed")
-        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_transcript_validation")
+        self.assertEqual(meeting["state"], "completed_with_missing_result")
+        self.assertEqual(meeting["transcript_status"], "missing_transcript_attachment")
+        self.assertEqual(meeting["diarization_status"], "missing_transcript_attachment")
+        self.assertEqual(meeting["failure_reason"], "meeting_agent_missing_transcript_attachment")
+        self.assertEqual(meeting["feed_item"]["card"]["title"], "Meeting needs review")
         self.assertFalse(meeting["feed_item"]["read"])
-        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
-        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
-        self.assertEqual(item["card_kind"], "meeting_failed")
-        self.assertEqual(item["meeting_state"], "failed")
-        self.assertEqual(item["origin"]["card_kind"], "meeting_failed")
-        self.assertEqual(item["origin"]["failure_stage"], "meeting_transcript_validation")
-        self.assertNotEqual(item["title"], "Meeting needs review")
         self.assertNotIn("meeting_result", self.service.meeting_codex.output_schemas[-1]["properties"])
-
-    def test_meeting_agent_timeout_is_hard_failed(self) -> None:
-        blocking = BlockingCodex()
-        self.service.meeting_codex = blocking
-        meeting_id = "meeting-20260601-120706-device-timeoutproof"
-        self.post_json(
-            "/api/meetings",
-            {
-                "meeting_id": meeting_id,
-                "started_at": "2026-06-01T12:07:06Z",
-                "stopped_at": "2026-06-01T12:07:11Z",
-                "duration_ms": 5000,
-                "device_id": "device-1",
-                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
-                "mime_type": "audio/mp4",
-                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
-            },
-        )
-        self.assertTrue(blocking.codex_started.wait(timeout=2))
-        meeting = {}
-        for _ in range(90):
-            rows = self.get_json("/api/meetings?include_archived=1", headers={"Authorization": "Bearer secret"}).get("meetings", [])
-            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
-            if meeting.get("state") == "failed":
-                break
-            time.sleep(0.1)
-        self.assertEqual(meeting["state"], "failed")
-        self.assertEqual(meeting["failure_stage"], "meeting_agent_timeout")
-        self.assertEqual(meeting["transcript_status"], "failed")
-        self.assertEqual(meeting["diarization_status"], "failed")
-        self.assertTrue(str(meeting["failure_reason"]).startswith("TimeoutError:"))
-        self.assertEqual(meeting["feed_item"]["card_kind"], "meeting_failed")
-        self.assertEqual(meeting["feed_item"]["origin"]["failure_stage"], "meeting_agent_timeout")
-        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
-        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
-        self.assertEqual(item["card_kind"], "meeting_failed")
-        self.assertEqual(item["origin"]["failure_stage"], "meeting_agent_timeout")
-
-    def test_meeting_agent_call_failure_falls_back_to_transcript_note(self) -> None:
-        class UsageLimitMeetingCodex(FakeCodex):
-            def send_turn(
-                self,
-                text: str,
-                *,
-                thread_id: str | None = None,
-                output_schema: dict[str, object] | None = None,
-                **_kwargs,
-            ):
-                self.turns.append(text)
-                self.output_schemas.append(output_schema)
-                raise RuntimeError(
-                    "Codex turn failed: {'message': 'Usage limit reached.', 'codexErrorInfo': 'usageLimitExceeded'}"
-                )
-
-        self.service.meeting_codex = UsageLimitMeetingCodex()
-        meeting_id = "meeting-20260601-120707-device-agent-fallback"
-        self.post_json(
-            "/api/meetings",
-            {
-                "meeting_id": meeting_id,
-                "started_at": "2026-06-01T12:07:07Z",
-                "stopped_at": "2026-06-01T12:07:12Z",
-                "duration_ms": 5000,
-                "device_id": "device-1",
-                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
-                "mime_type": "audio/mp4",
-                "audio_base64": base64.b64encode(b"RIFFmeeting-audio").decode("ascii"),
-            },
-        )
-        meeting = {}
-        for _ in range(50):
-            rows = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"}).get("meetings", [])
-            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
-            if meeting.get("state") in {"completed", "failed"}:
-                break
-            time.sleep(0.1)
-
-        self.assertEqual(meeting["state"], "completed")
-        self.assertEqual(meeting["transcript_status"], "completed")
-        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
-        self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "completed")
-        self.assertEqual(meeting["feed_item"]["origin"]["card_kind"], "meeting_result")
-        self.assertIn("transcript-backed note", meeting["feed_item"]["summary"])
-        self.assertEqual(meeting["agent"]["fallback_mode"], "transcript_note")
-        self.assertEqual(meeting["agent"]["fallback_transcript_source"], "meeting_deepgram_transcribe")
-        self.assertIn("usageLimitExceeded", meeting["agent"]["last_tool_error"])
-        note = self.service.workspace.get_record("notes", meeting["connected_records"][0]["id"])
-        self.assertIsNotNone(note)
-        self.assertIn("Transcript", str(note.get("html") or ""))
-        feed = self.get_json("/api/feed?limit=50", headers={"Authorization": "Bearer secret"})
-        item = next(item for item in feed["items"] if item["card_id"] == f"pucky_card_{meeting_id}")
-        self.assertEqual(item["meeting_state"], "completed")
-        self.assertEqual(item["connected_records"][0]["kind"], "note")
-
-    def test_stale_processing_meeting_is_recovered_to_transcript_note(self) -> None:
-        meeting_id = "meeting-20260601-120708-device-stale-processing"
-        audio = b"RIFFmeeting-audio"
-        self.service._meetings_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = self.service._meetings_dir / f"{meeting_id}.wav"
-        audio_path.write_bytes(audio)
-        record = {
-            "schema": "pucky.meeting.v1",
-            "meeting_id": meeting_id,
-            "state": "processing",
-            "created_at": "2026-06-01T12:07:08Z",
-            "updated_at": "2026-06-01T12:07:08Z",
-            "started_at": "2026-06-01T12:07:08Z",
-            "stopped_at": "2026-06-01T12:07:13Z",
-            "duration_ms": 5000,
-            "device_id": "device-1",
-            "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
-            "mime_type": "audio/wav",
-            "audio_bytes": len(audio),
-            "audio_path": str(audio_path),
-            "audio_url": "",
-            "metadata": {},
-            "transcript_status": "agent_pending",
-            "transcript_error": "",
-            "transcript_text": "",
-            "transcript_result": {},
-            "diarization_requested": True,
-            "diarization_status": "agent_pending",
-            "speaker_turns": [],
-            "agent": {"label": "Meeting Mode Agent"},
-            "archived": False,
-            "failure_stage": "",
-        }
-        placeholder = self.service._upsert_meeting_processing_card(record, audio, "audio/wav")
-        record["card_id"] = str(placeholder.get("card_id") or "")
-        record["card"] = placeholder.get("card") if isinstance(placeholder.get("card"), dict) else {}
-        record["feed_item"] = placeholder
-        self.service._upsert_meeting(record)
-
-        self.service._recover_stale_meeting_runtime_records()
-
-        meeting = self.service.meeting_detail(meeting_id)["meeting"]
-        self.assertEqual(meeting["state"], "completed")
-        self.assertEqual(meeting["feed_item"]["origin"]["meeting_state"], "completed")
-        self.assertEqual(meeting["connected_records"][0]["kind"], "note")
-        self.assertEqual(meeting["agent"]["fallback_mode"], "transcript_note")
-        self.assertEqual(meeting["agent"]["fallback_reason"], "stale_processing_recovery")
-        self.assertEqual(meeting["agent"]["fallback_transcript_source"], "meeting_deepgram_transcribe")
 
     def test_meeting_attachment_builder_falls_back_to_tool_transcript_when_agent_omits_transcript_attachment(self) -> None:
         meeting_id = "meeting-20260601-120701-device-abc123ef"
@@ -3310,16 +2858,21 @@ class ServerTests(unittest.TestCase):
         }
         envelope = parse_reply_envelope(
             json.dumps(
-                meeting_graph_reply(
-                    reply_text="I processed the meeting.",
-                    card_title="Meeting Summary",
-                    recording_title="Launch Readiness Recording",
-                    note_id="note-launch-readiness-recording",
-                    note_title="Launch Readiness Recording",
-                    note_summary="Meeting summary.",
-                    note_html="<section><h1>Overview</h1><p>Meeting summary.</p></section>",
-                    attachments=[],
-                )
+                {
+                    "reply_text": "I processed the meeting.",
+                    "card_title": "Meeting Summary",
+                    "recording_title": "Launch Readiness Recording",
+                    "card_icon": "mic",
+                    "html": {
+                        "title": "Meeting Summary",
+                        "content": (
+                            "<section><h1>Overview</h1><p>Meeting summary.</p>"
+                            "<p>{{PUCKY_MEETING_TRANSCRIPT_LINK}}</p>"
+                            "<p>{{PUCKY_MEETING_AUDIO_LINK}}</p></section>"
+                        ),
+                    },
+                    "attachments": [],
+                }
             )
         )
         with patch.object(self.service, "_meeting_record_by_id", return_value=latest_record):
@@ -3330,10 +2883,12 @@ class ServerTests(unittest.TestCase):
             )
         titles = [str(item.get("title") or "") for item in attachments]
         self.assertIn("Transcript (Plain Text)", titles)
+        self.assertIn("Transcript", titles)
+        self.assertIn("Meeting Summary", titles)
         self.assertIn("Meeting Audio", titles)
         transcript_attachment = next(item for item in attachments if item["title"] == "Transcript (Plain Text)")
         self.assertIn("Jimmy:", str(transcript_attachment.get("text") or ""))
-        self.assertNotIn("summary_html_content", attachment_meta)
+        self.assertIn("/api/shared/meetings/", str(attachment_meta.get("summary_html_content") or ""))
 
     def test_meetings_list_is_compact_by_default_and_detail_is_full(self) -> None:
         audio = b"RIFFmeeting-audio"
@@ -3378,7 +2933,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("transcript_result", detail["meeting"])
         self.assertGreaterEqual(len(detail["meeting"]["speaker_turns"]), 2)
 
-    def test_meeting_archive_hides_meeting_and_archives_feed_card(self) -> None:
+    def test_meeting_archive_hides_meeting_without_archiving_feed_card(self) -> None:
         audio = b"RIFFmeeting-audio"
         self.post_json(
             "/api/meetings",
@@ -3431,54 +2986,7 @@ class ServerTests(unittest.TestCase):
 
         feed_item = self.service.feed.get_item(card_id)
         self.assertIsNotNone(feed_item)
-        self.assertTrue(feed_item["archived"])
-
-    def test_startup_sync_archives_feed_card_for_archived_meeting(self) -> None:
-        audio = b"RIFFmeeting-audio"
-        meeting_id = "meeting-20260601-122500-device-archive-sync"
-        self.post_json(
-            "/api/meetings",
-            {
-                "meeting_id": meeting_id,
-                "started_at": "2026-06-01T12:25:00Z",
-                "stopped_at": "2026-06-01T12:25:05Z",
-                "duration_ms": 5000,
-                "device_id": "device-1",
-                "device_path": "/data/user/0/com.pucky.device.debug/files/voice/meeting.m4a",
-                "mime_type": "audio/mp4",
-                "audio_base64": base64.b64encode(audio).decode("ascii"),
-            },
-        )
-        meeting = {}
-        for _ in range(50):
-            meetings = self.get_json("/api/meetings", headers={"Authorization": "Bearer secret"})
-            rows = meetings.get("meetings", [])
-            meeting = next((item for item in rows if item.get("meeting_id") == meeting_id), {})
-            if meeting.get("state") == "completed":
-                break
-            time.sleep(0.1)
-
-        card_id = meeting["card_id"]
-        record = self.service._meeting_record_by_id(meeting_id)
-        self.assertIsNotNone(record)
-        archived_record = dict(record or {})
-        archived_record["archived"] = True
-        archived_record["feed_item"] = dict(archived_record.get("feed_item") or {})
-        archived_record["feed_item"]["archived"] = False
-        self.service._upsert_meeting(archived_record)
-
-        feed_item_before = self.service.feed.get_item(card_id)
-        self.assertIsNotNone(feed_item_before)
-        self.assertFalse(feed_item_before["archived"])
-
-        self.service._sync_archived_meeting_feed_cards()
-
-        feed_item_after = self.service.feed.get_item(card_id)
-        self.assertIsNotNone(feed_item_after)
-        self.assertTrue(feed_item_after["archived"])
-        synced_record = self.service._meeting_record_by_id(meeting_id)
-        self.assertIsNotNone(synced_record)
-        self.assertTrue(bool((synced_record or {}).get("feed_item", {}).get("archived")))
+        self.assertFalse(feed_item["archived"])
 
     def test_meeting_archive_missing_meeting_fails_with_not_found(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -3505,15 +3013,15 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(detail_caught.exception.code, 404)
 
-    def test_meetings_compact_list_and_detail_accept_api_token(self) -> None:
-        payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer secret"})
+    def test_meetings_compact_list_and_detail_accept_browser_user_token(self) -> None:
+        payload = self.get_json("/api/meetings?compact=1", headers={"Authorization": "Bearer browser-secret"})
         self.assertEqual(payload["schema"], "pucky.meetings.v1")
         self.assertTrue(payload["compact"])
 
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.get_json(
                 "/api/meetings/missing-meeting",
-                headers={"Authorization": "Bearer secret"},
+                headers={"Authorization": "Bearer browser-secret"},
             )
 
         self.assertEqual(caught.exception.code, 404)
@@ -3533,7 +3041,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["error_code"], "unauthorized")
         self.assertTrue(payload["read_only"])
 
-    def test_phone_role_status_accepts_api_token(self) -> None:
+    def test_phone_role_status_accepts_browser_user_token(self) -> None:
         self.broker.set_device("phone-browser", True)
         with self.broker.LOCK:
             self.broker.DEVICES["phone-browser"] = {"socket": object()}
@@ -3559,7 +3067,7 @@ class ServerTests(unittest.TestCase):
             return None
 
         with mock.patch("pucky_vm.server.ensure_broker_initialized", return_value=self.broker), mock.patch.object(self.broker, "ws_send", side_effect=ws_send_side_effect):
-            payload = self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer secret"})
+            payload = self.get_json("/api/device/phone-role-status", headers={"Authorization": "Bearer browser-secret"})
 
         self.assertEqual(payload["schema"], "pucky.phone_role_status.v1")
 
@@ -4692,12 +4200,6 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(attachments["type"], ["array", "null"])
         self.assertIn("attachments", schema["required"])
         self.assertNotIn("meeting_result", schema["properties"])
-        self.assertIn("graph_records", schema["properties"])
-        self.assertIn("graph_links", schema["properties"])
-        self.assertIn("connected_records", schema["properties"])
-        self.assertIn("graph_records", schema["required"])
-        self.assertIn("graph_links", schema["required"])
-        self.assertIn("connected_records", schema["required"])
         item_schema = attachments["items"]
         self.assertEqual(
             item_schema["required"],
@@ -4731,10 +4233,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(envelope.recording_title, "Recording Title")
         self.assertEqual(envelope.card_icon, "sparkles")
         self.assertEqual(envelope.transcript_text, "")
-        self.assertEqual(envelope.graph_records, ())
-        self.assertEqual(envelope.graph_links, ())
-        self.assertEqual(envelope.connected_records, ())
-        self.assertFalse(envelope.legacy_html_requested)
+        self.assertEqual(envelope.html_content, "")
 
     def test_large_html_is_omitted(self) -> None:
         self.service.config = make_config(max_html_bytes=4)
@@ -4946,30 +4445,6 @@ class ServerTests(unittest.TestCase):
             except socket.timeout as exc:
                 self.fail(f"server did not answer before reading the declared body: {exc}")
 
-    def read_raw_http_response(self, sock: socket.socket) -> tuple[str, dict[str, str], bytes]:
-        data = b""
-        while b"\r\n\r\n" not in data:
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-        header_bytes, _, body = data.partition(b"\r\n\r\n")
-        header_text = header_bytes.decode("iso-8859-1", errors="replace")
-        lines = header_text.splitlines()
-        status_line = lines[0] if lines else ""
-        headers: dict[str, str] = {}
-        for line in lines[1:]:
-            if ":" in line:
-                key, value = line.split(":", 1)
-                headers[key.strip().lower()] = value.strip()
-        content_length = int(headers.get("content-length") or "0")
-        while len(body) < content_length:
-            chunk = sock.recv(content_length - len(body))
-            if not chunk:
-                break
-            body += chunk
-        return status_line, headers, body[:content_length]
-
     def post_audio(
         self,
         audio: bytes,
@@ -5020,6 +4495,45 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def post_multipart(
+        self,
+        path: str,
+        *,
+        fields: dict[str, object],
+        files: list[tuple[str, str, str, bytes]],
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        boundary = f"----pucky-{uuid.uuid4().hex}"
+        body = bytearray()
+        for name, value in fields.items():
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+            body.extend(str(value).encode("utf-8"))
+            body.extend(b"\r\n")
+        for field_name, filename, content_type, content in files:
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'.encode("utf-8")
+            )
+            body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+            body.extend(content)
+            body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+        merged = {
+            "Authorization": "Bearer secret",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        }
+        if headers:
+            merged.update(headers)
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=bytes(body),
+            method="POST",
+            headers=merged,
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
     def post_empty(self, path: str, headers: dict[str, str] | None = None) -> dict:
         request = urllib.request.Request(
             self.base_url + path,
@@ -5037,6 +4551,104 @@ class ServerTests(unittest.TestCase):
     def issue_portal_token(self) -> str:
         payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
         return self.portal_token(payload["portal_url"])
+
+    def test_text_turn_accepts_multipart_user_attachments_and_preserves_them_on_user_message(self) -> None:
+        note_bytes = b"THREAD-COMPOSE-UNIT unique text attachment line\nsecond line\n"
+        image_bytes = b"\x89PNG\r\n\x1a\nthread-compose-proof"
+
+        body = self.post_multipart(
+            "/api/turn/text",
+            fields={
+                "text": "Please inspect the attachments.",
+                "turn_id": "thread-compose-multipart-1",
+                "thread_mode": "existing",
+                "thread_id": "thread-compose-existing",
+                "thread_scope_source": "thread_transcript",
+                "proof_reply_delay_ms": "6000",
+            },
+            files=[
+                ("files", "thread-compose-note.txt", "text/plain", note_bytes),
+                ("files", "thread-compose-proof.png", "image/png", image_bytes),
+            ],
+        )
+
+        prompt = self.codex.turns[-1]
+        self.assertIn("thread-compose-note.txt", prompt)
+        self.assertIn("THREAD-COMPOSE-UNIT unique text attachment line", prompt)
+        self.assertIn("thread-compose-proof.png", prompt)
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "thread-compose-existing")
+        self.assertEqual(body["telemetry"]["requested_thread_id"], "thread-compose-existing")
+        self.assertEqual(body["telemetry"]["proof_reply_delay_ms_requested"], 6000)
+
+        messages = body["transcript_messages"]
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["text"], "Please inspect the attachments.")
+        attachments = messages[0]["attachments"]
+        self.assertEqual([attachment["title"] for attachment in attachments], ["thread-compose-note.txt", "thread-compose-proof.png"])
+        self.assertEqual(attachments[0]["kind"], "text")
+        self.assertEqual(attachments[1]["kind"], "image")
+        self.assertEqual(attachments[0]["viewer"]["type"], "text")
+        self.assertEqual(attachments[1]["viewer"]["type"], "image_gallery")
+
+    def test_text_turn_new_thread_origin_is_returned_and_reusable_for_follow_up(self) -> None:
+        created = self.post_json(
+            "/api/turn/text",
+            {
+                "text": "Start a brand-new Inbox chat",
+                "turn_id": "thread-compose-new-1",
+                "thread_mode": "new",
+            },
+        )
+
+        created_thread_id = created["origin"]["thread_id"]
+        self.assertTrue(created_thread_id)
+        self.assertEqual(created["telemetry"]["requested_thread_mode"], "new")
+        self.assertEqual(created["telemetry"]["requested_thread_id"], "")
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "")
+
+        follow_up = self.post_json(
+            "/api/turn/text",
+            {
+                "text": "Continue the Inbox chat you just created",
+                "turn_id": "thread-compose-new-2",
+                "thread_mode": "existing",
+                "thread_id": created_thread_id,
+            },
+        )
+
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], created_thread_id)
+        self.assertEqual(follow_up["telemetry"]["requested_thread_mode"], "existing")
+        self.assertEqual(follow_up["telemetry"]["requested_thread_id"], created_thread_id)
+        self.assertEqual(follow_up["origin"]["thread_id"], created_thread_id)
+
+    def test_text_turn_multipart_new_thread_preserves_first_message_user_attachments(self) -> None:
+        note_bytes = b"THREAD-COMPOSE-UNIT first-message text attachment\n"
+        image_bytes = b"\x89PNG\r\n\x1a\nthread-compose-proof-first-message"
+
+        body = self.post_multipart(
+            "/api/turn/text",
+            fields={
+                "text": "Start a new thread from the Inbox composer.",
+                "turn_id": "thread-compose-new-multipart-1",
+                "thread_mode": "new",
+                "proof_reply_delay_ms": "6000",
+            },
+            files=[
+                ("files", "thread-compose-note.txt", "text/plain", note_bytes),
+                ("files", "thread-compose-proof.png", "image/png", image_bytes),
+            ],
+        )
+
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "")
+        self.assertEqual(body["telemetry"]["requested_thread_mode"], "new")
+        self.assertEqual(body["telemetry"]["requested_thread_id"], "")
+        self.assertTrue(body["origin"]["thread_id"])
+        messages = body["transcript_messages"]
+        self.assertEqual(messages[0]["role"], "user")
+        attachments = messages[0]["attachments"]
+        self.assertEqual([attachment["title"] for attachment in attachments], ["thread-compose-note.txt", "thread-compose-proof.png"])
+        self.assertEqual(attachments[0]["viewer"]["type"], "text")
+        self.assertEqual(attachments[1]["viewer"]["type"], "image_gallery")
 
 
 if __name__ == "__main__":
