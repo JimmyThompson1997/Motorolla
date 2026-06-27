@@ -197,7 +197,57 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "contacts-search-cleared" in source
     assert "contacts-search-detail-from-filter" in source
     assert 'phone: "+1 (415) 555-0188"' in shared
-    assert 'activity: ["Linked to live alpha"]' in shared
+    assert 'activity: ["Created by proof", "Linked to live alpha"]' in shared
+    assert 'title: "David"' in shared
+    assert 'title: "Daniel"' in shared
+
+
+def test_task_workspace_seed_restore_resets_contact_records_for_multi_lane_proofs() -> None:
+    shared = read_source("task_workspace_proof_shared.mjs")
+
+    assert "export async function restoreTaskProofSeed(baseUrl, apiToken, seed) {" in shared
+    assert "const contactPayloads = [" in shared
+    assert 'await apiRequest(baseUrl, apiToken, "PATCH", `/api/workspace/contacts/${encodeURIComponent(entry.id)}`, entry.payload);' in shared
+    assert 'activity: ["Created by proof", "Linked to live alpha"]' in shared
+
+
+def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "readContactEditState" in source
+    assert "traceContactEditTyping" in source
+    assert "activateContactDetailDone" in source
+    assert "contact-edit-baseline" in source
+    assert "contact-edit-mode" in source
+    assert "contact-edit-fields" in source
+    assert "contact-edit-photo-added" in source
+    assert "contact-edit-photo-removed" in source
+    assert "contact-edit-reload" in source
+    assert "contact-edit-updated-list" in source
+    assert "contact-edit-identity-view" in source
+    assert "contact-edit-identity-edit" in source
+    assert "contact-edit-done-focused" in source
+    assert "contact-edit-done-after-first-tap" in source
+    assert "contact-edit-done-reloaded" in source
+    assert "Updated Proof Contact" in source
+    assert "Updated from local proof edit flow" in source
+    assert "updated.proof.one@example.com" in source
+    assert "Expected contact edit to persist the updated title" in source
+    assert "Expected contact edit typing to keep the same mounted input" in source
+    assert "Expected contact Done to leave edit mode on the first activation" in source
+    assert "Expected contact Done exit to stay on the detail route" in source
+    assert "Expected contact Done to persist the focused-field change after exit" in source
+    assert "Expected contact edit to persist the uploaded photo" in source
+    assert "Expected contact edit to remove the uploaded photo" in source
+    assert "Expected photo removal to restore derived initials" in source
+    assert "Expected contact detail reload to stay on the edited contact" in source
+    assert "Expected classic detail to omit the Activity section" in source
+    assert "Expected edit mode to keep Activity removed" in source
+    assert "Expected contact Connected rows to use generic info rows" in source
+    assert "Expected contact Connected rows to stop using linked-record feed rows" in source
+    assert "Expected unlinked contact detail to omit Connected entirely" in source
+    assert "contact-edit-connected-comparison" in source
+    assert 'input[type="file"][data-contact-photo-input="true"]' in source
 
 
 def test_workspace_tasks_press_proof_uses_real_row_control() -> None:

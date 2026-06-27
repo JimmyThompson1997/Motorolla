@@ -6661,7 +6661,7 @@
     refs.page.dataset.contactDetailId = contactId;
     refs.page.dataset.contactDetailMode = editMode ? "edit" : "view";
     const actionButton = editMode
-      ? lightCircleButton("check", "Done editing", finishContactDetailEditMode, "light-contact-detail-done-button")
+      ? lightCircleButton("check", "Done editing", finishContactDetailEditMode, "light-contact-detail-done-button", { interactionMode: "press" })
       : lightCircleButton("edit", "Edit contact", openContactDetailEditMode, "light-contact-detail-edit-button");
     actionButton.dataset.contactDetailAction = editMode ? "done" : "edit";
     refs.actionSlot.replaceChildren(actionButton);
@@ -12351,25 +12351,56 @@
     return true;
   }
 
-  function lightCircleButton(icon, label, onClick, className = "") {
+  function bindLightButtonAction(button, onClick, options = {}) {
+    if (!(button instanceof HTMLElement) || typeof onClick !== "function") {
+      return;
+    }
+    const interactionMode = String(options.interactionMode || "click").trim().toLowerCase();
+    if (interactionMode !== "press") {
+      button.addEventListener("click", onClick);
+      return;
+    }
+    let skipClick = false;
+    const handlePress = event => {
+      if (event instanceof MouseEvent && event.button !== 0) {
+        return;
+      }
+      skipClick = true;
+      event.preventDefault();
+      onClick(event);
+    };
+    if (window.PointerEvent) {
+      button.addEventListener("pointerdown", handlePress);
+    } else {
+      button.addEventListener("mousedown", handlePress);
+      button.addEventListener("touchstart", handlePress, { passive: false });
+    }
+    button.addEventListener("click", event => {
+      if (skipClick) {
+        skipClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      onClick(event);
+    });
+  }
+
+  function lightCircleButton(icon, label, onClick, className = "", options = {}) {
     const button = el("button", `light-circle-button ${className}`.trim());
     button.type = "button";
     button.setAttribute("aria-label", label);
     button.innerHTML = iconSvg(icon, { filled: false });
-    if (typeof onClick === "function") {
-      button.addEventListener("click", onClick);
-    }
+    bindLightButtonAction(button, onClick, options);
     return button;
   }
 
-  function lightIconButton(icon, label, onClick, className = "") {
+  function lightIconButton(icon, label, onClick, className = "", options = {}) {
     const button = el("button", `light-icon-button ${className}`.trim());
     button.type = "button";
     button.setAttribute("aria-label", label);
     button.innerHTML = iconSvg(icon, { filled: false });
-    if (typeof onClick === "function") {
-      button.addEventListener("click", onClick);
-    }
+    bindLightButtonAction(button, onClick, options);
     return button;
   }
 

@@ -1363,6 +1363,16 @@ async function fillContactEditField(page, fieldName, value, timeoutMs) {
   await input.fill(value);
 }
 
+async function activateContactDetailDone(page, mode, timeoutMs) {
+  const button = page.locator('[data-contact-detail-action="done"]').first();
+  await button.waitFor({ state: "visible", timeout: timeoutMs });
+  if (mode === "desktop") {
+    await button.click({ timeout: timeoutMs });
+    return;
+  }
+  await button.tap({ timeout: timeoutMs });
+}
+
 async function waitForContactRecord(baseUrl, apiToken, contactId, predicate, timeoutMs, failureMessage) {
   const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0) || 0);
   let lastRecord = null;
@@ -1493,6 +1503,7 @@ function buildContactsEditProofValues(mode) {
   return {
     updatedTitle: "Updated Live Contact",
     updatedSummary: `Updated from ${modeKey} live proof edit flow`,
+    doneExitSummary: `Updated from ${modeKey} live proof edit flow and Done`,
     updatedEmail: "updated.live.contact@example.com",
     updatedPhone: `+1 (415) 555-${phoneSuffix}`,
     modeLabel,
@@ -2375,7 +2386,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
   }
 
   if (shouldRunRoute(config, "contact-edit")) {
-    const { updatedTitle, updatedSummary, updatedEmail, updatedPhone, modeLabel } = buildContactsEditProofValues(mode);
+    const { updatedTitle, updatedSummary, doneExitSummary, updatedEmail, updatedPhone, modeLabel } = buildContactsEditProofValues(mode);
     const updatedFirstName = "Updated";
     const updatedLastName = "Live Contact";
     const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
@@ -2511,7 +2522,14 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       observed: { photo_fixture: photoPath, avatar_text_after_remove: photoRemovedState.avatarText },
     });
 
-    await page.locator('[data-contact-detail-action="done"]').first().click();
+    await fillContactEditField(page, "summary", doneExitSummary, config.timeoutMs);
+    await page.waitForFunction(() => {
+      const active = document.activeElement;
+      return (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)
+        && active.getAttribute("data-contact-edit-field") === "summary";
+    }, undefined, { timeout: config.timeoutMs });
+    const doneFocusedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-05a-contact-detail-done-focused`, config.timeoutMs);
+    await activateContactDetailDone(page, mode, config.timeoutMs);
     await page.waitForFunction(expectedTitle => {
       const pageRoot = document.querySelector(".light-contact-detail-page");
       const title = document.querySelector(".light-contact-detail-title");
@@ -2519,6 +2537,31 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
         && pageRoot.getAttribute("data-contact-detail-mode") === "view"
         && String(title?.textContent || "").trim() === expectedTitle;
     }, updatedTitle, { timeout: config.timeoutMs });
+    const doneExitState = await readContactEditState(page);
+    assert(doneExitState.mode === "view", `${mode}: Expected first Done activation to leave edit mode, got ${doneExitState.mode}`);
+    assert(doneExitState.route === "contact-detail", `${mode}: Expected Done exit to stay on the same contact-detail route, got ${doneExitState.route}`);
+    assert(doneExitState.summaryViewText === doneExitSummary, `${mode}: Expected Done exit to update the summary view immediately, got ${doneExitState.summaryViewText}`);
+    const doneAfterScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-05b-contact-detail-done-after-first-tap`, config.timeoutMs);
+    updatedRecord = await waitForContactRecord(
+      config.baseUrl,
+      config.apiToken,
+      seed.contactId,
+      record => record.title === updatedTitle && record.summary === doneExitSummary,
+      config.timeoutMs,
+      `${mode}: Expected Done exit to persist the focused-field summary change after leaving edit mode`
+    );
+    await recorder.capture({
+      route: "contact-detail",
+      action: "Exit edit mode with first Done tap",
+      expected: "Tapping Done once while a text field is still focused should leave edit mode immediately and let autosave finish in the background.",
+      confirmation: `${modeLabel} left contact edit mode on the first Done activation and persisted the focused-field change after exit.`,
+      observed: {
+        done_focused_screenshot: doneFocusedScreenshot,
+        done_after_screenshot: doneAfterScreenshot,
+        done_exit_state: doneExitState,
+        persisted_summary: updatedRecord.summary,
+      },
+    });
 
     await clickBack(page, config.timeoutMs);
     await waitForRoute(page, "contacts", config.timeoutMs);
@@ -2533,7 +2576,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(reopenedState.action === "edit", `${mode}: expected reopened detail to expose the edit action, got ${reopenedState.action}`);
     assert(reopenedState.firstName === updatedFirstName, `${mode}: expected reopened detail to preserve first name, got ${reopenedState.firstName}`);
     assert(reopenedState.lastName === updatedLastName, `${mode}: expected reopened detail to preserve last name, got ${reopenedState.lastName}`);
-    assert(reopenedState.summary === updatedSummary, `${mode}: expected reopened detail to preserve summary, got ${reopenedState.summary}`);
+    assert(reopenedState.summary === doneExitSummary, `${mode}: expected reopened detail to preserve summary, got ${reopenedState.summary}`);
     assert(reopenedState.email === updatedEmail, `${mode}: expected reopened detail to preserve email, got ${reopenedState.email}`);
     assert(reopenedState.phone === updatedPhone, `${mode}: expected reopened detail to preserve phone, got ${reopenedState.phone}`);
     assert(!reopenedState.hasActivitySection, `${mode}: expected reopened detail to keep Activity removed`);
@@ -2545,17 +2588,18 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(reloadedState.mode === "view", `${mode}: expected reloaded detail to stay in view mode, got ${reloadedState.mode}`);
     assert(reloadedState.firstName === updatedFirstName, `${mode}: Expected contact detail reload to stay on the edited contact, got ${reloadedState.firstName}`);
     assert(reloadedState.lastName === updatedLastName, `${mode}: expected reloaded detail to preserve last name, got ${reloadedState.lastName}`);
-    assert(reloadedState.summary === updatedSummary, `${mode}: expected reloaded detail to preserve summary, got ${reloadedState.summary}`);
+    assert(reloadedState.summary === doneExitSummary, `${mode}: expected reloaded detail to preserve summary, got ${reloadedState.summary}`);
     assert(reloadedState.email === updatedEmail, `${mode}: expected reloaded detail to preserve email, got ${reloadedState.email}`);
     assert(reloadedState.phone === updatedPhone, `${mode}: expected reloaded detail to preserve phone, got ${reloadedState.phone}`);
     assert(!reloadedState.hasActivitySection, `${mode}: expected reloaded detail to keep Activity removed`);
     assert(!reloadedState.hasPhotoPreview, `${mode}: expected reloaded detail to stay initials-only after photo removal`);
+    const doneReloadedScreenshot = await saveScreenshot(page, config.reportDir, `${mode}-06a-contact-detail-done-reloaded`, config.timeoutMs);
     await recorder.capture({
       route: "contact-detail",
       action: "Reload saved contact detail",
       expected: "Reloading the edited contact detail stays on the same contact and keeps the autosaved values.",
       confirmation: "The reloaded contact detail stayed on the edited contact with the saved values intact.",
-      observed: { updated_title: updatedTitle, reloaded_state: reloadedState },
+      observed: { updated_title: updatedTitle, reloaded_state: reloadedState, done_reloaded_screenshot: doneReloadedScreenshot },
     });
     await recorder.capture({
       route: "contacts",

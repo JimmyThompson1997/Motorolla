@@ -2514,6 +2514,8 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     filtered_contacts = function_block(app, "filteredContactsListItems")
     bind_contact_detail_text_field = function_block(app, "bindContactDetailTextField")
     build_contact_detail_field_row = function_block(app, "buildContactDetailFieldRow")
+    bind_light_button_action = function_block(app, "bindLightButtonAction")
+    finish_contact_detail_edit_mode = function_block(app, "finishContactDetailEditMode")
     update_contact_detail_draft = function_block(app, "updateContactDetailDraftAndSchedule")
     schedule_contact_detail_autosave = function_block(app, "scheduleContactDetailAutosave")
     run_after_contact_detail_flush = function_block(app, "runAfterContactDetailFlush")
@@ -2521,6 +2523,7 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     sync_contact_detail_editor = function_block(app, "syncContactDetailEditor")
     prepare_contact_photo_draft = function_block(app, "prepareContactPhotoDraft")
     light_avatar = function_block(app, "lightAvatar")
+    light_circle_button = function_block(app, "lightCircleButton")
     contact_detail = function_block(app, "lightContactDetailPage")
     contact_search_wrap = css_block(styles, ".light-contacts-search-wrap")
     contact_search_input = css_block(styles, ".light-contacts-search")
@@ -2550,6 +2553,7 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "function openContactDetailEditMode() {" in app
     assert "function finishContactDetailEditMode() {" in app
     assert "function handleContactDetailBack() {" in app
+    assert "function bindLightButtonAction(button, onClick, options = {}) {" in app
     assert "function scheduleContactDetailAutosave() {" in app
     assert "async function flushContactDetailAutosave(options = {}) {" in app
     assert "const searchWrap = lightContactsSearchField();" in contacts_page
@@ -2598,6 +2602,10 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "window.setTimeout(() => {" in schedule_contact_detail_autosave
     assert "350" in schedule_contact_detail_autosave
     assert "render();" not in schedule_contact_detail_autosave
+    assert "state.contacts.editMode = false;" in finish_contact_detail_edit_mode
+    assert "syncContactDetailEditor();" in finish_contact_detail_edit_mode
+    assert 'void flushContactDetailAutosave({ reason: "done" });' in finish_contact_detail_edit_mode
+    assert "await flushContactDetailAutosave" not in finish_contact_detail_edit_mode
     assert "if (!isContactDetailEditorRoute(state.route)) {" in run_after_contact_detail_flush
     assert "if (stayingOnSameContact) {" in run_after_contact_detail_flush
     assert "if (!state.contacts.editSaving && !contactEditHasUnsavedChanges()) {" in run_after_contact_detail_flush
@@ -2638,6 +2646,7 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "Reminder device" not in contact_detail
     assert 'refs.page.dataset.contactDetailMode = editMode ? "edit" : "view";' in sync_contact_detail_editor
     assert "refs.actionSlot.replaceChildren(" in sync_contact_detail_editor
+    assert 'lightCircleButton("check", "Done editing", finishContactDetailEditMode, "light-contact-detail-done-button", { interactionMode: "press" })' in sync_contact_detail_editor
     assert 'actionButton.dataset.contactDetailAction = editMode ? "done" : "edit";' in sync_contact_detail_editor
     assert "refs.titleView.hidden = editMode;" in sync_contact_detail_editor
     assert "refs.nameEdit.hidden = !editMode;" in sync_contact_detail_editor
@@ -2656,6 +2665,14 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "lightLinkedRecordSection(contact" not in sync_contact_detail_editor
     assert "render();" not in bind_contact_detail_text_field
     assert "render();" not in update_contact_detail_draft
+    assert 'const interactionMode = String(options.interactionMode || "click").trim().toLowerCase();' in bind_light_button_action
+    assert 'if (interactionMode !== "press") {' in bind_light_button_action
+    assert 'button.addEventListener("pointerdown", handlePress);' in bind_light_button_action
+    assert 'button.addEventListener("touchstart", handlePress, { passive: false });' in bind_light_button_action
+    assert 'button.addEventListener("click", event => {' in bind_light_button_action
+    assert "event.preventDefault();" in bind_light_button_action
+    assert "skipClick = true;" in bind_light_button_action
+    assert "bindLightButtonAction(button, onClick, options);" in light_circle_button
     assert 'input.dataset.contactEditField = field;' in build_contact_detail_field_row
     assert "display: flex;" in contact_search_wrap
     assert "padding: 0;" in contact_search_wrap

@@ -224,16 +224,21 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
 
     assert 'shouldRunRoute(config, "contact-edit")' in source
     assert "function buildContactsEditProofValues(mode) {" in source
+    assert "async function activateContactDetailDone(page, mode, timeoutMs) {" in source
     assert 'const modeLabel = modeKey === "desktop" ? "Desktop" : modeKey === "iphone" ? "iPhone" : modeKey === "android" ? "Android" : "Proof";' in source
     assert 'const phoneSuffix = modeKey === "desktop" ? "0179" : modeKey === "iphone" ? "0199" : modeKey === "android" ? "0209" : "0189";' in source
     assert 'action: "Open classic contact detail"' in source
     assert 'action: "Enter in-place contact edit mode"' in source
+    assert 'action: "Exit edit mode with first Done tap"' in source
     assert 'action: "Autosave edited contact"' in source
     assert 'action: "Add and remove contact photo"' in source
     assert 'action: "Reload saved contact detail"' in source
     assert 'action: "Return to edited Contacts list"' in source
     assert "contact-detail-identity-view" in source
     assert "contact-detail-identity-edit" in source
+    assert "contact-detail-done-focused" in source
+    assert "contact-detail-done-after-first-tap" in source
+    assert "contact-detail-done-reloaded" in source
     assert "readContactEditState" in source
     assert "traceContactEditTyping" in source
     assert "data-contact-autosave-status" in source
@@ -251,6 +256,9 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert "expected contact Connected rows to stop using linked-record feed rows" in source
     assert "expected unlinked contact detail to omit Connected entirely" in source
     assert "Expected contact edit typing to keep the same mounted input" in source
+    assert "Expected first Done activation to leave edit mode" in source
+    assert "Expected Done exit to stay on the same contact-detail route" in source
+    assert "Expected Done exit to persist the focused-field summary change after leaving edit mode" in source
     assert "Expected photo removal to restore initials" in source
     assert "Expected contact detail reload to stay on the edited contact" in source
     assert "Expected edited contact row to reappear with the updated title" in source
