@@ -144,6 +144,38 @@ function cssString(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }
 
+function hasCardIdentity(target) {
+  return Boolean(String(target?.session_id || "").trim() || String(target?.card_id || "").trim());
+}
+
+function sameCardIdentity(left, right) {
+  const leftSessionId = String(left?.session_id || "").trim();
+  const rightSessionId = String(right?.session_id || "").trim();
+  if (leftSessionId || rightSessionId) {
+    return leftSessionId && leftSessionId === rightSessionId;
+  }
+  const leftCardId = String(left?.card_id || "").trim();
+  const rightCardId = String(right?.card_id || "").trim();
+  return Boolean(leftCardId && leftCardId === rightCardId);
+}
+
+function dedupeCardTargets(targets) {
+  const seen = new Set();
+  const unique = [];
+  for (const target of Array.isArray(targets) ? targets : []) {
+    if (!hasCardIdentity(target)) {
+      continue;
+    }
+    const key = String(target.session_id || "").trim() || `card:${String(target.card_id || "").trim()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(target);
+  }
+  return unique;
+}
+
 async function waitForLightHome(page, timeoutMs) {
   await page.waitForFunction(
     () => {
@@ -400,23 +432,24 @@ async function readPlayerState(page) {
 
 async function waitForPlayerAdvance(page, timeoutMs, minimumDeltaMs = 400) {
   const before = await readPlayerState(page);
-  const startPosition = Number(before?.position_ms || 0);
-  await page.waitForFunction(
-    ({ minimumDelta, startPositionMs }) => window.Pucky.request({ command: "player.state", args: {} }).then((player) => {
-      const current = Number(player?.position_ms || 0);
-      const duration = Number(player?.duration_ms || 0);
-      const playing = Boolean(player?.is_playing);
-      return current - startPositionMs >= minimumDelta
-        || (duration > 0 && current >= duration && current >= startPositionMs)
-        || !playing;
-    }),
-    {
-      minimumDelta: Math.max(50, Number(minimumDeltaMs || 400)),
-      startPositionMs: startPosition
-    },
-    { timeout: timeoutMs }
-  );
-  const after = await readPlayerState(page);
+  const startPositionMs = Number(before?.position_ms || 0);
+  const minimumDelta = Math.max(50, Number(minimumDeltaMs || 400));
+  const deadlineMs = Date.now() + Math.max(250, Number(timeoutMs || 0));
+  let after = before;
+  while (Date.now() < deadlineMs) {
+    await page.waitForTimeout(120);
+    after = await readPlayerState(page);
+    const current = Number(after?.position_ms || 0);
+    const duration = Number(after?.duration_ms || 0);
+    const playing = Boolean(after?.is_playing);
+    if (
+      current - startPositionMs >= minimumDelta
+      || (duration > 0 && current >= duration && current >= startPositionMs)
+      || !playing
+    ) {
+      break;
+    }
+  }
   return {
     before,
     after,
@@ -425,19 +458,11 @@ async function waitForPlayerAdvance(page, timeoutMs, minimumDeltaMs = 400) {
 }
 
 async function openAudioControls(page, selector, timeoutMs) {
-  const trigger = page.locator(selector).first();
-  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
-  const target = await trigger.evaluate(node => {
-    const article = node.closest("article.card");
-    return {
-      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
-      card_id: String(article?.getAttribute("data-card-id") || "").trim()
-    };
-  });
+  const target = typeof selector === "string"
+    ? await resolveCardActionTarget(page, selector, timeoutMs)
+    : selector;
   assert(target.card_id || target.session_id, "Audio controls target did not resolve to a canonical card identity");
-  const detailSelector = target.session_id
-    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="transcript_title"]`
-    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="transcript_title"]`;
+  const detailSelector = selectorForCardAction(target, "transcript_title");
   await clickSelector(page, detailSelector, timeoutMs);
   await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: timeoutMs });
   const before = await readDetailState(page);
@@ -468,18 +493,23 @@ async function clickSelector(page, selector, timeoutMs) {
   }, selector);
 }
 
-async function stableCardSelector(page, selector, timeoutMs) {
+async function resolveCardActionTarget(page, selector, timeoutMs) {
   const trigger = page.locator(selector).first();
   await trigger.waitFor({ state: "visible", timeout: timeoutMs });
-  const target = await trigger.evaluate(node => {
+  return trigger.evaluate(node => {
     const article = node.closest("article.card");
     return {
       action: String(node.getAttribute("data-card-action") || "").trim(),
       session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
       card_id: String(article?.getAttribute("data-card-id") || "").trim(),
+      title: String(article?.querySelector(".title")?.textContent || "").trim(),
       is_card_body: node.classList.contains("card-body")
     };
   });
+}
+
+async function stableCardSelector(page, selector, timeoutMs) {
+  const target = await resolveCardActionTarget(page, selector, timeoutMs);
   if (target.action && (target.session_id || target.card_id)) {
     return target.session_id
       ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="${cssString(target.action)}"]`
@@ -528,20 +558,11 @@ async function openAndInspectDetail(page, selector, timeoutMs) {
 }
 
 async function toggleAndReadAudioState(page, selector, timeoutMs) {
-  const trigger = page.locator(selector).first();
-  await trigger.waitFor({ state: "visible", timeout: timeoutMs });
-  const target = await trigger.evaluate(button => {
-    const article = button.closest("article.card");
-    return {
-      card_id: String(article?.getAttribute("data-card-id") || "").trim(),
-      session_id: String(article?.getAttribute("data-card-session-id") || "").trim(),
-      title: String(article?.querySelector(".title")?.textContent || "").trim()
-    };
-  });
+  const target = typeof selector === "string"
+    ? await resolveCardActionTarget(page, selector, timeoutMs)
+    : selector;
   assert(target.card_id || target.session_id, "Audio target did not resolve to a canonical card identity");
-  const targetSelector = target.session_id
-    ? `article.card[data-card-session-id="${cssString(target.session_id)}"] [data-card-action="audio"]`
-    : `article.card[data-card-id="${cssString(target.card_id)}"] [data-card-action="audio"]`;
+  const targetSelector = selectorForCardAction(target, "audio");
   await clickSelector(page, targetSelector, timeoutMs);
   await page.waitForFunction(
     selectorValue => Boolean(document.querySelector(selectorValue)?.classList.contains("is-playing")),
@@ -571,7 +592,9 @@ async function toggleAndReadAudioState(page, selector, timeoutMs) {
 }
 
 async function openInlineAudioDetail(page, selector, timeoutMs) {
-  const targets = await listCardActionTargets(page, selector);
+  const targets = typeof selector === "string"
+    ? dedupeCardTargets(await listCardActionTargets(page, selector))
+    : [selector];
   for (const target of targets) {
     if (!target.card_id && !target.session_id) {
       continue;
@@ -881,6 +904,23 @@ async function main() {
       assert(unreadMarker.color !== unreadMarker.readColor, "Light Inbox unread icon should keep a distinct emphasized treatment");
     }
     screenshots.inboxList = await saveScreenshot(lightPage, config.reportDir, "04-light-inbox-list");
+    const darkFeedAudioTargets = dedupeCardTargets(await listCardActionTargets(darkFeedPage, ".card-wrap article.card [data-card-action=\"audio\"]"));
+    const lightInboxAudioTargets = dedupeCardTargets(await listCardActionTargets(lightPage, ".light-shell[data-light-route=\"inbox\"] .card-wrap article.card [data-card-action=\"audio\"]"));
+    assert(darkFeedAudioTargets.length > 0, "Dark Feed did not expose any card-scoped audio targets.");
+    assert(lightInboxAudioTargets.length > 0, "Light Inbox did not expose any card-scoped audio targets.");
+    const primaryDarkAudioTarget = darkFeedAudioTargets[0];
+    const primaryLightAudioTarget = lightInboxAudioTargets.find(target => sameCardIdentity(target, primaryDarkAudioTarget)) || lightInboxAudioTargets[0];
+    assert(
+      sameCardIdentity(primaryDarkAudioTarget, primaryLightAudioTarget),
+      "Light Inbox audio target diverged from the canonical dark Home feed before playback checks"
+    );
+    logAction(actions, "resolved_inbox_audio_targets", {
+      dark_session_id: primaryDarkAudioTarget.session_id || "",
+      dark_card_id: primaryDarkAudioTarget.card_id || "",
+      light_session_id: primaryLightAudioTarget.session_id || "",
+      light_card_id: primaryLightAudioTarget.card_id || "",
+      title: primaryDarkAudioTarget.title || primaryLightAudioTarget.title || ""
+    });
 
     logAction(actions, "open_transcript_title_detail");
     const darkFeedTitleDetail = await openAndInspectDetail(darkFeedPage, ".card-wrap article.card [data-card-action=\"transcript_title\"]", config.timeoutMs);
@@ -902,20 +942,24 @@ async function main() {
     logAction(actions, "open_page_detail_and_scroll_bottom");
     const inboxAttachmentDetail = await compareOptionalAttachmentDetail(lightPage, darkFeedPage, config.timeoutMs, config.reportDir);
     logAction(actions, "toggle_inbox_audio_playback");
-    const darkFeedAudioState = await toggleAndReadAudioState(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
-    const lightInboxAudioState = await toggleAndReadAudioState(lightPage, ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]", config.timeoutMs);
+    const darkFeedAudioState = await toggleAndReadAudioState(darkFeedPage, primaryDarkAudioTarget, config.timeoutMs);
+    const lightInboxAudioState = await toggleAndReadAudioState(lightPage, primaryLightAudioTarget, config.timeoutMs);
+    logAction(actions, "inbox_audio_states", {
+      dark: darkFeedAudioState,
+      light: lightInboxAudioState,
+    });
     assert(lightInboxAudioState.title === darkFeedAudioState.title, "Light Inbox audio title diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.session_id === darkFeedAudioState.session_id, "Light Inbox audio session diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.aria_label === darkFeedAudioState.aria_label, "Light Inbox audio control label diverged from the canonical dark Home feed");
     assert(lightInboxAudioState.progress.delta_ms >= 2000, "Light Inbox audio did not advance by at least 2 seconds after starting playback");
     assert(darkFeedAudioState.progress.delta_ms >= 2000, "Dark Feed audio did not advance by at least 2 seconds after starting playback");
     logAction(actions, "open_inline_audio_detail");
-    const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
-    const lightInboxInlineAudioDetail = await openInlineAudioDetail(
-      lightPage,
-      ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]",
-      config.timeoutMs
-    );
+    const darkFeedInlineAudioDetail = await openInlineAudioDetail(darkFeedPage, primaryDarkAudioTarget, config.timeoutMs);
+    const lightInboxInlineAudioDetail = await openInlineAudioDetail(lightPage, primaryLightAudioTarget, config.timeoutMs);
+    logAction(actions, "inbox_inline_audio_detail", {
+      dark: darkFeedInlineAudioDetail,
+      light: lightInboxInlineAudioDetail,
+    });
     assert(darkFeedInlineAudioDetail.detail.detail_type === "audio", "Dark Feed inline audio strip did not open audio detail");
     assert(lightInboxInlineAudioDetail.detail.detail_type === "audio", "Light Inbox inline audio strip did not open audio detail");
     assert(
@@ -923,12 +967,8 @@ async function main() {
       "Inline audio detail did not preserve the active player session"
     );
     logAction(actions, "open_audio_controls_navigation");
-    const darkFeedAudioControls = await openAudioControls(darkFeedPage, "[data-card-action=\"audio\"]", config.timeoutMs);
-    const lightInboxAudioControls = await openAudioControls(
-      lightPage,
-      ".light-shell[data-light-route=\"inbox\"] [data-card-action=\"audio\"]",
-      config.timeoutMs
-    );
+    const darkFeedAudioControls = await openAudioControls(darkFeedPage, primaryDarkAudioTarget, config.timeoutMs);
+    const lightInboxAudioControls = await openAudioControls(lightPage, primaryLightAudioTarget, config.timeoutMs);
     assert(darkFeedAudioControls.after.detail_type === "audio", "Dark Feed did not enter audio detail after clicking Open audio controls");
     assert(lightInboxAudioControls.after.detail_type === "audio", "Light Inbox did not enter audio detail after clicking Open audio controls");
     assert(

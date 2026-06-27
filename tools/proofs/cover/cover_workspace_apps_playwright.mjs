@@ -75,6 +75,10 @@ function assert(condition, message) {
   }
 }
 
+function taskRowSelector(taskId) {
+  return `.light-task-row[data-task-id="${String(taskId || "").replace(/"/g, '\\"')}"]`;
+}
+
 function isZeroishPx(value) {
   return Math.abs(Number.parseFloat(String(value || "0")) || 0) <= 0.5;
 }
@@ -788,7 +792,7 @@ async function readTaskListState(page) {
         node.getAttribute("aria-expanded") === "true"
       ])
     );
-    const visibleTaskIds = Array.from(document.querySelectorAll("[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
+    const visibleTaskIds = Array.from(document.querySelectorAll(".light-task-row[data-task-id]")).map(node => node.getAttribute("data-task-id") || "");
     return {
       headers,
       countLine,
@@ -918,10 +922,10 @@ function countTaskRequestEvents(networkLog, startMs, endMs) {
 
 async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
   return page.evaluate((args) => {
-    const row = document.querySelector(`[data-task-id="${args.rowTaskId}"]`);
+    const row = document.querySelector(`.light-task-row[data-task-id="${args.rowTaskId}"]`);
     const parent = row ? row.closest(".light-task-card") : null;
     const sibling = parent && args.siblingTaskId
-      ? parent.querySelector(`[data-task-id="${args.siblingTaskId}"]`)
+      ? parent.querySelector(`.light-task-row[data-task-id="${args.siblingTaskId}"]`)
       : null;
     const capture = (node) => {
       if (!node) {
@@ -948,7 +952,7 @@ async function readTaskPressMetrics(page, rowTaskId, siblingTaskId = null) {
 }
 
 function taskRowControl(page, taskId) {
-  return page.locator(`[data-task-id="${taskId}"] .light-task-row-main`);
+  return page.locator(`${taskRowSelector(taskId)} .light-task-row-main`);
 }
 
 async function proveNotes(page, config, seed, theme, screenshots, summary) {
@@ -1051,7 +1055,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     if (!taskPage) {
       return false;
     }
-    const hasRows = document.querySelectorAll("[data-task-id]").length > 0;
+    const hasRows = document.querySelectorAll(".light-task-row[data-task-id]").length > 0;
     const text = String(taskPage.textContent || "");
     return hasRows && !/\bLoading\b/.test(text);
   }, { timeout: config.timeoutMs }).catch(() => null);
@@ -1107,8 +1111,8 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
     await backHome(page, theme, config.timeoutMs);
     return;
   }
-  const rowAButton = page.locator(`[data-task-id="${rowA.id}"]`);
-  const rowBButton = page.locator(`[data-task-id="${rowB.id}"]`);
+  const rowAButton = page.locator(taskRowSelector(rowA.id));
+  const rowBButton = page.locator(taskRowSelector(rowB.id));
   await rowAButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   await rowBButton.waitFor({ state: "visible", timeout: config.timeoutMs });
   const rowAPressTarget = taskRowControl(page, rowA.id);
@@ -1308,7 +1312,7 @@ async function proveTasks(page, config, seed, theme, screenshots, summary, netwo
   await page.waitForTimeout(8500);
   if (seed.writeEnabled) {
     await page.waitForFunction((taskId) => {
-      const row = document.querySelector(`[data-task-id="${taskId}"]`);
+      const row = document.querySelector(`.light-task-row[data-task-id="${taskId}"]`);
       return Boolean(row && row.classList.contains("overdue"));
     }, flipId, { timeout: config.timeoutMs });
   }

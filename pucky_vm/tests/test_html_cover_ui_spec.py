@@ -632,6 +632,10 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     describe_audio_source = function_block(app, "describeAudioSourceForCard")
     audio_tile_status = function_block(app, "audioTileStatus")
     confirm_playback = function_block(app, "confirmAudioProbePlaybackStart")
+    queue_same_card_toggle = function_block(app, "queueSameCardToggle")
+    clear_queued_same_card_toggle = function_block(app, "clearQueuedSameCardToggle")
+    should_replay_queued_same_card_toggle = function_block(app, "shouldReplayQueuedSameCardToggle")
+    set_audio_probe_terminal_by_key = function_block(app, "setAudioProbeTerminalByKey")
     tile_audio_label = function_block(app, "tileAudioLabel")
     tile_audio_meta = function_block(app, "tileAudioMeta")
     current_player_position = function_block(app, "currentPlayerPositionMs")
@@ -641,6 +645,7 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     is_same_audio_card = function_block(app, "isSameAudioCard")
 
     assert 'const AUDIO_TILE_PHASES = ["idle", "starting", "playing_confirmed", "pause_pending", "start_failed", "ended_immediately"];' in app
+    assert 'queuedAudioToggleKey: "",' in app
     assert 'if (currentTileAudioPhase(card) !== "idle") {' in card_view
     assert 'const title = el("button", "card-title-trigger title", card.title || "Pucky");' in card_view
     assert 'applyCardActionData(title, "transcript_title", card, "reply");' in card_view
@@ -656,13 +661,23 @@ def test_inbox_tile_audio_uses_explicit_phase_machine_and_not_waveform_default()
     assert 'if (prefersHostedDirectAudio(card)) {' in toggle_audio
     assert "await toggleHostedBrowserAudio(card, busyKey);" in toggle_audio
     assert 'recordAudioProbeEvent("click_received"' in toggle_audio
+    assert 'if (state.audioToggleBusyKey === busyKey && phaseBefore !== "pause_pending") {' in toggle_audio
+    assert 'queueSameCardToggle(busyKey, phaseBefore);' in toggle_audio
     assert 'setAudioProbePhase(card, "starting"' in toggle_audio
     assert 'setAudioProbePhase(card, "pause_pending"' in toggle_audio
     assert 'setAudioProbeTerminal(card, "start_failed"' in toggle_audio
     assert 'recordAudioProbeEvent("play_request_start"' in toggle_audio
     assert 'recordAudioProbeEvent("play_request_end"' in toggle_audio
     assert "confirmAudioProbePlaybackStart(busyKey, state.player);" in toggle_audio
+    assert 'const replayQueuedSameCardToggle = shouldReplayQueuedSameCardToggle(card, busyKey);' in toggle_audio
+    assert 'recordAudioProbeEvent("busy_same_card_toggle_replayed"' in toggle_audio
     assert 'recordAudioProbeEvent("busy_end"' in toggle_audio
+    assert 'state.queuedAudioToggleKey = targetKey;' in queue_same_card_toggle
+    assert 'recordAudioProbeEvent("busy_same_card_toggle_queued"' in queue_same_card_toggle
+    assert 'state.queuedAudioToggleKey = "";' in clear_queued_same_card_toggle
+    assert 'return samePath(state.queuedAudioToggleKey, targetKey)' in should_replay_queued_same_card_toggle
+    assert '&& currentTileAudioPhase(card) === "playing_confirmed"' in should_replay_queued_same_card_toggle
+    assert "clearQueuedSameCardToggle(targetKey);" in set_audio_probe_terminal_by_key
     assert "const current = currentBrowserPlayerState();" in toggle_hosted_audio
     assert 'const audioUrl = String(card?.audio_url || "").trim();' in toggle_hosted_audio
     assert "const controlKey = audioControlKey(card) || audioUrl;" in toggle_hosted_audio

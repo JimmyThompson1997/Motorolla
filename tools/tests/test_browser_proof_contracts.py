@@ -205,6 +205,8 @@ def test_workspace_tasks_press_proof_uses_real_row_control() -> None:
 
     assert "taskById(seed.taskIds?.rowA)" in source
     assert "taskById(seed.taskIds?.rowB)" in source
+    assert "function taskRowSelector(taskId)" in source
+    assert '.light-task-row[data-task-id="' in source
     assert "function taskRowControl(page, taskId)" in source
     assert "const rowAPressTarget = taskRowControl(page, rowA.id);" in source
     assert 'rowAPressTarget.dispatchEvent("pointerdown"' in source
@@ -341,6 +343,11 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     package = json.loads((ROOT / "tools" / "package.json").read_text(encoding="utf-8"))
 
     assert '"--skip-canonical-check"' in source
+    assert '"--preferred-session-id"' in source
+    assert '"--viewport-width"' in source
+    assert '"--viewport-height"' in source
+    assert '"--immediate-second-tap-delay-ms"' in source
+    assert '"--immediate-second-tap-attempts"' in source
     assert 'import { chromium, webkit } from "playwright-core";' in source
     assert "isLocalProofUrl" in source
     assert "isLocalProof" in source
@@ -348,15 +355,19 @@ def test_inbox_audio_truth_proof_is_toolchain_first_class() -> None:
     assert 'config.browserName = browserName === "webkit" ? "webkit" : "chromium";' in source
     assert 'if (browserName === "webkit") {' in source
     assert 'await context.tracing.start({ screenshots: true, snapshots: true, sources: true });' in source
-    assert 'recordVideo: { dir: videoDir, size: VIEWPORT }' in source
+    assert 'recordVideo: { dir: videoDir, size: viewport }' in source
     assert 'writeJsonFile(path.join(config.reportDir, "network.json"), networkEvents);' in source
     assert 'writeJsonFile(path.join(config.reportDir, "console.json"), consoleMessages);' in source
     assert 'fs.writeFileSync(path.join(config.reportDir, "final-dom.html"), await page.content(), "utf8");' in source
+    assert "pickCards(audioCards, config.preferredSessionId, config.preferredTitle)" in source
+    assert "runImmediateRetapScenario(page, config, targets.primary, config.reportDir)" in source
     assert 'immediate_feedback: immediateFeedbackResult(startStop),' in source
     assert 'playing_stability: playingStabilityResult(startStop),' in source
+    assert 'immediate_retap: immediateRetapResult(immediateRetap),' in source
     assert 'cross_card: crossCard ? crossCardResult(crossCard) : { pass: false, reason: "No secondary audio card found." },' in source
     assert 'assert(summary.results.immediate_feedback.pass' in source
     assert 'assert(summary.results.playing_stability.pass' in source
+    assert 'assert(summary.results.immediate_retap.pass' in source
     assert 'assert(summary.results.cross_card.pass' in source
     assert 'assert(summary.results.injected_failure.pass' in source
     assert 'assert(summary.results.injected_early_stop.pass' in source
@@ -383,6 +394,17 @@ def test_light_native_ports_proof_adds_real_render_and_scroll_contracts() -> Non
     assert 'addCandidate(document.scrollingElement, "document.scrollingElement");' in source
     assert "measurements.find(candidate => candidate.can_scroll) || measurements[0]" in source
     assert "listCardActionTargets(" in source
+    assert "dedupeCardTargets(" in source
+    assert "sameCardIdentity(" in source
+    assert 'logAction(actions, "resolved_inbox_audio_targets",' in source
+    assert 'logAction(actions, "inbox_audio_states",' in source
+    assert "toggleAndReadAudioState(darkFeedPage, primaryDarkAudioTarget, config.timeoutMs)" in source
+    assert "toggleAndReadAudioState(lightPage, primaryLightAudioTarget, config.timeoutMs)" in source
+    assert "openInlineAudioDetail(darkFeedPage, primaryDarkAudioTarget, config.timeoutMs)" in source
+    assert "openInlineAudioDetail(lightPage, primaryLightAudioTarget, config.timeoutMs)" in source
+    assert 'logAction(actions, "inbox_inline_audio_detail",' in source
+    assert "openAudioControls(darkFeedPage, primaryDarkAudioTarget, config.timeoutMs)" in source
+    assert "openAudioControls(lightPage, primaryLightAudioTarget, config.timeoutMs)" in source
     assert "No page action opened a scrollable rich page that reached the bottom in both themes" in source
     assert "No audio card exposed an inline audio detail strip after playback started" in source
     assert "reached_bottom" in source
