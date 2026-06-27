@@ -3551,6 +3551,54 @@ class ServerTests(unittest.TestCase):
         self.assertIsNotNone(synced_record)
         self.assertTrue(bool((synced_record or {}).get("feed_item", {}).get("archived")))
 
+    def test_startup_sync_skips_rewriting_already_synced_archived_meetings(self) -> None:
+        meeting_id = "meeting-20260601-122550-device-archive-steady"
+        item = self.seed_legacy_meeting_feed_item(
+            meeting_id=meeting_id,
+            title="Archived proof meeting",
+            summary="Already archived and already synced.",
+            source="meeting_recording",
+            archived=True,
+        )
+        record = {
+            "schema": "pucky.meeting.v1",
+            "meeting_id": meeting_id,
+            "state": "completed",
+            "created_at": "2026-06-01T12:25:50Z",
+            "updated_at": "2026-06-01T12:25:55Z",
+            "started_at": "2026-06-01T12:25:50Z",
+            "stopped_at": "2026-06-01T12:25:55Z",
+            "duration_ms": 5000,
+            "device_id": "device-1",
+            "device_path": "/proof/meeting.wav",
+            "mime_type": "audio/wav",
+            "audio_bytes": len(b"RIFFlegacy-meeting-audio"),
+            "audio_path": "",
+            "audio_url": "",
+            "metadata": {},
+            "transcript_status": "completed",
+            "transcript_error": "",
+            "transcript_text": "",
+            "transcript_result": {},
+            "diarization_requested": False,
+            "diarization_status": "plain_transcript",
+            "speaker_turns": [],
+            "agent": {"label": "Meeting Mode Agent"},
+            "archived": True,
+            "failure_stage": "",
+            "failure_reason": "",
+            "card_id": str(item["card_id"]),
+            "card": dict(item.get("card") or {}),
+            "feed_item": dict(item),
+            "connected_records": [],
+        }
+        self.service._upsert_meeting(record)
+
+        with patch.object(self.service, "_upsert_meeting", wraps=self.service._upsert_meeting) as wrapped_upsert:
+            self.service._sync_archived_meeting_feed_cards()
+
+        wrapped_upsert.assert_not_called()
+
     def test_legacy_successful_meeting_feed_item_migrates_to_note_and_preserves_state(self) -> None:
         meeting_id = "meeting-20260601-123000-legacy-success"
         legacy_html = meeting_summary_html(

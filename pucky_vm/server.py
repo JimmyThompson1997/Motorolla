@@ -1059,11 +1059,20 @@ class PuckyVoiceService:
             synced_item = dict(response.get("item") or {})
         if not synced_item:
             return False
-        record["card_id"] = str(synced_item.get("card_id") or card_id)
+        next_card_id = str(synced_item.get("card_id") or card_id)
+        existing_feed_item = record.get("feed_item") if isinstance(record.get("feed_item"), dict) else {}
+        changed = (
+            str(record.get("card_id") or "").strip() != next_card_id
+            or str(existing_feed_item.get("card_id") or "").strip() != next_card_id
+            or bool(existing_feed_item.get("archived")) != bool(synced_item.get("archived"))
+        )
+        record["card_id"] = next_card_id
         record["feed_item"] = synced_item
         if isinstance(synced_item.get("card"), dict):
-            record["card"] = dict(synced_item.get("card") or {})
-        return True
+            next_card = dict(synced_item.get("card") or {})
+            changed = changed or next_card != (record.get("card") if isinstance(record.get("card"), dict) else {})
+            record["card"] = next_card
+        return changed
 
     def _sync_archived_meeting_feed_cards(self) -> None:
         for item in self._load_meetings():
