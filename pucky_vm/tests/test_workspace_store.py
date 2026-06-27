@@ -1241,7 +1241,7 @@ def test_seeded_connected_detail_repair_restores_task_and_reminder_linked_notes(
             "DELETE FROM workspace_records WHERE kind = 'note' AND record_id = ?",
             (note_id,),
         )
-    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v2'")
+    store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v3'")
     store._conn.commit()
     store.close()
 
@@ -1260,7 +1260,7 @@ def test_seeded_connected_detail_repair_restores_task_and_reminder_linked_notes(
         assert link["target_id"] == note_id
         assert link["label"] == expected_title
     meta = repaired._conn.execute(
-        "SELECT value FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v2'"
+        "SELECT value FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v3'"
     ).fetchone()
     assert meta is not None
     assert meta["value"] == "1"

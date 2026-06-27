@@ -967,7 +967,7 @@ class WorkspaceStore:
             proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'proof_cleanup_v1'").fetchone()
             task_proof_cleanup_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'task_proof_cleanup_v1'").fetchone()
             project_connected_repair_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_project_connected_repair_v1'").fetchone()
-            connected_detail_repair_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v2'").fetchone()
+            connected_detail_repair_seeded = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v3'").fetchone()
             contact_endpoints_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_endpoints_removed_v1'").fetchone()
             contact_html_removed = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_html_removed_v1'").fetchone()
             contact_cleanup_photos = self._conn.execute("SELECT value FROM workspace_meta WHERE key = 'contact_cleanup_photos_v1'").fetchone()
@@ -1027,7 +1027,7 @@ class WorkspaceStore:
         if not project_connected_repair_seeded:
             self._repair_seeded_project_connected_v1(now)
         if not connected_detail_repair_seeded:
-            self._repair_seeded_connected_detail_v2(now)
+            self._repair_seeded_connected_detail_v3(now)
         if not contact_endpoints_removed:
             self._remove_contact_endpoints_v1(now)
         if not contact_html_removed:
@@ -1592,7 +1592,7 @@ class WorkspaceStore:
             )
             self._conn.commit()
 
-    def _repair_seeded_connected_detail_v2(self, now_ms: int) -> None:
+    def _repair_seeded_connected_detail_v3(self, now_ms: int) -> None:
         source_ids_by_kind = {
             "project": {"aurora", "migration", "home-refresh", "freelance-followup"},
             "task": {"demo-task-do-paint-samples", "demo-task-send-freelance-mockup"},
@@ -1653,7 +1653,7 @@ class WorkspaceStore:
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO workspace_meta (key, value, updated_at_ms) VALUES (?, ?, ?)",
-                ("seeded_connected_detail_repair_v2", "1", now_ms),
+                ("seeded_connected_detail_repair_v3", "1", now_ms),
             )
             self._conn.commit()
 
