@@ -2714,3 +2714,21 @@ def test_linked_records_keep_click_targets_but_allow_task_surface_chevron_suppre
     assert "item.addEventListener(\"click\", () => openWorkspaceTarget(" in light_info_row
     assert 'lightTextStack(row.label, row.value)' in light_info_row
     assert 'light-chevron' not in light_info_row
+
+
+def test_inbox_transcript_hides_legacy_meeting_html_artifacts_but_keeps_connected_records() -> None:
+    app = read("app.js")
+    legacy_meeting_artifact = function_block(app, "isLegacyMeetingTranscriptArtifact")
+    transcript_visible_attachments = function_block(app, "transcriptVisibleAttachments")
+    message_attachment_row = function_block(app, "messageAttachmentRow")
+    message_images = function_block(app, "messageImages")
+
+    assert 'function isLegacyMeetingTranscriptArtifact(item) {' in app
+    assert 'if (!isMeetingAttachmentItem(item)) {' in legacy_meeting_artifact
+    assert 'if (title === "meeting summary" || title === "meeting transcript html") {' in legacy_meeting_artifact
+    assert 'if (title === "transcript" || title === "transcript (plain text)" || title === "meeting transcript") {' in legacy_meeting_artifact
+    assert 'return kind === "html" || (kind === "text" && title.includes("transcript"));' in legacy_meeting_artifact
+    assert 'const attachments = preferredDisplayAttachments(card, message?.attachments);' in transcript_visible_attachments
+    assert 'return attachments.filter(item => !isLegacyMeetingTranscriptArtifact(item));' in transcript_visible_attachments
+    assert 'const attachments = transcriptVisibleAttachments(card, message);' in message_attachment_row
+    assert 'const direct = transcriptVisibleAttachments(card, message).filter(attachmentPromotesToChatMedia);' in message_images

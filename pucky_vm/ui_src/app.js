@@ -16522,7 +16522,7 @@
   }
 
   function messageAttachmentRow(card, message, index) {
-    const attachments = preferredDisplayAttachments(card, message?.attachments);
+    const attachments = transcriptVisibleAttachments(card, message);
     const chips = attachments.filter(item => {
       if (String(message?.role || "").toLowerCase() === "user") {
         return true;
@@ -20038,8 +20038,35 @@
     return ["image_gallery", "video_player", "document_html", "html_iframe"].includes(viewerType);
   }
 
+  function isLegacyMeetingTranscriptArtifact(item) {
+    if (!isMeetingAttachmentItem(item)) {
+      return false;
+    }
+    const title = String(item?.title || "").trim().toLowerCase();
+    const id = String(item?.id || "").trim().toLowerCase();
+    const kind = attachmentKind(item);
+    if (id.endsWith(":html")) {
+      return true;
+    }
+    if (title === "meeting summary" || title === "meeting transcript html") {
+      return true;
+    }
+    if (title === "transcript" || title === "transcript (plain text)" || title === "meeting transcript") {
+      return true;
+    }
+    return kind === "html" || (kind === "text" && title.includes("transcript"));
+  }
+
+  function transcriptVisibleAttachments(card, message) {
+    const attachments = preferredDisplayAttachments(card, message?.attachments);
+    if (String(message?.role || "").toLowerCase() === "user") {
+      return attachments;
+    }
+    return attachments.filter(item => !isLegacyMeetingTranscriptArtifact(item));
+  }
+
   function messageImages(card, message, index, messages) {
-    const direct = normalizedAttachments(message?.attachments).filter(attachmentPromotesToChatMedia);
+    const direct = transcriptVisibleAttachments(card, message).filter(attachmentPromotesToChatMedia);
     if (direct.length) {
       return direct;
     }

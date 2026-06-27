@@ -1032,6 +1032,8 @@ def test_real_vm_inbox_proof_uses_universal_feed_dom_contract() -> None:
     assert "readInboxTranscriptConnectedState(" in source
     assert "bubble-connected-record-row .light-record-chip" in source
     assert "Light Inbox transcript detail should surface inline connected record chips for connected feed items." in source
+    assert "legacyArtifactLabels" in source
+    assert "Light Inbox transcript detail should hide legacy meeting summary/transcript artifacts once connected notes exist" in source
     assert "isLegacyMeetingNoiseCard(" in source
     assert "Archived Inbox API should exclude legacy failed/processing/review meeting noise" in source
     assert ".inbox-archive-toggle" in source
@@ -1052,6 +1054,8 @@ def test_live_user_session_runtime_proof_rejects_missing_result_soft_completion(
     assert "Captured runtime meeting note should live in Notes only and not leak into Meeting Notes." in source
     assert "Inbox compact cards should not render page/paperclip actions after the graph-first cutover" in source
     assert "Inbox transcript detail should render inline connected record chips for the runtime meeting." in source
+    assert "legacyArtifactLabels" in source
+    assert "Inbox transcript detail should hide legacy meeting summary/transcript artifacts once the connected note exists" in source
 
 
 def test_meetings_walkthrough_proof_checks_short_and_long_title_alignment() -> None:

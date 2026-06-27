@@ -187,6 +187,9 @@ async function readInboxTranscriptConnectedState(page) {
     connectedChipLabels: Array.from(document.querySelectorAll("#detail .bubble-connected-record-row .light-record-chip"))
       .map(node => String(node.textContent || "").replace(/\s+/g, " ").trim())
       .filter(Boolean),
+    legacyArtifactLabels: Array.from(document.querySelectorAll("#detail .bubble-attachment-chip"))
+      .map(node => String(node.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(label => /meeting summary|meeting transcript html|transcript \(plain text\)|meeting transcript|^transcript$/i.test(label)),
   }));
 }
 
@@ -279,13 +282,16 @@ async function main() {
         await page.locator(".detail-panel.is-open").waitFor({ state: "visible", timeout: config.timeoutMs });
         const connectedDetail = await readInboxTranscriptConnectedState(page);
         assert(connectedDetail.connectedChipCount > 0, "Light Inbox transcript detail should surface inline connected record chips for connected feed items.");
+        assert(connectedDetail.legacyArtifactLabels.length === 0, `Light Inbox transcript detail should hide legacy meeting summary/transcript artifacts once connected notes exist (saw ${JSON.stringify(connectedDetail.legacyArtifactLabels)}).`);
         screenshots.inboxConnectedDetail = await saveScreenshot(page, config.reportDir, "05-vm-light-inbox-connected-detail");
         optionalActions.inbox_connected_detail_chip_count = connectedDetail.connectedChipCount;
         optionalActions.inbox_connected_detail_labels = connectedDetail.connectedChipLabels.slice(0, 6);
+        optionalActions.inbox_connected_detail_legacy_artifacts = connectedDetail.legacyArtifactLabels.slice(0, 6);
         await dismissDetail(page);
       } else {
         optionalActions.inbox_connected_detail_chip_count = 0;
         optionalActions.inbox_connected_detail_labels = [];
+        optionalActions.inbox_connected_detail_legacy_artifacts = [];
       }
     }
 

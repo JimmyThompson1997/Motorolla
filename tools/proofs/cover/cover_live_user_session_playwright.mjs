@@ -709,6 +709,9 @@ async function readInboxConnectedDetailState(page) {
     connectedChipLabels: Array.from(document.querySelectorAll("#detail .bubble-connected-record-row .light-record-chip"))
       .map(node => String(node.textContent || "").replace(/\s+/g, " ").trim())
       .filter(Boolean),
+    legacyArtifactLabels: Array.from(document.querySelectorAll("#detail .bubble-attachment-chip"))
+      .map(node => String(node.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(label => /meeting summary|meeting transcript html|transcript \(plain text\)|meeting transcript|^transcript$/i.test(label)),
   }));
 }
 
@@ -2695,6 +2698,7 @@ async function proveRuntimeMeetingTerminal(browser, config, runtimeMeeting) {
     await waitForDetailOpen(page, config.timeoutMs);
     const inboxDetail = await readInboxConnectedDetailState(page);
     assert(inboxDetail.connectedChipLabels.length > 0, "Inbox transcript detail should render inline connected record chips for the runtime meeting.");
+    assert(inboxDetail.legacyArtifactLabels.length === 0, `Inbox transcript detail should hide legacy meeting summary/transcript artifacts once the connected note exists (saw ${JSON.stringify(inboxDetail.legacyArtifactLabels)}).`);
     screenshots.inbox_detail_connected = await saveScreenshot(page, config.reportDir, "runtime-inbox-detail-connected");
     const inlineNoteChip = page.locator('#detail .bubble-connected-record-row [data-workspace-target-route="note-detail"]').first();
     await inlineNoteChip.waitFor({ state: "visible", timeout: config.timeoutMs });
