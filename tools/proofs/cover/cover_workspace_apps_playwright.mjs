@@ -1823,7 +1823,7 @@ async function assertFlatContactProfileCard(page, label) {
   return cardState;
 }
 
-async function assertNoContactEndpoints(page, config, contactId, label, options = {}) {
+async function assertNoContactEndpoints(page, config, contactId, label) {
   const detailState = await page.evaluate(() => {
     const sectionTitles = Array.from(document.querySelectorAll(".light-info-section .light-section-title"))
       .map(node => String(node.textContent || "").trim())
@@ -1833,9 +1833,8 @@ async function assertNoContactEndpoints(page, config, contactId, label, options 
     };
   });
   assert(detailState.sectionTitles.some(title => title.toLowerCase() === "contact"), `${label} should render the Contact section`);
-  if (options.requireActivity) {
-    assert(detailState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should render the Activity section`);
-  }
+  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "activity"), `${label} should not render an Activity section`);
+  assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "notes"), `${label} should not render a separate Notes section`);
   assert(!detailState.sectionTitles.some(title => title.toLowerCase() === "endpoints"), `${label} should not render an Endpoints section`);
   if (String(contactId || "").trim() && String(config.apiToken || "").trim()) {
     const record = await apiRequest(config, "GET", `/api/workspace/contacts/${encodeURIComponent(String(contactId || "").trim())}`);
@@ -1965,6 +1964,7 @@ async function readContactsSearchState(page) {
     const rowData = rows.map(node => ({
       id: String(node.getAttribute("data-contact-id") || "").trim(),
       title: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+      detail: String(node.querySelector(".light-text-stack span")?.textContent || "").trim(),
       avatarText: String(node.querySelector(".light-avatar")?.textContent || "").trim(),
     }));
     return {
@@ -1973,6 +1973,7 @@ async function readContactsSearchState(page) {
       query: search instanceof HTMLInputElement ? search.value : "",
       rowIds: rowData.map(row => row.id).filter(Boolean),
       rowTitles: rowData.map(row => row.title).filter(Boolean),
+      rowDetails: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.detail])),
       rowAvatarTexts: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.avatarText])),
       emptyText: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
     };
@@ -2106,16 +2107,17 @@ async function readContactEditState(page) {
       const input = document.querySelector(`[data-contact-edit-field="${key}"]`);
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
-    const activityRows = Array.from(document.querySelectorAll(".light-contact-detail-activity-host .light-info-row"));
-    const activityValues = activityRows.map(row => {
-      const valueNode = row.querySelector(".light-text-stack span");
-      return String(valueNode?.textContent || row.textContent || "").replace(/\s+/g, " ").trim();
-    }).filter(Boolean);
     const status = document.querySelector("[data-contact-autosave-status]");
     const firstNameInput = document.querySelector('[data-contact-edit-field="first_name"]');
     const lastNameInput = document.querySelector('[data-contact-edit-field="last_name"]');
     const actionButton = document.querySelector("[data-contact-detail-action]");
     const summaryView = document.querySelector(".light-contact-detail-summary");
+    const infoSections = Array.from(pageRoot?.querySelectorAll(".light-info-section") || []);
+    const sectionTitle = section => String(section?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
+    const connectedSection = infoSections.find(section => sectionTitle(section) === "connected") || null;
+    const activitySection = infoSections.find(section => sectionTitle(section) === "activity") || null;
+    const connectedInfoRows = Array.from(connectedSection?.querySelectorAll(".light-info-row") || []);
+    const connectedLinkedRecordFeedRows = Array.from(connectedSection?.querySelectorAll(".light-linked-record-feed-row") || []);
     const identityRect = identity instanceof HTMLElement
       ? (() => {
           const rect = identity.getBoundingClientRect();
@@ -2149,23 +2151,45 @@ async function readContactEditState(page) {
       summary: fieldValue("summary"),
       email: fieldValue("email"),
       phone: fieldValue("phone"),
-      activityValues,
       firstNameVisible: isVisible(firstNameInput),
       lastNameVisible: isVisible(lastNameInput),
       summaryVisible: isVisible(summaryView),
-      hasConnectedSection: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
+      hasConnectedSection: Boolean(connectedSection),
+      hasActivitySection: Boolean(activitySection),
+      sectionTitles: infoSections.map(section => String(section.querySelector(".light-section-title")?.textContent || "").trim()).filter(Boolean),
+      connectedInfoRowCount: connectedInfoRows.length,
+      connectedLinkedRecordFeedRowCount: connectedLinkedRecordFeedRows.length,
+      connectedRowTexts: connectedInfoRows
+        .map(row => String(row.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean),
       hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
       hasHeroContainer: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
       hasIdentityHeader: Boolean(identity),
       identityHasCardChrome: Boolean(identityStyle && (!hasTransparentBackground || identityStyle.boxShadow !== "none" || borderWidth || (Number.isFinite(borderRadius) && borderRadius > 0))),
       identityRect,
       action: String(actionButton?.getAttribute("data-contact-detail-action") || "").trim(),
-      hasActivityInputs: Boolean(pageRoot?.querySelector("input[data-contact-activity-index]")),
-      hasActivityAddButton: Boolean(pageRoot?.querySelector('[data-contact-activity-add="true"]')),
       autosaveStatus: String(status?.getAttribute("data-contact-autosave-status") || "").trim(),
       autosaveLabel: String(status?.textContent || "").trim(),
     };
   });
+}
+
+async function waitForContactConnectedRows(page, labels, timeoutMs) {
+  await page.waitForFunction(expectedLabels => {
+    const pageRoot = document.querySelector(".light-contact-detail-page");
+    const infoSections = Array.from(pageRoot?.querySelectorAll(".light-info-section") || []);
+    const connectedSection = infoSections.find(section => String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === "connected");
+    if (!connectedSection) {
+      return false;
+    }
+    const infoRows = Array.from(connectedSection.querySelectorAll(".light-info-row"));
+    const linkedFeedRows = connectedSection.querySelectorAll(".light-linked-record-feed-row").length;
+    const rowTexts = infoRows
+      .map(row => String(row.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    return linkedFeedRows === 0 && expectedLabels.every(label => rowTexts.some(text => text.includes(label)));
+  }, labels, { timeout: timeoutMs });
+  return readContactEditState(page);
 }
 
 async function saveContactDetailIdentityScreenshot(page, reportDir, name) {
@@ -2335,6 +2359,7 @@ async function traceContactEditTyping(page, fieldName, value, timeoutMs) {
 
 async function proveContacts(page, config, seed, theme, screenshots, summary) {
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
+  summary.contactProfileCards = summary.contactProfileCards || [];
   const contacts = seed.writeEnabled ? null : (seed.contacts || []);
   const proofContactId = `${seed.runId}-contact-one`;
   const davidContactId = `${seed.runId}-david-contact`;
@@ -2374,7 +2399,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     );
   }
   screenshots[`${theme}_contacts`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-baseline`);
-  const initialsSearchState = await expectContactsSearchRows(page, "single-name proof", [danielContactId, davidContactId], config.timeoutMs);
+  const initialsSearchState = await expectContactsSearchRows(page, "Da", [danielContactId, davidContactId], config.timeoutMs);
   assert(initialsSearchState.rowAvatarTexts[davidContactId] === "D", `Expected David initials search result to render D, got ${initialsSearchState.rowAvatarTexts[davidContactId] || "<missing>"}`);
   assert(initialsSearchState.rowAvatarTexts[danielContactId] === "D", `Expected Daniel initials search result to render D, got ${initialsSearchState.rowAvatarTexts[danielContactId] || "<missing>"}`);
   screenshots[`${theme}_contacts_search_initials`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-initials`);
@@ -2407,9 +2432,10 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
   if (seed.writeEnabled) {
     const emailQuery = "one@example";
     const phoneQuery = "0101000";
-    const phraseQuery = "Linked to Alpha";
-    const reminderQuery = "reminder";
+    const summaryQuery = "Partner lead";
+    const staleActivityQuery = "Linked to Alpha";
     const noMatchQuery = "zzzz-no-match";
+    const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
 
     const emailSearchState = await expectContactsSearchRows(page, emailQuery, [proofContactId], config.timeoutMs);
     assert(emailSearchState.rowTitles.includes("Proof Contact One"), `Expected email query to return Proof Contact One, got ${emailSearchState.rowTitles.join(", ")}`);
@@ -2419,22 +2445,14 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     assert(phoneSearchState.rowTitles.includes("Proof Contact One"), `Expected phone query to return Proof Contact One, got ${phoneSearchState.rowTitles.join(", ")}`);
     screenshots[`${theme}_contacts_search_phone`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-phone`);
 
-    const phraseSearchState = await expectContactsSearchRows(page, phraseQuery, [proofContactId], config.timeoutMs);
-    assert(phraseSearchState.rowTitles.includes("Proof Contact One"), `Expected phrase query to return Proof Contact One, got ${phraseSearchState.rowTitles.join(", ")}`);
-    screenshots[`${theme}_contacts_search_phrase`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-phrase`);
+    const summarySearchState = await expectContactsSearchRows(page, summaryQuery, [proofContactId], config.timeoutMs);
+    assert(summarySearchState.rowTitles.includes("Proof Contact One"), `Expected summary query to return Proof Contact One, got ${summarySearchState.rowTitles.join(", ")}`);
+    screenshots[`${theme}_contacts_search_summary`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-filtered-summary`);
 
-    await setContactsSearchQuery(page, reminderQuery, config.timeoutMs);
-    await page.waitForFunction(expectedQuery => {
-      const input = document.querySelector(".light-contacts-search");
-      const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
-        .map(node => String(node.getAttribute("data-contact-id") || "").trim())
-        .filter(Boolean);
-      return input instanceof HTMLInputElement
-        && input.value === expectedQuery
-        && rowIds.includes("contact-me");
-    }, reminderQuery, { timeout: config.timeoutMs });
-    const reminderSearchState = await readContactsSearchState(page);
-    assert(reminderSearchState.rowIds.includes("contact-me"), `Expected reminder query to include contact-me, got ${reminderSearchState.rowIds.join(", ")}`);
+    const staleActivitySearchState = await expectContactsSearchRows(page, staleActivityQuery, [], config.timeoutMs);
+    assert(staleActivitySearchState.searchVisible, "Expected stale activity-only query to keep the Contacts search field visible");
+    assert(staleActivitySearchState.rowIds.length === 0, `Expected stale activity-only query to return no Contacts rows, got ${staleActivitySearchState.rowIds.join(", ")}`);
+    screenshots[`${theme}_contacts_search_activity_no_match`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-search-activity-no-match`);
 
     const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
     assert(emptySearchState.searchVisible, "Contacts search should stay visible when there are no matching results");
@@ -2455,7 +2473,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.locator(`button[data-contact-id="${proofContactId}"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-    const contactEditState = await readContactEditState(page);
+    const contactEditState = await waitForContactConnectedRows(page, connectedLabels, config.timeoutMs);
     assert(contactEditState.pageVisible, "Expected contact detail page to be visible");
     assert(contactEditState.mode === "view", `Expected contact detail to open in view mode, got ${contactEditState.mode}`);
     assert(!contactEditState.hasHeroContainer, "Expected contact detail to drop the hero container chrome");
@@ -2464,24 +2482,16 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     assert(contactEditState.titleFontSizePx >= 28, `Expected contact detail title font size to stay large, got ${contactEditState.titleFontSizePx}`);
     assert(contactEditState.action === "edit", `Expected contact detail to expose an edit action, got ${contactEditState.action}`);
     assert(!contactEditState.firstNameVisible && !contactEditState.lastNameVisible, "Expected name inputs to stay hidden until edit mode is entered");
+    assert(!contactEditState.hasActivitySection, "Expected contact detail to omit the Activity section");
     assert(contactEditState.hasConnectedSection, "Expected contact detail to keep Connected visible");
-    await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail", { requireActivity: true });
+    assert(contactEditState.connectedInfoRowCount >= 3, `Expected contact Connected rows to use generic info rows, got ${contactEditState.connectedInfoRowCount}`);
+    assert(contactEditState.connectedLinkedRecordFeedRowCount === 0, `Expected contact Connected rows to stop using linked-record feed rows, got ${contactEditState.connectedLinkedRecordFeedRowCount}`);
+    await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail");
     await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
     summary.contactProfileCards.push({ theme, contact: proofContactId, editor: contactEditState });
-    const linkedSection = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
-    await linkedSection.waitFor({ state: "visible", timeout: config.timeoutMs });
     assert(await page.getByText("NOTES").count() === 0, "Expected populated contact detail to avoid a separate Notes section.");
-    assert(await linkedSection.locator(".light-linked-record-feed-row").count() >= 3, "Expected populated contact detail to show mixed linked-record rows.");
-    assert(await linkedSection.locator(".light-info-row").count() === 0, "Expected linked records to use feed rows instead of legacy info rows.");
-    const connectedState = await readLinkedRecordSectionState(page, "connected");
-    assert(connectedState.bodyIsFlat, "Expected populated contact Connected section to render inside one shared flat-feed shell.");
-    assert(connectedState.flatRowCount === connectedState.rowCount, "Expected populated contact Connected rows to all use flat-feed styling.");
-    assert(connectedState.contiguousRows, "Expected populated contact Connected rows to render contiguously with no inter-row gaps.");
-    assert(connectedState.chevronCount === 0, "Expected populated contact Connected rows to omit trailing chevrons.");
-    assert(connectedState.chipCount === 0, "Expected populated contact Connected rows to omit pills.");
-    const linkedTexts = await linkedSection.locator(".light-linked-record-feed-row").allTextContents();
-    for (const label of ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"]) {
-      assert(linkedTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${linkedTexts.join(", ")}.`);
+    for (const label of connectedLabels) {
+      assert(contactEditState.connectedRowTexts.some(value => value.includes(label)), `Expected populated contact linked records to include ${label}, got ${contactEditState.connectedRowTexts.join(", ")}.`);
     }
     const filteredDetailState = await readGraphDetailState(page);
     assert(filteredDetailState.route === "contact-detail", `Expected contact-detail route, got ${filteredDetailState.route}`);
@@ -2509,7 +2519,7 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
     await page.locator(`button[data-contact-id="${proofContactId}"]`).click();
     await page.getByText("proof.one@example.com").first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-    await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail", { requireActivity: true });
+    await assertNoContactEndpoints(page, config, proofContactId, "Proof Contact One detail");
     await assertNoContactHtmlDocument(page, config, proofContactId, "Proof Contact One detail");
     screenshots[`${theme}_contacts_detail_reopened`] = await saveScreenshot(page, config.reportDir, `${theme}-contacts-detail`);
     await page.locator(`[data-workspace-target-kind="note"][data-workspace-target-id="${seed.pinnedNoteId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
@@ -2535,8 +2545,8 @@ async function proveContacts(page, config, seed, theme, screenshots, summary) {
         queries: {
           email: emailQuery,
           phone: phoneQuery,
-          phrase: phraseQuery,
-          reminder: reminderQuery,
+          summary: summaryQuery,
+          stale_activity: staleActivityQuery,
           no_match: noMatchQuery,
         }
       }
@@ -2571,6 +2581,7 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
     return;
   }
   const proofContactId = `${seed.runId}-contact-one`;
+  const davidContactId = `${seed.runId}-david-contact`;
   const updatedFirstName = "Updated";
   const updatedLastName = "Proof Contact";
   const updatedTitle = "Updated Proof Contact";
@@ -2579,13 +2590,23 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   const updatedPhone = "+1 (555) 010-3333";
   const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
   const expectedInitials = "UC";
+  const staleActivityQuery = "Linked to Alpha";
+  const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
 
   await backHome(page, theme, config.timeoutMs);
   await openTile(page, "Contacts", "contacts", config.timeoutMs);
+  await page.locator(`button[data-contact-id="${proofContactId}"]`).first().waitFor({ state: "visible", timeout: config.timeoutMs });
+  const baselineListState = await readContactsSearchState(page);
+  assert(baselineListState.rowDetails[proofContactId] === "Partner lead", `Expected Contacts row subtitle to drop activity suffix, got ${baselineListState.rowDetails[proofContactId] || "<missing>"}`);
+  const staleActivitySearchState = await expectContactsSearchRows(page, staleActivityQuery, [], config.timeoutMs);
+  assert(staleActivitySearchState.searchVisible, "Expected stale activity-only query to keep the Contacts search field visible");
+  assert(staleActivitySearchState.rowIds.length === 0, `Expected stale activity-only query to return no Contacts rows, got ${staleActivitySearchState.rowIds.join(", ")}`);
+  screenshots[`${theme}_contact_edit_activity_no_match`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-activity-no-match`);
+  await expectContactsSearchRows(page, "", baselineListState.rowIds, config.timeoutMs);
   await page.locator(`button[data-contact-id="${proofContactId}"]`).first().click();
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
   await waitForGraphText(page, "Proof Contact One", config.timeoutMs);
-  const initialEditState = await readContactEditState(page);
+  const initialEditState = await waitForContactConnectedRows(page, connectedLabels, config.timeoutMs);
   assert(initialEditState.pageVisible, "Expected classic contact detail to be visible");
   assert(initialEditState.route === "contact-detail", `Expected contact-detail route, got ${initialEditState.route}`);
   assert(initialEditState.mode === "view", `Expected classic detail to open in view mode, got ${initialEditState.mode}`);
@@ -2595,8 +2616,13 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(!initialEditState.identityHasCardChrome, "Expected classic detail identity header to stay chrome-free");
   assert(initialEditState.titleFontSizePx >= 28, `Expected classic detail title font size to stay large, got ${initialEditState.titleFontSizePx}`);
   assert(!initialEditState.firstNameVisible && !initialEditState.lastNameVisible, "Expected name inputs to stay hidden until edit mode is entered");
-  assert(!initialEditState.hasActivityInputs && !initialEditState.hasActivityAddButton, "Expected activity to stay read-only in the classic detail editor");
+  assert(!initialEditState.hasActivitySection, "Expected classic detail to omit the Activity section");
   assert(initialEditState.hasConnectedSection, "Expected classic detail to keep Connected visible");
+  assert(initialEditState.connectedInfoRowCount >= 3, `Expected contact Connected rows to use generic info rows, got ${initialEditState.connectedInfoRowCount}`);
+  assert(initialEditState.connectedLinkedRecordFeedRowCount === 0, `Expected contact Connected rows to stop using linked-record feed rows, got ${initialEditState.connectedLinkedRecordFeedRowCount}`);
+  for (const label of connectedLabels) {
+    assert(initialEditState.connectedRowTexts.some(value => value.includes(label)), `Expected contact Connected to include ${label}, got ${initialEditState.connectedRowTexts.join(", ")}`);
+  }
   screenshots[`${theme}_contact_edit_baseline`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-baseline`);
   screenshots[`${theme}_contact_edit_identity_view`] = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${theme}-contact-edit-identity-view`);
 
@@ -2612,7 +2638,7 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(editModeState.hasIdentityHeader, "Expected edit mode to keep the frameless identity header");
   assert(!editModeState.identityHasCardChrome, "Expected edit mode to keep the identity header chrome-free");
   assert(editModeState.firstNameVisible && editModeState.lastNameVisible, "Expected edit mode to expose first and last name inputs");
-  assert(!editModeState.hasActivityInputs && !editModeState.hasActivityAddButton, "Expected activity to remain read-only in edit mode");
+  assert(!editModeState.hasActivitySection, "Expected edit mode to keep Activity removed");
   screenshots[`${theme}_contact_edit_mode`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-mode`);
   screenshots[`${theme}_contact_edit_identity_edit`] = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${theme}-contact-edit-identity-edit`);
 
@@ -2693,10 +2719,7 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(reopenedState.summary === updatedSummary, `Expected reopened contact detail to keep summary ${updatedSummary}, got ${reopenedState.summary}`);
   assert(reopenedState.email === updatedEmail, `Expected reopened contact detail to keep email ${updatedEmail}, got ${reopenedState.email}`);
   assert(reopenedState.phone === updatedPhone, `Expected reopened contact detail to keep phone ${updatedPhone}, got ${reopenedState.phone}`);
-  assert(
-    JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Created by proof", "Linked to Alpha"]),
-    `Expected reopened contact detail to keep read-only activity rows, got ${JSON.stringify(reopenedState.activityValues)}`
-  );
+  assert(!reopenedState.hasActivitySection, "Expected reopened contact detail to keep Activity removed");
   assert(!reopenedState.hasPhotoPreview, "Expected photo removal to keep the detail editor on initials after reopen");
   await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
   await waitForLightRoute(page, "contact-detail", config.timeoutMs);
@@ -2708,12 +2731,27 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
   assert(reloadedState.summary === updatedSummary, `Expected contact detail reload to preserve summary ${updatedSummary}, got ${reloadedState.summary}`);
   assert(reloadedState.email === updatedEmail, `Expected contact detail reload to preserve email ${updatedEmail}, got ${reloadedState.email}`);
   assert(reloadedState.phone === updatedPhone, `Expected contact detail reload to preserve phone ${updatedPhone}, got ${reloadedState.phone}`);
-  assert(
-    JSON.stringify(reloadedState.activityValues) === JSON.stringify(["Created by proof", "Linked to Alpha"]),
-    `Expected contact detail reload to preserve read-only activity rows, got ${JSON.stringify(reloadedState.activityValues)}`
-  );
+  assert(!reloadedState.hasActivitySection, "Expected reloaded contact detail to keep Activity removed");
   assert(!reloadedState.hasPhotoPreview, "Expected contact detail reload to keep photo removal on initials");
   screenshots[`${theme}_contact_edit_reload`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-reload`);
+  await topBackToRoute(page, "contacts", "", config.timeoutMs);
+  await expectContactsSearchRows(page, "David", [davidContactId], config.timeoutMs);
+  await page.locator(`button[data-contact-id="${davidContactId}"]`).first().click();
+  await waitForLightRoute(page, "contact-detail", config.timeoutMs);
+  await waitForGraphText(page, "David", config.timeoutMs);
+  const emptyConnectedState = await readContactEditState(page);
+  assert(!emptyConnectedState.hasActivitySection, "Expected unlinked contact detail to keep Activity removed");
+  assert(!emptyConnectedState.hasConnectedSection, "Expected unlinked contact detail to omit Connected entirely");
+  screenshots[`${theme}_contact_edit_empty_connected`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-empty-connected`);
+
+  await backHome(page, theme, config.timeoutMs);
+  await openTile(page, "Tasks", "tasks", config.timeoutMs);
+  await page.locator(`.light-task-row[data-task-id="${seed.taskIds?.inline}"] .light-task-row-main`).first().click();
+  await waitForLightRoute(page, "task-detail", config.timeoutMs);
+  await waitForGraphText(page, "Proof Future Task", config.timeoutMs);
+  const taskConnectedRowCount = await page.locator('.light-info-row[data-task-connected-kind]').count();
+  assert(taskConnectedRowCount > 0, `Expected task Connected comparison to keep generic info rows, got ${taskConnectedRowCount}`);
+  screenshots[`${theme}_contact_edit_connected_comparison`] = await saveScreenshot(page, config.reportDir, `${theme}-contact-edit-connected-comparison`);
   await backHome(page, theme, config.timeoutMs);
 
   summary.contactEdits = summary.contactEdits || [];
@@ -2726,7 +2764,6 @@ async function proveContactsEdit(page, config, seed, theme, screenshots, summary
     updated_summary: updatedSummary,
     updated_email: updatedEmail,
     updated_phone: updatedPhone,
-    activity: Array.isArray(updatedRecord.metadata?.activity) ? updatedRecord.metadata.activity.slice() : [],
     photo_present: Boolean(String(updatedRecord.metadata?.photo || "").trim()),
     reload_stayed_on_contact: true,
   });

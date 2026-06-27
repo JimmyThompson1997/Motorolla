@@ -1076,6 +1076,7 @@ async function readContactsSearchState(page) {
     const rowData = rows.map(node => ({
       id: String(node.getAttribute("data-contact-id") || "").trim(),
       title: String(node.querySelector(".light-text-stack strong")?.textContent || "").trim(),
+      detail: String(node.querySelector(".light-text-stack span")?.textContent || "").trim(),
       avatarText: String(node.querySelector(".light-avatar")?.textContent || "").trim(),
     }));
     return {
@@ -1084,6 +1085,7 @@ async function readContactsSearchState(page) {
       query: search instanceof HTMLInputElement ? search.value : "",
       row_ids: rowData.map(row => row.id).filter(Boolean),
       row_titles: rowData.map(row => row.title).filter(Boolean),
+      row_details: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.detail])),
       row_avatar_texts: Object.fromEntries(rowData.filter(row => row.id).map(row => [row.id, row.avatarText])),
       empty_text: String(empty?.textContent || "").replace(/\s+/g, " ").trim(),
     };
@@ -1217,16 +1219,17 @@ async function readContactEditState(page) {
       const input = document.querySelector(`[data-contact-edit-field="${key}"]`);
       return input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.value : "";
     };
-    const activityRows = Array.from(document.querySelectorAll(".light-contact-detail-activity-host .light-info-row"));
-    const activityValues = activityRows.map(row => {
-      const valueNode = row.querySelector(".light-text-stack span");
-      return String(valueNode?.textContent || row.textContent || "").replace(/\s+/g, " ").trim();
-    }).filter(Boolean);
     const status = document.querySelector("[data-contact-autosave-status]");
     const firstNameInput = document.querySelector('[data-contact-edit-field="first_name"]');
     const lastNameInput = document.querySelector('[data-contact-edit-field="last_name"]');
     const actionButton = document.querySelector("[data-contact-detail-action]");
     const summaryView = document.querySelector(".light-contact-detail-summary");
+    const infoSections = Array.from(pageRoot?.querySelectorAll(".light-info-section") || []);
+    const sectionTitle = section => String(section?.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase();
+    const connectedSection = infoSections.find(section => sectionTitle(section) === "connected") || null;
+    const activitySection = infoSections.find(section => sectionTitle(section) === "activity") || null;
+    const connectedInfoRows = Array.from(connectedSection?.querySelectorAll(".light-info-row") || []);
+    const connectedLinkedRecordFeedRows = Array.from(connectedSection?.querySelectorAll(".light-linked-record-feed-row") || []);
     const identityRect = identity instanceof HTMLElement
       ? (() => {
           const rect = identity.getBoundingClientRect();
@@ -1260,23 +1263,45 @@ async function readContactEditState(page) {
       summary: fieldValue("summary"),
       email: fieldValue("email"),
       phone: fieldValue("phone"),
-      activityValues,
       firstNameVisible: isVisible(firstNameInput),
       lastNameVisible: isVisible(lastNameInput),
       summaryVisible: isVisible(summaryView),
-      hasConnectedSection: Boolean(pageRoot?.querySelector('[data-linked-records-title="connected"]')),
+      hasConnectedSection: Boolean(connectedSection),
+      hasActivitySection: Boolean(activitySection),
+      sectionTitles: infoSections.map(section => String(section.querySelector(".light-section-title")?.textContent || "").trim()).filter(Boolean),
+      connectedInfoRowCount: connectedInfoRows.length,
+      connectedLinkedRecordFeedRowCount: connectedLinkedRecordFeedRows.length,
+      connectedRowTexts: connectedInfoRows
+        .map(row => String(row.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean),
       hasPhotoPreview: Boolean(pageRoot?.querySelector(".light-avatar.has-photo img")),
       hasHeroContainer: Boolean(pageRoot?.querySelector(".light-contact-detail-hero")),
       hasIdentityHeader: Boolean(identity),
       identityHasCardChrome: Boolean(identityStyle && (!hasTransparentBackground || identityStyle.boxShadow !== "none" || borderWidth || (Number.isFinite(borderRadius) && borderRadius > 0))),
       identityRect,
       action: String(actionButton?.getAttribute("data-contact-detail-action") || "").trim(),
-      hasActivityInputs: Boolean(pageRoot?.querySelector("input[data-contact-activity-index]")),
-      hasActivityAddButton: Boolean(pageRoot?.querySelector('[data-contact-activity-add="true"]')),
       autosaveStatus: String(status?.getAttribute("data-contact-autosave-status") || "").trim(),
       autosaveLabel: String(status?.textContent || "").trim(),
     };
   });
+}
+
+async function waitForContactConnectedRows(page, labels, timeoutMs) {
+  await page.waitForFunction(expectedLabels => {
+    const pageRoot = document.querySelector(".light-contact-detail-page");
+    const infoSections = Array.from(pageRoot?.querySelectorAll(".light-info-section") || []);
+    const connectedSection = infoSections.find(section => String(section.querySelector(".light-section-title")?.textContent || "").trim().toLowerCase() === "connected");
+    if (!connectedSection) {
+      return false;
+    }
+    const infoRows = Array.from(connectedSection.querySelectorAll(".light-info-row"));
+    const linkedFeedRows = connectedSection.querySelectorAll(".light-linked-record-feed-row").length;
+    const rowTexts = infoRows
+      .map(row => String(row.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    return linkedFeedRows === 0 && expectedLabels.every(label => rowTexts.some(text => text.includes(label)));
+  }, labels, { timeout: timeoutMs });
+  return readContactEditState(page);
 }
 
 async function saveContactDetailIdentityScreenshot(page, reportDir, name, timeoutMs) {
@@ -2136,11 +2161,13 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
 
   if (shouldRunRoute(config, "contacts")) {
     const stabilityQuery = "dav";
-    const phraseQuery = "Linked to live alpha";
+    const summaryQuery = "primary task";
     const phoneQuery = "0188";
-    const reminderQuery = "reminder";
+    const staleActivityQuery = "Linked to live alpha";
+    const staleSelfActivityQuery = "reminder";
     const noMatchQuery = "zzzz-no-match";
-    const initialsQuery = "single-name proof";
+    const initialsQuery = "Da";
+    const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
 
     await goHome(page, config);
     await openRouteFromHome(page, "contacts", config.timeoutMs);
@@ -2155,6 +2182,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       JSON.stringify(baselineSearchState.row_titles) === JSON.stringify(baselineSearchState.row_titles.slice().sort((left, right) => left.localeCompare(right))),
       `${mode}: expected Contacts baseline list to stay alphabetical, got ${baselineSearchState.row_titles.join(", ")}`
     );
+    assert(baselineSearchState.row_details[seed.contactId] === "Proof contact linked from the primary task.", `${mode}: expected Contacts row subtitle to drop activity suffix, got ${baselineSearchState.row_details[seed.contactId] || "<missing>"}`);
     assert(baselineSearchState.row_avatar_texts["contact-me"] === "M", `${mode}: Expected contact-me avatar to stay M, got ${baselineSearchState.row_avatar_texts["contact-me"] || "<missing>"}`);
     assert(baselineSearchState.row_avatar_texts[seed.davidContactId] === "D", `${mode}: Expected David avatar to render a single D initial, got ${baselineSearchState.row_avatar_texts[seed.davidContactId] || "<missing>"}`);
     assert(baselineSearchState.row_avatar_texts[seed.danielContactId] === "D", `${mode}: Expected Daniel avatar to render a single D initial, got ${baselineSearchState.row_avatar_texts[seed.danielContactId] || "<missing>"}`);
@@ -2224,31 +2252,32 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     });
     await expectContactsSearchRows(page, "", baselineRowIds, config.timeoutMs);
 
-    const phraseSearchState = await expectContactsSearchRows(page, phraseQuery, [seed.contactId], config.timeoutMs);
-    assert(phraseSearchState.row_titles.includes(seed.contactTitle), `${mode}: phrase query should return the seeded contact, got ${phraseSearchState.row_titles.join(", ")}`);
+    const summarySearchState = await expectContactsSearchRows(page, summaryQuery, [seed.contactId], config.timeoutMs);
+    assert(summarySearchState.row_titles.includes(seed.contactTitle), `${mode}: summary query should return the seeded contact, got ${summarySearchState.row_titles.join(", ")}`);
     await recorder.capture({
       route: "contacts",
-      action: "Filter Contacts by activity phrase",
-      expected: "Searching by a contact activity phrase narrows the Contacts list to the matching contact.",
-      confirmation: "Activity phrase filtering returned only the seeded contact.",
-      observed: { query: phraseQuery, contacts_search: phraseSearchState },
+      action: "Filter Contacts by summary text",
+      expected: "Searching by a contact summary phrase narrows the Contacts list to the matching contact.",
+      confirmation: "Summary-text filtering returned only the seeded contact.",
+      observed: { query: summaryQuery, contacts_search: summarySearchState },
     });
 
     const phoneSearchState = await expectContactsSearchRows(page, phoneQuery, [seed.contactId], config.timeoutMs);
     assert(phoneSearchState.row_titles.includes(seed.contactTitle), `${mode}: phone query should return the seeded contact, got ${phoneSearchState.row_titles.join(", ")}`);
 
-    await setContactsSearchQuery(page, reminderQuery, config.timeoutMs);
-    await page.waitForFunction(expectedQuery => {
-      const input = document.querySelector(".light-contacts-search");
-      const rowIds = Array.from(document.querySelectorAll(".light-contact-row"))
-        .map(node => String(node.getAttribute("data-contact-id") || "").trim())
-        .filter(Boolean);
-      return input instanceof HTMLInputElement
-        && input.value === expectedQuery
-        && rowIds.includes("contact-me");
-    }, reminderQuery, { timeout: config.timeoutMs });
-    const reminderSearchState = await readContactsSearchState(page);
-    assert(reminderSearchState.row_ids.includes("contact-me"), `${mode}: reminder query should include contact-me, got ${reminderSearchState.row_ids.join(", ")}`);
+    const staleActivitySearchState = await expectContactsSearchRows(page, staleActivityQuery, [], config.timeoutMs);
+    assert(staleActivitySearchState.search_visible, `${mode}: stale activity-only query should keep the search visible`);
+    assert(staleActivitySearchState.row_ids.length === 0, `${mode}: Expected stale activity-only phrase to return zero Contacts rows, got ${staleActivitySearchState.row_ids.join(", ")}`);
+    await recorder.capture({
+      route: "contacts",
+      action: "Reject Contacts activity-only phrase",
+      expected: "An old activity-only phrase no longer matches Contacts once activity becomes UI-inert.",
+      confirmation: "The stale activity-only phrase returned zero Contacts rows.",
+      observed: { query: staleActivityQuery, contacts_search: staleActivitySearchState },
+    });
+
+    const staleSelfActivitySearchState = await expectContactsSearchRows(page, staleSelfActivityQuery, [], config.timeoutMs);
+    assert(staleSelfActivitySearchState.row_ids.length === 0, `${mode}: Expected stale self activity-only phrase to return zero Contacts rows, got ${staleSelfActivitySearchState.row_ids.join(", ")}`);
 
     const emptySearchState = await expectContactsSearchRows(page, noMatchQuery, [], config.timeoutMs);
     assert(emptySearchState.search_visible, `${mode}: Contacts search should remain visible when no results match`);
@@ -2277,22 +2306,30 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       observed: { contacts_search: clearedSearchState },
     });
 
-    await expectContactsSearchRows(page, phraseQuery, [seed.contactId], config.timeoutMs);
+    await expectContactsSearchRows(page, summaryQuery, [seed.contactId], config.timeoutMs);
     await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
+    const filteredDetailState = await waitForContactConnectedRows(page, connectedLabels, config.timeoutMs);
+    assert(!filteredDetailState.hasActivitySection, `${mode}: expected classic detail to omit the Activity section`);
+    assert(filteredDetailState.hasConnectedSection, `${mode}: expected contact detail to keep Connected visible`);
+    assert(filteredDetailState.connectedInfoRowCount >= 3, `${mode}: expected contact Connected rows to use generic info rows, got ${filteredDetailState.connectedInfoRowCount}`);
+    assert(filteredDetailState.connectedLinkedRecordFeedRowCount === 0, `${mode}: expected contact Connected rows to stop using linked-record feed rows, got ${filteredDetailState.connectedLinkedRecordFeedRowCount}`);
+    for (const label of connectedLabels) {
+      assert(filteredDetailState.connectedRowTexts.some(value => value.includes(label)), `${mode}: expected contact Connected to include ${label}, got ${filteredDetailState.connectedRowTexts.join(", ")}`);
+    }
     await recorder.capture({
       route: "contact-detail",
       action: "Open seeded contact detail from filtered list",
       expected: "A filtered Contacts result still opens its contact detail normally.",
       confirmation: "Seeded contact detail opened from the filtered Contacts list.",
-      observed: { contact_title: seed.contactTitle, query: phraseQuery },
+      observed: { contact_title: seed.contactTitle, query: summaryQuery, contact_edit: filteredDetailState },
     });
 
     await clickBack(page, config.timeoutMs);
     await waitForRoute(page, "contacts", config.timeoutMs);
     const backToFilteredState = await readContactsSearchState(page);
-    assert(backToFilteredState.query === phraseQuery, `${mode}: expected Back to preserve the Contacts query, got ${backToFilteredState.query}`);
+    assert(backToFilteredState.query === summaryQuery, `${mode}: expected Back to preserve the Contacts query, got ${backToFilteredState.query}`);
     assert(
       JSON.stringify(backToFilteredState.row_ids) === JSON.stringify([seed.contactId]),
       `${mode}: expected Back to restore the filtered Contacts list, got ${backToFilteredState.row_ids.join(", ")}`
@@ -2302,7 +2339,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       action: "Return to filtered Contacts list",
       expected: "Back from contact detail returns to the same filtered Contacts list with the same query.",
       confirmation: "Contacts Back restored the same filtered list and query.",
-      observed: { query: phraseQuery, contacts_search: backToFilteredState },
+      observed: { query: summaryQuery, contacts_search: backToFilteredState },
     });
 
     await goHome(page, config);
@@ -2322,14 +2359,22 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     const updatedLastName = "Live Contact";
     const photoPath = path.resolve("pucky_vm/ui_src/fixtures/contact_photos/proof-contact.webp");
     const expectedInitials = "UC";
+    const staleActivityQuery = "Linked to live alpha";
+    const connectedLabels = ["Proof Pinned Note", "Proof Alpha Project", "Proof Graph Meeting"];
 
     await goHome(page, config);
     await openRouteFromHome(page, "contacts", config.timeoutMs);
     await waitForSeededContact(page, seed, config.timeoutMs);
+    const baselineListState = await readContactsSearchState(page);
+    assert(baselineListState.row_details[seed.contactId] === "Proof contact linked from the primary task.", `${mode}: expected Contacts row subtitle to drop activity suffix, got ${baselineListState.row_details[seed.contactId] || "<missing>"}`);
+    const staleActivitySearchState = await expectContactsSearchRows(page, staleActivityQuery, [], config.timeoutMs);
+    assert(staleActivitySearchState.search_visible, `${mode}: stale activity-only query should keep the search visible`);
+    assert(staleActivitySearchState.row_ids.length === 0, `${mode}: Expected stale activity-only phrase to return zero Contacts rows, got ${staleActivitySearchState.row_ids.join(", ")}`);
+    await expectContactsSearchRows(page, "", baselineListState.row_ids, config.timeoutMs);
     await page.locator(`.light-contact-row[data-contact-id="${seed.contactId}"]`).first().click();
     await waitForRoute(page, "contact-detail", config.timeoutMs);
     await waitForTextInBody(page, seed.contactTitle, config.timeoutMs);
-    const editState = await readContactEditState(page);
+    const editState = await waitForContactConnectedRows(page, connectedLabels, config.timeoutMs);
     assert(editState.pageVisible, `${mode}: expected classic contact detail to be visible`);
     assert(editState.route === "contact-detail", `${mode}: expected contact-detail route, got ${editState.route}`);
     assert(editState.mode === "view", `${mode}: expected classic detail to open in view mode, got ${editState.mode}`);
@@ -2339,8 +2384,13 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(!editState.identityHasCardChrome, `${mode}: expected classic detail identity header to stay chrome-free`);
     assert(editState.titleFontSizePx >= 28, `${mode}: expected classic detail title font size to stay large, got ${editState.titleFontSizePx}`);
     assert(!editState.firstNameVisible && !editState.lastNameVisible, `${mode}: expected name inputs to stay hidden until edit mode`);
-    assert(!editState.hasActivityInputs && !editState.hasActivityAddButton, `${mode}: expected activity to remain read-only in classic detail`);
+    assert(!editState.hasActivitySection, `${mode}: expected classic detail to omit the Activity section`);
     assert(editState.hasConnectedSection, `${mode}: expected Connected to remain visible on the detail`);
+    assert(editState.connectedInfoRowCount >= 3, `${mode}: expected contact Connected rows to use generic info rows, got ${editState.connectedInfoRowCount}`);
+    assert(editState.connectedLinkedRecordFeedRowCount === 0, `${mode}: expected contact Connected rows to stop using linked-record feed rows, got ${editState.connectedLinkedRecordFeedRowCount}`);
+    for (const label of connectedLabels) {
+      assert(editState.connectedRowTexts.some(value => value.includes(label)), `${mode}: expected contact Connected to include ${label}, got ${editState.connectedRowTexts.join(", ")}`);
+    }
     const identityViewScreenshot = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${mode}-02a-contact-detail-identity-view`, config.timeoutMs);
     await recorder.capture({
       route: "contact-detail",
@@ -2362,7 +2412,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(editModeState.hasIdentityHeader, `${mode}: expected edit mode to keep the frameless identity header`);
     assert(!editModeState.identityHasCardChrome, `${mode}: expected edit mode to keep the identity header chrome-free`);
     assert(editModeState.firstNameVisible && editModeState.lastNameVisible, `${mode}: expected editable first + last name inputs in edit mode`);
-    assert(!editModeState.hasActivityInputs && !editModeState.hasActivityAddButton, `${mode}: expected activity to remain read-only in edit mode`);
+    assert(!editModeState.hasActivitySection, `${mode}: expected edit mode to keep Activity removed`);
     const identityEditScreenshot = await saveContactDetailIdentityScreenshot(page, config.reportDir, `${mode}-03a-contact-detail-identity-edit`, config.timeoutMs);
     await recorder.capture({
       route: "contact-detail",
@@ -2401,7 +2451,6 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
         updated_summary: updatedSummary,
         updated_email: updatedEmail,
         updated_phone: updatedPhone,
-        read_only_activity: Array.isArray(updatedRecord.metadata?.activity) ? updatedRecord.metadata.activity.slice() : [],
         typing_trace: typingTrace,
       },
     });
@@ -2466,10 +2515,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(reopenedState.summary === updatedSummary, `${mode}: expected reopened detail to preserve summary, got ${reopenedState.summary}`);
     assert(reopenedState.email === updatedEmail, `${mode}: expected reopened detail to preserve email, got ${reopenedState.email}`);
     assert(reopenedState.phone === updatedPhone, `${mode}: expected reopened detail to preserve phone, got ${reopenedState.phone}`);
-    assert(
-      JSON.stringify(reopenedState.activityValues) === JSON.stringify(["Created by proof", "Linked to live alpha"]),
-      `${mode}: expected reopened detail to preserve read-only activity, got ${JSON.stringify(reopenedState.activityValues)}`
-    );
+    assert(!reopenedState.hasActivitySection, `${mode}: expected reopened detail to keep Activity removed`);
     assert(!reopenedState.hasPhotoPreview, `${mode}: expected reopened detail to stay initials-only after photo removal`);
     await page.reload({ waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForRoute(page, "contact-detail", config.timeoutMs);
@@ -2481,10 +2527,7 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
     assert(reloadedState.summary === updatedSummary, `${mode}: expected reloaded detail to preserve summary, got ${reloadedState.summary}`);
     assert(reloadedState.email === updatedEmail, `${mode}: expected reloaded detail to preserve email, got ${reloadedState.email}`);
     assert(reloadedState.phone === updatedPhone, `${mode}: expected reloaded detail to preserve phone, got ${reloadedState.phone}`);
-    assert(
-      JSON.stringify(reloadedState.activityValues) === JSON.stringify(["Created by proof", "Linked to live alpha"]),
-      `${mode}: expected reloaded detail to preserve read-only activity, got ${JSON.stringify(reloadedState.activityValues)}`
-    );
+    assert(!reloadedState.hasActivitySection, `${mode}: expected reloaded detail to keep Activity removed`);
     assert(!reloadedState.hasPhotoPreview, `${mode}: expected reloaded detail to stay initials-only after photo removal`);
     await recorder.capture({
       route: "contact-detail",
@@ -2500,6 +2543,17 @@ async function runRouteTour(page, config, mode, seed, runtimeMeeting = null) {
       confirmation: "The edited row reappeared in Contacts and reopening detail showed the persisted autosaved values.",
       observed: { updated_title: updatedTitle, contacts_search: editedListState, reopened_state: reopenedState },
     });
+
+    await clickBack(page, config.timeoutMs);
+    await waitForRoute(page, "contacts", config.timeoutMs);
+    await expectContactsSearchRows(page, "David", [seed.davidContactId], config.timeoutMs);
+    await page.locator(`.light-contact-row[data-contact-id="${seed.davidContactId}"]`).first().click();
+    await waitForRoute(page, "contact-detail", config.timeoutMs);
+    await waitForTextInBody(page, "David", config.timeoutMs);
+    const emptyConnectedState = await readContactEditState(page);
+    assert(!emptyConnectedState.hasActivitySection, `${mode}: expected unlinked contact detail to omit the Activity section`);
+    assert(!emptyConnectedState.hasConnectedSection, `${mode}: expected unlinked contact detail to omit Connected entirely`);
+    await goHome(page, config);
   }
 
   return {

@@ -5984,7 +5984,6 @@
     const meta = contact && typeof contact === "object" && contact.metadata && typeof contact.metadata === "object"
       ? contact.metadata
       : {};
-    const activity = Array.isArray(meta.activity) ? meta.activity : [];
     return [
       contact?.title,
       contact?.summary,
@@ -5993,7 +5992,6 @@
       meta.last_name,
       meta.email,
       meta.phone,
-      ...activity,
     ]
       .map(value => String(value || "").trim())
       .filter(Boolean);
@@ -6504,8 +6502,6 @@
     const refs = contactDetailPageRefs;
     const contactId = contactRecordId(contact);
     const editMode = Boolean(state.contacts.editMode);
-    const activity = contactDraftActivity(draft, contact).map(item => normalizeContactText(item)).filter(Boolean);
-    const activityKey = JSON.stringify(activity);
     refs.page.dataset.contactId = contactId;
     refs.page.dataset.contactDetailId = contactId;
     refs.page.dataset.contactDetailMode = editMode ? "edit" : "view";
@@ -6534,38 +6530,18 @@
     refs.saveStatus.dataset.contactSaveState = state.contacts.editStatus || "idle";
     syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);
     syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);
-    if (refs.activityHost.dataset.activityKey !== activityKey) {
-      refs.activityHost.dataset.activityKey = activityKey;
-      if (!activity.length) {
-        refs.activityHost.replaceChildren();
-      } else {
-        refs.activityHost.replaceChildren(
-          lightInfoSection("Activity", activity.map(item => ({
-            icon: "chat",
-            accentKey: "notes",
-            label: "Activity",
-            value: item,
-          })))
-        );
-      }
-    }
-    if (refs.notesHost.dataset.contactId !== contactId) {
-      refs.notesHost.dataset.contactId = contactId;
-      const notes = lightLinkedNotesSection(contact);
-      refs.notesHost.replaceChildren(...(notes ? [notes] : []));
-    }
-    if (refs.connectedHost.dataset.contactId !== contactId) {
-      refs.connectedHost.dataset.contactId = contactId;
-      refs.connectedHost.replaceChildren(
-        lightLinkedRecordSection(contact, {
-          title: "Connected",
-          showWhenEmpty: true,
-          showChips: false,
-          showChevron: false,
-          variant: "flat",
-          fromRoute: "contact-detail"
-        })
-      );
+    const connectedRows = contactConnectedRows(contact);
+    const connectedKey = connectedRows.map(row => [
+      row.kind,
+      row.target?.id || "",
+      row.label,
+      row.value,
+    ].join(":")).join("|");
+    if (refs.connectedHost.dataset.connectedKey !== connectedKey) {
+      refs.connectedHost.dataset.connectedKey = connectedKey;
+      refs.connectedHost.replaceChildren(...(connectedRows.length
+        ? [lightInfoSection("Connected", connectedRows, { showTrailingChevron: false })]
+        : []));
     }
   }
 
@@ -6776,10 +6752,8 @@
       contactCard.append(emailField.row, phoneField.row);
       contactSection.append(contactCard);
 
-      const activityHost = el("div", "light-contact-detail-activity-host");
-      const notesHost = el("div", "light-contact-detail-notes-host");
       const connectedHost = el("div", "light-contact-detail-connected");
-      page.append(identity, contactSection, activityHost, notesHost, connectedHost);
+      page.append(identity, contactSection, connectedHost);
       contactDetailPageRefs = {
         page,
         actionSlot,
@@ -6796,8 +6770,6 @@
         saveStatus,
         emailField,
         phoneField,
-        activityHost,
-        notesHost,
         connectedHost,
       };
       contactDetailPageNode = page;
@@ -9599,6 +9571,51 @@
     return lightInfoSection(options.title || "Notes", rows, { showTrailingChevron: options.showTrailingChevron });
   }
 
+  function contactConnectedRows(contact) {
+    const rows = [];
+    const seen = new Set();
+    workspaceLinkedEntries(contact, { currentKind: "contact" }).forEach(entry => {
+      const target = entry.target || workspaceTargetForKind(entry.relatedKind, entry.related?.id || entry.relatedId);
+      const key = target?.kind && target?.id
+        ? `${target.kind}:${target.id}`
+        : `${entry.relatedKind}:${entry.relatedId}`;
+      if (!target || !key || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      const recencyMs = linkedRecordRecencyMs(entry.relatedKind, entry.related);
+      const value = entry.relatedKind === "note"
+        ? String(entry.related?.summary || entry.relation || "Note").trim() || "Note"
+        : connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true });
+      rows.push({
+        icon: graphKindIcon(entry.relatedKind),
+        accentKey: graphKindAccentKey(entry.relatedKind),
+        label: String(entry.related?.title || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),
+        value,
+        target,
+        kind: entry.relatedKind,
+        recencyMs,
+        fromRoute: "contact-detail",
+        dataset: {
+          contactConnectedKind: entry.relatedKind,
+          contactConnectedRecencyMs: String(recencyMs || 0),
+        },
+      });
+    });
+    rows.sort((left, right) => {
+      const recencyDelta = Number(right.recencyMs || 0) - Number(left.recencyMs || 0);
+      if (recencyDelta !== 0) {
+        return recencyDelta;
+      }
+      const kindDelta = String(left.kind || "").localeCompare(String(right.kind || ""));
+      if (kindDelta !== 0) {
+        return kindDelta;
+      }
+      return String(left.label || "").localeCompare(String(right.label || ""));
+    });
+    return rows;
+  }
+
   function connectedRecordEntries(records, options = {}) {
     const includeKinds = Array.isArray(options.includeKinds) && options.includeKinds.length
       ? new Set(options.includeKinds.map(value => String(value || "").trim()).filter(Boolean))
@@ -12081,9 +12098,7 @@
   }
 
   function lightContactCopy(contact) {
-    const meta = contact.metadata || {};
-    const activity = Array.isArray(meta.activity) && meta.activity.length ? meta.activity[0] : "";
-    return lightTextStack(contactDisplayName(contact), `${contact.summary || "Contact"}${activity ? `${DOT}${activity}` : ""}`);
+    return lightTextStack(contactDisplayName(contact), contact.summary || "Contact");
   }
 
   function lightAvatar(contact, size = "") {

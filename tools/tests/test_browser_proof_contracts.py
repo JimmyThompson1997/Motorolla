@@ -551,8 +551,8 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "traceContactsSearchTyping" in source
     assert 'const emailQuery = "one@example";' in source
     assert 'const phoneQuery = "0101000";' in source
-    assert 'const phraseQuery = "Linked to Alpha";' in source
-    assert 'const reminderQuery = "reminder";' in source
+    assert 'const summaryQuery = "Partner lead";' in source
+    assert 'const staleActivityQuery = "Linked to Alpha";' in source
     assert 'const noMatchQuery = "zzzz-no-match";' in source
     assert 'const stabilityQuery = "dav";' in source
     assert "No contacts match your search." in source
@@ -560,9 +560,11 @@ def test_workspace_apps_browser_proof_captures_contacts_search_contract() -> Non
     assert "Expected Contacts search to reset after leaving the Contacts surface" in source
     assert "Expected Contacts search typing to avoid blur/focusout while filtering" in source
     assert "Expected Contacts search typing to keep the same mounted input" in source
+    assert "Expected stale activity-only query to return no Contacts rows" in source
     assert "contacts-search-filtered-email" in source
     assert "contacts-search-filtered-phone" in source
-    assert "contacts-search-filtered-phrase" in source
+    assert "contacts-search-filtered-summary" in source
+    assert "contacts-search-activity-no-match" in source
     assert "contacts-search-empty" in source
     assert "contacts-search-cleared" in source
     assert "contacts-search-detail-from-filter" in source
@@ -606,8 +608,12 @@ def test_workspace_apps_browser_proof_captures_contacts_edit_contract() -> None:
     assert "Expected contact edit to remove the uploaded photo" in source
     assert "Expected photo removal to restore derived initials" in source
     assert "Expected contact detail reload to stay on the edited contact" in source
-    assert "Expected activity to stay read-only in the classic detail editor" in source
-    assert "Expected activity to remain read-only in edit mode" in source
+    assert "Expected classic detail to omit the Activity section" in source
+    assert "Expected edit mode to keep Activity removed" in source
+    assert "Expected contact Connected rows to use generic info rows" in source
+    assert "Expected contact Connected rows to stop using linked-record feed rows" in source
+    assert "Expected unlinked contact detail to omit Connected entirely" in source
+    assert "contact-edit-connected-comparison" in source
     assert 'input[type="file"][data-contact-photo-input="true"]' in source
 
 

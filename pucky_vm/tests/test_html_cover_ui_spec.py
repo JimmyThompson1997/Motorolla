@@ -1720,12 +1720,8 @@ def test_workspace_detail_routes_use_notes_only_rich_content_model() -> None:
     assert 'const linkedRows = lightLinkedRecordRows(contact, { excludeKinds: ["note"] });' not in contact_detail
     assert 'const connectedHost = el("div", "light-contact-detail-connected");' in contact_detail
     assert "refs.connectedHost.replaceChildren(" in contact_detail_sync
-    assert 'title: "Connected"' in contact_detail_sync
-    assert "showWhenEmpty: true" in contact_detail_sync
-    assert 'showChips: false,' in contact_detail_sync
-    assert 'showChevron: false,' in contact_detail_sync
-    assert 'variant: "flat",' in contact_detail_sync
-    assert 'fromRoute: "contact-detail"' in contact_detail_sync
+    assert 'lightInfoSection("Connected", connectedRows, { showTrailingChevron: false })' in contact_detail_sync
+    assert "lightLinkedRecordSection(contact" not in contact_detail_sync
     assert "const title = options.title || \"Linked records\";" in linked_record_section
     assert "const showWhenEmpty = options.showWhenEmpty === true;" in linked_record_section
     assert 'const flatFeed = String(options.variant || "").trim().toLowerCase() === "flat";' in linked_record_section
@@ -2445,10 +2441,12 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     contacts_page = function_block(app, "lightContactsPage")
     contacts_search = function_block(app, "lightContactsSearchField")
     contacts_list_items = function_block(app, "contactsListItems")
+    light_contact_copy = function_block(app, "lightContactCopy")
     sync_contacts_page = function_block(app, "syncContactsPage")
     sync_contacts_search_input = function_block(app, "syncContactsSearchInput")
     contact_search_terms = function_block(app, "contactSearchTerms")
     contact_matches_search = function_block(app, "contactMatchesSearch")
+    contact_connected_rows = function_block(app, "contactConnectedRows")
     filtered_contacts = function_block(app, "filteredContactsListItems")
     bind_contact_detail_text_field = function_block(app, "bindContactDetailTextField")
     build_contact_detail_field_row = function_block(app, "buildContactDetailFieldRow")
@@ -2516,8 +2514,17 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert "meta.last_name" in contact_search_terms
     assert "meta.email" in contact_search_terms
     assert "meta.phone" in contact_search_terms
-    assert "...activity," in contact_search_terms
+    assert "meta.activity" not in contact_search_terms
+    assert "...activity," not in contact_search_terms
     assert "phoneDigits.includes(queryDigits)" in contact_matches_search
+    assert "meta.activity" not in light_contact_copy
+    assert 'return lightTextStack(contactDisplayName(contact), contact.summary || "Contact");' in light_contact_copy
+    assert "function contactConnectedRows(contact) {" in app
+    assert 'workspaceLinkedEntries(contact, { currentKind: "contact" })' in contact_connected_rows
+    assert 'const key = target?.kind && target?.id' in contact_connected_rows
+    assert 'label: String(entry.related?.title || graphKindLabel(entry.relatedKind)).trim() || graphKindLabel(entry.relatedKind),' in contact_connected_rows
+    assert 'connectedRecordValue(entry.relatedKind, entry.related, entry.relation, { preferSummary: true })' in contact_connected_rows
+    assert 'rows.sort((left, right) => {' in contact_connected_rows
     assert 'refs.empty.hidden = contacts.length > 0;' in sync_contacts_page
     assert 'refs.list.hidden = contacts.length === 0;' in sync_contacts_page
     assert 'No contacts match your search.' in sync_contacts_page
@@ -2558,8 +2565,9 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert 'photoInput.dataset.contactPhotoInput = "true";' in contact_detail
     assert 'removePhoto.dataset.contactPhotoRemove = "true";' in contact_detail
     assert 'saveStatus.dataset.contactAutosaveStatus = "idle";' in contact_detail
-    assert 'page.append(identity, contactSection, activityHost, notesHost, connectedHost);' in contact_detail
-    assert 'const notes = lightLinkedNotesSection(contact);' not in contact_detail
+    assert 'const activityHost = el("div", "light-contact-detail-activity-host");' not in contact_detail
+    assert 'const notesHost = el("div", "light-contact-detail-notes-host");' not in contact_detail
+    assert 'page.append(identity, contactSection, connectedHost);' in contact_detail
     assert 'lightNavigate("contact-edit", { from: "contact-detail" });' not in contact_detail
     assert 'Add activity' not in contact_detail
     assert "lightHtmlDocument(contact" not in contact_detail
@@ -2574,7 +2582,14 @@ def test_contacts_keep_search_sync_and_restore_classic_detail_edit_mode() -> Non
     assert 'refs.saveStatus.dataset.contactAutosaveStatus = state.contacts.editStatus || "idle";' in sync_contact_detail_editor
     assert 'syncContactDetailFieldRow(refs.emailField, draft.email || "", editMode);' in sync_contact_detail_editor
     assert 'syncContactDetailFieldRow(refs.phoneField, draft.phone || "", editMode);' in sync_contact_detail_editor
-    assert 'refs.connectedHost.replaceChildren(' in sync_contact_detail_editor
+    assert 'const connectedRows = contactConnectedRows(contact);' in sync_contact_detail_editor
+    assert 'const connectedKey = connectedRows.map(row => [' in sync_contact_detail_editor
+    assert 'if (refs.connectedHost.dataset.connectedKey !== connectedKey) {' in sync_contact_detail_editor
+    assert 'refs.connectedHost.dataset.connectedKey = connectedKey;' in sync_contact_detail_editor
+    assert 'lightInfoSection("Connected", connectedRows, { showTrailingChevron: false })' in sync_contact_detail_editor
+    assert 'lightInfoSection("Activity"' not in sync_contact_detail_editor
+    assert "lightLinkedNotesSection(contact)" not in sync_contact_detail_editor
+    assert "lightLinkedRecordSection(contact" not in sync_contact_detail_editor
     assert "render();" not in bind_contact_detail_text_field
     assert "render();" not in update_contact_detail_draft
     assert 'input.dataset.contactEditField = field;' in build_contact_detail_field_row

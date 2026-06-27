@@ -195,11 +195,13 @@ def test_live_user_session_runner_supports_contacts_route_filter_and_search_cont
     assert "readContactsSearchState" in source
     assert "setContactsSearchQuery" in source
     assert "expectContactsSearchRows" in source
-    assert 'const phraseQuery = "Linked to live alpha";' in source
+    assert 'const summaryQuery = "primary task";' in source
     assert 'const phoneQuery = "0188";' in source
-    assert 'const reminderQuery = "reminder";' in source
+    assert 'const staleActivityQuery = "Linked to live alpha";' in source
+    assert 'const staleSelfActivityQuery = "reminder";' in source
     assert 'const noMatchQuery = "zzzz-no-match";' in source
-    assert 'action: "Filter Contacts by activity phrase"' in source
+    assert 'action: "Filter Contacts by summary text"' in source
+    assert 'action: "Reject Contacts activity-only phrase"' in source
     assert 'action: "Show Contacts search empty state"' in source
     assert 'action: "Clear Contacts search"' in source
     assert 'action: "Open seeded contact detail from filtered list"' in source
@@ -210,6 +212,7 @@ def test_live_user_session_runner_supports_contacts_route_filter_and_search_cont
     assert 'const stabilityQuery = "dav";' in source
     assert "Expected Contacts search typing to avoid blur/focusout while filtering" in source
     assert "Expected Contacts search typing to keep the same mounted input" in source
+    assert "Expected stale activity-only phrase to return zero Contacts rows" in source
     assert "Expected David avatar to render a single D initial" in source
     assert "Expected Daniel avatar to render a single D initial" in source
     assert "Requested routes" in source
@@ -243,7 +246,10 @@ def test_live_user_session_runner_supports_contacts_edit_route_and_post_save_con
     assert "expected classic detail title font size to stay large" in source
     assert "expected edit mode to keep the frameless identity header" in source
     assert "expected edit mode to keep the identity header chrome-free" in source
-    assert "expected activity to remain read-only in classic detail" in source
+    assert "expected classic detail to omit the Activity section" in source
+    assert "expected contact Connected rows to use generic info rows" in source
+    assert "expected contact Connected rows to stop using linked-record feed rows" in source
+    assert "expected unlinked contact detail to omit Connected entirely" in source
     assert "Expected contact edit typing to keep the same mounted input" in source
     assert "Expected photo removal to restore initials" in source
     assert "Expected contact detail reload to stay on the edited contact" in source
