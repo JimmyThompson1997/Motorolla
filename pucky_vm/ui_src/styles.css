@@ -6953,8 +6953,6 @@ button {
 }
 
 .card-wrap.is-inbox-manage-mode .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"],
-.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="reply"],
-.card-wrap.has-inbox-menu .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="meeting_processing"],
 .card-wrap.is-inbox-manage-mode .card.is-flat-feed[data-card-surface="inbox"][data-card-kind="meeting_processing"] {
   padding-left: 50px;
 }
@@ -6993,83 +6991,6 @@ button {
   height: 18px;
   fill: currentColor;
   stroke: none;
-}
-
-.inbox-card-menu-button {
-  position: absolute;
-  left: 7px;
-  top: 50%;
-  z-index: 4;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--home-shell-border) 88%, transparent);
-  border-radius: 999px;
-  color: var(--home-shell-text-muted);
-  background: color-mix(in srgb, var(--surface-card-elevated) 94%, transparent);
-  box-shadow: 0 8px 18px rgba(37, 50, 76, 0.12);
-  transform: translateY(-50%);
-}
-
-.inbox-card-menu-button.is-open,
-.inbox-card-menu-button:focus-visible {
-  color: var(--home-shell-text);
-  background: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-card-elevated));
-  outline: 2px solid color-mix(in srgb, var(--accent-primary) 28%, transparent);
-  outline-offset: 1px;
-}
-
-.inbox-card-menu-button .material-icon {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-  stroke: none;
-}
-
-.inbox-card-menu {
-  position: absolute;
-  top: calc(50% + 20px);
-  left: 7px;
-  z-index: 7;
-  min-width: 178px;
-  display: grid;
-  gap: 2px;
-  padding: 6px;
-  border: 1px solid color-mix(in srgb, var(--home-shell-border) 78%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-card-elevated) 98%, white 2%);
-  box-shadow: 0 18px 44px rgba(31, 44, 70, 0.2);
-}
-
-.inbox-card-menu-item {
-  min-height: 36px;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--home-shell-text);
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 760;
-  text-align: left;
-}
-
-.inbox-card-menu-item:hover,
-.inbox-card-menu-item:focus-visible {
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
-  outline: none;
-}
-
-.inbox-card-menu-item .material-icon {
-  width: 19px;
-  height: 19px;
 }
 
 .inbox-manage-overlay {

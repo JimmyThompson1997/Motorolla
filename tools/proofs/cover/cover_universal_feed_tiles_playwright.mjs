@@ -489,6 +489,8 @@ async function collectRouteMetrics(page, routeConfig) {
         archiveActions: count(".archive-reveal-action"),
         inboxArchiveToggles: count(".inbox-archive-toggle"),
         inboxManageToggles: count(".inbox-manage-toggle"),
+        inboxMenuButtons: count(".inbox-card-menu-button"),
+        inboxManageSelectButtons: count(".inbox-manage-select"),
         inlineAudioTriggers: count(".card-inline-audio-trigger"),
         meetingsCards: count(".card.card-meeting-list"),
         meetingsEmpty: count(".meetings-empty"),
@@ -728,6 +730,8 @@ function assertRouteSpecificState(routeConfig, metrics) {
     assert(metrics.selectorCounts.inboxCards > 0, "Inbox: canonical cards should render");
     assert(metrics.selectorCounts.inboxArchiveToggles === 1, "Inbox: archive filter toggle should remain available");
     assert(metrics.selectorCounts.inboxManageToggles === 1, "Inbox: manage toggle should remain available");
+    assert(metrics.selectorCounts.inboxMenuButtons === 0, "Inbox: active tiles should not render left-side dot menus");
+    assert(metrics.selectorCounts.inboxManageSelectButtons === 0, "Inbox: selection circles should stay hidden until Manage mode is enabled");
     assert(metrics.firstRowContentMetrics, "Inbox: missing first-row content metrics");
     assert(metrics.firstRowContentMetrics.bodyRect, "Inbox: missing measurable body width");
     assert(metrics.firstRowContentMetrics.actionsRect, "Inbox: missing measurable action rail width");
@@ -748,6 +752,83 @@ function assertRouteSpecificState(routeConfig, metrics) {
       assert(metrics.selectorCounts.meetingsEmpty > 0, "Meetings: empty-state honesty should remain visible when no rows exist");
     }
   }
+}
+
+async function waitForInboxArchiveToggleIdle(page, timeoutMs) {
+  await page.waitForFunction(
+    () => !document.querySelector(".app-shell")?.classList.contains("is-inbox-archive-filter-loading"),
+    undefined,
+    { timeout: timeoutMs }
+  );
+}
+
+async function captureInboxNoDotsAndManageState(page, routeConfig, timeoutMs, routeDir, prefix) {
+  if (routeConfig.route !== "inbox") {
+    return {
+      attempted: false,
+      archivedChecked: false,
+      manageChecked: false,
+      failedDetailAttempted: false,
+      failedDetailOpened: false,
+      screenshots: {},
+    };
+  }
+
+  const menuButtonCount = async () => page.locator(".inbox-card-menu-button").count();
+  const manageSelectCount = async () => page.locator(".inbox-manage-select").count();
+  const screenshots = {};
+
+  assert(await menuButtonCount() === 0, "Inbox: active tiles should not render left-side dot menus");
+
+  const failedCard = page.locator(".card-wrap > article.card").filter({ hasText: /failed/i }).first();
+  let failedDetailAttempted = false;
+  let failedDetailOpened = false;
+  if (await failedCard.count()) {
+    failedDetailAttempted = true;
+    await failedCard.locator(".card-body").click();
+    await page.locator(`${DETAIL_SELECTOR}[aria-hidden="false"], ${DETAIL_SELECTOR}.is-open`).first().waitFor({ state: "visible", timeout: timeoutMs });
+    failedDetailOpened = true;
+    screenshots.failed_detail = await saveScreenshot(page, path.join(routeDir, `${prefix}-failed-detail-open.png`));
+    const returned = await backToList(page, routeConfig, timeoutMs);
+    assert(returned, "Inbox: failed meeting cards should still open without dot menus");
+  }
+
+  const manageToggle = page.locator(".inbox-manage-toggle").first();
+  await manageToggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll(".inbox-manage-select").length > 0,
+    undefined,
+    { timeout: timeoutMs }
+  );
+  assert(await menuButtonCount() === 0, "Inbox: manage mode should not revive dot menus");
+  assert(await manageSelectCount() > 0, "Inbox: manage mode should reveal selection circles");
+  screenshots.manage = await saveScreenshot(page, path.join(routeDir, `${prefix}-manage-mode.png`));
+  await manageToggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll(".inbox-manage-select").length === 0,
+    undefined,
+    { timeout: timeoutMs }
+  );
+  assert(await manageSelectCount() === 0, "Inbox: leaving manage mode should clear selection circles");
+
+  const archiveToggle = page.locator(".inbox-archive-toggle").first();
+  await archiveToggle.click();
+  await waitForInboxArchiveToggleIdle(page, timeoutMs);
+  await page.waitForTimeout(200);
+  assert(await menuButtonCount() === 0, "Inbox: archived tiles should not render left-side dot menus");
+  assert(await page.locator(".inbox-archive-toggle").count() === 1, "Inbox: archived view should still keep the archive filter toggle");
+  screenshots.archived = await saveScreenshot(page, path.join(routeDir, `${prefix}-archived.png`));
+  await archiveToggle.click();
+  await waitForInboxArchiveToggleIdle(page, timeoutMs);
+
+  return {
+    attempted: true,
+    archivedChecked: true,
+    manageChecked: true,
+    failedDetailAttempted,
+    failedDetailOpened,
+    screenshots,
+  };
 }
 
 async function backToList(page, routeConfig, timeoutMs) {
@@ -1008,6 +1089,7 @@ async function captureRoute(browser, config, routeConfig, theme, viewportName, v
       secondaryScreenshot = await saveScreenshot(page, path.join(routeDir, `${prefix}-scrolled.png`));
     }
     const detailResult = await openDetailAndReturn(page, routeConfig, config.timeoutMs, routeDir, prefix);
+    const inboxChromeResult = await captureInboxNoDotsAndManageState(page, routeConfig, config.timeoutMs, routeDir, prefix);
     const archiveRevealResult = await revealArchiveWithoutMutating(page, routeConfig, config.timeoutMs, routeDir, prefix);
     summary = {
       surface: routeConfig.surface,
@@ -1029,6 +1111,7 @@ async function captureRoute(browser, config, routeConfig, theme, viewportName, v
       row_action_metrics: metrics.rowActionMetrics,
       section_keys: metrics.sectionKeys,
       first_detail_result: detailResult,
+      inbox_chrome_result: inboxChromeResult,
       archive_reveal_result: archiveRevealResult,
       screenshots: {
         route_top: routeTop,

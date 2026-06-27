@@ -696,6 +696,19 @@ def test_universal_feed_tiles_proof_tracks_inbox_content_width_metrics() -> None
     assert "Inbox: two-action rows should stay tighter than the old 98px rail" in source
 
 
+def test_universal_feed_tiles_proof_covers_inbox_no_dots_and_manage_state() -> None:
+    source = read_source("cover_universal_feed_tiles_playwright.mjs")
+
+    assert 'inboxMenuButtons: count(".inbox-card-menu-button")' in source
+    assert 'inboxManageSelectButtons: count(".inbox-manage-select")' in source
+    assert "Inbox: active tiles should not render left-side dot menus" in source
+    assert "Inbox: archived tiles should not render left-side dot menus" in source
+    assert "Inbox: manage mode should reveal selection circles" in source
+    assert "Inbox: leaving manage mode should clear selection circles" in source
+    assert "Inbox: failed meeting cards should still open without dot menus" in source
+    assert "Inbox: archived view should still keep the archive filter toggle" in source
+
+
 def test_calendar_and_hosted_bug_hunt_proofs_cover_event_container_clicks() -> None:
     calendar_source = read_source("cover_calendar_playwright.mjs")
     hosted_source = read_source("cover_hosted_bug_hunt_playwright.mjs")
