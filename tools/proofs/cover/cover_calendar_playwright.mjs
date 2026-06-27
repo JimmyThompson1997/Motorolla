@@ -450,13 +450,33 @@ async function saveLocatorShot(locator, reportDir, name, summary) {
   throw lastError || new Error(`Expected locator screenshot ${name} to succeed.`);
 }
 
+async function gotoCalendarPageWithRetry(page, url, options = {}, maxAttempts = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await page.goto(url, options);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts) {
+        break;
+      }
+      await delay(500 * attempt);
+    }
+  }
+  throw lastError;
+}
+
 async function openHomeCalendar(page) {
   await page.locator('.light-app-tile[data-route="calendar"]').click();
   await page.locator(".light-date-input").waitFor({ state: "visible" });
 }
 
 async function openCalendarProofRoot(page, config, theme) {
-  await page.goto(pageUrl(config.baseUrl, config.apiToken, theme), { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  await gotoCalendarPageWithRetry(page, pageUrl(config.baseUrl, config.apiToken, theme), {
+    waitUntil: "domcontentloaded",
+    timeout: config.timeoutMs,
+  });
   await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
 }
 
