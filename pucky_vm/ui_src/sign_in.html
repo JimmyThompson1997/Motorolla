@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pucky Sign In</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #111827;
+        --muted: #6b7280;
+        --line: #d1d5db;
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --accent: #0f766e;
+        --accent-ink: #ecfeff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 34rem),
+          linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .shell {
+        width: min(100%, 420px);
+        background: var(--card);
+        border: 1px solid rgba(17, 24, 39, 0.08);
+        border-radius: 24px;
+        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.12);
+        padding: 28px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.05;
+      }
+      p {
+        margin: 0 0 18px;
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        margin: 14px 0 8px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px 16px;
+        font: inherit;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 16px;
+        padding: 14px 16px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        background: var(--accent);
+        color: var(--accent-ink);
+        margin-top: 16px;
+      }
+      button[disabled] {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .secondary {
+        background: #e5f6f4;
+        color: var(--accent);
+      }
+      .hidden {
+        display: none;
+      }
+      .status {
+        min-height: 24px;
+        margin-top: 14px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .status.error {
+        color: #b91c1c;
+      }
+      .status.ok {
+        color: #0f766e;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <h1>Sign in</h1>
+      <p>Use your email to get a one-time code and open your workspace.</p>
+      <form id="signInForm">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required />
+        <button id="requestButton" type="submit">Continue</button>
+      </form>
+      <form id="verifyForm" class="hidden">
+        <label for="code">Verification code</label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required />
+        <button id="verifyButton" type="submit">Verify code</button>
+        <button id="resendButton" type="button" class="secondary">Send code</button>
+      </form>
+      <div id="status" class="status" aria-live="polite"></div>
+    </main>
+    <script>
+      const signInForm = document.getElementById("signInForm");
+      const verifyForm = document.getElementById("verifyForm");
+      const requestButton = document.getElementById("requestButton");
+      const verifyButton = document.getElementById("verifyButton");
+      const resendButton = document.getElementById("resendButton");
+      const emailInput = document.getElementById("email");
+      const codeInput = document.getElementById("code");
+      const statusEl = document.getElementById("status");
+
+      function status(message, kind = "") {
+        statusEl.textContent = String(message || "");
+        statusEl.className = kind ? `status ${kind}` : "status";
+      }
+
+      async function postJson(path, body) {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(String(payload.detail || payload.error || `Request failed (${response.status})`));
+        }
+        return payload;
+      }
+
+      async function requestCode() {
+        const email = String(emailInput.value || "").trim();
+        requestButton.disabled = true;
+        try {
+          await postJson("/api/auth/request-code", { email });
+          signInForm.classList.add("hidden");
+          verifyForm.classList.remove("hidden");
+          codeInput.focus();
+          status(`Code sent to ${email}.`, "ok");
+        } catch (error) {
+          status(String(error && error.message || "Could not send code."), "error");
+        } finally {
+          requestButton.disabled = false;
+        }
+      }
+
+      async function verifyCode() {
+        const email = String(emailInput.value || "").trim();
+        const code = String(codeInput.value || "").trim();
+        verifyButton.disabled = true;
+        try {
+          const payload = await postJson("/api/auth/verify-code", {
+            email,
+            code,
+            next: new URLSearchParams(window.location.search).get("next") || "",
+          });
+          status("Signed in. Opening workspace…", "ok");
+          window.location.assign(String(payload.landing_url || payload.workspace_url || "/ui/pucky/latest/?route=home"));
+        } catch (error) {
+          status(String(error && error.message || "Could not verify code."), "error");
+        } finally {
+          verifyButton.disabled = false;
+        }
+      }
+
+      signInForm.addEventListener("submit", event => {
+        event.preventDefault();
+        requestCode();
+      });
+      verifyForm.addEventListener("submit", event => {
+        event.preventDefault();
+        verifyCode();
+      });
+      resendButton.addEventListener("click", () => {
+        requestCode();
+      });
+    </script>
+  </body>
+</html>

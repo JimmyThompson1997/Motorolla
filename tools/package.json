@@ -13,6 +13,8 @@
     "test:cover-universal-feed-tiles": "node ./proofs/cover/cover_universal_feed_tiles_playwright.mjs",
     "test:cover-links-auth-flow": "node ./proofs/cover/cover_links_auth_flow_playwright.mjs",
     "test:cover-links-auth-flow-live": "node ./proofs/cover/cover_links_auth_flow_live_playwright.mjs",
+    "test:auth-browser-live": "node ./proofs/auth/live_auth_browser_playwright.mjs",
+    "test:auth-composio-live": "node ./proofs/auth/live_auth_composio_playwright.mjs",
     "test:cover-hosted-bug-hunt": "node ./proofs/cover/cover_hosted_bug_hunt_playwright.mjs",
     "test:cover-inbox-tile-audio-truth": "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
     "test:cover-inbox-thread-compose": "node ./proofs/cover/cover_inbox_thread_compose_playwright.mjs",

@@ -91,6 +91,10 @@ TASK_HELP = {
     "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
     "proof-live-speed-browser": "Run the hosted desktop and mobile speed loop browser proof against the current base URL env/default.",
     "proof-live-speed-emulator": "Run the Android emulator speed loop proof with hosted Connect auth validation.",
+    "proof-live-auth-browser": "Run the multi-user Clerk/email-OTP browser auth proof with matrix screenshots, API assertions, persistence checks, and cross-user isolation attempts.",
+    "proof-live-auth-composio": "Run the authenticated Composio isolation proof with real browser login, My Apps truth checks, action execution, and foreign principal denial checks.",
+    "proof-live-auth-android-ubc": "Run the physical Android UBC auth/WebView proof against the plugged-in device with install, clear, relaunch, screenshots, and logcat evidence.",
+    "qa-live-multiuser-release": "Run the full local/staging/production multi-user auth release gauntlet and emit one pass/fail verdict bundle.",
     "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "release-hosted-web": "Run the hosted-web release lane: parser checks, targeted pytest, VM sync deploy, manifest verification, and live proof.",
@@ -1011,6 +1015,68 @@ def run_hosted_bug_hunt(extra_args: list[str]) -> int:
     )
 
 
+def run_live_auth_browser_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/auth/live_auth_browser_playwright.mjs",
+                [
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-auth-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_auth_composio_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/auth/live_auth_composio_playwright.mjs",
+                [
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-auth-composio").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_auth_android_ubc_proof(extra_args: list[str]) -> int:
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/auth/phone_auth_ubc_real_proof.py",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-live-auth-android-ubc").resolve()),
+            *extra_args,
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_multiuser_release_gauntlet(extra_args: list[str]) -> int:
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/auth/qa_live_multiuser_release.py",
+            "--bundle-dir",
+            str((ROOT / ".tmp" / "qa-live-multiuser-release").resolve()),
+            *extra_args,
+        ],
+        env=proof_env(),
+    )
+
+
 def run_live_speed_browser_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     refresh_seed = current_git_head() or str(int(time.time()))
@@ -1197,6 +1263,14 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_web_proof(args.extra_args)
     if args.task == "proof-live-web":
         return run_live_web_proof(args.extra_args)
+    if args.task == "proof-live-auth-browser":
+        return run_live_auth_browser_proof(args.extra_args)
+    if args.task == "proof-live-auth-composio":
+        return run_live_auth_composio_proof(args.extra_args)
+    if args.task == "proof-live-auth-android-ubc":
+        return run_live_auth_android_ubc_proof(args.extra_args)
+    if args.task == "qa-live-multiuser-release":
+        return run_live_multiuser_release_gauntlet(args.extra_args)
     if args.task == "proof-live-speed-browser":
         return run_live_speed_browser_proof(args.extra_args)
     if args.task == "proof-live-speed-emulator":

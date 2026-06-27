@@ -9,7 +9,7 @@ import mimetypes
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .http_surface import (
     cors_header_items,
@@ -78,6 +78,8 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             self.end_headers()
 
         def do_GET(self) -> None:
+            identity = self._request_identity()
+            service._request_identity_var.set(identity)
             parsed = urlsplit(self.path)
             path = parsed.path
             if path == "/favicon.ico":
@@ -88,6 +90,19 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
+                return
+            if path == "/sign-in":
+                if identity.kind == "session" and identity.workspace_id:
+                    self._redirect(service.workspace_landing_url(self._request_base_url(), workspace_id=identity.workspace_id))
+                    return
+                self._file(
+                    UI_SRC / "sign_in.html",
+                    "text/html; charset=utf-8",
+                    headers=self._ui_asset_headers("index.html"),
+                )
+                return
+            if path == "/api/auth/session":
+                self._json(HTTPStatus.OK, service.auth_session_payload(identity, base_url=self._request_base_url()))
                 return
             if path == "/api/agent-runtime/catalog":
                 if not self._is_authorized():
@@ -114,7 +129,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path == "/api/links/composio/portal-url":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 query = parse_qs(parsed.query)
@@ -126,7 +141,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._json(status, payload)
                 return
             if path == "/api/device/phone-role-status":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(
                         HTTPStatus.UNAUTHORIZED,
                         {
@@ -199,7 +214,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 try:
                     payload = service.links_my_apps(
                         token,
-                        allow_default_user=not str(token or "").strip(),
+                        allow_default_user=service.composio_default_user_read_enabled() and not str(token or "").strip(),
                     )
                 except ValueError as exc:
                     self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
@@ -213,7 +228,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 try:
                     payload, headers = service.links_catalog(
                         token,
-                        allow_default_user=not str(token or "").strip(),
+                        allow_default_user=service.composio_default_user_read_enabled() and not str(token or "").strip(),
                     )
                 except ValueError as exc:
                     self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
@@ -240,10 +255,16 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                         query=query.get("q", [""])[0],
                         offset=int(query.get("offset", ["0"])[0]),
                         limit=int(query.get("limit", ["60"])[0]),
-                        allow_default_user=not str(token or "").strip(),
+                        allow_default_user=service.composio_default_user_read_enabled() and not str(token or "").strip(),
                     )
                 except ValueError as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    error_text = str(exc)
+                    status = (
+                        HTTPStatus.UNAUTHORIZED
+                        if error_text in {"invalid_or_expired_connect_link", "connect_user_unavailable"}
+                        else HTTPStatus.BAD_REQUEST
+                    )
+                    self._json(status, {"ok": False, "error": error_text})
                     return
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
                 self._json(status, payload)
@@ -255,10 +276,16 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     payload = service.links_app_details(
                         token,
                         query.get("slug", [""])[0],
-                        allow_default_user=not str(token or "").strip(),
+                        allow_default_user=service.composio_default_user_read_enabled() and not str(token or "").strip(),
                     )
                 except ValueError as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    error_text = str(exc)
+                    status = (
+                        HTTPStatus.UNAUTHORIZED
+                        if error_text in {"invalid_or_expired_connect_link", "connect_user_unavailable"}
+                        else HTTPStatus.BAD_REQUEST
+                    )
+                    self._json(status, {"ok": False, "error": error_text})
                     return
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
                 self._json(status, payload)
@@ -307,13 +334,13 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 query = parse_qs(parsed.query)
                 include_archived = _truthy_query(query.get("include_archived", ["0"])[0])
                 compact = _truthy_query(query.get("compact", ["0"])[0])
-                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                if not (self._allows_public_browser_user_read(path) or self._is_user_data_authorized()):
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 self._json(HTTPStatus.OK, service.meetings_list(include_archived=include_archived, compact=compact))
                 return
             if path == "/api/app-badges":
-                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                if not (self._allows_public_browser_user_read(path) or self._is_user_data_authorized()):
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 self._json(HTTPStatus.OK, service.app_badges())
@@ -343,7 +370,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path.startswith("/api/meetings/") and path.endswith("/audio"):
-                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                if not (self._allows_public_browser_user_read(path) or self._is_user_data_authorized()):
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 meeting_id = unquote(path.removeprefix("/api/meetings/").removesuffix("/audio")).strip()
@@ -355,7 +382,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._bytes(HTTPStatus.OK, body, mime_type, filename=filename)
                 return
             if path.startswith("/api/meetings/"):
-                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                if not (self._allows_public_browser_user_read(path) or self._is_user_data_authorized()):
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 meeting_id = unquote(path.removeprefix("/api/meetings/")).strip()
@@ -393,7 +420,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path.startswith("/api/artifacts/"):
-                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                if not (self._allows_public_browser_user_read(path) or self._is_user_data_authorized()):
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 artifact_id = unquote(path.removeprefix("/api/artifacts/")).strip()
@@ -414,7 +441,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path == "/api/feed":
-                if not (self._allows_public_browser_user_read(path) or self._is_authorized()):
+                if not (self._allows_public_browser_user_read(path) or self._is_user_data_authorized()):
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 query = parse_qs(parsed.query)
@@ -470,6 +497,10 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path == "/ui/pucky/latest" or path == "/ui/pucky/latest/":
+                if service.config.strict_browser_user_auth and not self._is_user_data_authorized():
+                    next_path = quote(self.path, safe="/?=&")
+                    self._redirect(f"/sign-in?next={next_path}")
+                    return
                 self._html(HTTPStatus.OK, self._ui_index_html(), headers=self._ui_asset_headers("index.html"))
                 return
             if path == "/ui/pucky/latest/pucky-config.js":
@@ -487,8 +518,45 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             super().do_GET()
 
         def do_POST(self) -> None:
+            service._request_identity_var.set(self._request_identity())
             parsed = urlsplit(self.path)
             path = parsed.path
+            if path == "/api/auth/request-code":
+                try:
+                    payload = self._read_json_payload(64 * 1024)
+                    result = service.request_auth_code(str(payload.get("email") or ""))
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                clean = dict(result)
+                clean.pop("test_code", None)
+                self._json(HTTPStatus.OK, clean)
+                return
+            if path == "/api/auth/verify-code":
+                try:
+                    payload = self._read_json_payload(64 * 1024)
+                    result = service.verify_auth_code(
+                        str(payload.get("email") or ""),
+                        str(payload.get("code") or ""),
+                        base_url=self._request_base_url(),
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                session_token = str(result.get("session_token") or "")
+                body = dict(result)
+                body.pop("session_token", None)
+                headers = {"Set-Cookie": self._session_cookie_header(session_token)}
+                self._json(HTTPStatus.OK, body, headers=headers)
+                return
+            if path == "/api/auth/logout":
+                revoked = self._clear_session()
+                self._json(
+                    HTTPStatus.OK,
+                    {"ok": True, "schema": "pucky.auth.logout.v1", "revoked": revoked},
+                    headers={"Set-Cookie": self._session_cookie_clear_header()},
+                )
+                return
             if path == "/api/agent-runtime/call":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -527,6 +595,25 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 status_code = int(result.get("status_code") or (HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_GATEWAY))
                 self._json(HTTPStatus(status_code), result)
                 return
+            if path == "/api/links/composio/actions/execute":
+                if not self._is_user_data_authorized():
+                    self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    payload = self._read_json_payload(512 * 1024)
+                    result = service.composio_execute_action_tool(payload)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._json(
+                        HTTPStatus.BAD_GATEWAY,
+                        {"ok": False, "error": "composio_execute_failed", "detail": str(exc)},
+                    )
+                    return
+                status = HTTPStatus.OK if bool(result.get("ok")) else HTTPStatus.BAD_REQUEST
+                self._json(status, result)
+                return
             if path == "/api/card-icons":
                 if not self._is_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -562,7 +649,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._json(HTTPStatus.OK, result)
                 return
             if path == "/api/meetings/actions":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 try:
@@ -584,7 +671,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._json(HTTPStatus.OK, result)
                 return
             if path == "/api/feed/actions":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._drain_request_body(256 * 1024)
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
@@ -626,7 +713,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._handle_workspace_write(parsed, "POST")
                 return
             if path == "/api/turn/text":
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 try:
@@ -669,6 +756,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                             or ""
                         ),
                         user_attachments=uploaded_files,
+                        upload_only=_truthy_query(payload.get("upload_only")),
                     )
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -715,6 +803,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
 
         def do_PATCH(self) -> None:
             parsed = urlsplit(self.path)
+            service._request_identity_var.set(self._request_identity())
             if parsed.path.startswith("/api/workspace/"):
                 self._handle_workspace_write(parsed, "PATCH")
                 return
@@ -722,13 +811,14 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
 
         def do_DELETE(self) -> None:
             parsed = urlsplit(self.path)
+            service._request_identity_var.set(self._request_identity())
             if parsed.path.startswith("/api/workspace/"):
                 self._handle_workspace_write(parsed, "DELETE")
                 return
             self.send_error(int(HTTPStatus.NOT_FOUND))
 
         def _handle_workspace_get(self, parsed) -> None:
-            if not (self._allows_public_browser_user_read(parsed.path) or self._is_authorized()):
+            if not (self._allows_public_browser_user_read(parsed.path) or self._is_user_data_authorized()):
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             parts = self._workspace_parts(parsed.path)
@@ -786,7 +876,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return
             try:
                 payload = {} if method == "DELETE" else self._read_json_payload(1024 * 1024)
-                if not self._is_authorized():
+                if not self._is_user_data_authorized():
                     public_browser_patch, public_browser_patch_code, public_browser_patch_error = self._public_browser_workspace_patch_result(parts, method, payload)
                     if public_browser_patch is None:
                         self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -993,6 +1083,8 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             return (scheme, host, int(port))
 
         def _allows_public_browser_user_read(self, path: str) -> bool:
+            if not service.public_browser_reads_enabled():
+                return False
             value = str(path or "").strip()
             if value in {
                 "/api/app-badges",
@@ -1033,6 +1125,49 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 (service.config.pucky_api_token,),
                 self.headers.get("Authorization", ""),
             )
+
+        def _is_user_data_authorized(self) -> bool:
+            return self._request_identity().kind != "anonymous"
+
+        def _request_identity(self):
+            from .server import RequestIdentity
+
+            auth_header = self.headers.get("Authorization", "")
+            if is_any_bearer_authorized((service.config.pucky_api_token,), auth_header):
+                return RequestIdentity(kind="operator", user_id="operator", workspace_id="default", auth_via="bearer")
+            if is_any_bearer_authorized((service.config.pucky_web_ui_token,), auth_header):
+                return RequestIdentity(kind="browser_token", user_id="browser", workspace_id="default", auth_via="bearer")
+            session = service.resolve_auth_session(self._session_cookie_value())
+            if session.kind == "session":
+                return session
+            return RequestIdentity()
+
+        def _session_cookie_value(self) -> str:
+            cookie_header = str(self.headers.get("Cookie") or "")
+            for part in cookie_header.split(";"):
+                name, sep, value = part.strip().partition("=")
+                if sep and name.strip() == service.config.auth_session_cookie_name:
+                    return value.strip()
+            return ""
+
+        def _clear_session(self) -> bool:
+            token = self._session_cookie_value()
+            if not token:
+                return False
+            return service.revoke_auth_session(token)
+
+        def _session_cookie_header(self, token: str) -> str:
+            return f"{service.config.auth_session_cookie_name}={token}; Path=/; HttpOnly; SameSite=Lax"
+
+        def _session_cookie_clear_header(self) -> str:
+            return f"{service.config.auth_session_cookie_name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
+        def _redirect(self, location: str, *, status: HTTPStatus = HTTPStatus.TEMPORARY_REDIRECT) -> None:
+            self.send_response(int(status))
+            self._cors_headers()
+            self.send_header("Location", str(location or "/"))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def _request_base_url(self) -> str:
             return request_base_url(

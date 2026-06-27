@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import contextvars
 import hashlib
 import html
 import hmac
@@ -23,6 +25,7 @@ from typing import Callable, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .action_ledger import ActionLedger
+from .auth_store import AuthStore, normalize_email
 from .attachment_manifest import normalize_attachment
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
@@ -31,6 +34,7 @@ from .http_handler import make_handler as _build_http_handler
 from .http_surface import (
     cors_header_items,
     inline_content_disposition,
+    is_any_bearer_authorized,
     is_bearer_authorized,
     json_body,
     parse_content_length,
@@ -365,6 +369,24 @@ class ReplyEnvelope:
 
 
 @dataclass(frozen=True)
+class RequestIdentity:
+    kind: str = "anonymous"
+    user_id: str = ""
+    workspace_id: str = ""
+    email: str = ""
+    session_id: str = ""
+    auth_via: str = ""
+
+
+class _ScopedStoreProxy:
+    def __init__(self, resolver: Callable[[], object]) -> None:
+        self._resolver = resolver
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._resolver(), name)
+
+
+@dataclass(frozen=True)
 class Config:
     host: str
     port: int
@@ -388,6 +410,7 @@ class Config:
     codex_base_instructions: str | None = None
     action_ledger_path: str = ""
     workspace_db_path: str = ""
+    auth_db_path: str = ""
     turn_status_ttl_seconds: float = 900.0
     codex_home: str | None = None
     codex_sandbox: str = "danger-full-access"
@@ -407,6 +430,12 @@ class Config:
     self_email: str = ""
     self_phone_number: str = ""
     public_base_url: str | None = None
+    pucky_web_ui_token: str = ""
+    strict_browser_user_auth: bool = False
+    strict_composio_user_scoping: bool = False
+    auth_session_cookie_name: str = "pucky_session"
+    auth_otp_ttl_seconds: int = 15 * 60
+    auth_session_ttl_seconds: int = 30 * 24 * 60 * 60
     ui_route_perf_ledger_path: str = ""
 
     @classmethod
@@ -415,6 +444,7 @@ class Config:
             host=os.environ.get("PUCKY_HOST", "0.0.0.0"),
             port=int(os.environ.get("PORT", os.environ.get("PUCKY_PORT", "8080"))),
             pucky_api_token=os.environ.get("PUCKY_API_TOKEN", ""),
+            pucky_web_ui_token=os.environ.get("PUCKY_WEB_UI_TOKEN", "").strip(),
             deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", ""),
             deepinfra_api_key=os.environ.get("DEEPINFRA_API_KEY", ""),
             max_audio_bytes=int(os.environ.get("PUCKY_MAX_AUDIO_BYTES", str(32 * 1024 * 1024))),
@@ -445,6 +475,10 @@ class Config:
                 "PUCKY_WORKSPACE_DB_PATH",
                 str((Path.cwd() / "pucky_workspace.sqlite3").resolve()),
             ),
+            auth_db_path=os.environ.get(
+                "PUCKY_AUTH_DB_PATH",
+                str((Path.cwd() / "pucky_auth.sqlite3").resolve()),
+            ),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
             codex_home=os.environ.get("CODEX_HOME") or None,
             codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
@@ -472,6 +506,15 @@ class Config:
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
             public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
+            strict_browser_user_auth=(
+                os.environ.get("PUCKY_STRICT_BROWSER_USER_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
+            strict_composio_user_scoping=(
+                os.environ.get("PUCKY_STRICT_COMPOSIO_USER_SCOPING", "").strip().lower() in {"1", "true", "yes", "on"}
+            ),
+            auth_session_cookie_name=os.environ.get("PUCKY_AUTH_SESSION_COOKIE_NAME", "pucky_session").strip() or "pucky_session",
+            auth_otp_ttl_seconds=max(60, int(os.environ.get("PUCKY_AUTH_OTP_TTL_SECONDS", str(15 * 60)))),
+            auth_session_ttl_seconds=max(300, int(os.environ.get("PUCKY_AUTH_SESSION_TTL_SECONDS", str(30 * 24 * 60 * 60)))),
             ui_route_perf_ledger_path=os.environ.get(
                 "PUCKY_UI_ROUTE_PERF_LEDGER_PATH",
                 str((Path.cwd() / "pucky_ui_route_perf.sqlite3").resolve()),
@@ -646,7 +689,7 @@ class PuckyVoiceService:
     ) -> None:
         self.config = config
         ledger_path = config.action_ledger_path or str(Path(config.feed_db_path).with_suffix(".actions.sqlite3"))
-        self.action_ledger = ActionLedger(ledger_path)
+        self._default_action_ledger = ActionLedger(ledger_path)
         ui_route_perf_ledger_path = config.ui_route_perf_ledger_path or str(
             Path(config.feed_db_path).with_suffix(".ui-route-perf.sqlite3")
         )
@@ -660,9 +703,25 @@ class PuckyVoiceService:
         )
         self.codex = codex or self._build_codex_client(meeting=False)
         self.meeting_codex = meeting_codex or self._build_codex_client(meeting=True)
-        self.feed = FeedStore(config.feed_db_path)
+        self._default_feed = FeedStore(config.feed_db_path)
         workspace_path = config.workspace_db_path or str(Path(config.feed_db_path).with_name("pucky_workspace.sqlite3"))
-        self.workspace = WorkspaceStore(workspace_path)
+        self._default_workspace = WorkspaceStore(workspace_path)
+        self.auth = AuthStore(
+            config.auth_db_path or str(Path(config.feed_db_path).with_name("pucky_auth.sqlite3")),
+            otp_ttl_seconds=config.auth_otp_ttl_seconds,
+            session_ttl_seconds=config.auth_session_ttl_seconds,
+        )
+        self._store_lock = threading.Lock()
+        self._feed_by_workspace: dict[str, FeedStore] = {}
+        self._workspace_by_workspace: dict[str, WorkspaceStore] = {}
+        self._action_ledger_by_workspace: dict[str, ActionLedger] = {}
+        self._request_identity_var: contextvars.ContextVar[RequestIdentity] = contextvars.ContextVar(
+            "pucky_request_identity",
+            default=RequestIdentity(),
+        )
+        self.feed = _ScopedStoreProxy(self._feed_store)
+        self.workspace = _ScopedStoreProxy(self._workspace_store)
+        self.action_ledger = _ScopedStoreProxy(self._action_ledger_store)
         self.composio = composio or ComposioClient(
             config.composio_api_key,
             config.composio_base_url,
@@ -677,8 +736,6 @@ class PuckyVoiceService:
         self._card_icon_lock = threading.Lock()
         self._card_icons_path = Path(self.config.feed_db_path).with_name("pucky_card_icons.json")
         self._meetings_lock = threading.Lock()
-        self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
-        self._meetings_index_path = self._meetings_dir / "meetings.json"
         self._meeting_agent_state_lock = threading.Lock()
         self._meeting_agent_state_by_id: dict[str, dict[str, object]] = {}
         self._reminder_poll_lock = threading.Lock()
@@ -727,6 +784,105 @@ class PuckyVoiceService:
                 daemon=True,
             )
             self._reminder_poll_thread.start()
+
+    @contextlib.contextmanager
+    def request_identity_context(self, identity: RequestIdentity | None):
+        token = self._request_identity_var.set(identity or RequestIdentity())
+        try:
+            yield
+        finally:
+            self._request_identity_var.reset(token)
+
+    def current_request_identity(self) -> RequestIdentity:
+        return self._request_identity_var.get()
+
+    def _current_workspace_key(self) -> str:
+        identity = self.current_request_identity()
+        return str(identity.workspace_id or "").strip() or "default"
+
+    def _workspace_root(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).resolve().parent
+        return Path(self.config.feed_db_path).resolve().parent / "pucky_workspaces" / workspace_key
+
+    def _workspace_store_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.workspace_db_path or str(Path(self.config.feed_db_path).with_name("pucky_workspace.sqlite3"))).resolve()
+        return self._workspace_root(workspace_key) / "workspace.sqlite3"
+
+    def _feed_store_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).resolve()
+        return self._workspace_root(workspace_key) / "feed.sqlite3"
+
+    def _action_ledger_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.action_ledger_path or str(Path(self.config.feed_db_path).with_suffix(".actions.sqlite3"))).resolve()
+        return self._workspace_root(workspace_key) / "actions.sqlite3"
+
+    def _hydrate_self_contact_into_store(self, store: WorkspaceStore) -> None:
+        email = str(self.config.self_email or "").strip()
+        phone = str(self.config.self_phone_number or "").strip()
+        if not email and not phone:
+            store.ensure_self_contact()
+            return
+        contact = store.ensure_self_contact()
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        next_metadata = dict(metadata)
+        if email:
+            next_metadata["email"] = email
+        if phone:
+            next_metadata["phone"] = phone
+        next_metadata.pop("endpoints", None)
+        store.patch_record("contacts", SELF_CONTACT_ID, {"metadata": next_metadata})
+
+    def _feed_store(self) -> FeedStore:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_feed
+        with self._store_lock:
+            existing = self._feed_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = FeedStore(str(self._feed_store_path(workspace_key)))
+            self._feed_by_workspace[workspace_key] = store
+            return store
+
+    def _workspace_store(self) -> WorkspaceStore:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_workspace
+        with self._store_lock:
+            existing = self._workspace_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = WorkspaceStore(str(self._workspace_store_path(workspace_key)))
+            self._hydrate_self_contact_into_store(store)
+            self._workspace_by_workspace[workspace_key] = store
+            return store
+
+    def _action_ledger_store(self) -> ActionLedger:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_action_ledger
+        with self._store_lock:
+            existing = self._action_ledger_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = ActionLedger(self._action_ledger_path(workspace_key))
+            self._action_ledger_by_workspace[workspace_key] = store
+            return store
+
+    @property
+    def _meetings_dir(self) -> Path:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).with_name("pucky_meetings")
+        return self._workspace_root(workspace_key) / "meetings"
+
+    @property
+    def _meetings_index_path(self) -> Path:
+        return self._meetings_dir / "meetings.json"
 
     def _meeting_runtime_recovery_threshold_seconds(self) -> float:
         return max(360.0, float(self.config.codex_turn_timeout) + 60.0)
@@ -1395,7 +1551,14 @@ class PuckyVoiceService:
             "deepgram_key": "present" if self.config.deepgram_api_key else "missing",
             "deepinfra_key": "present" if self.config.deepinfra_api_key else "missing",
             "pucky_api_token": "present" if self.config.pucky_api_token else "missing",
+            "pucky_web_ui_token": "present" if self.config.pucky_web_ui_token else "missing",
             "composio": "present" if self.config.composio_api_key else "missing",
+            "browser_user_read_mode": "strict_auth" if self.config.strict_browser_user_auth else "legacy_public",
+            "composio_read_scope_mode": (
+                "strict_workspace_token"
+                if self.config.strict_composio_user_scoping
+                else "legacy_default_user_fallback"
+            ),
         }
 
     def _reminder_poll_loop(self) -> None:
@@ -2589,7 +2752,20 @@ class PuckyVoiceService:
             self._reminder_poll_lock.release()
 
     def composio_user_id(self) -> str:
+        identity = self.current_request_identity()
+        workspace_id = str(identity.workspace_id or "").strip()
+        if workspace_id and (identity.kind == "session" or self.config.strict_composio_user_scoping):
+            return f"ws_{workspace_id.removeprefix('ws_')}"
+        if self.config.strict_composio_user_scoping:
+            return "ws_default"
         return self.config.composio_default_user_id
+
+    def public_browser_reads_enabled(self) -> bool:
+        return not bool(self.config.strict_browser_user_auth)
+
+    def composio_default_user_read_enabled(self) -> bool:
+        identity = self.current_request_identity()
+        return not bool(self.config.strict_composio_user_scoping) and not str(identity.workspace_id or "").strip()
 
     def composio_auth_mode(self, value: str | None = None) -> str:
         candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()
@@ -3223,6 +3399,73 @@ class PuckyVoiceService:
             ],
         }
 
+    def request_auth_code(self, email: str) -> dict[str, object]:
+        result = self.auth.issue_code(normalize_email(email))
+        return {
+            "ok": True,
+            "schema": "pucky.auth.request_code.v1",
+            "challenge_id": result["challenge_id"],
+            "email": result["email"],
+            "expires_at": result["expires_at"],
+            "delivery": "local_otp",
+            "test_code": result["code"],
+        }
+
+    def verify_auth_code(self, email: str, code: str, *, base_url: str) -> dict[str, object]:
+        identity = self.auth.verify_code(email, code)
+        session = self.auth.create_session(
+            user_id=str(identity["user_id"]),
+            workspace_id=str(identity["workspace_id"]),
+            email=str(identity["email"]),
+        )
+        landing_url = self.workspace_landing_url(base_url, workspace_id=str(identity["workspace_id"]))
+        return {
+            "ok": True,
+            "schema": "pucky.auth.verify_code.v1",
+            "session_token": session["token"],
+            "session_id": session["session_id"],
+            "expires_at": session["expires_at"],
+            "user_id": identity["user_id"],
+            "workspace_id": identity["workspace_id"],
+            "workspace_slug": identity["workspace_slug"],
+            "workspace_url": landing_url,
+            "landing_url": landing_url,
+            "email": identity["email"],
+        }
+
+    def resolve_auth_session(self, token: str) -> RequestIdentity:
+        session = self.auth.resolve_session(token)
+        if session is None:
+            return RequestIdentity()
+        return RequestIdentity(
+            kind="session",
+            user_id=str(session["user_id"]),
+            workspace_id=str(session["workspace_id"]),
+            email=str(session["email"]),
+            session_id=str(session["session_id"]),
+            auth_via="cookie",
+        )
+
+    def revoke_auth_session(self, token: str) -> bool:
+        return self.auth.revoke_session(token)
+
+    def workspace_landing_url(self, base_url: str, *, workspace_id: str = "") -> str:
+        prefix = str(base_url or "").rstrip("/")
+        path = "/ui/pucky/latest/?route=home"
+        return f"{prefix}{path}" if prefix else path
+
+    def auth_session_payload(self, identity: RequestIdentity, *, base_url: str) -> dict[str, object]:
+        active = bool(identity and identity.kind == "session" and identity.workspace_id)
+        return {
+            "ok": True,
+            "schema": "pucky.auth.session.v1",
+            "signed_in": active,
+            "user_id": str(identity.user_id or "") if active else "",
+            "workspace_id": str(identity.workspace_id or "") if active else "",
+            "email": str(identity.email or "") if active else "",
+            "landing_url": self.workspace_landing_url(base_url, workspace_id=str(identity.workspace_id or "")) if active else "",
+        }
+
     def _portal_token_secret(self) -> str:
         return str(self.config.connect_portal_secret or "").strip()
 
@@ -3325,6 +3568,9 @@ class PuckyVoiceService:
         clean_token = str(token or "").strip()
         if clean_token:
             return self._resolve_links_portal_user(clean_token)
+        identity = self.current_request_identity()
+        if str(identity.workspace_id or "").strip():
+            return self.composio_user_id()
         if allow_default_user:
             user_id = self.composio_user_id()
             if user_id:
@@ -5430,6 +5676,7 @@ class PuckyVoiceService:
         thread_card_id: str | None = None,
         proof_reply_delay_ms: str | int | None = None,
         user_attachments: list[dict[str, object]] | None = None,
+        upload_only: bool = False,
     ) -> dict[str, object]:
         transcript = str(text or "").strip()
         if not transcript:
@@ -5476,6 +5723,16 @@ class PuckyVoiceService:
         telemetry["user_attachment_count"] = len(normalized_user_attachments)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         try:
+            if upload_only:
+                return self._handle_upload_only_turn(
+                    turn_id=turn_id,
+                    session_id=session_id,
+                    reply_mode=reply_mode,
+                    transcript=transcript,
+                    telemetry=telemetry,
+                    total_start=total_start,
+                    user_attachments=normalized_user_attachments,
+                )
             return self._handle_transcript_turn(
                 turn_id=turn_id,
                 session_id=session_id,
@@ -5503,6 +5760,117 @@ class PuckyVoiceService:
             self._update_turn_status(turn_id, "failed", "failed", telemetry)
             _log_json(telemetry)
             raise
+
+    def _handle_upload_only_turn(
+        self,
+        *,
+        turn_id: str,
+        session_id: str,
+        reply_mode: str,
+        transcript: str,
+        telemetry: dict[str, object],
+        total_start: float,
+        user_attachments: list[dict[str, object]],
+    ) -> dict[str, object]:
+        if not user_attachments:
+            raise ValueError("upload_only_requires_attachment")
+        names = [str(item.get("title") or "").strip() for item in user_attachments if str(item.get("title") or "").strip()]
+        count = len(user_attachments)
+        card_title = names[0] if count == 1 and names else f"Uploaded {count} files"
+        summary = (
+            f"Uploaded {names[0]}."
+            if count == 1 and names
+            else f"Uploaded {count} files."
+        )
+        origin = _normalize_origin(
+            {
+                "runtime": "pucky",
+                "thread_id": turn_id,
+                "source": "upload_only",
+                "upload_only": True,
+            },
+            turn_id,
+        )
+        transcript_messages = [
+            _user_transcript_message(
+                text=transcript,
+                created_at=_iso_time(time.time()),
+                turn_id=turn_id,
+                request_audio_mime_type="",
+                has_request_audio=False,
+                attachments=user_attachments,
+            ),
+            _assistant_transcript_message(
+                text=summary,
+                created_at=_iso_time(time.time()),
+                attachments=[],
+            ),
+        ]
+        telemetry["stage"] = "feed_persist"
+        telemetry["attachment_upload_only"] = True
+        telemetry["attachment_count"] = len(user_attachments)
+        telemetry["displayable_attachment_count"] = int(sum(1 for item in user_attachments if _attachment_is_displayable(item)))
+        telemetry["origin_thread_id"] = origin.get("thread_id", "")
+        telemetry["origin_model"] = ""
+        telemetry["origin_reasoning_effort"] = ""
+        telemetry["tts_status"] = "skipped_upload_only"
+        telemetry["reply_audio_bytes"] = 0
+        telemetry["audio_mime_type"] = ""
+        result = _run_staged_operation(
+            "feed_persist",
+            lambda: self.feed.upsert_turn_result(
+                turn_id=turn_id,
+                session_id=session_id,
+                reply_mode=reply_mode,
+                reply_text=summary,
+                title=card_title,
+                summary=summary,
+                icon="upload_file",
+                origin=origin,
+                telemetry=_public_turn_telemetry(telemetry),
+                transcript_messages=transcript_messages,
+                request_audio_mime_type="",
+                request_audio_base64="",
+                audio_mime_type="",
+                audio_base64="",
+                html_mime_type="",
+                html_base64="",
+            ),
+            sqlite_retry=True,
+        )
+        card_id = str(result.get("card_id") or "")
+        telemetry["card_id"] = card_id
+        verified = _run_staged_operation(
+            "feed_persist",
+            lambda: self.feed.get_item(card_id),
+            sqlite_retry=True,
+        )
+        if verified is None:
+            telemetry["feed_persisted"] = False
+            telemetry["status"] = "failed"
+            telemetry["error_type"] = "RuntimeError"
+            telemetry["error_message"] = "feed_persist_failed"
+            telemetry["failure_reason"] = "feed_persist_failed"
+            telemetry["total_ms"] = _elapsed_ms(total_start)
+            self._update_turn_status(turn_id, "failed", "failed", telemetry)
+            _log_json(telemetry)
+            raise RuntimeError("feed_persist_failed")
+        telemetry["feed_persisted"] = True
+        telemetry["status"] = "ok"
+        telemetry["total_ms"] = _elapsed_ms(total_start)
+        self._update_turn_status(turn_id, "ready", "succeeded", telemetry)
+        result["telemetry"] = _public_turn_telemetry(telemetry)
+        result["transcript_messages"] = transcript_messages
+        result["card"] = {
+            "title": card_title,
+            "summary": summary,
+            "icon": "upload_file",
+            "accent": self._card_icon_accent("upload_file"),
+            "origin": origin,
+            "connected_records": [],
+        }
+        _log_json(telemetry)
+        return result
 
     def _handle_transcript_turn(
         self,
@@ -7031,6 +7399,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "reply_audio_bytes",
         "audio_mime_type",
         "tts_status",
+        "attachment_upload_only",
         "attachment_count",
         "displayable_attachment_count",
         "attachment_fallback_from_reply_text",
@@ -7090,6 +7459,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "reply_audio_bytes",
         "audio_mime_type",
         "tts_status",
+        "attachment_upload_only",
         "attachment_count",
         "displayable_attachment_count",
         "attachment_fallback_from_reply_text",

@@ -4236,6 +4236,7 @@
     }
     try {
       const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+      maybeRedirectToSignInOnUnauthorized(response);
       const payload = await response.json().catch(() => ({}));
       if (payload && typeof payload === "object" && !Array.isArray(payload)) {
         payload._server_timing = String(response.headers.get("Server-Timing") || "");
@@ -22858,6 +22859,7 @@
 
   async function fetchCardIconRegistry() {
     const response = await fetch(`${linksApiBaseUrl()}/api/card-icons`, { cache: "no-store" });
+    maybeRedirectToSignInOnUnauthorized(response);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(String(payload?.detail || payload?.error || `Card icon registry failed (${response.status})`));

@@ -5392,6 +5392,37 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(attachments[0]["viewer"]["type"], "text")
         self.assertEqual(attachments[1]["viewer"]["type"], "image_gallery")
 
+    def test_text_turn_upload_only_persists_attachment_without_codex_turn(self) -> None:
+        before_turns = len(self.codex.turns)
+        payload = self.post_multipart(
+            "/api/turn/text",
+            fields={
+                "text": "Upload this file.",
+                "turn_id": "upload-only-1",
+                "upload_only": "1",
+            },
+            files=[
+                ("files", "upload-only.txt", "text/plain", b"upload-only-proof-body\n"),
+            ],
+        )
+
+        self.assertEqual(len(self.codex.turns), before_turns)
+        self.assertEqual(payload["telemetry"]["attachment_upload_only"], True)
+        self.assertEqual(payload["telemetry"]["tts_status"], "skipped_upload_only")
+        messages = payload["transcript_messages"]
+        self.assertEqual(messages[0]["role"], "user")
+        attachments = messages[0]["attachments"]
+        self.assertEqual(len(attachments), 1)
+        artifact_id = str(attachments[0]["artifact"])
+        self.assertTrue(artifact_id)
+        request = urllib.request.Request(
+            self.base_url + f"/api/artifacts/{urllib.parse.quote(artifact_id, safe='')}",
+            headers={"Authorization": "Bearer secret"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read(), b"upload-only-proof-body\n")
+
 
 if __name__ == "__main__":
     unittest.main()

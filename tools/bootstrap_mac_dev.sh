@@ -19,6 +19,10 @@ BREW_PREFIX="$(brew --prefix)"
 PYTHON_BIN="$(brew --prefix python@3.12)/bin/python3.12"
 NODE_BIN="$(brew --prefix node@20)/bin/node"
 NPM_BIN="$(brew --prefix node@20)/bin/npm"
+FLYCTL_BIN="${FLYCTL_BIN:-$(command -v flyctl 2>/dev/null || true)}"
+if [[ -z "$FLYCTL_BIN" ]]; then
+  FLYCTL_BIN="$(brew --prefix flyctl)/bin/flyctl"
+fi
 JAVA_HOME_DEFAULT="${JAVA_HOME:-}"
 if [[ -z "$JAVA_HOME_DEFAULT" ]]; then
   if JAVA_HOME_CANDIDATE="$(/usr/libexec/java_home -v 17 2>/dev/null)"; then
@@ -79,6 +83,7 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-t
 alias pucky-python="$PYTHON_BIN"
 alias pucky-node="$NODE_BIN"
 alias pucky-npm="$NPM_BIN"
+alias pucky-flyctl="$FLYCTL_BIN"
 EOF
 
 "$PYTHON_BIN" "$ROOT/tools/dev_env_doctor.py" --include-emulator --json >"$ROOT/.tmp/pucky-mac-dev-doctor.json"
