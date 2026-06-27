@@ -1596,6 +1596,12 @@ class WorkspaceStore:
         source_ids_by_kind = {
             "project": {"aurora", "migration", "home-refresh", "freelance-followup"},
             "task": {"demo-task-do-paint-samples", "demo-task-send-freelance-mockup"},
+            "reminder": {
+                "demo-reminder-paint-samples",
+                "demo-reminder-health-call",
+                "demo-reminder-book-note",
+                "demo-reminder-freelance-followup",
+            },
         }
         desired_records: dict[tuple[str, str], tuple[str, dict[str, object]]] = {}
         desired_links: dict[str, dict[str, object]] = {}

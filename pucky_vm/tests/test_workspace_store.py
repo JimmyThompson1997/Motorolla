@@ -1226,33 +1226,39 @@ def test_seeded_calendar_week_preserves_places_and_graph_links(tmp_path: Path) -
     assert ("reminder", "demo-reminder-freelance-followup") in late_call_links
 
 
-def test_seeded_connected_detail_repair_restores_task_linked_note(tmp_path: Path) -> None:
+def test_seeded_connected_detail_repair_restores_task_and_reminder_linked_notes(tmp_path: Path) -> None:
     clock = Clock(1_800_000_000_000)
     db_path = tmp_path / "workspace.sqlite3"
     store = WorkspaceStore(str(db_path), clock_ms=clock)
-    note_id = _linked_note_record_id("task", "demo-task-do-paint-samples")
-    link_id = _linked_note_link_id("task", "demo-task-do-paint-samples")
-    assert store.get_record("notes", note_id) is not None
-
-    store._conn.execute(
-        "DELETE FROM workspace_records WHERE kind = 'note' AND record_id = ?",
-        (note_id,),
-    )
+    cases = [
+        ("task", "demo-task-do-paint-samples", "Bring paint samples upstairs"),
+        ("reminder", "demo-reminder-paint-samples", "Bring paint samples upstairs"),
+    ]
+    for source_kind, source_id, expected_title in cases:
+        note_id = _linked_note_record_id(source_kind, source_id)
+        assert store.get_record("notes", note_id) is not None
+        store._conn.execute(
+            "DELETE FROM workspace_records WHERE kind = 'note' AND record_id = ?",
+            (note_id,),
+        )
     store._conn.execute("DELETE FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v2'")
     store._conn.commit()
     store.close()
 
     repaired = WorkspaceStore(str(db_path), clock_ms=clock)
-    note = repaired.get_record("notes", note_id)
-    assert note is not None
-    assert note["title"] == "Bring paint samples upstairs"
-    link = repaired._conn.execute(
-        "SELECT target_id, label FROM workspace_links WHERE link_id = ?",
-        (link_id,),
-    ).fetchone()
-    assert link is not None
-    assert link["target_id"] == note_id
-    assert link["label"] == "Bring paint samples upstairs"
+    for source_kind, source_id, expected_title in cases:
+        note_id = _linked_note_record_id(source_kind, source_id)
+        link_id = _linked_note_link_id(source_kind, source_id)
+        note = repaired.get_record("notes", note_id)
+        assert note is not None
+        assert note["title"] == expected_title
+        link = repaired._conn.execute(
+            "SELECT target_id, label FROM workspace_links WHERE link_id = ?",
+            (link_id,),
+        ).fetchone()
+        assert link is not None
+        assert link["target_id"] == note_id
+        assert link["label"] == expected_title
     meta = repaired._conn.execute(
         "SELECT value FROM workspace_meta WHERE key = 'seeded_connected_detail_repair_v2'"
     ).fetchone()
