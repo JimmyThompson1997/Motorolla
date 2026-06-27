@@ -2021,6 +2021,16 @@
     return `/api/feed?${params.toString()}`;
   }
 
+  function maybeRedirectToSignInOnUnauthorized(response) {
+    if (!response || response.status !== 401 || state.links.apiToken) {
+      return;
+    }
+    if (window.location.pathname === "/sign-in") {
+      return;
+    }
+    window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  }
+
   async function feedApiRequest(path, options = {}) {
     await ensureLinksApiConfig();
     const method = String(options.method || "GET").toUpperCase();

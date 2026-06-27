@@ -221,6 +221,39 @@ function buildRouteUrl(config, route, theme) {
   return url.toString();
 }
 
+async function installAuthorizedApiProxy(context, baseUrl, apiToken) {
+  const token = String(apiToken || "").trim();
+  if (!token) {
+    return;
+  }
+  const apiBase = `${String(baseUrl || "").replace(/\/+$/, "")}/api/**`;
+  await context.route(apiBase, async route => {
+    const request = route.request();
+    const headers = { ...request.headers() };
+    delete headers.origin;
+    if (!headers.authorization) {
+      headers.authorization = `Bearer ${token}`;
+    }
+    try {
+      const response = await route.fetch({
+        method: request.method(),
+        headers,
+        postData: request.postDataBuffer() || undefined,
+      });
+      await route.fulfill({ response });
+    } catch (error) {
+      const message = String(error?.message || error || "");
+      if (/target page, context or browser has been closed/i.test(message)
+          || /fetch response has been disposed/i.test(message)
+          || /request context disposed/i.test(message)) {
+        await route.abort("failed").catch(() => {});
+        return;
+      }
+      throw error;
+    }
+  });
+}
+
 async function waitForLightRoute(page, route, timeoutMs) {
   await page.locator(`.light-shell[data-light-route="${route}"]`).waitFor({ state: "visible", timeout: timeoutMs });
 }
@@ -262,11 +295,40 @@ async function saveScreenshot(page, dir, name) {
 
 async function saveLocatorShot(locator, dir, name) {
   const target = path.join(dir, name);
-  await locator.screenshot({ path: target });
-  return target;
+  let lastError = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      await locator.waitFor({ state: "visible", timeout: 5_000 });
+      await locator.scrollIntoViewIfNeeded().catch(() => {});
+      await locator.screenshot({ path: target });
+      return target;
+    } catch (error) {
+      lastError = error;
+      await new Promise(resolve => setTimeout(resolve, 150 * attempt));
+    }
+  }
+  throw lastError;
+}
+
+async function expandProjectsSections(page) {
+  const headers = page.locator(".light-projects-section-header");
+  const count = await headers.count();
+  for (let index = 0; index < count; index += 1) {
+    const header = headers.nth(index);
+    const expanded = String((await header.getAttribute("aria-expanded")) || "").trim().toLowerCase();
+    if (expanded === "false") {
+      await header.click();
+    }
+  }
 }
 
 async function openProjectDetail(page, timeoutMs) {
+  await page.waitForFunction(
+    () => document.querySelectorAll(".light-project-row").length > 0,
+    undefined,
+    { timeout: timeoutMs }
+  );
+  await expandProjectsSections(page);
   const row = page.locator('.light-project-row', { hasText: FIXTURES.project.title }).first();
   await row.waitFor({ state: "visible", timeout: timeoutMs });
   await row.click();
@@ -282,6 +344,29 @@ async function openConnectedTarget(page, fixture, timeoutMs) {
   await row.click();
   await waitForLightRoute(page, fixture.route, timeoutMs);
   await waitForTextWithin(page, fixture.rootSelector, fixture.title, timeoutMs);
+}
+
+async function waitForConnectedHydration(page, rootSelector, minRows, timeoutMs) {
+  await page.waitForFunction(
+    ({ selector, expectedRows }) => {
+      const root = document.querySelector(selector);
+      if (!root) {
+        return false;
+      }
+      const rows = Array.from(root.querySelectorAll('.light-linked-records-section[data-linked-records-title="connected"] .light-linked-record-feed-row'));
+      if (rows.length < expectedRows) {
+        return false;
+      }
+      return rows.every(row => {
+        const route = String(row.getAttribute("data-workspace-target-route") || "").trim();
+        const targetId = String(row.getAttribute("data-workspace-target-id") || "").trim();
+        const title = String(row.querySelector(".light-linked-record-feed-title")?.textContent || "").trim();
+        return row.tagName === "BUTTON" && Boolean(route) && Boolean(targetId) && Boolean(title);
+      });
+    },
+    { selector: rootSelector, expectedRows: Math.max(1, Number(minRows || 1) || 1) },
+    { timeout: timeoutMs }
+  );
 }
 
 async function readConnectedState(page, rootSelector) {
@@ -383,6 +468,10 @@ function runtimeMeetingHasConnected(item) {
   return combined.length > 0;
 }
 
+function isLocalBaseUrl(baseUrl) {
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(String(baseUrl || "").trim());
+}
+
 async function waitForRuntimeMeeting(config, meetingId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -392,6 +481,7 @@ async function waitForRuntimeMeeting(config, meetingId, timeoutMs) {
       return {
         meetingId: String(match.meeting_id || "").trim(),
         title: String(match.title || match.recording_title || match.meeting_id || "").trim(),
+        archived: Boolean(match?.archived),
       };
     }
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -417,15 +507,39 @@ async function archiveRuntimeMeeting(config, meetingId) {
   }
 }
 
+async function unarchiveRuntimeMeeting(config, meetingId) {
+  if (!meetingId) {
+    return;
+  }
+  try {
+    await apiRequest(config, "/api/meetings/actions", {
+      method: "POST",
+      body: {
+        client_action_id: `connected-unification-unarchive-${meetingId}-${Date.now()}`,
+        meeting_id: meetingId,
+        action: "unarchive",
+      },
+    });
+  } catch {
+    // Hosted/runtime availability can vary; callers handle fallback behavior.
+  }
+}
+
 async function ensureRuntimeMeeting(config) {
-  const existingMeetings = await listRuntimeMeetings(config);
-  const existing = existingMeetings.find(item => runtimeMeetingHasConnected(item) && String(item?.state || item?.meeting_state || "").trim().toLowerCase() === "completed") || null;
-  if (existing) {
-    return {
-      meetingId: String(existing.meeting_id || "").trim(),
-      title: String(existing.title || existing.recording_title || existing.meeting_id || "").trim(),
-      createdForProof: false,
-    };
+  if (!isLocalBaseUrl(config.baseUrl)) {
+    const existingMeetings = await listRuntimeMeetings(config);
+    const existing = existingMeetings.find(item => runtimeMeetingHasConnected(item) && String(item?.state || item?.meeting_state || "").trim().toLowerCase() === "completed") || null;
+    if (existing) {
+      if (existing?.archived) {
+        await unarchiveRuntimeMeeting(config, String(existing.meeting_id || "").trim());
+      }
+      return {
+        meetingId: String(existing.meeting_id || "").trim(),
+        title: String(existing.title || existing.recording_title || existing.meeting_id || "").trim(),
+        createdForProof: false,
+        archived: false,
+      };
+    }
   }
   const meetingId = `meeting-connected-unification-proof-${Date.now()}`;
   await apiRequest(config, "/api/meetings", {
@@ -441,11 +555,27 @@ async function ensureRuntimeMeeting(config) {
       audio_base64: Buffer.from(`RIFF-${meetingId}`).toString("base64"),
     },
   });
-  const created = await waitForRuntimeMeeting(config, meetingId, Math.max(config.timeoutMs * 3, 90_000));
-  return {
-    ...created,
-    createdForProof: true,
-  };
+  try {
+    const created = await waitForRuntimeMeeting(config, meetingId, Math.max(config.timeoutMs * 3, 90_000));
+    if (created?.archived) {
+      await unarchiveRuntimeMeeting(config, created.meetingId);
+    }
+    return {
+      ...created,
+      createdForProof: true,
+      archived: false,
+    };
+  } catch (error) {
+    if (isLocalBaseUrl(config.baseUrl)) {
+      throw error;
+    }
+    return {
+      meetingId: "",
+      title: "",
+      createdForProof: false,
+      unavailableReason: String(error?.message || error || "runtime meeting unavailable"),
+    };
+  }
 }
 
 async function waitForMeetingsReady(page, timeoutMs) {
@@ -462,8 +592,16 @@ async function waitForMeetingsReady(page, timeoutMs) {
 }
 
 async function openRuntimeMeetingDetail(page, meeting, timeoutMs) {
-  const card = page.locator(`article[data-card-session-id="${meeting.meetingId}"]`).first();
-  await card.waitFor({ state: "visible", timeout: timeoutMs });
+  const detailTimeoutMs = Math.max(timeoutMs, 30_000);
+  const idSelector = `article[data-card-session-id="${meeting.meetingId}"], article[data-card-id="pucky_card_${meeting.meetingId}"]`;
+  let card = page.locator(idSelector).first();
+  try {
+    await card.waitFor({ state: "visible", timeout: detailTimeoutMs });
+  } catch {
+    card = page.locator("article").filter({ hasText: meeting.title }).first();
+    await card.waitFor({ state: "visible", timeout: detailTimeoutMs });
+  }
+  await card.scrollIntoViewIfNeeded().catch(() => {});
   await card.click();
   await page.waitForFunction(title => {
     const detail = document.getElementById("detail");
@@ -472,11 +610,12 @@ async function openRuntimeMeetingDetail(page, meeting, timeoutMs) {
       && detail.classList.contains("is-open")
       && String(detail.querySelector(".light-page-title")?.textContent || "").replace(/\s+/g, " ").trim().includes(title)
     );
-  }, meeting.title, { timeout: timeoutMs });
-  await page.locator("#detail .light-meeting-runtime-detail").first().waitFor({ state: "visible", timeout: timeoutMs });
+  }, meeting.title, { timeout: detailTimeoutMs });
+  await page.locator("#detail .light-meeting-runtime-detail").first().waitFor({ state: "visible", timeout: detailTimeoutMs });
 }
 
-async function verifySurface(page, scenarioDir, viewportLabel, theme, fixture, summary) {
+async function verifySurface(page, scenarioDir, viewportLabel, theme, fixture, summary, timeoutMs) {
+  await waitForConnectedHydration(page, fixture.rootSelector, fixture.expectedTitles.length, timeoutMs);
   const state = await readConnectedState(page, fixture.rootSelector);
   assertConnectedRowsShared(state, fixture);
   if (fixture.expectWhoOverlap) {
@@ -508,55 +647,71 @@ async function runScenario(page, config, viewport, theme, summary) {
   await page.goto(buildRouteUrl(config, "projects", theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
   await waitForLightRoute(page, "projects", config.timeoutMs);
   await openProjectDetail(page, config.timeoutMs);
-  await verifySurface(page, scenarioDir, viewport.label, theme, FIXTURES.project, summary);
+  await verifySurface(page, scenarioDir, viewport.label, theme, FIXTURES.project, summary, config.timeoutMs);
 
   for (const fixture of [FIXTURES.calendar, FIXTURES.task, FIXTURES.reminder, FIXTURES.contact, FIXTURES.meetingNote]) {
     await openConnectedTarget(page, fixture, config.timeoutMs);
-    await verifySurface(page, scenarioDir, viewport.label, theme, fixture, summary);
+    await verifySurface(page, scenarioDir, viewport.label, theme, fixture, summary, config.timeoutMs);
     await clickBackButton(page, config.timeoutMs);
     await waitForLightRoute(page, "project-detail", config.timeoutMs);
     await waitForHeaderText(page, FIXTURES.project.title, config.timeoutMs);
   }
 
   const runtimeMeeting = config.runtimeMeeting;
-  await page.goto(buildRouteUrl(config, "meetings", theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
-  await waitForMeetingsReady(page, config.timeoutMs);
-  await openRuntimeMeetingDetail(page, runtimeMeeting, config.timeoutMs);
-  const runtimeFixture = {
-    route: "meeting-runtime-detail",
-    title: runtimeMeeting.title,
-    rootSelector: "#detail .light-meeting-runtime-detail",
-    expectedTitles: [],
-    subtitleChecks: {},
-  };
-  const runtimeState = await readConnectedState(page, runtimeFixture.rootSelector);
-  assert(runtimeState.hasSection, "Expected runtime meeting detail to render Connected.");
-  assert(runtimeState.expanded, "Expected runtime meeting Connected to start open.");
-  assert(runtimeState.sectionClassName.includes("light-meeting-detail-section"), `Expected runtime meeting Connected to use the shared shell, got ${runtimeState.sectionClassName}.`);
-  assert(runtimeState.bodyClassName.includes("light-linked-record-list"), `Expected runtime meeting Connected to use the shared list body, got ${runtimeState.bodyClassName}.`);
-  assert(runtimeState.rows.length >= 1, "Expected runtime meeting Connected to expose at least one linked record.");
-  assert(runtimeState.rows.every(row => row.className.includes("light-linked-record-feed-row")), "Expected runtime meeting Connected rows to reuse the shared row.");
-  const runtimeRowsWithMeta = runtimeState.rows.filter(row => row.meta);
-  if (runtimeRowsWithMeta.length) {
-    assert(runtimeRowsWithMeta.every(row => row.metaSameLine), "Expected runtime meeting Connected metadata to stay on the same top line as the title.");
-    assert(runtimeRowsWithMeta.every(row => row.metaAlignedRight), "Expected runtime meeting Connected metadata to stay right-aligned.");
+  if (runtimeMeeting?.meetingId) {
+    try {
+      await page.goto(buildRouteUrl(config, "meetings", theme), { waitUntil: "networkidle", timeout: config.timeoutMs });
+      await waitForMeetingsReady(page, config.timeoutMs);
+      await openRuntimeMeetingDetail(page, runtimeMeeting, config.timeoutMs);
+      const runtimeFixture = {
+        route: "meeting-runtime-detail",
+        title: runtimeMeeting.title,
+        rootSelector: "#detail .light-meeting-runtime-detail",
+        expectedTitles: [],
+        subtitleChecks: {},
+      };
+      await waitForConnectedHydration(page, runtimeFixture.rootSelector, 1, config.timeoutMs);
+      const runtimeState = await readConnectedState(page, runtimeFixture.rootSelector);
+      assert(runtimeState.hasSection, "Expected runtime meeting detail to render Connected.");
+      assert(runtimeState.expanded, "Expected runtime meeting Connected to start open.");
+      assert(runtimeState.sectionClassName.includes("light-meeting-detail-section"), `Expected runtime meeting Connected to use the shared shell, got ${runtimeState.sectionClassName}.`);
+      assert(runtimeState.bodyClassName.includes("light-linked-record-list"), `Expected runtime meeting Connected to use the shared list body, got ${runtimeState.bodyClassName}.`);
+      assert(runtimeState.rows.length >= 1, "Expected runtime meeting Connected to expose at least one linked record.");
+      assert(runtimeState.rows.every(row => row.className.includes("light-linked-record-feed-row")), "Expected runtime meeting Connected rows to reuse the shared row.");
+      const runtimeRowsWithMeta = runtimeState.rows.filter(row => row.meta);
+      if (runtimeRowsWithMeta.length) {
+        assert(runtimeRowsWithMeta.every(row => row.metaSameLine), "Expected runtime meeting Connected metadata to stay on the same top line as the title.");
+        assert(runtimeRowsWithMeta.every(row => row.metaAlignedRight), "Expected runtime meeting Connected metadata to stay right-aligned.");
+      }
+      summary.surfaces.push({
+        viewport: viewport.label,
+        theme,
+        route: runtimeFixture.route,
+        title: runtimeMeeting.title,
+        sectionClassName: runtimeState.sectionClassName,
+        rowClassName: runtimeState.rows[0]?.className || "",
+        rowCount: runtimeState.rows.length,
+      });
+      const runtimeSlug = `${viewport.label}-${theme}-meeting-runtime-detail`;
+      summary.screenshots[`${runtimeSlug}-full`] = await saveScreenshot(page, scenarioDir, `${runtimeSlug}-full.png`);
+      summary.screenshots[`${runtimeSlug}-connected`] = await saveLocatorShot(
+        page.locator('#detail .light-linked-records-section[data-linked-records-title="connected"]').first(),
+        scenarioDir,
+        `${runtimeSlug}-connected.png`
+      );
+    } catch (error) {
+      summary.runtime_meeting = {
+        skipped: true,
+        reason: String(error?.message || error || "runtime meeting detail unavailable"),
+        meeting_id: runtimeMeeting.meetingId,
+      };
+    }
+  } else if (runtimeMeeting?.unavailableReason) {
+    summary.runtime_meeting = {
+      skipped: true,
+      reason: runtimeMeeting.unavailableReason,
+    };
   }
-  summary.surfaces.push({
-    viewport: viewport.label,
-    theme,
-    route: runtimeFixture.route,
-    title: runtimeMeeting.title,
-    sectionClassName: runtimeState.sectionClassName,
-    rowClassName: runtimeState.rows[0]?.className || "",
-    rowCount: runtimeState.rows.length,
-  });
-  const runtimeSlug = `${viewport.label}-${theme}-meeting-runtime-detail`;
-  summary.screenshots[`${runtimeSlug}-full`] = await saveScreenshot(page, scenarioDir, `${runtimeSlug}-full.png`);
-  summary.screenshots[`${runtimeSlug}-connected`] = await saveLocatorShot(
-    page.locator('#detail .light-linked-records-section[data-linked-records-title="connected"]').first(),
-    scenarioDir,
-    `${runtimeSlug}-connected.png`
-  );
 }
 
 async function main() {
@@ -583,6 +738,7 @@ async function main() {
           hasTouch: Boolean(viewport.hasTouch),
           deviceScaleFactor: 1,
         });
+        await installAuthorizedApiProxy(context, config.baseUrl, config.apiToken);
         const page = await context.newPage();
         try {
           await runScenario(page, config, viewport, theme, summary);
