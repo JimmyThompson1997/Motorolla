@@ -325,7 +325,25 @@ def discover_cover_cdp_url(args: argparse.Namespace, serial: str) -> dict[str, s
             keep_forward = False
             try:
                 pages = fetch_json(f"http://127.0.0.1:{port}/json/list")
-                if any("Pucky Cover" in str(page.get("title", "")) for page in (pages or [])):
+                def page_matches_cover(page: dict[str, object]) -> bool:
+                    if not isinstance(page, dict):
+                        return False
+                    title = str(page.get("title", "") or "")
+                    url = str(page.get("url", "") or "")
+                    page_type = str(page.get("type", "") or "")
+                    if page_type and page_type != "page":
+                        return False
+                    if "Pucky Cover" in title:
+                        return True
+                    if "pucky.fly.dev/ui/pucky/latest" in url:
+                        return True
+                    if url.startswith("file:///android_asset/pucky_fallback"):
+                        return True
+                    if title == "Webpage not available" and "pucky.fly.dev" in url:
+                        return True
+                    return False
+
+                if any(page_matches_cover(page) for page in (pages or [])):
                     keep_forward = True
                     return {
                         "socket": socket_name,
@@ -337,7 +355,10 @@ def discover_cover_cdp_url(args: argparse.Namespace, serial: str) -> dict[str, s
                 errors.append(f"{socket_name}: {exc}")
             finally:
                 if not keep_forward:
-                    run_subprocess(adb_command(args, serial, ["forward", "--remove", f"tcp:{port}"]), cwd=args.repo_root, timeout=10)
+                    try:
+                        run_adb(args, serial, ["forward", "--remove", f"tcp:{port}"], timeout_seconds=10)
+                    except Exception:
+                        pass
         last_errors = errors or last_errors
         time.sleep(1.0)
     if not saw_socket:

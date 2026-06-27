@@ -5429,6 +5429,7 @@ class PuckyVoiceService:
         thread_scope_source: str | None = None,
         thread_card_id: str | None = None,
         proof_reply_delay_ms: str | int | None = None,
+        user_attachments: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         transcript = str(text or "").strip()
         if not transcript:
@@ -5468,19 +5469,26 @@ class PuckyVoiceService:
             telemetry["requested_reasoning_effort"] = requested_reasoning_effort
         telemetry["proof_reply_delay_ms_requested"] = _normalize_proof_reply_delay_ms(proof_reply_delay_ms)
         telemetry["proof_reply_delay_enabled"] = bool(self.config.proof_reply_delay_enabled)
+        normalized_user_attachments, prompt_attachment_context = self._prepare_user_turn_attachments(
+            turn_id,
+            user_attachments or [],
+        )
+        telemetry["user_attachment_count"] = len(normalized_user_attachments)
         self._update_turn_status(turn_id, "upload_received", "running", telemetry)
         try:
             return self._handle_transcript_turn(
                 turn_id=turn_id,
                 session_id=session_id,
                 reply_mode=reply_mode,
-                transcript=transcript,
+                transcript=f"{transcript}\n\n{prompt_attachment_context}".strip() if prompt_attachment_context else transcript,
                 telemetry=telemetry,
                 total_start=total_start,
                 request_audio_mime_type="",
                 request_audio_base64="",
+                display_transcript_text=transcript,
                 model=requested_model or None,
                 reasoning_effort=requested_reasoning_effort or None,
+                user_attachments=normalized_user_attachments,
             )
         except Exception as exc:
             failed_stage, root = _unwrap_staged_exception(exc, fallback_stage="codex_running")
@@ -5514,6 +5522,7 @@ class PuckyVoiceService:
         model: str | None = None,
         reasoning_effort: str | None = None,
         force_unread: bool = False,
+        user_attachments: list[dict[str, object]] | None = None,
         codex_client: CodexProvider | None = None,
         attachment_builder: Callable[[ReplyEnvelope], tuple[list[dict[str, object]], dict[str, object]]] | None = None,
         graph_output_validator: Callable[[ReplyEnvelope, list[dict[str, object]]], None] | None = None,
@@ -5678,6 +5687,7 @@ class PuckyVoiceService:
                 request_audio_mime_type=request_audio_mime_type,
                 has_request_audio=bool(request_audio_base64),
                 request_audio_attachment=request_audio_attachment,
+                attachments=user_attachments,
             ),
             _assistant_transcript_message(
                 text=envelope.reply_text,
@@ -5768,6 +5778,62 @@ class PuckyVoiceService:
         time.sleep(requested_ms / 1000.0)
         telemetry["proof_reply_delay_ms_applied"] = requested_ms
         telemetry["proof_reply_delay_elapsed_ms"] = _elapsed_ms(start)
+
+    def _user_turn_upload_dir(self, turn_id: str) -> Path:
+        base = Path(self.config.feed_db_path).with_name("pucky_uploaded_attachments")
+        target = base / _normalize_turn_id(turn_id)
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _prepare_user_turn_attachments(
+        self,
+        turn_id: str,
+        uploaded_files: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], str]:
+        if not uploaded_files:
+            return [], ""
+        prepared: list[dict[str, object]] = []
+        prompt_lines: list[str] = []
+        upload_dir = self._user_turn_upload_dir(turn_id)
+        max_count = max(1, int(self.config.max_attachment_count or 1))
+        max_bytes = max(1, int(self.config.max_attachment_bytes or 1))
+        for index, raw in enumerate(uploaded_files[:max_count]):
+            filename = re.sub(r"[^A-Za-z0-9._-]+", "-", str(raw.get("filename") or "attachment")).strip("-")
+            filename = filename or f"attachment-{index + 1}"
+            mime_type = str(raw.get("content_type") or _guess_attachment_mime(filename) or "application/octet-stream").strip()
+            mime_type = mime_type or "application/octet-stream"
+            content = raw.get("content") or b""
+            if isinstance(content, bytearray):
+                content = bytes(content)
+            if not isinstance(content, bytes):
+                content = bytes(str(content), "utf-8")
+            if len(content) > max_bytes:
+                raise ValueError(f"attachment_too_large:{filename}")
+            stored_path = upload_dir / f"{index + 1:02d}-{filename}"
+            stored_path.write_bytes(content)
+            attachment: dict[str, object] = {
+                "id": f"{turn_id}:user_attachment:{index + 1}",
+                "path": str(stored_path),
+                "artifact": f"pucky_card_{turn_id}:user_attachment:{index + 1}:original",
+                "mime_type": mime_type,
+                "title": filename,
+                "size_bytes": len(content),
+            }
+            excerpt = ""
+            if _is_inline_text_mime(mime_type) or mime_type in {"text/html", "application/xhtml+xml"}:
+                excerpt = content.decode("utf-8", errors="replace")[:4000]
+                if excerpt:
+                    attachment["text"] = excerpt
+            normalized = normalize_attachment(attachment)
+            prepared.append(normalized)
+            line = f"- {filename} ({mime_type}, {len(content)} bytes)"
+            if excerpt:
+                line += f":\n{excerpt[:1200]}"
+            prompt_lines.append(line)
+        prompt = ""
+        if prompt_lines:
+            prompt = "User attached files:\n" + "\n".join(prompt_lines)
+        return prepared, prompt
 
     def _prepare_reply_attachments(
         self,
@@ -6135,12 +6201,15 @@ def _user_transcript_message(
     request_audio_mime_type: str,
     has_request_audio: bool,
     request_audio_attachment: dict[str, object] | None = None,
+    attachments: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     message: dict[str, object] = {
         "role": "user",
         "text": text,
         "created_at": created_at,
     }
+    if attachments:
+        message["attachments"] = attachments
     return message
 
 
@@ -6937,6 +7006,7 @@ def _public_turn_status(telemetry: dict[str, object]) -> dict[str, object]:
         "proof_reply_delay_ms_applied",
         "proof_reply_delay_elapsed_ms",
         "proof_reply_delay_ignored",
+        "user_attachment_count",
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",
@@ -6995,6 +7065,7 @@ def _public_turn_telemetry(telemetry: dict[str, object]) -> dict[str, object]:
         "proof_reply_delay_ms_applied",
         "proof_reply_delay_elapsed_ms",
         "proof_reply_delay_ignored",
+        "user_attachment_count",
         "thread_mode",
         "thread_reused",
         "thread_fallback_reason",

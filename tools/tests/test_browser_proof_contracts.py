@@ -110,7 +110,91 @@ def test_workspace_apps_browser_proof_asserts_project_detail_chrome_is_removed()
     assert "Expected project detail chip cloud to be removed" in source
 
 
-def test_notes_pin_browser_proof_handles_preview_unlock_and_row_toggle_contract() -> None:
+def test_thread_compose_browser_and_emulator_proofs_require_real_send_state_evidence() -> None:
+    browser_source = read_source("cover_inbox_thread_compose_playwright.mjs")
+    emulator_source = read_source("phone_inbox_thread_compose_emulator_proof.py")
+
+    assert "THREAD-COMPOSE-" in browser_source
+    assert "new_chat_smoke" in browser_source
+    assert "continuation_smoke" in browser_source
+    assert "header_compose" in browser_source
+    assert "new_thread_created" in browser_source
+    assert "existing_thread_reused" in browser_source
+    assert "waitForThreadDetailThreadId" in browser_source
+    assert "summary.new_chat_smoke.final.thread_id === createdThreadId" in browser_source
+    assert "summary.continuation_smoke.turn_response.requested_thread_id === createdThreadId" in browser_source
+    assert "proof_reply_delay_ms" in browser_source
+    assert "Sending" in browser_source
+    assert "Thinking..." in browser_source
+    assert "blocked_second_send" in browser_source
+    assert "attachment_queued" in browser_source
+    assert "request_count_before_release" in browser_source
+    assert "thread-compose-note.txt" in browser_source
+    assert "thread-compose-proof.png" in browser_source
+    assert "manifest_commit" in browser_source
+    assert "trace.zip" in browser_source or "tracing.stop" in browser_source
+    assert "video_path" in browser_source
+
+    assert "adb" in emulator_source.lower()
+    assert "subprocess" in emulator_source
+    assert "devtools" in emulator_source.lower()
+    assert "screencap" in emulator_source.lower()
+    assert "WebView" in emulator_source
+    assert "THREAD-COMPOSE-" in emulator_source
+    assert "proof_reply_delay_ms" in emulator_source
+    assert "thread-compose-note.txt" in emulator_source
+    assert "thread-compose-proof.png" in emulator_source
+    assert "chooser" in emulator_source.lower()
+    assert "select_file_from_chooser" in emulator_source
+    assert "chooser_return" in emulator_source
+    assert '"api_base_url"' in emulator_source
+    assert "api_base_url_for_page_url" in emulator_source
+    assert '"wait_for_turn_request_count"' in emulator_source
+    assert '"wait_for_thread_compose_ready"' in emulator_source
+    assert "thinking" in emulator_source.lower()
+    assert "request_count" in emulator_source
+    assert "new_thread_created" in emulator_source
+    assert "existing_thread_reused" in emulator_source
+    assert '"set_input_files"' not in emulator_source
+
+
+def test_reminder_browser_proofs_require_graph_only_connected_feed() -> None:
+    reminder_source = read_source("reminders_v3_browser_proof.mjs")
+    workspace_source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert "Expected no Connected feed when reminder has no graph links" in reminder_source
+    assert "Expected no Connected section title when reminder has no graph links" in reminder_source
+    assert "Expected reminder detail to omit reminder-native Connected rows" in reminder_source
+    assert "detail.nativeTileLabels.length === 0" in reminder_source
+    assert "detail.connectedCount === 0" in reminder_source
+    assert "installAuthorizedApiProxy(" not in reminder_source
+    assert 'headers.authorization = `Bearer ${token}`' not in reminder_source
+    assert "document.querySelectorAll('[data-reminder-detail-tile=\"recipient\"]').length === 0" in workspace_source
+    assert "document.querySelectorAll('[data-reminder-detail-tile=\"when\"]').length === 0" in workspace_source
+    assert 'JSON.stringify(feedLabels) === JSON.stringify(["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project"])' in workspace_source
+    assert 'for (const text of ["Proof Future Task", "Proof Graph Meeting", "Proof Alpha Project", "CONNECTED"]) {' in workspace_source
+    assert 'for (const text of ["When", "Me", "Proof Contact One", "Proof Future Task", "Proof Graph Meeting", "CONNECTED"]) {' not in workspace_source
+    assert "async function sampleReminderIconTimeline(page, reportDir, reminderIds, options = {}) {" in reminder_source
+    assert "async function sampleReminderCountdownTimeline(page, reportDir, reminderId, options = {}) {" in reminder_source
+    assert "Expected live reminder list icon to stay visually static with no animation" in reminder_source
+    assert "Expected upcoming comparison reminder list icon to stay visually static with no animation" in reminder_source
+    assert "Expected at least six distinct countdown progress values in twelve seconds" in reminder_source
+    assert "summary.motion.list_icon_stability" in reminder_source
+    assert "summary.motion.snooze_countdown" in reminder_source
+    assert "Reminder list icons stay visually static for live and upcoming rows on the hosted list." in reminder_source
+    assert "writeReminderProofSummary(config.reportDir, summary);" in reminder_source
+
+
+def test_universal_feed_tiles_browser_proof_loads_directly_without_browser_unlock() -> None:
+    source = read_source("cover_universal_feed_tiles_playwright.mjs")
+
+    assert LEGACY_LOCK_TITLE not in source
+    assert LEGACY_UNLOCK_LABEL not in source
+    assert "unlockPreviewIfNeeded(" not in source
+    assert 'url.searchParams.set("api_token", String(apiToken || "").trim());' not in source
+
+
+def test_notes_pin_browser_proof_loads_directly_and_keeps_row_toggle_contract() -> None:
     source = read_source("cover_notes_pin_playwright.mjs")
 
     assert "Preview needs api_token" in source

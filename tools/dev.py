@@ -82,6 +82,9 @@ TASK_HELP = {
     "proof-live-contacts-edit-browser": "Alias for proof-live-contact-edit-browser.",
     "proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle.",
     "proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts.",
+    "proof-local-thread-compose-browser": "Boot the local inbox/media proof server and run the Inbox thread compose browser proof against the current local bundle.",
+    "proof-live-thread-compose-browser": "Run the Inbox thread compose browser proof against the hosted VM with manifest refresh verification.",
+    "proof-live-thread-compose-emulator": "Run the Inbox thread compose emulator proof against the hosted VM with real WebView chooser/send evidence.",
     "proof-local-inbox-management": "Boot the local inbox/media proof server and run the no-audio Inbox management browser proof.",
     "proof-live-inbox-management": "Run the no-audio Inbox management browser proof against the deployed hosted VM bundle.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
@@ -735,6 +738,63 @@ def run_live_universal_feed_tiles_proof(extra_args: list[str]) -> int:
     )
 
 
+def run_local_thread_compose_browser_proof(extra_args: list[str]) -> int:
+    return run_local_workspace_proof(
+        "tools/proofs/cover/cover_inbox_thread_compose_playwright.mjs",
+        [
+            "--page-url",
+            "http://127.0.0.1:8768/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+            "--api-token",
+            "proof-token",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-local-thread-compose-browser").resolve()),
+            "--timeout-ms",
+            "30000",
+        ],
+        extra_args,
+        server_command=LOCAL_INBOX_MEDIA_PROOF_SERVER,
+        health_url="http://127.0.0.1:8768/healthz",
+    )
+
+
+def run_live_thread_compose_browser_proof(extra_args: list[str]) -> int:
+    node_binary = require_binary("node")
+    refresh_seed = current_git_head() or str(int(time.time()))
+    page_url = append_refresh_param(
+        "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
+        refresh_seed,
+    )
+    return run_node_proofs(
+        node_binary,
+        [
+            (
+                "tools/proofs/cover/cover_inbox_thread_compose_playwright.mjs",
+                [
+                    "--page-url",
+                    page_url,
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-thread-compose-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
+        env=proof_env(),
+    )
+
+
+def run_live_thread_compose_emulator_proof(extra_args: list[str]) -> int:
+    return run_command(
+        [
+            PYTHON,
+            "tools/proofs/phone/phone_inbox_thread_compose_emulator_proof.py",
+            "--report-dir",
+            str((ROOT / ".tmp" / "proof-live-thread-compose-emulator").resolve()),
+            *extra_args,
+        ],
+        env=proof_env(),
+    )
+
+
 def run_local_inbox_management_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
@@ -1123,6 +1183,12 @@ def main(argv: list[str] | None = None) -> int:
         return run_local_universal_feed_tiles_proof(args.extra_args)
     if args.task == "proof-live-universal-tiles":
         return run_live_universal_feed_tiles_proof(args.extra_args)
+    if args.task == "proof-local-thread-compose-browser":
+        return run_local_thread_compose_browser_proof(args.extra_args)
+    if args.task == "proof-live-thread-compose-browser":
+        return run_live_thread_compose_browser_proof(args.extra_args)
+    if args.task == "proof-live-thread-compose-emulator":
+        return run_live_thread_compose_emulator_proof(args.extra_args)
     if args.task == "proof-local-inbox-management":
         return run_local_inbox_management_proof(args.extra_args)
     if args.task == "proof-live-inbox-management":

@@ -489,6 +489,22 @@ public final class MainActivityWebViewShellTest {
                 Files.exists(Path.of("src/main/java/com/pucky/device/tunnel/TlsSniProxy.java")));
     }
 
+    @Test
+    public void hostedHtmlUiWebViewSupportsRealFileChooserForComposerAttachments() throws Exception {
+        String activity = read("src/main/java/com/pucky/device/MainActivity.java");
+
+        assertTrue(activity.contains("webShell.setWebChromeClient("));
+        assertTrue(activity.contains("onShowFileChooser("));
+        assertTrue(activity.contains("pendingWebFileChooserCallback"));
+        assertTrue(activity.contains("REQUEST_WEB_FILE_CHOOSER"));
+        assertTrue(activity.contains("Intent.EXTRA_ALLOW_MULTIPLE"));
+        assertTrue(activity.contains("startActivityForResult("));
+        assertTrue(activity.contains("onActivityResult("));
+        assertTrue(activity.contains("WebChromeClient.FileChooserParams.parseResult("));
+        assertTrue(activity.contains("callback.onReceiveValue(results);")
+                || activity.contains("pendingWebFileChooserCallback.onReceiveValue(results);"));
+    }
+
     private static String read(String path) throws Exception {
         return new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8);
     }

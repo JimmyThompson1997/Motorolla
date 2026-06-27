@@ -946,6 +946,10 @@ def test_android_bootstrap_snapshot_primes_first_paint_state_before_individual_r
     assert 'writeBridgeCache("wake.status", {}, raw.wake_status);' in apply_native_bootstrap
     assert 'writeBridgeCache("phone.role.status", {}, raw.phone_role);' in apply_native_bootstrap
     assert 'writeBridgeCache("ui.default_audio_speed.get", {}, raw.default_audio_speed);' in apply_native_bootstrap
+    assert 'const apiBaseOverride = explicitHostedBrowserApiBaseUrlOverride();' in apply_native_bootstrap
+    assert 'const apiTokenOverride = explicitHostedBrowserApiTokenOverride();' in apply_native_bootstrap
+    assert 'state.links.apiBaseUrl = apiBaseOverride || String(config.api_base_url || "").trim().replace(/\\/$/, "");' in apply_native_bootstrap
+    assert 'state.links.apiToken = apiTokenOverride || String(config.api_token || "").trim();' in apply_native_bootstrap
     assert 'perfDebugState.bootstrap_snapshot_used = true;' in apply_native_bootstrap
     assert 'await cachedBridgeRead("ui.bootstrap.get", {}, {' in load_native_bootstrap
     assert 'await loadNativeBootstrapSnapshot({ render: false, force: Boolean(options.force) });' in load_settings
@@ -959,6 +963,8 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     ui_state = read("pucky-ui-state.js")
 
     initial_links = function_block(app, "initialLinksState")
+    explicit_hosted_browser_api_base = function_block(app, "explicitHostedBrowserApiBaseUrlOverride")
+    explicit_hosted_browser_api_token = function_block(app, "explicitHostedBrowserApiTokenOverride")
     resolve_hosted_browser_api_base = function_block(app, "resolveHostedBrowserApiBaseUrl")
     resolve_hosted_browser_api_token = function_block(app, "resolveHostedBrowserApiToken")
     resolve_hosted_browser_device = function_block(app, "resolveHostedBrowserDeviceId")
@@ -968,12 +974,14 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     assert 'apiToken: resolveHostedBrowserApiToken(),' in initial_links
     assert "function resolveBrowserApiBaseUrl(" in ui_state
     assert 'params.get("api_base_url")' in ui_state
+    assert 'params.get("api_base_url") || params.get("apiBase")' in explicit_hosted_browser_api_base
     assert 'const fallbackApiBaseUrl = window.location && /^https?:$/i.test(window.location.protocol || "")' in resolve_hosted_browser_api_base
     assert 'if (uiState && typeof uiState.resolveBrowserApiBaseUrl === "function") {' in resolve_hosted_browser_api_base
     assert 'return String(uiState.resolveBrowserApiBaseUrl({ defaultApiBaseUrl: fallbackApiBaseUrl }) || fallbackApiBaseUrl).trim().replace(/\\/$/, "");' in resolve_hosted_browser_api_base
     assert "function resolveBrowserApiToken(" in ui_state
     assert "browser_api_token" in ui_state
     assert 'new URLSearchParams(window.location.search || "").get("api_token")' in app
+    assert 'new URLSearchParams(window.location.search || "").get("api_token")' in explicit_hosted_browser_api_token
     assert 'params.get("api_token")' in ui_state
     assert 'if (uiState && typeof uiState.resolveBrowserApiToken === "function") {' in resolve_hosted_browser_api_token
     assert 'return String(uiState.resolveBrowserApiToken() || "").trim();' in resolve_hosted_browser_api_token
@@ -1037,6 +1045,10 @@ def test_connect_native_config_waits_for_bridge_request_before_declaring_missing
     assert 'const hasApiToken = Boolean(String(config && config.api_token || "").trim()) || config && config.has_api_token === true;' in request_native_config
     assert 'return await Pucky.request({ command: "pucky.config.get", args: {} });' not in request_native_config
     assert 'const config = await requestNativeLinksConfig({ requireApiToken: true });' in ensure_links_api_config
+    assert 'const apiBaseOverride = explicitHostedBrowserApiBaseUrlOverride();' in ensure_links_api_config
+    assert 'const apiTokenOverride = explicitHostedBrowserApiTokenOverride();' in ensure_links_api_config
+    assert 'state.links.apiBaseUrl = apiBaseOverride || String(config && config.api_base_url || "").replace(/\\/$/, "");' in ensure_links_api_config
+    assert 'state.links.apiToken = apiTokenOverride || String(config && config.api_token || "");' in ensure_links_api_config
     assert 'if (state.links.apiBaseUrl && state.links.apiToken) {' in ensure_links_api_config
     assert 'if (state.links.apiBaseUrl) {' not in ensure_links_api_config
 
@@ -1381,6 +1393,143 @@ def test_ui_debug_focus_card_navigates_to_inbox_before_selecting_thread() -> Non
     assert 'state.openCardMenuThreadId = cardThreadId(card);' in focus_card
     assert 'void syncVoiceThreadScope({ reason: "debug_focus_card", render: true });' in focus_card
     assert "openInboxCardMenu(" not in focus_card
+
+
+def test_thread_compose_transcript_detail_supports_composer_state_and_multipart_send() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    render_fn = function_block(app, "render")
+    load_turn_status = function_block(app, "loadTurnStatus")
+    show_transcript = function_block(app, "showTranscript")
+    render_transcript_detail_content = function_block(app, "renderTranscriptDetailContent")
+    transcript_detail_messages = function_block(app, "transcriptDetailMessages")
+    render_thread_composer = function_block(app, "renderThreadComposer")
+    thread_composer_state = function_block(app, "threadComposerStateForCard")
+    send_thread_composer_turn = function_block(app, "sendThreadComposerTurn")
+    schedule_thread_composer_thinking_fallback = function_block(app, "scheduleComposerTurnThinkingFallback")
+    apply_voice_state = function_block(app, "applyVoiceState")
+    pending_outbound_messages = function_block(app, "pendingOutboundMessages")
+    feed_display_cards = function_block(app, "feedDisplayCards")
+    refresh_open_transcript_detail = function_block(app, "refreshOpenTranscriptDetail")
+
+    assert "threadComposerDrafts: {}," in app
+    assert "function renderTranscriptDetailContent(card) {" in app
+    assert "function transcriptDetailMessages(card) {" in app
+    assert "function renderThreadComposer(card) {" in app
+    assert "function threadComposerStateForCard(card) {" in app
+    assert "function sendThreadComposerTurn(card) {" in app
+    assert "function scheduleComposerTurnThinkingFallback(turnId) {" in app
+    assert "function refreshOpenTranscriptDetail() {" in app
+    assert "refreshOpenTranscriptDetail();" in render_fn
+    assert "if (shouldPollHostedTurnStatus()) {" in load_turn_status
+    assert 'snapshot = await loadHostedTurnStatus(turnId);' in load_turn_status
+    assert "composer_managed: true," in load_turn_status
+    assert "client_started_at_ms: Number(snapshot?.client_started_at_ms || currentTurn.client_started_at_ms || 0)," in load_turn_status
+    assert "pending_user_attachments: Array.isArray(snapshot?.pending_user_attachments) && snapshot.pending_user_attachments.length" in load_turn_status
+    assert "const current = normalizeTurnStatus(state.turn);" in apply_voice_state
+    assert "const incoming = normalizeTurnStatus(input);" in apply_voice_state
+    assert "if (current.composer_managed && isTurnActive(current) && !turnStatusTurnId(incoming) && !turnFailed(incoming)) {" in apply_voice_state
+    assert "return;" in apply_voice_state
+    assert "const content = renderTranscriptDetailContent(card);" in show_transcript
+    assert 'const pendingNewThreadDetail = isPendingOutboundCard(card) && turnRequestedThreadMode(state.turn) === "new" && !cardThreadId(card);' in show_transcript
+    assert 'const detailType = pendingNewThreadDetail ? "transcript_new" : "transcript";' in show_transcript
+    assert "applyDetailDataAttributes(panel, detailType, card);" in show_transcript
+    assert "rememberNavDetail(detailType, card, options);" in show_transcript
+    assert "const messages = transcriptDetailMessages(card);" in render_transcript_detail_content
+    assert "const composer = renderThreadComposer(card);" in render_transcript_detail_content
+    assert "content.append(stack, composer);" in render_transcript_detail_content
+    assert "const pendingMessages = pendingOutboundMessages(pendingCard);" in transcript_detail_messages
+    assert "if (turnRequestedThreadId(state.turn) !== cardThreadId(card)) {" in transcript_detail_messages
+    assert "textarea.disabled = false;" in render_thread_composer
+    assert 'const input = document.createElement("input");' in render_thread_composer
+    assert 'input.type = "file";' in render_thread_composer
+    assert "input.multiple = true;" in render_thread_composer
+    assert 'input.className = "thread-composer-file-input";' in render_thread_composer
+    assert 'input.setAttribute("aria-label", "Attach files");' in render_thread_composer
+    assert 'const attach = el("label", "thread-composer-attach", "Attach");' in render_thread_composer
+    assert "attach.append(input);" in render_thread_composer
+    assert "const syncComposerUi = () => {" in render_thread_composer
+    assert "const nextState = threadComposerStateForCard(card);" in render_thread_composer
+    assert "send.disabled = !nextState.sendEnabled;" in render_thread_composer
+    assert 'status.textContent = nextState.disabledReason || "Ready to send.";' in render_thread_composer
+    assert "composer.append(textarea);" in render_thread_composer
+    assert 'const send = el("button", "thread-composer-send", "Send");' in render_thread_composer
+    assert "void sendThreadComposerTurn(card);" in render_thread_composer
+    assert "syncComposerUi();" in render_thread_composer
+    assert 'mode: isNewThreadComposerCard(card) ? "new_thread" : "existing_thread",' in thread_composer_state
+    assert "apiTokenPresent: Boolean(String(state.links.apiToken || \"\").trim())," in thread_composer_state
+    assert "inFlight: composerTurnMatchesCard(card, threadId)," in thread_composer_state
+    assert "const proofReplyDelayMs = composerProofReplyDelayMs();" in send_thread_composer_turn
+    assert 'const threadMode = composerState.mode === "new_thread" ? "new" : "existing";' in send_thread_composer_turn
+    assert "const form = new FormData();" in send_thread_composer_turn
+    assert 'form.append("thread_mode", threadMode);' in send_thread_composer_turn
+    assert 'if (composerState.threadId) {' in send_thread_composer_turn
+    assert 'form.append("files", queued.file, queued.name);' in send_thread_composer_turn
+    assert "const body = {" in send_thread_composer_turn
+    assert 'thread_mode: threadMode,' in send_thread_composer_turn
+    assert "const responseThreadId = String(" in send_thread_composer_turn
+    assert "migrateThreadComposerDraftKey(composerState.draftKey, `thread:${responseThreadId}`);" in send_thread_composer_turn
+    assert "state.navDetail = normalizeNavDetail({" in send_thread_composer_turn
+    assert "thread_id: responseThreadId," in send_thread_composer_turn
+    assert "await refreshCardsFromVmSnapshot({ reason: \"thread_composer_send\", render: false });" in send_thread_composer_turn
+    assert "scheduleComposerTurnThinkingFallback(turnId);" in send_thread_composer_turn
+    assert "client_started_at_ms: Date.now()," in app
+    assert "const startedAtMs = Number(normalized.client_started_at_ms || 0);" in app
+    assert "if (normalized.composer_managed && isTurnActive(normalized) && startedAtMs > 0) {" in app
+    assert "if ((Date.now() - startedAtMs) < 1200) {" in app
+    assert "const ensureThinkingRender = () => {" in schedule_thread_composer_thinking_fallback
+    assert 'if (turnStatusTurnId(current) !== scheduledTurnId || !current.composer_managed) {' in schedule_thread_composer_thinking_fallback
+    assert 'if (!isTurnActive(current) || turnFailed(current) || pendingTurnState(current) !== "sending") {' in schedule_thread_composer_thinking_fallback
+    assert 'stage: "codex_running",' in schedule_thread_composer_thinking_fallback
+    assert 'visual_state: "thinking",' in schedule_thread_composer_thinking_fallback
+    assert "ensureThinkingRender();" in schedule_thread_composer_thinking_fallback
+    assert "const pendingThreadId = cardThreadId(pendingCard);" in feed_display_cards
+    assert "if (pendingThreadId && cardThreadId(card) === pendingThreadId) {" in feed_display_cards
+    assert "existing.replaceWith(next);" in refresh_open_transcript_detail
+    assert "attachments: normalizedAttachments(card?.pending_user_attachments)" in pending_outbound_messages
+    assert ".thread-composer {" in styles
+    assert ".thread-composer-shell {" in styles
+    assert ".thread-composer-input {" in styles
+    assert ".thread-composer-queued {" in styles
+    assert ".thread-composer-file-input {" in styles
+    assert ".thread-composer-send:disabled {" in styles
+
+
+def test_inbox_header_compose_path_and_new_thread_detail_are_first_class() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    light_inbox_page = function_block(app, "lightInboxPage")
+    inbox_header_action_cluster = function_block(app, "inboxHeaderActionCluster")
+    show_new_inbox_thread_composer = function_block(app, "showNewInboxThreadComposer")
+    messages_for_card = function_block(app, "messagesForCard")
+    normalize_nav_detail = function_block(app, "normalizeNavDetail")
+    resolve_nav_detail_card = function_block(app, "resolveNavDetailCard")
+    refresh_open_transcript_detail = function_block(app, "refreshOpenTranscriptDetail")
+    sync_open_thread_detail_after_cards = function_block(app, "syncOpenThreadDetailAfterCards")
+
+    assert "function inboxHeaderActionCluster() {" in app
+    assert "function inboxNewThreadComposerCard() {" in app
+    assert "function isNewThreadComposerCard(card) {" in app
+    assert "function showNewInboxThreadComposer(options = {}) {" in app
+    assert "function migrateThreadComposerDraftKey(fromKey, toKey) {" in app
+    assert "function composerTurnMatchesCard(card, threadId = \"\") {" in app
+    assert "action: inboxManageHeaderAction()" in light_inbox_page
+    assert "const archive = lightCircleButton(" in inbox_header_action_cluster
+    assert 'displayArchived ? "mail" : "archive_folder"' in inbox_header_action_cluster
+    assert '"checklist"' in inbox_header_action_cluster
+    assert '"edit_square"' in inbox_header_action_cluster
+    assert "showNewInboxThreadComposer();" in inbox_header_action_cluster
+    assert 'openSideDetail(panel, card.title || "New chat", content, dismissDetail);' in show_new_inbox_thread_composer
+    assert 'rememberNavDetail("transcript_new", card, options);' in show_new_inbox_thread_composer
+    assert "if (isNewThreadComposerCard(card)) {" in messages_for_card
+    assert "return [];" in messages_for_card
+    assert '"transcript_new"' in normalize_nav_detail
+    assert 'if (detail.type === "transcript_new") {' in resolve_nav_detail_card
+    assert "return inboxNewThreadComposerCard();" in resolve_nav_detail_card
+    assert 'if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {' in refresh_open_transcript_detail
+    assert 'if (!detail || !["transcript", "transcript_new"].includes(detail.type)) {' in sync_open_thread_detail_after_cards
+    assert ".light-header-actions {" in styles
+    assert ".light-header-actions .light-circle-button {" in styles
 
 
 def test_detail_shell_inherits_shared_light_header_column_gutter_contract() -> None:
@@ -2423,9 +2572,10 @@ def test_inbox_management_uses_visible_archive_controls_without_delete_ui() -> N
     assert "afterSections: [inboxManageToolbar()].filter(Boolean)" not in inbox_page
     assert "function inboxManageHeaderAction(" in app
     assert "function inboxHeaderPillButton(" in app
-    assert "lightCircleButton(" not in header_action
-    assert 'label: inboxArchiveFilterLabel(displayArchived)' in header_action
-    assert 'label: state.inboxManageMode ? "Done" : "Manage"' in header_action
+    assert "return inboxHeaderActionCluster();" in header_action
+    assert 'const wrap = el("div", "light-header-actions inbox-header-actions");' in function_block(app, "inboxHeaderActionCluster")
+    assert 'displayArchived ? "mail" : "archive_folder"' in function_block(app, "inboxHeaderActionCluster")
+    assert '"checklist"' in function_block(app, "inboxHeaderActionCluster")
     assert 'button.setAttribute("aria-busy", "true");' in header_pill
     assert 'button.disabled = Boolean(config.disabled);' in header_pill
     assert "state.inboxArchiveFilterPendingTarget" in app

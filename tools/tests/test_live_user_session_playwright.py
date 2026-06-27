@@ -283,6 +283,50 @@ def test_tools_package_exposes_inbox_related_proofs() -> None:
 
     assert payload["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
     assert payload["scripts"]["test:cover-light-native-ports"] == "node ./proofs/cover/cover_light_native_ports_playwright.mjs"
+    assert payload["scripts"]["test:cover-inbox-thread-compose"] == "node ./proofs/cover/cover_inbox_thread_compose_playwright.mjs"
+
+
+def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
+    source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
+
+    assert "cover_light_native_ports_playwright.mjs" in source
+    assert "cover_inbox_tile_audio_truth_playwright.mjs" in source
+    assert "cover_inbox_thread_compose_playwright.mjs" in source
+    assert "cover_calendar_playwright.mjs" in source
+    assert "cover_live_user_session_playwright.mjs" in source
+    assert "--skip-canonical-check" in source
+    assert "127.0.0.1:8768" in source
+    assert "ensure_cover_playwright_shims()" in source
+    assert 'for package_name in ("playwright-core", "playwright"):' in source
+    assert 'tools_node_modules = ROOT / "tools" / "node_modules"' in source
+    assert 'for browser_name in ("chromium", "webkit"):' in source
+    assert "for attempt in range(1, 4):" in source
+    assert 'append_refresh_param(' in source
+    assert '"_pucky_refresh"' in source
+    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1"' in source
+    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1"' in source
+    assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
+    assert 'live_root / "light-native-ports" / browser_name / run_name' in source
+    assert "cover_universal_feed_tiles_playwright.mjs" in source
+    assert 'proof-local-contacts-search-browser' in source
+    assert 'proof-live-contacts-search-browser' in source
+    assert 'proof-local-calendar' in source
+    assert 'proof-live-calendar' in source
+    assert 'live_root = (ROOT / ".tmp" / "proof-live-calendar").resolve()' in source
+    assert 'live_root / browser_name' in source
+    assert '"--browser"' in source
+    assert 'proof-local-universal-tiles' in source
+    assert 'proof-live-universal-tiles' in source
+    assert 'proof-local-thread-compose-browser' in source
+    assert 'proof-live-thread-compose-browser' in source
+    assert 'proof-live-thread-compose-emulator' in source
+
+
+def test_tools_package_exposes_inbox_related_proofs() -> None:
+    payload = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))
+
+    assert payload["scripts"]["test:cover-inbox-tile-audio-truth"] == "node ./proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs"
+    assert payload["scripts"]["test:cover-light-native-ports"] == "node ./proofs/cover/cover_light_native_ports_playwright.mjs"
 
 
 def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:

@@ -4,9 +4,11 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import sys
 import tempfile
 import threading
+import time
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -33,9 +35,122 @@ class FakeTTS:
 
 class FakeCodex:
     ready = True
+    thread_id = "thread-compose-proof-seed"
+
+    def __init__(self) -> None:
+        self.thread_counter = 0
+        self.thread_titles: dict[str, str] = {}
+        self.last_turn_routing = {
+            "requested_thread_id": "",
+            "used_thread_id": self.thread_id,
+            "thread_mode": "new",
+            "reused_existing_thread": False,
+            "fallback_reason": "",
+        }
 
     def start(self) -> None:
         return None
+
+    def _next_thread_id(self) -> str:
+        self.thread_counter += 1
+        return f"thread-compose-proof-{self.thread_counter}"
+
+    def _derive_reply_text(self, text: str) -> str:
+        text_attach = re.search(r"TEXT-ATTACH-ACK\s+([A-Z0-9-]+)", text)
+        if text_attach:
+            return f"TEXT-ATTACH-ACK {text_attach.group(1)} thread-compose-note.txt"
+        image_attach = re.search(r"IMAGE-ATTACH-ACK\s+([A-Z0-9-]+)", text)
+        if image_attach:
+            return f"IMAGE-ATTACH-ACK {image_attach.group(1)}"
+        ack = re.search(r"ACK\s+(THREAD-COMPOSE-[A-Z0-9-]+)", text)
+        if ack:
+            return f"ACK {ack.group(1)}"
+        cheerful = re.search(r"say hello back in one cheerful sentence", text, flags=re.IGNORECASE)
+        if cheerful:
+            return "Hello back! Hope your day is going wonderfully!"
+        return "Thread compose proof reply."
+
+    def _derive_card_title(self, text: str) -> str:
+        compact = " ".join(str(text or "").split())
+        if not compact:
+            return "Thread Compose Proof"
+        if ". Reply with exactly " in compact:
+            compact = compact.split(". Reply with exactly ", 1)[0].strip()
+        return compact[:80] or "Thread Compose Proof"
+
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        output_schema: dict[str, object] | None = None,
+        developer_instructions: str | None = None,
+        **_kwargs,
+    ):
+        del model, reasoning_effort, output_schema, developer_instructions
+        requested_thread_id = str(thread_id or "").strip()
+        used_thread_id = requested_thread_id or self._next_thread_id()
+        self.thread_id = used_thread_id
+        self.last_turn_routing = {
+            "requested_thread_id": requested_thread_id,
+            "used_thread_id": used_thread_id,
+            "thread_mode": "existing" if requested_thread_id else "new",
+            "reused_existing_thread": bool(requested_thread_id),
+            "fallback_reason": "",
+        }
+        time.sleep(0.25)
+        card_title = self._derive_card_title(text)
+        self.thread_titles[used_thread_id] = card_title
+        reply = {
+            "reply_text": self._derive_reply_text(text),
+            "card_title": card_title,
+            "card_icon": "message",
+            "recording_title": "",
+            "attachments": [],
+            "graph_records": [],
+            "graph_links": [],
+            "connected_records": [],
+        }
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(reply),
+                "used_thread_id": used_thread_id,
+                "requested_thread_id": requested_thread_id,
+                "thread_mode": "existing" if requested_thread_id else "new",
+                "reused_existing_thread": bool(requested_thread_id),
+                "fallback_reason": "",
+            },
+        )()
+
+    def set_thread_title(self, title: str, *, thread_id: str | None = None) -> None:
+        resolved_thread_id = str(thread_id or self.thread_id or "").strip()
+        if resolved_thread_id:
+            self.thread_titles[resolved_thread_id] = str(title or "").strip()
+            self.thread_id = resolved_thread_id
+
+    def thread_origin(self, thread_id: str | None = None, *, retries: int = 5, delay: float = 0.15) -> dict[str, str]:
+        del retries, delay
+        resolved_thread_id = str(thread_id or self.thread_id or "thread-compose-proof-seed").strip()
+        return {
+            "runtime": "codex",
+            "thread_id": resolved_thread_id,
+            "thread_title": self.thread_titles.get(resolved_thread_id, "Thread Compose Proof"),
+            "rollout_path": f"/tmp/{resolved_thread_id}.jsonl",
+            "source": "inbox-media-proof-server",
+            "model": "gpt-5.5",
+            "model_provider": "openai",
+            "reasoning_effort": "high",
+            "sandbox_policy": "danger-full-access",
+            "approval_mode": "never",
+        }
+
+    def runtime_call(self, method: str, params: dict[str, object] | None = None, *, timeout: float | None = None) -> dict[str, object]:
+        del timeout
+        return {"ok": True, "method": method, "params": params or {}}
 
 
 class FakeComposio:
@@ -76,6 +191,7 @@ def build_config(root: Path, host: str, port: int, token: str) -> Config:
         action_ledger_path=str(root / "actions.sqlite3"),
         self_email="proof@example.com",
         self_phone_number="+14155550123",
+        proof_reply_delay_enabled=True,
     )
 
 
@@ -117,11 +233,15 @@ def build_handler(service: PuckyVoiceService):
             if parsed.path == "/api/feed":
                 query = parse_qs(parsed.query or "")
                 limit = max(1, min(100, int((query.get("limit") or ["100"])[0] or "100")))
+                live_payload = service.feed_sync("", limit, include_archived=True, compact=False, base_url="")
+                live_items = list(live_payload.get("items") or [])
+                fixture_items = browser_cards()
+                items = (live_items + fixture_items)[:limit]
                 self._json(
                     HTTPStatus.OK,
                     {
                         "schema": "pucky.feed_sync.v1",
-                        "items": browser_cards()[:limit],
+                        "items": items,
                         "next_cursor": "",
                         "has_more": False,
                     },

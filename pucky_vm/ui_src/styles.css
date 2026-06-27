@@ -1846,6 +1846,123 @@ button {
   margin-bottom: 0;
 }
 
+.thread-composer-shell {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 14px;
+  padding-top: 14px;
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--surface-app) 0%, transparent), var(--surface-app) 32%);
+}
+
+.thread-composer {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-card) 92%, var(--surface-app));
+  box-shadow: inset 0 0 0 1px var(--card-border);
+}
+
+.thread-composer-input {
+  width: 100%;
+  min-height: 44px;
+  max-height: 180px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.4;
+}
+
+.thread-composer-input::placeholder {
+  color: var(--text-subtle);
+}
+
+.thread-composer-file-input {
+  display: none;
+}
+
+.thread-composer-queued {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.thread-composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--surface-control);
+  box-shadow: var(--shadow-control);
+  max-width: 100%;
+}
+
+.thread-composer-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 760;
+}
+
+.thread-composer-chip-remove {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 760;
+}
+
+.thread-composer-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.thread-composer-attach,
+.thread-composer-send {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 0;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 780;
+}
+
+.thread-composer-attach {
+  background: var(--surface-control);
+  color: var(--text-primary);
+}
+
+.thread-composer-status {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.thread-composer-send {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.thread-composer-send:disabled {
+  opacity: 0.48;
+}
+
 .chat-title,
 .sheet-title {
   margin: 0 0 12px;
@@ -6855,12 +6972,36 @@ button {
   grid-template-columns: 46px minmax(0, 1fr) auto;
 }
 
-.inbox-header-actions {
-  justify-self: end;
+.light-header-actions {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.light-header-actions .light-circle-button {
+  width: 40px;
+  height: 40px;
+}
+
+.inbox-header-actions {
+  justify-self: end;
   min-width: 0;
+}
+
+.inbox-header-action.is-active {
+  color: var(--text-on-accent);
+  background: var(--accent-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 72%, var(--home-shell-border, var(--border-subtle)));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent-primary) 22%, transparent);
+}
+
+.inbox-header-action.is-busy {
+  opacity: 0.72;
+}
+
+.inbox-header-compose {
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--home-shell-card-strong, var(--surface-card-elevated)));
 }
 
 .inbox-header-pill {
