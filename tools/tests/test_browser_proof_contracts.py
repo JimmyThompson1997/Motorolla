@@ -385,6 +385,15 @@ def test_calendar_browser_proof_retries_manifest_fetch_and_reacquires_event_cont
     assert 'assert(await page.locator(\'.light-calendar-detail-row[data-detail-row=\"who\"] .light-attendee-chip-guest\').count() >= 1' not in source
 
 
+def test_calendar_browser_proof_uses_resilient_back_navigation_contract() -> None:
+    source = read_source("cover_calendar_playwright.mjs")
+
+    assert "async function clickBackButton(page) {" in source
+    assert 'page.getByRole("button", { name: "Back" }).first()' in source
+    assert 'await button.click({ timeout: 5000 });' in source
+    assert "Expected a Back button to remain available for fallback navigation." in source
+
+
 def test_task_workspace_proof_page_url_keeps_hosted_page_access_token_free() -> None:
     source = read_source("task_workspace_proof_shared.mjs")
 
@@ -1168,6 +1177,24 @@ def test_universal_feed_tiles_browser_proof_contract_is_first_class() -> None:
     assert '"proof-local-universal-tiles": "Boot the local inbox/media proof server and run the six-route universal feed tile browser proof against the current local bundle."' in dev_source
     assert '"proof-live-universal-tiles": "Run the six-route universal feed tile browser proof against the hosted VM with screenshots, summaries, trace, and video artifacts."' in dev_source
     assert "cover_universal_feed_tiles_playwright.mjs" in dev_source
+    assert "const REMINDER_PROOF_RECORD_ID = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_ID" in source
+    assert "const REMINDER_PROOF_TITLE = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_TITLE" in source
+    assert "const REMINDER_PROOF_EVENT_TITLE = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_EVENT_TITLE" in source
+    assert "const REMINDER_PROOF_BLOCKED_SUMMARY = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_BLOCKED_SUMMARY" in source
+    assert "surfaceConfig.openerText" in source
+    assert "datePrefixSource: CALENDAR_CONNECTED_DATE_PREFIX_RE.source" in source
+    assert "timeWindowSource: CALENDAR_CONNECTED_TIME_WINDOW_RE.source" in source
+
+
+def test_local_universal_feed_tiles_runner_uses_isolated_port_contract() -> None:
+    source = DEV_PY_PATH.read_text(encoding="utf-8")
+
+    assert "def build_local_inbox_media_proof_server_command(port: int, *, state_dir: Path | None = None) -> list[str]:" in source
+    assert "port = find_free_localhost_port()" in source
+    assert 'base_url = f"http://127.0.0.1:{port}"' in source
+    assert "server_command=build_local_inbox_media_proof_server_command(" in source
+    assert 'state_dir=ROOT / ".tmp" / "proof-local-universal-tiles-state"' in source
+    assert 'health_url=f"{base_url}/healthz"' in source
 
 
 def test_hosted_bug_hunt_contract_includes_universal_feed_tiles_acceptance_surface() -> None:

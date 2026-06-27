@@ -315,6 +315,22 @@ def build_local_workspace_proof_server_command(port: int, *, state_dir: Path | N
     return command
 
 
+def build_local_inbox_media_proof_server_command(port: int, *, state_dir: Path | None = None) -> list[str]:
+    command = [
+        PYTHON,
+        "tools/proofs/cover/cover_inbox_media_proof_server.py",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--api-token",
+        "proof-token",
+    ]
+    if state_dir is not None:
+        command.extend(["--state-dir", str(state_dir.resolve())])
+    return command
+
+
 def run_local_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
     env = proof_env()
@@ -676,19 +692,24 @@ def run_live_contact_detail_classic_edit_emulator_proof(extra_args: list[str]) -
 
 
 def run_local_universal_feed_tiles_proof(extra_args: list[str]) -> int:
+    port = find_free_localhost_port()
+    base_url = f"http://127.0.0.1:{port}"
     return run_local_workspace_proof(
         "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
         [
             "--base-url",
-            "http://127.0.0.1:8768",
+            base_url,
             "--api-token",
             "proof-token",
             "--report-dir",
             str((ROOT / ".tmp" / "proof-local-universal-tiles").resolve()),
         ],
         extra_args,
-        server_command=LOCAL_INBOX_MEDIA_PROOF_SERVER,
-        health_url="http://127.0.0.1:8768/healthz",
+        server_command=build_local_inbox_media_proof_server_command(
+            port,
+            state_dir=ROOT / ".tmp" / "proof-local-universal-tiles-state",
+        ),
+        health_url=f"{base_url}/healthz",
     )
 
 

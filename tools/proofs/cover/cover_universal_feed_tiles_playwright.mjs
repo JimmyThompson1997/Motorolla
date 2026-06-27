@@ -18,6 +18,11 @@ const DEFAULT_BASE_URL = process.env.PUCKY_UNIVERSAL_FEED_TILES_BASE_URL || "htt
 const MOBILE_VIEWPORT = { width: 430, height: 932 };
 const DESKTOP_VIEWPORT = { width: 1440, height: 980 };
 const DETAIL_SELECTOR = "#detail";
+const REMINDER_PROOF_RECORD_ID = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_ID || "demo-reminder-paint-samples";
+const REMINDER_PROOF_TITLE = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_TITLE || "Bring paint samples upstairs";
+const REMINDER_PROOF_EVENT_TITLE = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_EVENT_TITLE || "Front porch repair window";
+const REMINDER_PROOF_BLOCKED_SUMMARY = process.env.PUCKY_UNIVERSAL_FEED_REMINDER_BLOCKED_SUMMARY
+  || "Walk the porch list, paint touch-ups, and the one loose handrail fix.";
 const ROUTES = [
   {
     surface: "Notes",
@@ -51,7 +56,7 @@ const ROUTES = [
     emptySelector: ".light-empty-state",
     viewportModes: ["mobile", "desktop"],
     detail: {
-      openerSelector: ".light-reminder-row",
+      openerSelector: `.light-reminder-row[data-record-id="${REMINDER_PROOF_RECORD_ID}"]`,
       expectedRoute: "reminder-detail",
     },
   },
@@ -110,11 +115,12 @@ const CALENDAR_CONNECTED_SURFACES = [
     surface: "Reminders",
     route: "reminders",
     readySelector: ".light-reminder-row",
-    openerSelector: '[data-record-id="demo-reminder-paint-samples"]',
+    openerSelector: `[data-record-id="${REMINDER_PROOF_RECORD_ID}"]`,
+    openerText: REMINDER_PROOF_TITLE,
     detailSelector: '.light-shell[data-light-route="reminder-detail"]',
-    expectedCalendarTitle: "Front porch repair window",
+    expectedCalendarTitle: REMINDER_PROOF_EVENT_TITLE,
     blockedSummaries: [
-      "Walk the porch list, paint touch-ups, and the one loose handrail fix.",
+      REMINDER_PROOF_BLOCKED_SUMMARY,
     ],
   },
   {
@@ -995,21 +1001,34 @@ async function captureCalendarConnectedSurface(browser, config, surfaceConfig, t
     await gotoRouteWithRetry(page, pageUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForRoute(page, surfaceConfig.route, config.timeoutMs);
     await page.locator(surfaceConfig.readySelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
-    const opener = page.locator(surfaceConfig.openerSelector).first();
-    if (await opener.count()) {
-      await opener.scrollIntoViewIfNeeded();
-      await opener.click();
+    let opener = page.locator(surfaceConfig.openerSelector).first();
+    if (!(await opener.count()) && surfaceConfig.openerText) {
+      opener = page.locator(surfaceConfig.readySelector, { hasText: surfaceConfig.openerText }).first();
     }
+    assert(await opener.count(), `${surfaceConfig.surface}: expected a connected-surface opener matching ${surfaceConfig.openerSelector} or ${surfaceConfig.openerText || "(no openerText fallback)"}.`);
+    await opener.scrollIntoViewIfNeeded();
+    await opener.click();
     await page.locator(surfaceConfig.detailSelector).first().waitFor({ state: "visible", timeout: config.timeoutMs });
     await page.waitForFunction(
-      ({ selector, expectedTitle }) => {
+      ({ selector, expectedTitle, datePrefixSource, timeWindowSource }) => {
+        const datePrefixRe = new RegExp(datePrefixSource, "i");
+        const timeWindowRe = new RegExp(timeWindowSource, "i");
         const rows = [...document.querySelectorAll(selector)];
-        if (!expectedTitle) {
-          return rows.some(row => row.querySelector(".light-text-stack span"));
-        }
-        return rows.some(row => String(row.querySelector(".light-text-stack strong")?.textContent || "").trim() === expectedTitle);
+        return rows.some(row => {
+          const title = String(row.querySelector(".light-text-stack strong")?.textContent || "").trim();
+          const detail = String(row.querySelector(".light-text-stack span")?.textContent || "").trim().replace(/\s+/g, " ");
+          if (expectedTitle && title !== expectedTitle) {
+            return false;
+          }
+          return datePrefixRe.test(detail) && timeWindowRe.test(detail);
+        });
       },
-      { selector: CALENDAR_CONNECTED_ROW_SELECTOR, expectedTitle: surfaceConfig.expectedCalendarTitle || "" },
+      {
+        selector: CALENDAR_CONNECTED_ROW_SELECTOR,
+        expectedTitle: surfaceConfig.expectedCalendarTitle || "",
+        datePrefixSource: CALENDAR_CONNECTED_DATE_PREFIX_RE.source,
+        timeWindowSource: CALENDAR_CONNECTED_TIME_WINDOW_RE.source,
+      },
       { timeout: config.timeoutMs }
     );
     const rows = await collectCalendarConnectedRows(page);

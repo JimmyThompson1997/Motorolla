@@ -471,7 +471,7 @@ async function closeCalendarSettings(page) {
 }
 
 async function goHome(page) {
-  await page.getByRole("button", { name: "Back" }).click();
+  await clickBackButton(page);
   await page.locator('.light-app-tile[data-route="calendar"]').waitFor({ state: "visible" });
 }
 
@@ -806,6 +806,27 @@ async function waitForHeaderText(page, text) {
 
 async function currentLightRoute(page) {
   return String(await page.locator(".light-shell").getAttribute("data-light-route") || "");
+}
+
+async function clickBackButton(page) {
+  const button = page.getByRole("button", { name: "Back" }).first();
+  await button.waitFor({ state: "visible" });
+  try {
+    await button.click({ timeout: 5000 });
+    return;
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error || "");
+    if (!/detached from the dom|not attached|stable/i.test(message)) {
+      throw error;
+    }
+  }
+  await page.evaluate(() => {
+    const button = document.querySelector('button.light-back-button[aria-label="Back"], button[aria-label="Back"]');
+    if (!(button instanceof HTMLElement)) {
+      throw new Error("Expected a Back button to remain available for fallback navigation.");
+    }
+    button.click();
+  });
 }
 
 async function waitForSelectorText(page, selector, text) {
@@ -1719,7 +1740,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected contact-detail route after agenda chip tap, got ${await currentLightRoute(page)}.`);
     await saveShot(page, reportDir, `calendar-desktop-${theme}-agenda-chip-contact.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from agenda chip to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected calendar agenda Back to preserve the selected day.");
@@ -1811,7 +1832,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
     await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected contact-detail route after Who chip tap, got ${await currentLightRoute(page)}.`);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     detailState = await readMeetingDetailState(page);
@@ -1825,14 +1846,14 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     ]) {
       await selectCalendarDetailTarget(page, config, target.route, target.id, target.expectedText);
       await saveShot(page, reportDir, `calendar-desktop-${theme}-${target.route}.png`, summary);
-      await page.getByRole("button", { name: "Back" }).click();
+      await clickBackButton(page);
       assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from ${target.route} to restore meeting-detail, got ${await currentLightRoute(page)}.`);
       await waitForHeaderText(page, "Proof freelance review call");
       detailState = await readMeetingDetailState(page);
       assert(detailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
     }
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-connected-restored.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await setCalendarDate(page, seed.tomorrow);
     await selectCalendarEventById(page, seed, "clinic", "Proof clinic paperwork check-in");
@@ -1848,7 +1869,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     await saveShot(page, reportDir, `calendar-desktop-${theme}-clinic-detail.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-desktop-${theme}-clinic-who-row.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="place"]').first(), reportDir, `calendar-desktop-${theme}-clinic-place-row.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from clinic detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await setCalendarDate(page, seed.today);
@@ -1859,7 +1880,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     const emptyConnectedShell = emptyConnectedSection.locator(".light-linked-records-empty-shell").first();
     await emptyConnectedShell.waitFor({ state: "attached", timeout: config.timeoutMs });
     await saveShot(page, reportDir, `calendar-desktop-${theme}-connected-empty.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected event-detail Back to preserve the selected day.");
@@ -1868,7 +1889,7 @@ async function runDesktopScenario(browser, config, seed, summary, consoleLog, ne
     assert(detailState.detailsExpanded, "Expected reopening the event detail to reset Details open.");
     assert(!detailState.connectedExpanded, "Expected reopening the event detail to reset Connected closed.");
     await saveShot(page, reportDir, `calendar-desktop-${theme}-event-detail-container-click.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from container-tap event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected container-tap Back to preserve the selected day.");
@@ -2154,7 +2175,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await selectAgendaChip(page, seed, "Jimmy T.");
     await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after agenda chip tap, got ${await currentLightRoute(page)}.`);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile agenda chip to restore calendar, got ${await currentLightRoute(page)}.`);
     assert(await page.locator(".light-date-input").inputValue() === seed.today, "Expected mobile agenda Back to preserve the selected day.");
@@ -2206,7 +2227,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await page.locator('.light-calendar-detail-row[data-detail-row="who"] .light-attendee-chip', { hasText: "Jimmy T." }).first().click();
     await waitForContactDetailName(page, "Jimmy Torres");
     assert(await currentLightRoute(page) === "contact-detail", `Expected mobile contact-detail route after Who chip tap, got ${await currentLightRoute(page)}.`);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from mobile Who chip to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
@@ -2247,13 +2268,13 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await ensureMeetingDetailSectionExpanded(page, "connected", true);
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail.png`, summary);
     await selectCalendarDetailTarget(page, config, "project-detail", `${seed.runId}-project`, "Proof freelance follow-up");
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from project-detail to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof freelance review call");
     mobileDetailState = await readMeetingDetailState(page);
     assert(mobileDetailState.connectedExpanded, "Expected Back from linked target to restore Connected expanded state.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-connected-restored.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile event detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await setCalendarDate(page, seed.tomorrow);
@@ -2271,7 +2292,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await saveShot(page, reportDir, `calendar-mobile-${theme}-clinic-detail.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="who"]').first(), reportDir, `calendar-mobile-${theme}-clinic-who-row.png`, summary);
     await saveLocatorShot(page.locator('.light-calendar-detail-row[data-detail-row="place"]').first(), reportDir, `calendar-mobile-${theme}-clinic-place-row.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     assert(await currentLightRoute(page) === "calendar", `Expected Back from mobile clinic detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await setCalendarDate(page, seed.today);
@@ -2280,7 +2301,7 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     assert(mobileDetailState.detailsExpanded, "Expected reopening the mobile event detail to reset Details open.");
     assert(!mobileDetailState.connectedExpanded, "Expected reopening the mobile event detail to reset Connected closed.");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-detail-container-click.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     await page.locator(".light-date-input").waitFor({ state: "visible" });
     const metrics = await stickyMetrics(page);
     assert(metrics.headerShellTop <= 1, `Expected mobile header shell to stay pinned, got ${JSON.stringify(metrics)}`);
@@ -2319,11 +2340,11 @@ async function runMobileScenario(browser, config, seed, summary, consoleLog, net
     await selectConnectedRow(page, "Late-call follow-up");
     await waitForHeaderText(page, "Late-call follow-up");
     assert(await currentLightRoute(page) === "note-detail", `Expected late-call chip tap to open note-detail, got ${await currentLightRoute(page)}.`);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     assert(await currentLightRoute(page) === "meeting-detail", `Expected Back from late-call linked note to restore meeting-detail, got ${await currentLightRoute(page)}.`);
     await waitForHeaderText(page, "Proof late call");
     await saveShot(page, reportDir, `calendar-mobile-${theme}-late-call-detail.png`, summary);
-    await page.getByRole("button", { name: "Back" }).click();
+    await clickBackButton(page);
     assert(await currentLightRoute(page) === "calendar", `Expected Back from late-call detail to restore calendar, got ${await currentLightRoute(page)}.`);
     await selectCalendarEventById(page, seed, "katy-handoff", "Proof Katy pickup handoff");
     const mobileEmptyConnected = page.locator('.light-linked-records-section[data-linked-records-title="connected"]').first();
