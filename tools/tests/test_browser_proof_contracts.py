@@ -331,6 +331,38 @@ def test_reminders_browser_proof_covers_orphaned_recipient_actions() -> None:
     assert "error toast" in source.lower()
 
 
+def test_reminders_browser_proof_covers_live_bell_dismiss_and_upcoming_neutral_bell_contract() -> None:
+    source = read_source("reminders_v3_browser_proof.mjs")
+
+    assert "data-reminder-bell-state" in source
+    assert '[data-reminder-bell-role="dismiss"]' in source
+    assert "Expected no reminder read-toggle control on reminder rows" in source
+    assert "Expected live reminder row bell to dismiss from the list" in source
+    assert "Expected upcoming reminder row bell to stay passive" in source
+    assert "opening the reminder detail without acting" in source
+    assert "seen_at_ms after detail open" not in source
+
+
+def test_home_badges_browser_proof_covers_meeting_note_icon_paint_contract() -> None:
+    source = read_source("cover_home_app_badges_playwright.mjs")
+
+    assert "meeting note read icon should render with an outline stroke" in source.lower()
+    assert "meeting note unread icon should render filled" in source.lower()
+    assert "reminder_detail_open_only" in source
+    assert "Reminder badge changed after opening the reminder detail without acting" in source
+    assert "reminder seen_at_ms after detail open" not in source
+
+
+def test_workspace_apps_browser_proof_matches_reminder_bell_and_detail_action_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert '[data-reminder-bell-role="dismiss"]' in source
+    assert "Snooze 10 min" not in source
+    assert '[data-reminder-action="done"]' not in source
+    assert '"Dismiss"' in source
+    assert '"Snooze"' in source
+
+
 def test_live_connect_auth_browser_proof_requires_explicit_token_and_real_transition() -> None:
     source = read_source("cover_links_auth_flow_live_playwright.mjs")
     package = (ROOT / "tools" / "package.json").read_text(encoding="utf-8")

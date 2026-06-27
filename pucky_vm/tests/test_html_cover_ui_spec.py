@@ -194,6 +194,23 @@ def test_task_and_meeting_note_details_mark_records_seen_through_detail_open_flo
     assert "if (explicitlySelectedTask) {" in task_workspace_page
 
 
+def test_feed_read_toggle_uses_outline_for_read_icons_and_fill_for_unread_icons() -> None:
+    app = read("app.js")
+    styles = read("styles.css")
+    toggle_button = function_block(app, "lightFeedReadToggleButton")
+    read_icon_block = css_block(styles, ".light-feed-read-toggle.is-read .material-icon")
+    unread_icon_block = css_block(styles, ".light-feed-read-toggle.is-unread .material-icon")
+
+    assert 'button.innerHTML = iconSvg(semanticIconName(accentKey), { filled: unread });' in toggle_button
+    assert "fill: none;" in read_icon_block
+    assert "stroke: currentColor;" in read_icon_block
+    assert "stroke-width:" in read_icon_block
+    assert "stroke-linecap: round;" in read_icon_block
+    assert "stroke-linejoin: round;" in read_icon_block
+    assert "fill: currentColor;" in unread_icon_block
+    assert "stroke: none;" in unread_icon_block
+
+
 def test_meeting_cards_preserve_feed_read_identity_and_reminders_stay_active_count_based() -> None:
     app = read("app.js")
     meeting_card = function_block(app, "meetingCardFromRecord")
@@ -2269,6 +2286,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     reminder_is_live = function_block(app, "reminderIsLive")
     reminder_is_now = function_block(app, "reminderIsNow")
     reminder_row = function_block(app, "lightReminderRow")
+    reminder_row_bell = function_block(app, "lightReminderRowBell")
     reminder_row_end = function_block(app, "lightReminderRowEnd")
     reminder_countdown = function_block(app, "reminderSnoozeCountdown")
     reminder_remaining = function_block(app, "reminderRemainingCompactLabel")
@@ -2287,9 +2305,6 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     mark_reminder_done = function_block(app, "markReminderDone")
     snooze_reminder = function_block(app, "snoozeReminder")
     light_info_row = function_block(app, "lightInfoRow")
-    ensure_reminder_seen = function_block(app, "ensureReminderSeen")
-    apply_reminder_seen = function_block(app, "applyReminderSeenMutation")
-    toggle_reminder_read = function_block(app, "toggleReminderRead")
 
     assert 'const SELF_CONTACT_ID = "contact-me";' in app
     assert "const REMINDER_LIVE_UI_TICK_MS = 1000;" in app
@@ -2316,21 +2331,28 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "return reminderIsLive(reminder);" in reminder_is_now
     assert 'return lightReminderRow(descriptor.meta?.reminder || null);' in render_universal_tile
     assert 'flatFeed: descriptor.renderMode === "flat",' in render_universal_tile
-    assert "function reminderReadAnchorAtMs(reminder) {" in app
-    assert "function reminderContentIsUnread(reminder) {" in app
-    assert "function reminderIsUnread(reminder) {" in app
-    assert 'const unread = reminderIsUnread(reminder);' in reminder_row
-    assert 'const toggle = lightFeedReadToggleButton({' in reminder_row
-    assert 'accentKey: "reminders",' in reminder_row
-    assert 'toggle.disabled = reminderHasPendingMutation(reminderRecordId(reminder));' in reminder_row
-    assert 'toggleReminderRead(reminder);' in reminder_row
+    assert "function reminderReadAnchorAtMs(reminder) {" not in app
+    assert "function reminderContentIsUnread(reminder) {" not in app
+    assert "function reminderIsUnread(reminder) {" not in app
+    assert "function ensureReminderSeen(reminder) {" not in app
+    assert "function applyReminderSeenMutation(reminder, seenAtMs) {" not in app
+    assert "function toggleReminderRead(reminder) {" not in app
+    assert 'const bell = lightReminderRowBell(reminder);' in reminder_row
+    assert 'const toggle = lightFeedReadToggleButton({' not in reminder_row
+    assert 'toggleReminderRead(reminder);' not in reminder_row
     assert 'const main = el("button", "light-reminder-row-main");' in reminder_row
     assert "const flatFeed = options.flatFeed === true;" in reminder_row
     assert "const secondaryCopy = reminderListSecondaryCopy(reminder);" in reminder_row
     assert 'copy.append(el("span", "light-reminder-row-summary", secondaryCopy));' in reminder_row
     assert 'const reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");' in reminder_row
     assert 'row.dataset.reminderState = reminderState;' in reminder_row
-    assert 'row.dataset.readState = unread ? "unread" : "read";' in reminder_row
+    assert "row.dataset.readState" not in reminder_row
+    assert "const bellState = reminderIsLive(reminder) ? \"live\" : \"upcoming\";" in reminder_row_bell
+    assert 'bell.dataset.reminderBellState = bellState;' in reminder_row_bell
+    assert 'bell.innerHTML = iconSvg(semanticIconName("reminders"), { filled: bellState === "live" });' in reminder_row_bell
+    assert 'bell.dataset.reminderBellRole = "dismiss";' in reminder_row_bell
+    assert 'void dismissReminder(reminder);' in reminder_row_bell
+    assert 'return el("span", "light-reminder-row-bell is-passive");' in reminder_row_bell
     assert "lightReminderRowEnd(reminder)" in reminder_row
     assert 'wrap.dataset.reminderCountdown = "true";' in reminder_row_end
     assert 'wrap.dataset.reminderProgress = countdown.progress.toFixed(3);' in reminder_row_end
@@ -2352,7 +2374,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert "light-graph-chip-row" not in reminder_row
     assert 'flatFeed ? "is-flat-feed" : ""' in reminder_row
     assert 'const page = lightPage("Reminder", { detail: true });' in reminder_detail
-    assert "void ensureReminderSeen(reminder);" in reminder_detail
+    assert "ensureReminderSeen(reminder)" not in reminder_detail
     assert "page.append(lightReminderDetailSurface(reminder));" in reminder_detail
     assert 'page.append(lightReminderDetailCard(reminder));' not in reminder_detail
     assert 'const feed = lightReminderDetailFeed(reminder);' in reminder_detail_surface
@@ -2392,27 +2414,21 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert 'const notes = lightLinkedNotesSection(reminder);' not in reminder_detail
     assert 'const linkedRows = lightLinkedRecordRows(reminder, { excludeKinds: ["note"] });' not in reminder_detail
     assert 'page.append(lightInfoSection("Linked records", linkedRows));' not in reminder_detail
-    assert 'const seenAtMs = reminderReadAnchorAtMs(currentReminder);' in ensure_reminder_seen
-    assert 'void applyReminderSeenMutation(currentReminder, seenAtMs);' in ensure_reminder_seen
-    assert 'metadata: { seen_at_ms: normalizedSeenAtMs }' in apply_reminder_seen
-    assert 'showToast(String(error && error.message || error || "Unable to mark reminder seen"));' in apply_reminder_seen
-    assert 'const effectiveUnread = reminderIsUnread(currentReminder);' in toggle_reminder_read
-    assert 'const serverUnread = reminderContentIsUnread(currentReminder);' in toggle_reminder_read
     assert "return markReminderDone(reminder);" in dismiss_reminder
     assert "applyReminderMutation(normalizedReminderId, \"done\"" in mark_reminder_done
-    assert 'const optimisticReminder = reminderWithDoneStatus(currentReminder, seenAtMs);' in mark_reminder_done
-    assert 'metadata: { seen_at_ms: seenAtMs }' in mark_reminder_done
+    assert 'const optimisticReminder = reminderWithDoneStatus(currentReminder);' in mark_reminder_done
+    assert 'metadata: { seen_at_ms: seenAtMs }' not in mark_reminder_done
     assert 'lightNavigate("reminders", {' in mark_reminder_done
     assert 'replaceHistory: true,' in mark_reminder_done
     assert 'selectionPatch: { selectedReminderId: "" }' in mark_reminder_done
-    assert 'const optimisticReminder = reminderWithSnooze(currentReminder, nextDueAtMs, seenAtMs);' in snooze_reminder
+    assert 'const optimisticReminder = reminderWithSnooze(currentReminder, nextDueAtMs);' in snooze_reminder
     assert 'metadata: {' in snooze_reminder
     assert 'snoozed_until_ms: nextDueAtMs,' in snooze_reminder
     assert 'delivery_state: "pending",' in snooze_reminder
     assert 'last_fired_at_ms: 0,' in snooze_reminder
     assert 'last_fired_due_at_ms: 0,' in snooze_reminder
     assert 'last_delivery_error: "",' in snooze_reminder
-    assert 'seen_at_ms: seenAtMs,' in snooze_reminder
+    assert 'seen_at_ms:' not in snooze_reminder
     assert 'function reminderSnoozePresets(nowMs = Date.now()) {' in app
     assert '"1_hour", label: "1 hour"' in app
     assert '"this_evening", label: "This evening"' in app
@@ -2430,12 +2446,17 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert ".light-reminder-countdown-ring" in styles
     assert ".light-reminder-countdown-label" in styles
     assert ".light-feed-read-toggle" in styles
+    assert ".light-reminder-row-bell {" in styles
+    assert ".light-reminder-row-bell.is-live .material-icon {" in styles
+    assert ".light-reminder-row-bell.is-passive .material-icon {" in styles
     assert ".light-reminder-row-main" in styles
     assert ".light-reminder-row-summary" in styles
     assert ".light-reminder-detail-feed .light-info-row" in styles
     assert ".light-reminder-channels-section" not in styles
     assert ".light-reminder-status-row" not in styles
     assert ".light-reminder-action-button.is-selector" not in styles
+    assert ".light-feed-read-toggle.is-read .material-icon {" in styles
+    assert ".light-feed-read-toggle.is-unread .material-icon {" in styles
     assert "padding: 22px 18px 18px;" in styles
     assert "grid-template-columns: 36px minmax(0, 1fr);" in styles
     assert "width: 36px;" in styles
