@@ -2440,7 +2440,7 @@ def test_reminders_use_active_only_ui_and_hide_row_chips() -> None:
     assert '"Snooze 10 min"' not in reminder_action_row
     assert '"Snooze..."' not in reminder_action_row
     assert "void dismissReminder(reminder);" in reminder_action_row
-    assert "void snoozeReminder(reminder, Date.now() + 90_000);" in reminder_action_row
+    assert "void snoozeReminder(reminder, Date.now() + (8 * 60 * 1000));" in reminder_action_row
     assert 'el("p", "light-reminder-detail-summary", summary)' in reminder_detail_card
     assert 'card.dataset.reminderState = reminderIsLive(reminder) ? "live" : (reminderIsSnoozed(reminder) ? "snoozed" : "upcoming");' in reminder_detail_card
     assert "const actionRow = lightReminderActionRow(reminder);" in reminder_detail_card

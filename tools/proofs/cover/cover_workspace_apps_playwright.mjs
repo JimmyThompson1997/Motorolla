@@ -2234,7 +2234,7 @@ async function proveReminders(page, config, seed, theme, screenshots, summary) {
   const quickSnoozedRecord = await waitForReminderRecord(
     config,
     manageReminderId,
-    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + 70_000,
+    record => reminderIsSnoozedForScript(record) && Number(record?.due_at_ms || 0) >= Date.now() + 420_000,
     "manage reminder should snooze into the upcoming state",
     30_000
   );

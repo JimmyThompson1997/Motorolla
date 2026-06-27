@@ -898,8 +898,8 @@ async function main() {
     const aSnoozedRecord = await waitForReminderRecord(
       config,
       reminderAId,
-      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + 70_000,
-      "reminder A should snooze for roughly ninety seconds",
+      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + 420_000,
+      "reminder A should snooze for roughly eight minutes",
       30_000
     );
     assert(
@@ -1033,7 +1033,7 @@ async function main() {
     const orphanSnoozedRecord = await waitForReminderRecord(
       config,
       orphanSnoozeReminderId,
-      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + 70_000,
+      reminder => reminderIsSnoozed(reminder) && Number(reminder?.due_at_ms || 0) >= Date.now() + 420_000,
       "orphan reminder should snooze back into a non-live state",
       30_000
     );

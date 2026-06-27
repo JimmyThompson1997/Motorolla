@@ -653,7 +653,15 @@ def test_reminders_browser_proof_covers_orphaned_recipient_actions() -> None:
     assert 'await apiRequest(config, "DELETE", `/api/workspace/contacts/${orphanContactId}`' in source
     assert '[data-reminder-action="dismiss"]' in source
     assert '[data-reminder-action="snooze"]' in source
+    assert '>= Date.now() + 420_000' in source
     assert "error toast" in source.lower()
+
+
+def test_workspace_apps_reminder_proof_uses_eight_minute_quick_snooze_contract() -> None:
+    source = read_source("cover_workspace_apps_playwright.mjs")
+
+    assert '[data-reminder-action="snooze"]' in source
+    assert '>= Date.now() + 420_000' in source
 
 
 def test_reminders_browser_proof_covers_stale_history_after_dismiss_sequence() -> None:
