@@ -15,9 +15,11 @@ import {
 import {
   DEFAULT_OTP_CODE,
   captureBodyText,
+  fillEmailAddress,
+  fillOtpCode,
   maybeClickOneOf,
-  performOtpLogin,
   requireValue,
+  waitForOtpInput,
   waitForWorkspaceReady,
 } from "../../support/auth_release_shared.mjs";
 
@@ -770,16 +772,28 @@ function manualSweepMatrix() {
 }
 
 async function performHostedLogin(page, config, matrixEntry, screenshotsDir) {
-  const otpCode = resolveOtpCode(config.userA);
   await page.goto(config.loginUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
   const signedOutScreenshot = await saveScreenshot(page, screenshotsDir, `${matrixEntry.label}-signed-out`);
-  await performOtpLogin(page, {
-    loginUrl: config.loginUrl,
-    email: config.userA.email,
-    otpCode,
-    timeoutMs: config.timeoutMs,
-  });
+  await fillEmailAddress(page, config.userA.email, config.timeoutMs);
+  await maybeClickOneOf(page, [
+    "Continue",
+    "Send code",
+    "Send Code",
+    "Sign in",
+    "Sign up",
+    "Create account",
+  ], 2500);
+  await waitForOtpInput(page, config.timeoutMs);
+  const otpCode = resolveOtpCode(config.userA);
+  await fillOtpCode(page, otpCode, config.timeoutMs);
   const otpScreenshot = await saveScreenshot(page, screenshotsDir, `${matrixEntry.label}-otp`);
+  await maybeClickOneOf(page, [
+    "Continue",
+    "Verify",
+    "Verify code",
+    "Sign in",
+    "Submit",
+  ], 2500);
   const landing = await waitForWorkspaceReady(page, {
     timeoutMs: config.timeoutMs,
     loginUrl: config.loginUrl,

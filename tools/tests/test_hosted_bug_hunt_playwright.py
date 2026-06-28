@@ -56,7 +56,9 @@ def test_hosted_bug_hunt_runner_reuses_existing_proofs_and_classification_labels
     assert '"navigation"' in source
     assert '"state-truthfulness"' in source
     assert '"performance-feel"' in source
-    assert "performOtpLogin(" in source
+    assert "fillEmailAddress(" in source
+    assert "waitForOtpInput(" in source
+    assert "fillOtpCode(" in source
     assert "waitForWorkspaceReady(" in source
     assert "Signed-in hosted routes should load protected data without unauthorized errors." in source
 

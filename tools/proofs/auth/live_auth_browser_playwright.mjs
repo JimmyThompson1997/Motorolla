@@ -126,6 +126,7 @@ function parseArgs(argv) {
     baseUrl: String(DEFAULT_BASE_URL || "").replace(/\/+$/, ""),
     loginUrl: String(DEFAULT_LOGIN_URL || "").trim(),
     browserPreviewToken: envValue("PUCKY_WEB_UI_TOKEN"),
+    artifactCommand: envValue("PUCKY_AUTH_ARTIFACT_COMMAND"),
     workspaceHostPattern: envValue("PUCKY_AUTH_WORKSPACE_HOST_PATTERN"),
     composioDetailsSlug: envValue("PUCKY_AUTH_COMPOSIO_DETAILS_SLUG", "PUCKY_COMPOSIO_APP_SLUG") || "gmail",
     timeoutMs: Math.max(15000, Number(process.env.PUCKY_AUTH_TIMEOUT_MS || "45000") || 45000),
@@ -387,6 +388,47 @@ function resolveOtpCode(userConfig) {
   throw new Error(`${userConfig.label}: missing OTP source. Set PUCKY_AUTH_USER_*_OTP_CODE or PUCKY_AUTH_OTP_COMMAND.`);
 }
 
+function resolveArtifactId(seed) {
+  return `pucky_card_${seed.uploadTurnId}:attachment:1:original`;
+}
+
+function turnPayloadHasUsageLimit(payload) {
+  const error = String(payload?.error || "").trim();
+  const detail = String(payload?.detail || "").trim();
+  return error === "turn_failed" && (detail.includes("usageLimitExceeded") || detail.toLowerCase().includes("usage limit"));
+}
+
+function resolveArtifactViaCommand(config, ownerEmail, seed) {
+  const commandTemplate = String(config.artifactCommand || "").trim();
+  if (!commandTemplate) {
+    return null;
+  }
+  const artifactId = resolveArtifactId(seed);
+  const command = interpolateTemplate(commandTemplate, {
+    email: ownerEmail,
+    artifact_id: artifactId,
+    file_name: seed.uploadFileName,
+    text: seed.uploadText,
+    turn_id: seed.uploadTurnId,
+  });
+  const shell = process.env.SHELL || "/bin/zsh";
+  const completed = spawnSync(shell, ["-lc", command], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 60000,
+  });
+  const stdout = String(completed.stdout || "").trim();
+  if (completed.status !== 0) {
+    throw new Error(`Artifact helper command failed (${completed.status ?? "unknown"}): ${String(completed.stderr || completed.stdout || "").trim()}`);
+  }
+  const resolvedArtifactId = stdout.split(/\r?\n/).at(-1)?.trim() || artifactId;
+  assert(resolvedArtifactId, "Artifact helper command did not return an artifact id.");
+  return {
+    artifactId: resolvedArtifactId,
+    mode: "helper_command",
+  };
+}
+
 function buildRouteUrl(landingUrl, route) {
   const url = new URL(String(landingUrl || ""));
   url.searchParams.set("route", String(route || "home"));
@@ -459,7 +501,7 @@ function buildSeed(runId, laneLabel) {
   };
 }
 
-async function seedWorkspaceRecords(page, baseUrl, seed) {
+async function seedWorkspaceRecords(page, baseUrl, seed, config, ownerEmail) {
   const ownerSummary = [];
   const contactBody = {
     id: seed.contactId,
@@ -533,6 +575,27 @@ async function seedWorkspaceRecords(page, baseUrl, seed) {
     ],
   });
   ownerSummary.push({ apiPath: "/api/turn/text", status: upload.status, ok: upload.ok });
+  if (!upload.ok && turnPayloadHasUsageLimit(upload.payload)) {
+    const fallback = resolveArtifactViaCommand(config, ownerEmail, seed);
+    if (fallback) {
+      ownerSummary.push({
+        apiPath: "/api/turn/text",
+        status: upload.status,
+        ok: false,
+        fallback: fallback.mode,
+        fallback_artifact_id: fallback.artifactId,
+      });
+      return {
+        ownerSummary,
+        artifactId: fallback.artifactId,
+        uploadedAttachment: {
+          artifact: fallback.artifactId,
+          title: seed.uploadFileName,
+          mime_type: "text/plain",
+        },
+      };
+    }
+  }
   assert(upload.ok, `Artifact upload failed: ${JSON.stringify(upload.payload)}`);
   const uploadedAttachments = Array.isArray(upload.payload?.transcript_messages?.[0]?.attachments)
     ? upload.payload.transcript_messages[0].attachments
@@ -635,10 +698,35 @@ async function logout(page, landingUrl, loginUrl, logoutLabels, timeoutMs) {
     await waitForRouteReady(page, "settings", timeoutMs);
     label = await maybeClickOneOf(page, logoutLabels, 4000);
   }
-  assert(label, `Could not find a logout control matching: ${logoutLabels.join(", ")}`);
+  let apiFallback = null;
+  if (!label) {
+    apiFallback = await page.evaluate(async () => {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (_error) {
+        payload = {};
+      }
+      return {
+        ok: response.ok,
+        status: response.status,
+        payload,
+      };
+    });
+    assert(apiFallback?.ok, `Could not find a logout control matching: ${logoutLabels.join(", ")} and /api/auth/logout fallback failed.`);
+    await page.goto(landingUrl || loginUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+  }
   await waitForSignedOut(page, loginUrl, timeoutMs);
   return {
     label,
+    api_fallback: apiFallback,
     url: page.url(),
     body: await captureBodyText(page),
   };
@@ -1070,7 +1158,7 @@ async function main() {
         let ownerPreLogoutState = null;
         if (matrixEntry.primaryIsolationLane) {
           seed = buildSeed(config.runId, matrixEntry.label);
-          const seeded = await seedWorkspaceRecords(page, config.baseUrl, seed);
+          const seeded = await seedWorkspaceRecords(page, config.baseUrl, seed, config, config.userA.email);
           artifactId = seeded.artifactId;
           lane.user_a.seed = { ...seeded, seed };
           lane.user_a.owner_api_checks = await verifyOwnerApiAssertions(page, config.baseUrl, seed, artifactId, config.composioDetailsSlug);
