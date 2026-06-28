@@ -813,12 +813,13 @@ def test_home_app_label_proof_checks_narrow_row_overlap_and_centering() -> None:
     assert '"test:cover-home-app-labels": "node ./proofs/cover/cover_home_app_labels_playwright.mjs"' in package
 
 
-def test_home_app_label_proof_is_wired_into_local_and_live_web_sweeps() -> None:
+def test_home_app_label_proof_is_wired_into_local_web_and_live_auth_release_sweeps() -> None:
     dev_source = (ROOT / "tools" / "dev.py").read_text(encoding="utf-8")
 
     assert '"tools/proofs/cover/cover_home_app_labels_playwright.mjs"' in dev_source
     assert 'str((ROOT / ".tmp" / "proof-local-web" / "home-app-labels").resolve())' in dev_source
-    assert 'str((live_root / "home-app-labels").resolve())' in dev_source
+    assert '"tools/proofs/auth/live_auth_browser_playwright.mjs"' in dev_source
+    assert 'str((ROOT / ".tmp" / "proof-live-web" / "auth-browser").resolve())' in dev_source
 
 
 def test_settings_quiet_list_proof_checks_compact_live_rows() -> None:

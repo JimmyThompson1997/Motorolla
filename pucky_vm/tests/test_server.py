@@ -887,6 +887,7 @@ def make_config(max_html_bytes: int = 512 * 1024, *, proof_reply_delay_enabled: 
         host="127.0.0.1",
         port=0,
         pucky_api_token="secret",
+        pucky_web_ui_token="browser-secret",
         deepgram_api_key="dg",
         deepinfra_api_key="di",
         max_audio_bytes=1024 * 1024,
@@ -1439,9 +1440,8 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
             html = response.read().decode("utf-8")
             self.assertIn("Pucky Cover", html)
-            self.assertIn("window.__PUCKY_BOOTSTRAP_STATUS__", html)
-            self.assertIn("const ESSENTIAL_ASSETS = [", html)
-            self.assertIn('"pucky-ui-state.js"', html)
+            self.assertIn('./pucky-browser-state.js', html)
+            self.assertIn('./pucky-browser-unlock.js', html)
             self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
 
         with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/manifest.json", timeout=10) as response:
@@ -1486,6 +1486,28 @@ class ServerTests(unittest.TestCase):
         for _ in range(3):
             with urllib.request.urlopen(self.base_url + "/ui/pucky/latest/", timeout=10) as response:
                 self.assertEqual(response.status, 200)
+
+    def test_strict_browser_auth_redirects_logged_out_bundle_reads_to_sign_in(self) -> None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        opener = urllib.request.build_opener(NoRedirect)
+
+        for path in (
+            "/ui/pucky/latest/?route=inbox",
+            "/ui/pucky/latest/index.html?route=inbox",
+        ):
+            request = urllib.request.Request(self.base_url + path)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                opener.open(request, timeout=10)
+
+            self.assertEqual(caught.exception.code, 307)
+            self.assertEqual(
+                caught.exception.headers.get("Location"),
+                f"/sign-in?next={path}",
+            )
 
     def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
         request = urllib.request.Request(self.base_url + "/favicon.ico")
@@ -1576,6 +1598,57 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(details["ok"])
         self.assertEqual(details["slug"], "gmail")
         self.assertEqual(details["details"][0]["id"], "ca_gmail_active")
+
+    def test_links_read_endpoints_require_token_in_strict_composio_scope_mode(self) -> None:
+        self.service.config = replace(self.service.config, strict_composio_user_scoping=True)
+
+        for path in (
+            "/api/links/composio/my-apps",
+            "/api/links/composio/catalog",
+            "/api/links/composio/all-apps?offset=0&limit=20",
+            "/api/links/composio/app-details?slug=gmail",
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.get_json(path)
+            self.assertEqual(caught.exception.code, 401, msg=path)
+
+        session_cookie = self.issue_browser_session_cookie("strict-links-reader@example.com")
+        token = self.issue_portal_token(headers={"Cookie": session_cookie})
+        payload = self.get_json(f"/api/links/composio/my-apps?token={token}")
+        self.assertTrue(payload["ok"])
+
+    def test_strict_composio_scope_rejects_default_browser_principal_and_requires_workspace_session(self) -> None:
+        self.service.config = replace(
+            self.service.config,
+            strict_browser_user_auth=True,
+            strict_composio_user_scoping=True,
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer browser-secret"})
+        self.assertEqual(caught.exception.code, 401)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], "workspace_auth_required")
+
+        issued = self.service.request_auth_code("workspace-user@example.com")
+        request = urllib.request.Request(
+            self.base_url + "/api/auth/verify-code",
+            data=json.dumps({"email": "workspace-user@example.com", "code": issued["test_code"]}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            verify_headers = dict(response.headers.items())
+
+        session_cookie = verify_headers.get("Set-Cookie", "")
+        portal = self.get_json("/api/links/composio/portal-url?auth_mode=browser", headers={"Cookie": session_cookie})
+        self.assertTrue(portal["ok"])
+        self.assertTrue(str(portal["user_id"]).startswith("ws_"))
+        self.assertNotEqual(portal["user_id"], "ws_default")
+
+        my_apps = self.get_json("/api/links/composio/my-apps", headers={"Cookie": session_cookie})
+        self.assertTrue(my_apps["ok"])
+        self.assertEqual(my_apps["user_id"], portal["user_id"])
 
     def test_links_catalog_returns_cached_snapshot_headers_without_connected_overlay(self) -> None:
         token = self.issue_portal_token()
@@ -5346,8 +5419,23 @@ class ServerTests(unittest.TestCase):
         parsed = urllib.parse.urlsplit(portal_url)
         return urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
 
-    def issue_portal_token(self) -> str:
-        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
+    def issue_browser_session_cookie(self, email: str = "workspace-user@example.com") -> str:
+        issued = self.service.request_auth_code(email)
+        request = urllib.request.Request(
+            self.base_url + "/api/auth/verify-code",
+            data=json.dumps({"email": email, "code": issued["test_code"]}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            verify_headers = dict(response.headers.items())
+        return verify_headers.get("Set-Cookie", "")
+
+    def issue_portal_token(self, headers: dict[str, str] | None = None) -> str:
+        payload = self.get_json(
+            "/api/links/composio/portal-url",
+            headers=headers or {"Authorization": "Bearer secret"},
+        )
         return self.portal_token(payload["portal_url"])
 
     def test_text_turn_accepts_multipart_user_attachments_and_preserves_them_on_user_message(self) -> None:

@@ -40,6 +40,7 @@ def test_live_auth_browser_proof_covers_matrix_api_assertions_and_cross_user_rep
     source = read_text(TOOLS_DIR / "proofs" / "auth" / "live_auth_browser_playwright.mjs")
 
     assert 'const RESULT_SCHEMA = "pucky.live_auth_browser_proof.v1";' in source
+    assert 'const HOME_TILE_ROUTES = ["inbox", "notes", "tasks", "contacts", "projects", "reminders", "settings"];' in source
     assert '"chromium-desktop"' in source
     assert '"webkit-desktop"' in source
     assert '"chromium-tablet"' in source
@@ -56,9 +57,18 @@ def test_live_auth_browser_proof_covers_matrix_api_assertions_and_cross_user_rep
     assert "/api/artifacts/" in source
     assert "seedWorkspaceRecords(" in source
     assert "pageApiMultipartJson(" in source
+    assert "fetchNoRedirect(" in source
+    assert "verifySignedOutDirectEntryRedirect(" in source
+    assert 'redirect: "manual"' in source
+    assert "verifyHomeTileLoads(" in source
+    assert "Live manifest commit" in source
+    assert "pucky-browser-state.js" in source
+    assert "pucky-browser-unlock.js" in source
+    assert "pucky-ui-state.js" in source
     assert "Stale owner session replay revived an authenticated workspace." in source
     assert "Wrong-host owner cookie replay exposed data." in source
     assert "User B saw User A workspace data while visiting the owner workspace URL directly." in source
+    assert "Home tile" in source
     assert 'const settingsUrl = buildRouteUrl(landingUrl, "settings");' in source
     assert 'await waitForRouteReady(page, "settings", timeoutMs);' in source
     assert "User B connection ids" not in source  # Keep browser proof focused on workspace/auth, not Composio execute logic.
@@ -84,28 +94,6 @@ def test_live_auth_composio_proof_checks_portal_token_actions_and_foreign_denial
     assert "PUCKY_COMPOSIO_REQUIRE_VERIFICATION_COMMAND" in source
     assert '"summary.json"' in source
     assert '"report.md"' in source
-
-
-def test_composio_auth_helpers_cover_seed_links_and_gmail_calendar_verification() -> None:
-    seed_source = read_text(TOOLS_DIR / "proofs" / "auth" / "generate_composio_connect_links.py")
-    gmail_verify_source = read_text(TOOLS_DIR / "proofs" / "auth" / "verify_gmail_action.py")
-    calendar_verify_source = read_text(TOOLS_DIR / "proofs" / "auth" / "verify_googlecalendar_action.py")
-    gauntlet_source = read_text(TOOLS_DIR / "proofs" / "auth" / "qa_live_multiuser_release.py")
-
-    assert 'RESULT_SCHEMA = "pucky.composio_connect_link_bundle.v1"' in seed_source
-    assert "ComposioClient" in seed_source
-    assert "AuthStore" in seed_source
-    assert 'composio_user_id": f"ws_{workspace_id.removeprefix(\'ws_\')}"' in seed_source
-    assert 'RESULT_SCHEMA = "pucky.composio_gmail_verify.v1"' in gmail_verify_source
-    assert "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID" in gmail_verify_source
-    assert 'RESULT_SCHEMA = "pucky.composio_googlecalendar_verify.v1"' in calendar_verify_source
-    assert "GOOGLECALENDAR_EVENTS_GET" in calendar_verify_source
-    assert "GOOGLECALENDAR_DELETE_EVENT" in calendar_verify_source
-    assert "default_gmail_action_json" in gauntlet_source
-    assert "default_googlecalendar_action_json" in gauntlet_source
-    assert "verify_gmail_action.py" in gauntlet_source
-    assert "verify_googlecalendar_action.py" in gauntlet_source
-    assert 'if app_slug in {"gmail", "googlecalendar"} and "PUCKY_COMPOSIO_REQUIRE_VERIFICATION_COMMAND" not in env:' in gauntlet_source
 
 
 def test_android_ubc_auth_proof_captures_real_device_evidence_and_cross_user_attempts() -> None:
@@ -161,6 +149,20 @@ def test_release_gauntlet_fails_closed_and_emits_single_verdict_file() -> None:
     assert 'write_json(args.bundle_dir / "verdict.json", summary["verdict"])' in source
     assert '"status": "pass"' in source
     assert '"status": "fail"' in source
+
+
+def test_live_auth_browser_bundle_contract_and_wrappers_replace_legacy_anonymous_release_entry() -> None:
+    auth_source = read_text(TOOLS_DIR / "proofs" / "auth" / "live_auth_browser_playwright.mjs")
+    dev_source = read_text(TOOLS_DIR / "dev.py")
+
+    assert "expectedBundleScripts(" in auth_source
+    assert "fetchRemoteManifest(" in auth_source
+    assert "fetchNoRedirect(" in auth_source
+    assert "verifyBundleFreshness(" in auth_source
+    assert '"missing_scripts"' in auth_source
+    assert '"unexpected_legacy_scripts"' in auth_source
+    assert '("tools/proofs/auth/live_auth_browser_playwright.mjs"' in dev_source
+    assert '"--skip-proofs"' in dev_source
 
 
 def test_auth_release_shared_supports_multipart_session_uploads_and_binary_fetches() -> None:

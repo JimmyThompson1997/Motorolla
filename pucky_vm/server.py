@@ -2760,6 +2760,20 @@ class PuckyVoiceService:
             return "ws_default"
         return self.config.composio_default_user_id
 
+    def require_workspace_composio_user_id(self) -> str:
+        identity = self.current_request_identity()
+        workspace_id = str(identity.workspace_id or "").strip()
+        if workspace_id and workspace_id != "default":
+            return f"ws_{workspace_id.removeprefix('ws_')}"
+        raise ValueError("workspace_auth_required")
+
+    def resolved_composio_user_id(self, *, require_workspace: bool | None = None) -> str:
+        if require_workspace is None:
+            require_workspace = bool(self.config.strict_composio_user_scoping)
+        if require_workspace:
+            return self.require_workspace_composio_user_id()
+        return self.composio_user_id()
+
     def public_browser_reads_enabled(self) -> bool:
         return not bool(self.config.strict_browser_user_auth)
 
@@ -2953,6 +2967,7 @@ class PuckyVoiceService:
             return {"ok": False, "error": "composio_not_configured"}
         try:
             apps = self._connected_apps_snapshot(force=True)
+            user_id = self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
         except Exception as exc:
             result = {"ok": False, "error": str(exc)}
         else:
@@ -2961,7 +2976,7 @@ class PuckyVoiceService:
                 "data": {
                     "apps": apps,
                     "count": len(apps),
-                    "user_id": self.composio_user_id(),
+                    "user_id": user_id,
                 },
             }
         self.record_action(
@@ -3119,7 +3134,10 @@ class PuckyVoiceService:
         return result
 
     def _connected_apps_snapshot(self, *, force: bool) -> list[dict[str, object]]:
-        payload = self.composio.list_connected_apps(self.composio_user_id(), force=force)
+        payload = self.composio.list_connected_apps(
+            self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping)),
+            force=force,
+        )
         accounts = [
             _compact_composio_app(item)
             for item in list(payload.get("connected_apps") or [])
@@ -3141,7 +3159,7 @@ class PuckyVoiceService:
             result = self.composio.execute_tool(
                 tool_slug=action_slug,
                 connected_account_id=connected_account_id,
-                user_id=self.composio_user_id(),
+                user_id=self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping)),
                 arguments=normalized_arguments,
             )
         except Exception as exc:
@@ -3290,7 +3308,10 @@ class PuckyVoiceService:
         }
 
     def _composio_runtime_context(self, *, include_inventory: bool) -> dict[str, object]:
-        user_id = self.composio_user_id()
+        try:
+            user_id = self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
+        except ValueError:
+            user_id = ""
         context: dict[str, object] = {
             "schema": "pucky.composio.runtime_context.v1",
             "configured": bool(self.composio.configured),
@@ -3311,7 +3332,7 @@ class PuckyVoiceService:
             "app_universe": [],
             "available_apps": [],
         }
-        if not self.composio.configured or not include_inventory:
+        if not self.composio.configured or not include_inventory or not user_id:
             return context
         try:
             connected_payload = self.composio.list_connected_apps(user_id, force=False)
@@ -3570,7 +3591,7 @@ class PuckyVoiceService:
             return self._resolve_links_portal_user(clean_token)
         identity = self.current_request_identity()
         if str(identity.workspace_id or "").strip():
-            return self.composio_user_id()
+            return self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
         if allow_default_user:
             user_id = self.composio_user_id()
             if user_id:
@@ -3588,7 +3609,8 @@ class PuckyVoiceService:
     def links_portal_url(self, base_url: str, *, auth_mode: str | None = None) -> dict[str, object]:
         if not self.composio.configured:
             return {"ok": False, "error": "composio_not_configured"}
-        token = self._mint_links_portal_token(user_id=self.composio_user_id())
+        user_id = self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
+        token = self._mint_links_portal_token(user_id=user_id)
         if not token:
             return {"ok": False, "error": "connect_portal_token_unavailable"}
         mode = self.composio_auth_mode(auth_mode)
@@ -3600,7 +3622,7 @@ class PuckyVoiceService:
             "portal_url": url,
             "token": token,
             "auth_mode": mode,
-            "user_id": self.composio_user_id(),
+            "user_id": user_id,
         }
 
     def links_my_apps(self, token: str, *, allow_default_user: bool = False) -> dict[str, object]:

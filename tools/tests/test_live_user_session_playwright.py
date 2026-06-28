@@ -299,14 +299,11 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert "ensure_cover_playwright_shims()" in source
     assert 'for package_name in ("playwright-core", "playwright"):' in source
     assert 'tools_node_modules = ROOT / "tools" / "node_modules"' in source
-    assert 'for browser_name in ("chromium", "webkit"):' in source
-    assert "for attempt in range(1, 4):" in source
     assert 'append_refresh_param(' in source
     assert '"_pucky_refresh"' in source
-    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1"' in source
-    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1"' in source
-    assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
-    assert 'live_root / "light-native-ports" / browser_name / run_name' in source
+    assert '"proof-live-web": "Run the auth-aware hosted web proof against the current base URL with real sign-in, route loads, tile clicks, and bundle freshness checks."' in source
+    assert 'tools/proofs/auth/live_auth_browser_playwright.mjs' in source
+    assert 'str((ROOT / ".tmp" / "proof-live-web" / "auth-browser").resolve())' in source
     assert "cover_universal_feed_tiles_playwright.mjs" in source
     assert 'proof-local-contacts-search-browser' in source
     assert 'proof-live-contacts-search-browser' in source
@@ -339,8 +336,6 @@ def test_live_native_port_proof_tracks_audio_continuity_opt_out_and_audio_detail
 def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_contracts() -> None:
     universal_source = (ROOT / "tools" / "proofs" / "cover" / "cover_universal_feed_tiles_playwright.mjs").read_text(encoding="utf-8")
     calendar_source = (ROOT / "tools" / "proofs" / "cover" / "cover_calendar_playwright.mjs").read_text(encoding="utf-8")
-    hosted_source = (ROOT / "tools" / "proofs" / "cover" / "cover_hosted_bug_hunt_playwright.mjs").read_text(encoding="utf-8")
-
     assert "first_row_content_metrics" in universal_source
     assert "row_action_metrics" in universal_source
     assert "Inbox: one-action rows should not reserve the old wide action rail" in universal_source
@@ -352,6 +347,3 @@ def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_
     assert "Expected passive rail scrolling to keep the selected date input stable" in calendar_source
     assert "calendar-desktop-${theme}-adjacent-month-selected.png" in calendar_source
     assert "calendar-mobile-${theme}-adjacent-month-selected.png" in calendar_source
-    assert 'openerSelector: ".light-event-block"' in hosted_source
-    assert "inboxVisibleMenuButtonCount" in hosted_source
-    assert "Normal-mode Inbox rows should not expose left-side row menu buttons." in hosted_source

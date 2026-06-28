@@ -133,10 +133,14 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                     return
                 query = parse_qs(parsed.query)
-                payload = service.links_portal_url(
-                    self._request_base_url(),
-                    auth_mode=query.get("auth_mode", [""])[0],
-                )
+                try:
+                    payload = service.links_portal_url(
+                        self._request_base_url(),
+                        auth_mode=query.get("auth_mode", [""])[0],
+                    )
+                except ValueError as exc:
+                    self._json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": str(exc)})
+                    return
                 status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY
                 self._json(status, payload)
                 return
@@ -513,6 +517,14 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return
             if path.startswith("/ui/pucky/latest/"):
                 relative = unquote(path.removeprefix("/ui/pucky/latest/")).lstrip("/")
+                if (
+                    relative == "index.html"
+                    and service.config.strict_browser_user_auth
+                    and not self._is_user_data_authorized()
+                ):
+                    next_path = quote(self.path, safe="/?=&")
+                    self._redirect(f"/sign-in?next={next_path}")
+                    return
                 self._safe_ui_file(relative)
                 return
             super().do_GET()
@@ -603,7 +615,9 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     payload = self._read_json_payload(512 * 1024)
                     result = service.composio_execute_action_tool(payload)
                 except ValueError as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    error_text = str(exc)
+                    status = HTTPStatus.UNAUTHORIZED if error_text == "workspace_auth_required" else HTTPStatus.BAD_REQUEST
+                    self._json(status, {"ok": False, "error": error_text})
                     return
                 except Exception as exc:
                     self._json(
@@ -611,7 +625,14 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                         {"ok": False, "error": "composio_execute_failed", "detail": str(exc)},
                     )
                     return
-                status = HTTPStatus.OK if bool(result.get("ok")) else HTTPStatus.BAD_REQUEST
+                error_text = str(result.get("error") or "")
+                status = (
+                    HTTPStatus.OK
+                    if bool(result.get("ok"))
+                    else HTTPStatus.UNAUTHORIZED
+                    if error_text == "workspace_auth_required"
+                    else HTTPStatus.BAD_REQUEST
+                )
                 self._json(status, result)
                 return
             if path == "/api/card-icons":

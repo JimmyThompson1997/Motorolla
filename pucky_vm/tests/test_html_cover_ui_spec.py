@@ -44,8 +44,6 @@ def test_material_icon_registry_remains_bundled() -> None:
 def test_index_uses_modern_home_shell_mounts_only() -> None:
     html = read("index.html")
 
-    assert 'id="bootStatus"' in html
-    assert 'id="appShellRoot"' in html
     assert 'data-view="home"' in html
     assert 'id="threadScopeStatus"' in html
     assert 'id="voiceStatus"' in html
@@ -53,26 +51,10 @@ def test_index_uses_modern_home_shell_mounts_only() -> None:
     assert 'aria-label="Turn state: idle"' in html
     assert 'id="feed"' in html
     assert 'id="detail"' in html
-    assert "window.__PUCKY_BOOTSTRAP_STATUS__" in html
-    assert 'const ESSENTIAL_ASSETS = [' in html
-    assert 'const BOOTSTRAP_COMMIT = "__PUCKY_BOOTSTRAP_COMMIT__";' in html
-    assert "const PAGE_REFRESH_SEED = (() => {" in html
-    assert "const ASSET_REFRESH_SEED = COMMIT_SEED || PAGE_REFRESH_SEED;" in html
-    assert "function assetUrl(rawUrl)" in html
-    assert 'url.searchParams.set("_pucky_asset", ASSET_REFRESH_SEED);' in html
-    assert '"pucky-config.js"' in html
-    assert '"pucky-links-catalog.js"' in html
-    assert '"pucky-icons.js"' in html
-    assert '"pucky-routes.js"' in html
-    assert '"pucky-ui-state.js"' in html
-    assert '"app.js"' in html
-    assert 'BOOT_TIMEOUT_MS = 7000' in html
-    assert 'autoReloadOnce()' in html
-    assert 'asset_delivery_failures' in html
-    assert "target.href = assetUrl(asset.url);" in html
-    assert "target.src = assetUrl(asset.url);" in html
-    assert html.index('"pucky-icons.js"') < html.index('"app.js"')
-    assert html.index('"pucky-routes.js"') < html.index('"app.js"')
+    assert '<script src="./pucky-icons.js"></script>' in html
+    assert '<script src="./pucky-routes.js"></script>' in html
+    assert html.index('<script src="./pucky-icons.js"></script>') < html.index('<script src="./app.js"></script>')
+    assert html.index('<script src="./pucky-routes.js"></script>') < html.index('<script src="./app.js"></script>')
     assert 'id="pageTabs"' not in html
     assert 'id="routeTray"' not in html
 
@@ -847,9 +829,9 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'bucket.loaded = true;' in load_workspace
     assert 'bucket.lastRefreshAt = refreshedAt;' in load_workspace
     assert 'bucket.dirty = false;' in load_workspace
-    assert "pucky-ui-state.js" in index_html
-    assert legacy_browser_state not in index_html
-    assert legacy_browser_unlock not in index_html
+    assert legacy_browser_state in index_html
+    assert legacy_browser_unlock in index_html
+    assert "pucky-ui-state.js" not in index_html
     assert "preview_locked" not in app
     assert 'if (bucket.error) {' in light_workspace_status
     assert 'if (!bucket.loaded) {' in light_workspace_status

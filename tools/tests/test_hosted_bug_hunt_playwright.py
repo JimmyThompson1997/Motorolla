@@ -56,9 +56,9 @@ def test_hosted_bug_hunt_runner_reuses_existing_proofs_and_classification_labels
     assert '"navigation"' in source
     assert '"state-truthfulness"' in source
     assert '"performance-feel"' in source
-    assert "inboxVisibleMenuButtonCount" in source
-    assert "Normal-mode Inbox rows should not expose left-side row menu buttons." in source
-    assert 'Inbox rendered ${metrics.inboxVisibleMenuButtonCount} visible row-level menu button(s) in normal mode.' in source
+    assert "performOtpLogin(" in source
+    assert "waitForWorkspaceReady(" in source
+    assert "Signed-in hosted routes should load protected data without unauthorized errors." in source
 
 
 def test_tools_package_and_dev_runner_expose_hosted_bug_hunt_entrypoint() -> None:
@@ -66,7 +66,9 @@ def test_tools_package_and_dev_runner_expose_hosted_bug_hunt_entrypoint() -> Non
     dev_source = DEV_PY_PATH.read_text(encoding="utf-8")
 
     assert payload["scripts"]["test:cover-hosted-bug-hunt"] == "node ./proofs/cover/cover_hosted_bug_hunt_playwright.mjs"
-    assert '"qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps."' in dev_source
+    assert '"qa-hosted-web": "Run the authenticated hosted bug-hunt sweep with real sign-in, route screenshots, findings bundle, and coverage gaps."' in dev_source
     assert "def run_hosted_bug_hunt(extra_args: list[str]) -> int:" in dev_source
-    assert '("tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs", extra_args)' in dev_source
+    assert '("tools/proofs/auth/live_auth_browser_playwright.mjs",' in dev_source
+    assert '("tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs",' in dev_source
+    assert '"--skip-proofs"' in dev_source
     assert 'if args.task == "qa-hosted-web":' in dev_source

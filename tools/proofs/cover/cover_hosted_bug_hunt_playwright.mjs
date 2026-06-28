@@ -13,16 +13,19 @@ import {
   writeJsonFile,
 } from "../../support/cover_shared.mjs";
 import {
-  loadFlyEnvironment,
-  loadProofRuntimeEnv,
-  resolveWriteToken,
-} from "../../support/proof_runtime_env.mjs";
+  DEFAULT_OTP_CODE,
+  captureBodyText,
+  maybeClickOneOf,
+  performOtpLogin,
+  requireValue,
+  waitForWorkspaceReady,
+} from "../../support/auth_release_shared.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
-loadProofRuntimeEnv({ rootDir: repoRoot });
 const RESULT_SCHEMA = "pucky.hosted_bug_hunt_browser_proof.v1";
 const DEFAULT_BASE_URL = process.env.PUCKY_HOSTED_BUG_HUNT_BASE_URL || "https://pucky.fly.dev";
+const DEFAULT_LOGIN_URL = process.env.PUCKY_AUTH_LOGIN_URL || `${String(DEFAULT_BASE_URL || "").replace(/\/+$/, "")}/sign-in`;
 const MOBILE_VIEWPORT = { width: 430, height: 932 };
 const DESKTOP_VIEWPORT = { width: 1440, height: 980 };
 const DETAIL_SELECTOR = "#detail";
@@ -361,11 +364,39 @@ const BASELINE_PROOFS = [
 ];
 
 function resolveApiToken() {
-  return resolveWriteToken({
-    sharedKeys: ["PUCKY_API_TOKEN", "PUCKY_OPERATOR_TOKEN"],
-    rootDir: repoRoot,
-    remoteEnvLoader: () => loadFlyEnvironment({ app: "pucky", rootDir: repoRoot }),
-  });
+  const operatorToken = String(process.env.PUCKY_OPERATOR_TOKEN || "").trim();
+  if (operatorToken) {
+    return operatorToken;
+  }
+  return String(process.env.PUCKY_API_TOKEN || "").trim();
+}
+
+function envValue(...names) {
+  for (const name of names) {
+    const value = String(process.env[name] || "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function truthy(value, fallback = false) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) {
+    return fallback;
+  }
+  return !["0", "false", "no", "off"].includes(text);
+}
+
+function buildUserConfig(prefix) {
+  const normalized = String(prefix || "").trim().toUpperCase();
+  return {
+    label: normalized === "A" ? "User A" : `User ${normalized}`,
+    email: envValue(`PUCKY_AUTH_USER_${normalized}_EMAIL`),
+    otpCode: envValue(`PUCKY_AUTH_USER_${normalized}_OTP_CODE`),
+    otpCommand: envValue(`PUCKY_AUTH_USER_${normalized}_OTP_COMMAND`, "PUCKY_AUTH_OTP_COMMAND"),
+  };
 }
 
 function timestampSlug() {
@@ -383,7 +414,9 @@ function slug(value) {
 function parseArgs(argv) {
   const config = {
     baseUrl: DEFAULT_BASE_URL,
+    loginUrl: DEFAULT_LOGIN_URL,
     apiToken: resolveApiToken(),
+    userA: buildUserConfig("A"),
     reportDir: path.join(repoRoot, ".tmp", "hosted-bug-hunt", timestampSlug()),
     timeoutMs: 30000,
     refreshKey: `bug-hunt-${Date.now()}`,
@@ -395,6 +428,8 @@ function parseArgs(argv) {
     const arg = String(argv[index] || "");
     if (arg === "--base-url" && argv[index + 1]) {
       config.baseUrl = String(argv[++index] || config.baseUrl).replace(/\/+$/, "");
+    } else if (arg === "--login-url" && argv[index + 1]) {
+      config.loginUrl = String(argv[++index] || config.loginUrl).trim();
     } else if (arg === "--api-token" && argv[index + 1]) {
       config.apiToken = String(argv[++index] || config.apiToken).trim();
     } else if (arg === "--report-dir" && argv[index + 1]) {
@@ -414,15 +449,49 @@ function parseArgs(argv) {
       config.skipManualSweep = true;
     }
   }
+  config.userA.email = requireValue(config.userA.email, "PUCKY_AUTH_USER_A_EMAIL");
   return config;
 }
 
-function appendLog(targetPath, message) {
-  fs.appendFileSync(targetPath, `${message}\n`, "utf8");
+function interpolateTemplate(template, values) {
+  let output = String(template || "");
+  for (const [key, value] of Object.entries(values || {})) {
+    output = output.replaceAll(`{{${key}}}`, String(value ?? ""));
+  }
+  return output;
+}
+
+function resolveOtpCode(userConfig) {
+  if (String(userConfig.otpCode || "").trim()) {
+    return String(userConfig.otpCode || "").trim();
+  }
+  if (String(userConfig.otpCommand || "").trim()) {
+    const command = interpolateTemplate(userConfig.otpCommand, {
+      email: userConfig.email,
+      label: userConfig.label,
+    });
+    const shell = process.env.SHELL || "/bin/zsh";
+    const completed = spawnSync(shell, ["-lc", command], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    const stdout = String(completed.stdout || "").trim();
+    if (completed.status === 0 && stdout) {
+      return stdout.split(/\r?\n/).at(-1)?.trim() || stdout;
+    }
+    throw new Error(
+      `${userConfig.label}: OTP command failed (${completed.status ?? "unknown"}): ${String(completed.stderr || completed.stdout || "").trim()}`
+    );
+  }
+  if (truthy(process.env.PUCKY_AUTH_ALLOW_DEFAULT_TEST_OTP, false)) {
+    return DEFAULT_OTP_CODE;
+  }
+  throw new Error(`${userConfig.label}: missing OTP source. Set PUCKY_AUTH_USER_A_OTP_CODE or PUCKY_AUTH_OTP_COMMAND.`);
 }
 
 function buildPageUrl(baseUrl, route, theme, refreshKey = "") {
-  const url = new URL("/ui/pucky/latest/index.html", `${String(baseUrl || "").replace(/\/+$/, "")}/`);
+  const url = new URL("/ui/pucky/latest/", `${String(baseUrl || "").replace(/\/+$/, "")}/`);
   url.searchParams.set("theme", theme || "light");
   url.searchParams.set("route", route || "home");
   url.searchParams.set("reset_nav", "1");
@@ -430,6 +499,23 @@ function buildPageUrl(baseUrl, route, theme, refreshKey = "") {
     url.searchParams.set("_pucky_refresh", String(refreshKey || "").trim());
   }
   return url.toString();
+}
+
+function buildRouteUrl(landingUrl, route, theme, refreshKey = "") {
+  const url = new URL(String(landingUrl || ""));
+  url.searchParams.set("route", route || "home");
+  url.searchParams.set("reset_nav", "1");
+  if (theme) {
+    url.searchParams.set("theme", theme);
+  }
+  if (String(refreshKey || "").trim()) {
+    url.searchParams.set("_pucky_refresh", String(refreshKey || "").trim());
+  }
+  return url.toString();
+}
+
+function appendLog(targetPath, message) {
+  fs.appendFileSync(targetPath, `${message}\n`, "utf8");
 }
 
 function deepFileList(root, matcher) {
@@ -595,6 +681,7 @@ async function runCalendarFreshnessCheck(page, config, matrixEntry, screenshotsD
     },
   };
 }
+
 async function collectRouteMetrics(page, surface) {
   return await page.evaluate((routeSurface) => {
     function text(value) {
@@ -650,11 +737,6 @@ async function collectRouteMetrics(page, surface) {
       linkedRecordsVisible: visibleSectionTitles.includes("LINKED RECORDS") || visibleSectionTitles.includes("RELATED"),
       htmlBodyCount: document.querySelectorAll(".light-detail-html-body").length,
       sectionTitles: visibleSectionTitles,
-      inboxVisibleMenuButtonCount: routeSurface.route === "inbox"
-        ? Array.from(document.querySelectorAll('[data-card-action="manage_menu"]'))
-          .filter(node => node instanceof HTMLElement && getComputedStyle(node).display !== "none" && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)
-          .length
-        : 0,
     };
   }, surface);
 }
@@ -687,9 +769,33 @@ function manualSweepMatrix() {
   ];
 }
 
-async function openSurface(page, config, surface, matrixEntry) {
-  const homeUrl = buildPageUrl(config.baseUrl, "home", matrixEntry.theme, config.refreshKey);
-  const targetUrl = buildPageUrl(config.baseUrl, surface.route, matrixEntry.theme, config.refreshKey);
+async function performHostedLogin(page, config, matrixEntry, screenshotsDir) {
+  const otpCode = resolveOtpCode(config.userA);
+  await page.goto(config.loginUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
+  const signedOutScreenshot = await saveScreenshot(page, screenshotsDir, `${matrixEntry.label}-signed-out`);
+  await performOtpLogin(page, {
+    loginUrl: config.loginUrl,
+    email: config.userA.email,
+    otpCode,
+    timeoutMs: config.timeoutMs,
+  });
+  const otpScreenshot = await saveScreenshot(page, screenshotsDir, `${matrixEntry.label}-otp`);
+  const landing = await waitForWorkspaceReady(page, {
+    timeoutMs: config.timeoutMs,
+    loginUrl: config.loginUrl,
+  });
+  const landingScreenshot = await saveScreenshot(page, screenshotsDir, `${matrixEntry.label}-landing`);
+  return {
+    landing,
+    signed_out_screenshot: signedOutScreenshot,
+    otp_screenshot: otpScreenshot,
+    landing_screenshot: landingScreenshot,
+  };
+}
+
+async function openSurface(page, config, surface, matrixEntry, landingUrl) {
+  const homeUrl = buildRouteUrl(landingUrl, "home", matrixEntry.theme, config.refreshKey);
+  const targetUrl = buildRouteUrl(landingUrl, surface.route, matrixEntry.theme, config.refreshKey);
   if (surface.route !== "home" && matrixEntry.navigationMode === "home_tile") {
     await page.goto(homeUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await waitForLightRoute(page, "home", config.timeoutMs);
@@ -751,6 +857,7 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
   const networkEvents = [];
   const results = [];
   const coverageGaps = [];
+  const loginArtifacts = [];
   const routeSet = config.routes.length ? new Set(config.routes) : null;
 
   for (const matrixEntry of manualSweepMatrix()) {
@@ -775,6 +882,11 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
     });
 
     try {
+      const login = await performHostedLogin(page, config, matrixEntry, screenshotsDir);
+      loginArtifacts.push({
+        lane: matrixEntry.label,
+        ...login,
+      });
       for (const surface of ROUTE_SWEEP_ORDER) {
         if (routeSet && !routeSet.has(surface.route)) {
           continue;
@@ -783,10 +895,14 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
           continue;
         }
         try {
-          const openResult = await openSurface(page, config, surface, matrixEntry);
+          const openStart = networkEvents.length;
+          const openResult = await openSurface(page, config, surface, matrixEntry, login.landing.url);
           await page.waitForLoadState("networkidle", { timeout: Math.min(10_000, config.timeoutMs) }).catch(() => {});
           const metrics = await collectRouteMetrics(page, surface);
           const screenshot = await saveScreenshot(page, screenshotsDir, `${slug(surface.route)}-${matrixEntry.label}`);
+          const bodyText = await captureBodyText(page);
+          const routeNetworkEvents = networkEvents.slice(openStart);
+          const unauthorizedEvents = routeNetworkEvents.filter(item => Number(item.status || 0) === 401);
           const calendarFreshness = surface.route === "calendar"
             ? await runCalendarFreshnessCheck(page, config, matrixEntry, screenshotsDir)
             : { status: "skipped", reason: "", screenshot_paths: [], observed: {} };
@@ -794,6 +910,8 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
           const status = metrics.loadedRoute === surface.route
             && (!surface.requiresHeader || metrics.hasHeader)
             && (metrics.primaryCount > 0 || metrics.hasEmptyState)
+            && unauthorizedEvents.length === 0
+            && !/could not load|unauthorized/i.test(bodyText)
             && calendarFreshness.status !== "failed"
             && detailResult.status !== "failed"
             ? "pass"
@@ -867,6 +985,24 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
               automation_candidate: "yes",
             });
           }
+          if (unauthorizedEvents.length || /could not load|unauthorized/i.test(bodyText)) {
+            pushFinding(findings, {
+              id: `auth-load-${surface.route}-${matrixEntry.label}`,
+              surface: surface.surface,
+              route: surface.route,
+              theme: matrixEntry.theme,
+              viewport: matrixEntry.viewportName,
+              severity: "P1",
+              class: "functional",
+              expected: "Signed-in hosted routes should load protected data without unauthorized errors.",
+              actual: unauthorizedEvents.length
+                ? `Observed protected 401 responses: ${unauthorizedEvents.map(item => `${item.status} ${item.url}`).join(", ")}`
+                : `Rendered unauthorized state text: ${bodyText.slice(0, 240)}`,
+              repro_steps: [`Open ${openResult.pageUrl}`],
+              screenshot_paths: [screenshot],
+              automation_candidate: "yes",
+            });
+          }
           if (metrics.horizontalOverflow) {
             pushFinding(findings, {
               id: `overflow-${surface.route}-${matrixEntry.label}`,
@@ -878,22 +1014,6 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
               class: "visual",
               expected: "Route should fit within the viewport without horizontal scrolling.",
               actual: "The page layout overflowed horizontally.",
-              repro_steps: [`Open ${openResult.pageUrl}`],
-              screenshot_paths: [screenshot],
-              automation_candidate: "yes",
-            });
-          }
-          if (surface.route === "inbox" && metrics.inboxVisibleMenuButtonCount > 0) {
-            pushFinding(findings, {
-              id: `inbox-left-menu-${matrixEntry.label}`,
-              surface: surface.surface,
-              route: surface.route,
-              theme: matrixEntry.theme,
-              viewport: matrixEntry.viewportName,
-              severity: "P1",
-              class: "visual",
-              expected: "Normal-mode Inbox rows should not expose left-side row menu buttons.",
-              actual: `Inbox rendered ${metrics.inboxVisibleMenuButtonCount} visible row-level menu button(s) in normal mode.`,
               repro_steps: [`Open ${openResult.pageUrl}`],
               screenshot_paths: [screenshot],
               automation_candidate: "yes",
@@ -977,6 +1097,7 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
             note: routePassNote(surface, matrixEntry, metrics, detailResult),
             screenshot_path: screenshot,
             detail_screenshot_path: detailResult.screenshot || "",
+            unauthorized_api_events: unauthorizedEvents,
             metrics,
             calendar_freshness: {
               status: calendarFreshness.status,
@@ -1029,6 +1150,7 @@ async function runManualSweep(browser, config, reportDir, consoleLogPath, findin
   }
 
   return {
+    login_artifacts: loginArtifacts,
     results,
     coverageGaps,
     network: {

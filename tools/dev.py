@@ -88,14 +88,14 @@ TASK_HELP = {
     "proof-local-inbox-management": "Boot the local inbox/media proof server and run the no-audio Inbox management browser proof.",
     "proof-live-inbox-management": "Run the no-audio Inbox management browser proof against the deployed hosted VM bundle.",
     "proof-local-web": "Boot local proof servers, then run workspace, inbox audio truth, and native-port browser proofs.",
-    "proof-live-web": "Run live user session, inbox audio truth, native-port, and universal feed tile browser proofs against the current base URL env/default.",
+    "proof-live-web": "Run the auth-aware hosted web proof against the current base URL with real sign-in, route loads, tile clicks, and bundle freshness checks.",
     "proof-live-speed-browser": "Run the hosted desktop and mobile speed loop browser proof against the current base URL env/default.",
     "proof-live-speed-emulator": "Run the Android emulator speed loop proof with hosted Connect auth validation.",
     "proof-live-auth-browser": "Run the multi-user Clerk/email-OTP browser auth proof with matrix screenshots, API assertions, persistence checks, and cross-user isolation attempts.",
     "proof-live-auth-composio": "Run the authenticated Composio isolation proof with real browser login, My Apps truth checks, action execution, and foreign principal denial checks.",
     "proof-live-auth-android-ubc": "Run the physical Android UBC auth/WebView proof against the plugged-in device with install, clear, relaunch, screenshots, and logcat evidence.",
     "qa-live-multiuser-release": "Run the full local/staging/production multi-user auth release gauntlet and emit one pass/fail verdict bundle.",
-    "qa-hosted-web": "Run the hosted-first bug hunt sweep: baseline proofs, screenshots, findings bundle, and coverage gaps.",
+    "qa-hosted-web": "Run the authenticated hosted bug-hunt sweep with real sign-in, route screenshots, findings bundle, and coverage gaps.",
     "deploy-vm": "Sync the pushed master commit onto the live Fly VM and verify the served manifest.",
     "release-hosted-web": "Run the hosted-web release lane: parser checks, targeted pytest, VM sync deploy, manifest verification, and live proof.",
     "deploy-apk": "Invoke the canonical APK deploy gate through PowerShell when available.",
@@ -899,107 +899,17 @@ def run_live_inbox_management_proof(extra_args: list[str]) -> int:
 
 def run_live_web_proof(extra_args: list[str]) -> int:
     node_binary = require_binary("node")
-    refresh_seed = current_git_head() or str(int(time.time()))
-    live_root = (ROOT / ".tmp" / "proof-live-web").resolve()
-    light_home_url = append_refresh_param(
-        "https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1",
-        refresh_seed,
-    )
-    light_url = append_refresh_param(
-        "https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1",
-        refresh_seed,
-    )
-    dark_feed_url = append_refresh_param(
-        "https://pucky.fly.dev/ui/pucky/latest/?theme=dark&route=inbox&reset_nav=1",
-        refresh_seed,
-    )
-    dark_meetings_url = append_refresh_param(
-        "https://pucky.fly.dev/ui/pucky/latest/?theme=dark&route=meetings&reset_nav=1",
-        refresh_seed,
-    )
-    scripts: list[tuple[str, list[str]]] = []
-    for browser_name in ("chromium", "webkit"):
-        for attempt in range(1, 4):
-            run_name = f"run-{attempt}"
-            scripts.extend([
-                (
-                    "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
-                    [
-                        "--browser",
-                        browser_name,
-                        "--page-url",
-                        light_url,
-                        "--report-dir",
-                        str((live_root / "inbox-audio-light" / browser_name / run_name).resolve()),
-                        *extra_args,
-                    ],
-                ),
-                (
-                    "tools/proofs/cover/cover_inbox_tile_audio_truth_playwright.mjs",
-                    [
-                        "--browser",
-                        browser_name,
-                        "--page-url",
-                        dark_feed_url,
-                        "--report-dir",
-                        str((live_root / "inbox-audio-dark" / browser_name / run_name).resolve()),
-                        *extra_args,
-                    ],
-                ),
-                (
-                    "tools/proofs/cover/cover_light_native_ports_playwright.mjs",
-                    [
-                        "--browser",
-                        browser_name,
-                        "--light-url",
-                        light_home_url,
-                        "--dark-feed-url",
-                        dark_feed_url,
-                        "--dark-meetings-url",
-                        dark_meetings_url,
-                        "--report-dir",
-                        str((live_root / "light-native-ports" / browser_name / run_name).resolve()),
-                        *extra_args,
-                    ],
-                ),
-            ])
-    scripts.append(
-        (
-            "tools/proofs/cover/cover_universal_feed_tiles_playwright.mjs",
-            [
-                "--base-url",
-                append_refresh_param("https://pucky.fly.dev", refresh_seed),
-                "--report-dir",
-                str((live_root / "universal-feed-tiles").resolve()),
-                *extra_args,
-            ],
-        )
-    )
-    scripts.append(
-        (
-            "tools/proofs/cover/cover_home_app_labels_playwright.mjs",
-            [
-                "--base-url",
-                append_refresh_param("https://pucky.fly.dev", refresh_seed),
-                "--report-dir",
-                str((live_root / "home-app-labels").resolve()),
-                *extra_args,
-            ],
-        )
-    )
-    scripts.append(
-        (
-            "tools/proofs/cover/cover_live_user_session_playwright.mjs",
-            [
-                "--report-dir",
-                str((live_root / "live-user-session").resolve()),
-                *extra_args,
-            ],
-        )
-    )
     return run_node_proofs(
         node_binary,
-        scripts,
+        [
+            ("tools/proofs/auth/live_auth_browser_playwright.mjs",
+                [
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "proof-live-web" / "auth-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+        ],
         env=proof_env(),
     )
 
@@ -1009,7 +919,21 @@ def run_hosted_bug_hunt(extra_args: list[str]) -> int:
     return run_node_proofs(
         node_binary,
         [
-            ("tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs", extra_args),
+            ("tools/proofs/auth/live_auth_browser_playwright.mjs",
+                [
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "qa-hosted-web" / "auth-browser").resolve()),
+                    *extra_args,
+                ],
+            ),
+            ("tools/proofs/cover/cover_hosted_bug_hunt_playwright.mjs",
+                [
+                    "--skip-proofs",
+                    "--report-dir",
+                    str((ROOT / ".tmp" / "qa-hosted-web" / "manual-sweep").resolve()),
+                    *extra_args,
+                ],
+            ),
         ],
         env=proof_env(),
     )

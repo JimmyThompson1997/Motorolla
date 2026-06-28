@@ -7,10 +7,14 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
 from pucky_vm.server import Config, PuckyVoiceService, make_handler
+
+
+BROWSER_TEST_TOKEN = "browser-test-token"
 
 class FakeSTT:
     def transcribe(self, audio: bytes, content_type: str) -> str:
@@ -27,6 +31,37 @@ class FakeCodex:
 
     def start(self) -> None:
         return None
+
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        output_schema: dict[str, object] | None = None,
+        developer_instructions: str | None = None,
+        **_kwargs,
+    ):
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": f"Echo: {text}",
+                        "card_title": "Workspace Echo",
+                        "card_icon": "mail",
+                        "html": None,
+                    }
+                ),
+                "used_thread_id": str(thread_id or "thread-1"),
+                "requested_thread_id": str(thread_id or ""),
+                "thread_mode": "existing" if thread_id else "new",
+                "reused_existing_thread": bool(thread_id),
+                "fallback_reason": "",
+            },
+        )()
 
     def runtime_call(self, method: str, params: dict[str, object] | None = None, *, timeout: float | None = None) -> dict[str, object]:
         return {"method": method, "params": params or {}}
@@ -50,6 +85,7 @@ def config(tmp_path: Path) -> Config:
         host="127.0.0.1",
         port=0,
         pucky_api_token="test-token",
+        pucky_web_ui_token=BROWSER_TEST_TOKEN,
         deepgram_api_key="",
         deepinfra_api_key="",
         max_audio_bytes=1024,
@@ -68,12 +104,37 @@ def config(tmp_path: Path) -> Config:
         feed_db_path=str(tmp_path / "feed.sqlite3"),
         workspace_db_path=str(tmp_path / "workspace.sqlite3"),
         action_ledger_path=str(tmp_path / "actions.sqlite3"),
+        connect_portal_secret="test-connect-secret",
     )
 
 
-def start_server(tmp_path: Path) -> tuple[ThreadingHTTPServer, str]:
+def start_server(
+    tmp_path: Path,
+    *,
+    strict_browser_user_auth: bool = False,
+    strict_composio_user_scoping: bool = False,
+) -> tuple[ThreadingHTTPServer, str]:
+    server, base_url, _service = start_server_with_service(
+        tmp_path,
+        strict_browser_user_auth=strict_browser_user_auth,
+        strict_composio_user_scoping=strict_composio_user_scoping,
+    )
+    return server, base_url
+
+
+def start_server_with_service(
+    tmp_path: Path,
+    *,
+    strict_browser_user_auth: bool = False,
+    strict_composio_user_scoping: bool = False,
+) -> tuple[ThreadingHTTPServer, str, PuckyVoiceService]:
+    base_config = config(tmp_path)
     service = PuckyVoiceService(
-        config(tmp_path),
+        replace(
+            base_config,
+            strict_browser_user_auth=strict_browser_user_auth,
+            strict_composio_user_scoping=strict_composio_user_scoping,
+        ),
         stt=FakeSTT(),
         tts=FakeTTS(),
         codex=FakeCodex(),
@@ -83,7 +144,7 @@ def start_server(tmp_path: Path) -> tuple[ThreadingHTTPServer, str]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    return server, f"http://127.0.0.1:{server.server_address[1]}"
+    return server, f"http://127.0.0.1:{server.server_address[1]}", service
 
 
 def request_json(
@@ -91,7 +152,8 @@ def request_json(
     path: str,
     *,
     method: str = "GET",
-    token: str | None = "",
+    token: str | None = BROWSER_TEST_TOKEN,
+    cookie: str | None = None,
     headers: dict[str, str] | None = None,
     body: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -101,11 +163,58 @@ def request_json(
         request_headers["Content-Type"] = "application/json"
     if token:
         request_headers["Authorization"] = f"Bearer {token}"
+    if cookie:
+        request_headers["Cookie"] = cookie
     if headers:
         request_headers.update(headers)
     req = urllib.request.Request(base_url + path, data=data, headers=request_headers, method=method)
     with urllib.request.urlopen(req, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def request_json_response(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    token: str | None = BROWSER_TEST_TOKEN,
+    cookie: str | None = None,
+    headers: dict[str, str] | None = None,
+    body: dict[str, object] | None = None,
+) -> tuple[dict[str, object], object]:
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request_headers = {"Accept": "application/json"}
+    if body is not None:
+        request_headers["Content-Type"] = "application/json"
+    if token:
+        request_headers["Authorization"] = f"Bearer {token}"
+    if cookie:
+        request_headers["Cookie"] = cookie
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(base_url + path, data=data, headers=request_headers, method=method)
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8")), response.headers
+
+
+def request_bytes(
+    base_url: str,
+    path: str,
+    *,
+    token: str | None = BROWSER_TEST_TOKEN,
+    cookie: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, bytes]:
+    request_headers = {"Accept": "*/*"}
+    if token:
+        request_headers["Authorization"] = f"Bearer {token}"
+    if cookie:
+        request_headers["Cookie"] = cookie
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(base_url + path, headers=request_headers, method="GET")
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return int(response.status), response.read()
 
 
 def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(tmp_path: Path) -> None:
@@ -123,6 +232,98 @@ def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(t
             raise AssertionError("unauthorized write succeeded")
         public_notes = request_json(base_url, "/api/workspace/notes", token="test-operator-token", method="GET")
         assert public_notes["count"] >= 1
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_session_auth_isolates_users_and_artifacts(tmp_path: Path) -> None:
+    server, base_url, service = start_server_with_service(
+        tmp_path,
+        strict_browser_user_auth=True,
+        strict_composio_user_scoping=True,
+    )
+    try:
+        service.composio.configured = True
+        try:
+            request_json(base_url, "/api/workspace/notes", token="", method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("strict workspace read unexpectedly succeeded without auth")
+
+        try:
+            request_json(base_url, "/api/links/composio/portal-url?auth_mode=browser", token=BROWSER_TEST_TOKEN, method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("strict composio scope unexpectedly allowed a default browser principal")
+
+        user_a_code = str(service.request_auth_code("user-a@example.com")["test_code"])
+        verify_a, headers_a = request_json_response(
+            base_url,
+            "/api/auth/verify-code",
+            method="POST",
+            token="",
+            body={"email": "user-a@example.com", "code": user_a_code},
+        )
+        cookie_a = str(headers_a.get("Set-Cookie") or "").split(";", 1)[0]
+        session_token_a = cookie_a.split("=", 1)[1]
+
+        user_b_code = str(service.request_auth_code("user-b@example.com")["test_code"])
+        verify_b, headers_b = request_json_response(
+            base_url,
+            "/api/auth/verify-code",
+            method="POST",
+            token="",
+            body={"email": "user-b@example.com", "code": user_b_code},
+        )
+        cookie_b = str(headers_b.get("Set-Cookie") or "").split(";", 1)[0]
+
+        assert verify_a["workspace_id"] != verify_b["workspace_id"]
+
+        session_a = request_json(base_url, "/api/auth/session", token="", cookie=cookie_a)
+        session_b = request_json(base_url, "/api/auth/session", token="", cookie=cookie_b)
+        assert session_a["signed_in"] is True
+        assert session_b["signed_in"] is True
+        assert session_a["workspace_id"] != session_b["workspace_id"]
+
+        created_note = request_json(
+            base_url,
+            "/api/workspace/notes",
+            method="POST",
+            token="",
+            cookie=cookie_a,
+            body={"id": "user-a-note", "title": "User A Note", "html": "<!doctype html><h1>User A</h1>"},
+        )
+        assert created_note["id"] == "user-a-note"
+
+        turn = request_json(
+            base_url,
+            "/api/turn/text",
+            method="POST",
+            token="",
+            cookie=cookie_a,
+            body={"text": "Create a quick card", "turn_id": "user-a-turn"},
+        )
+        assert turn["card_id"].startswith("pucky_card_")
+
+        owner_note = request_json(base_url, "/api/workspace/notes/user-a-note", token="", cookie=cookie_a)
+        assert owner_note["title"] == "User A Note"
+
+        user_b_notes = request_json(base_url, "/api/workspace/notes", token="", cookie=cookie_b)
+        assert all(str(item.get("id") or "") != "user-a-note" for item in list(user_b_notes.get("items") or []))
+        try:
+            request_json(base_url, "/api/workspace/notes/user-a-note", token="", cookie=cookie_b)
+        except urllib.error.HTTPError as exc:
+            assert exc.code in {401, 403, 404}
+        else:
+            raise AssertionError("User B fetched User A note")
+
+        portal_a = request_json(base_url, "/api/links/composio/portal-url?auth_mode=browser", token="", cookie=cookie_a)
+        portal_b = request_json(base_url, "/api/links/composio/portal-url?auth_mode=browser", token="", cookie=cookie_b)
+        assert str(portal_a["user_id"]).startswith("ws_")
+        assert str(portal_b["user_id"]).startswith("ws_")
+        assert portal_a["user_id"] != portal_b["user_id"]
     finally:
         server.shutdown()
 

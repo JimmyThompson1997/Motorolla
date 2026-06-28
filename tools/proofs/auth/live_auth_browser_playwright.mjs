@@ -49,6 +49,18 @@ const DEFAULT_MAJOR_ROUTES = [
   "settings",
 ];
 const DEFAULT_LOGOUT_LABELS = ["Sign out", "Log out", "Logout"];
+const HOME_TILE_ROUTES = ["inbox", "notes", "tasks", "contacts", "projects", "reminders", "settings"];
+const CURRENT_AUTH_BUNDLE_SCRIPTS = ["pucky-browser-state.js", "pucky-browser-unlock.js"];
+const LEGACY_BUNDLE_SCRIPTS = ["pucky-ui-state.js"];
+const HOME_TILE_LABELS = {
+  inbox: "Inbox",
+  notes: "Notes",
+  tasks: "Tasks",
+  contacts: "Contacts",
+  projects: "Projects",
+  reminders: "Reminders",
+  settings: "Settings",
+};
 const DEFAULT_MATRIX = [
   { label: "chromium-desktop", browserName: "chromium", viewport: { width: 1440, height: 980 }, primaryIsolationLane: true },
   { label: "webkit-desktop", browserName: "webkit", viewport: { width: 1440, height: 980 } },
@@ -164,6 +176,107 @@ function parseArgs(argv) {
   config.matrix = DEFAULT_MATRIX.filter(item => !config.matrixFilter.length || config.matrixFilter.includes(item.label));
   assert(config.matrix.length > 0, "No browser matrix entries selected.");
   return config;
+}
+
+function runGit(args) {
+  const completed = spawnSync("git", args, {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 30000,
+  });
+  if (completed.status === 0) {
+    return String(completed.stdout || "").trim();
+  }
+  return "";
+}
+
+function localGitState() {
+  return {
+    head: runGit(["rev-parse", "HEAD"]),
+    headShort: runGit(["rev-parse", "--short", "HEAD"]),
+  };
+}
+
+function expectedBundleScripts() {
+  const indexPath = path.join(ROOT, "pucky_vm", "ui_src", "index.html");
+  const source = fs.readFileSync(indexPath, "utf8");
+  const scripts = Array.from(source.matchAll(/<script\s+src="\.\/([^"]+)"/g))
+    .map(match => String(match[1] || "").trim())
+    .filter(Boolean);
+  for (const script of CURRENT_AUTH_BUNDLE_SCRIPTS) {
+    assert(scripts.includes(script), `Local auth bundle contract is missing required script ${script}`);
+  }
+  return scripts;
+}
+
+async function fetchRemoteManifest(baseUrl, refreshKey = "") {
+  const url = new URL("/ui/pucky/latest/manifest.json", `${String(baseUrl || "").replace(/\/+$/, "")}/`);
+  if (String(refreshKey || "").trim()) {
+    url.searchParams.set("_pucky_refresh", String(refreshKey || "").trim());
+  }
+  const response = await fetch(url, {
+    headers: {
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache",
+    },
+  });
+  assert(response.ok, `Could not load remote manifest from ${url.toString()} (${response.status})`);
+  const payload = await response.json().catch(() => ({}));
+  assert(payload && typeof payload === "object", `Remote manifest from ${url.toString()} was not valid JSON`);
+  return {
+    manifestUrl: url.toString(),
+    manifest: payload,
+  };
+}
+
+async function fetchNoRedirect(url) {
+  const response = await fetch(url, {
+    redirect: "manual",
+    headers: {
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache",
+    },
+  });
+  return {
+    status: response.status,
+    location: String(response.headers.get("location") || ""),
+  };
+}
+
+async function readLoadedBundleScripts(page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll("script[src]"))
+      .map(node => {
+        const raw = String(node.getAttribute("src") || "").trim();
+        const clean = raw.split("?")[0];
+        const parts = clean.split("/");
+        return String(parts.at(-1) || "").trim();
+      })
+      .filter(Boolean)
+  );
+}
+
+async function verifyBundleFreshness(page, baseUrl, gitState, expectedScripts) {
+  const remoteManifest = await fetchRemoteManifest(baseUrl, gitState.headShort || "");
+  const observedScripts = await readLoadedBundleScripts(page);
+  const missingScripts = expectedScripts.filter(script => !observedScripts.includes(script));
+  const unexpectedLegacyScripts = observedScripts.filter(script => LEGACY_BUNDLE_SCRIPTS.includes(script));
+  if (gitState.head) {
+    assert(
+      String(remoteManifest.manifest?.source_commit_full || "") === String(gitState.head),
+      `Live manifest commit ${remoteManifest.manifest?.source_commit_full || "<empty>"} does not match release commit ${gitState.head}`
+    );
+  }
+  assert(missingScripts.length === 0, `Live bundle is missing expected scripts: ${missingScripts.join(", ")}`);
+  assert(unexpectedLegacyScripts.length === 0, `Live bundle is still serving legacy scripts: ${unexpectedLegacyScripts.join(", ")}`);
+  return {
+    "manifest_url": remoteManifest.manifestUrl,
+    "manifest": remoteManifest.manifest,
+    "expected_scripts": expectedScripts,
+    "observed_scripts": observedScripts,
+    "missing_scripts": missingScripts,
+    "unexpected_legacy_scripts": unexpectedLegacyScripts,
+  };
 }
 
 function expandNodeModuleCandidates(basePath) {
@@ -409,7 +522,6 @@ async function seedWorkspaceRecords(page, baseUrl, seed) {
     fields: {
       text: `Upload ${seed.prefix}`,
       turn_id: seed.uploadTurnId,
-      upload_only: "1",
     },
     files: [
       {
@@ -523,19 +635,7 @@ async function logout(page, landingUrl, loginUrl, logoutLabels, timeoutMs) {
     await waitForRouteReady(page, "settings", timeoutMs);
     label = await maybeClickOneOf(page, logoutLabels, 4000);
   }
-  if (!label) {
-    const status = await page.evaluate(async () => {
-      const response = await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        credentials: "include",
-      });
-      return response.status;
-    });
-    assert(status === 200, `Auth logout API failed with status ${status}`);
-    label = "api_auth_logout";
-    await page.goto(loginUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
-  }
+  assert(label, `Could not find a logout control matching: ${logoutLabels.join(", ")}`);
   await waitForSignedOut(page, loginUrl, timeoutMs);
   return {
     label,
@@ -602,6 +702,100 @@ async function captureRouteSweep(page, landingUrl, routes, routeDir, timeoutMs) 
       screenshot,
       snapshot,
     });
+  }
+  return entries;
+}
+
+async function verifySignedOutDirectEntryRedirect(page, config, routeDir, timeoutMs) {
+  const checks = [];
+  const attempts = [
+    { label: "root", path: "/ui/pucky/latest/?route=home" },
+    { label: "index", path: "/ui/pucky/latest/index.html?route=inbox" },
+  ];
+  for (const attempt of attempts) {
+    const url = new URL(attempt.path, `${String(config.baseUrl || "").replace(/\/+$/, "")}/`).toString();
+    const transport = await fetchNoRedirect(url);
+    assert(
+      transport.status >= 300 && transport.status < 400,
+      `Signed-out direct app entry for ${attempt.path} did not return an HTTP redirect. Saw status ${transport.status}`
+    );
+    assert(
+      String(transport.location || "").includes("/sign-in"),
+      `Signed-out direct app entry for ${attempt.path} did not point at /sign-in. Saw location ${transport.location || "<empty>"}`
+    );
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    await waitForSignedOut(page, config.loginUrl, timeoutMs);
+    const currentUrl = page.url();
+    const currentPath = (() => {
+      try {
+        return new URL(currentUrl).pathname;
+      } catch (_error) {
+        return "";
+      }
+    })();
+    assert(
+      safeOrigin(currentUrl) === safeOrigin(config.loginUrl) || currentPath === "/sign-in",
+      `Signed-out direct app entry for ${attempt.path} did not redirect to sign-in. Saw ${currentUrl}`
+    );
+    checks.push({
+      label: attempt.label,
+      attempted_url: url,
+      transport,
+      final_url: currentUrl,
+      screenshot: await saveScreenshot(page, routeDir, `signed-out-direct-${attempt.label}`),
+      body: await captureBodyText(page),
+    });
+  }
+  return checks;
+}
+
+async function clickHomeTileAndVerify(page, landingUrl, route, routeDir, timeoutMs) {
+  const label = HOME_TILE_LABELS[route] || route;
+  await page.goto(buildRouteUrl(landingUrl, "home"), { waitUntil: "domcontentloaded", timeout: timeoutMs });
+  await waitForRouteReady(page, "home", timeoutMs);
+  const events = [];
+  const listener = response => {
+    try {
+      const url = String(response.url() || "");
+      if (url.includes("/api/")) {
+        events.push({
+          url,
+          status: response.status(),
+          resource_type: response.request().resourceType(),
+        });
+      }
+    } catch (_error) {
+      // Best effort only.
+    }
+  };
+  page.on("response", listener);
+  try {
+    const tile = page.locator(`.light-app-tile[data-light-app-route="${route}"]`).first();
+    await tile.click({ timeout: timeoutMs });
+    await waitForRouteReady(page, route, timeoutMs);
+    await page.waitForLoadState("networkidle", { timeout: Math.min(10_000, timeoutMs) }).catch(() => {});
+  } finally {
+    page.off("response", listener);
+  }
+  const snapshot = await readRouteSnapshot(page);
+  const body = await captureBodyText(page);
+  const unauthorizedEvents = events.filter(item => Number(item.status || 0) === 401);
+  assert(unauthorizedEvents.length === 0, `Home tile ${route} triggered 401 API responses.`);
+  assert(!/could not load|unauthorized/i.test(body), `Home tile ${route} landed in an unauthorized error state.`);
+  return {
+    route,
+    label,
+    url: page.url(),
+    snapshot,
+    screenshot: await saveScreenshot(page, routeDir, `home-tile-${route}`),
+    api_events: events.slice(-30),
+  };
+}
+
+async function verifyHomeTileLoads(page, landingUrl, routeDir, timeoutMs) {
+  const entries = [];
+  for (const route of HOME_TILE_ROUTES) {
+    entries.push(await clickHomeTileAndVerify(page, landingUrl, route, routeDir, timeoutMs));
   }
   return entries;
 }
@@ -780,6 +974,7 @@ function renderReport(summary) {
     `- Verdict: ${summary.ok ? "pass" : "fail"}`,
     `- Base URL: ${summary.base_url}`,
     `- Login URL: ${summary.login_url}`,
+    `- Release commit: ${summary.bundle_contract?.release_commit || ""}`,
     `- User A: ${maskEmail(summary.user_a?.email || "")}`,
     `- User B: ${maskEmail(summary.user_b?.email || "")}`,
     `- Matrix lanes: ${summary.lanes.length}`,
@@ -791,6 +986,8 @@ function renderReport(summary) {
     lines.push(`- Primary isolation lane: ${lane.primary_isolation_lane ? "yes" : "no"}`);
     lines.push(`- Landing URL: ${lane.user_a?.landing?.url || ""}`);
     lines.push(`- Major routes captured: ${(lane.user_a?.routes || []).map(item => item.route).join(", ")}`);
+    lines.push(`- Home tile routes verified: ${(lane.user_a?.home_tile_routes || []).map(item => item.route).join(", ")}`);
+    lines.push(`- Bundle commit: ${lane.bundle_contract?.manifest?.source_commit_full || ""}`);
     if (lane.primary_isolation_lane) {
       lines.push(`- Distinct workspace hosts: ${lane.isolation?.userBLogin ? "verified" : "not run"}`);
       lines.push(`- Negative checks: ${Object.keys(lane.isolation?.negativeChecks || {}).join(", ")}`);
@@ -809,6 +1006,8 @@ function renderReport(summary) {
 
 async function main() {
   const config = parseArgs(process.argv.slice(2));
+  const gitState = localGitState();
+  const expectedScripts = expectedBundleScripts();
   ensureDir(config.reportDir);
   const summary = {
     schema: RESULT_SCHEMA,
@@ -816,6 +1015,11 @@ async function main() {
     base_url: config.baseUrl,
     login_url: config.loginUrl,
     report_dir: config.reportDir,
+    bundle_contract: {
+      release_commit: gitState.head,
+      release_commit_short: gitState.headShort,
+      expected_scripts: expectedScripts,
+    },
     user_a: { email: config.userA.email },
     user_b: { email: config.userB.email },
     lanes: [],
@@ -837,7 +1041,14 @@ async function main() {
         const context = await buildContext(browser, matrixEntry, laneDir, config.browserPreviewToken);
         const page = await context.newPage();
         attachPageLogging(page, path.join(laneDir, "browser-console.log"));
+        lane.signed_out_redirects = await verifySignedOutDirectEntryRedirect(
+          page,
+          config,
+          path.join(laneDir, "signed-out"),
+          config.timeoutMs
+        );
         const loginResult = await performOtpLoginWithArtifacts(page, config.userA, config, laneDir, "user-a");
+        lane.bundle_contract = await verifyBundleFreshness(page, config.baseUrl, gitState, expectedScripts);
         lane.user_a = {
           email: config.userA.email,
           signed_out_screenshot: loginResult.signedOutScreenshot,
@@ -847,6 +1058,12 @@ async function main() {
         };
         const routes = await captureRouteSweep(page, loginResult.landing.url, config.majorRoutes, path.join(laneDir, "routes"), config.timeoutMs);
         lane.user_a.routes = routes;
+        lane.user_a.home_tile_routes = await verifyHomeTileLoads(
+          page,
+          loginResult.landing.url,
+          path.join(laneDir, "home-tiles"),
+          config.timeoutMs
+        );
 
         let seed = null;
         let artifactId = "";
