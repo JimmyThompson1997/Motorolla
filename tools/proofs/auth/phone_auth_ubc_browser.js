@@ -91,16 +91,23 @@ async function waitForWorkspace(page, loginUrl, workspaceHostPattern, timeoutMs)
         }
       })();
       const readySelector = document.querySelector('.light-shell, .app-shell, [data-light-route]');
+      const pathname = (() => {
+        try {
+          return new URL(currentUrl).pathname;
+        } catch (_error) {
+          return "";
+        }
+      })();
       if (hostPattern) {
         try {
-          if (new RegExp(hostPattern).test(currentHost) && readySelector && currentOrigin !== loginOrigin) {
+          if (new RegExp(hostPattern).test(currentHost) && readySelector) {
             return true;
           }
         } catch (_error) {
           // Fall through to selector readiness.
         }
       }
-      return Boolean(readySelector) && (!loginOrigin || currentOrigin !== loginOrigin);
+      return Boolean(readySelector) && (!loginOrigin || currentOrigin !== loginOrigin || pathname !== "/sign-in");
     },
     {
       loginOrigin: (() => {

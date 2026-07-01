@@ -4,10 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_ROOT="${PUCKY_LOCAL_DEV_ROOT:-$HOME/.local/pucky-dev}"
 BIN_DIR="$LOCAL_ROOT/bin"
+LOCAL_TOOLS_DIR="$LOCAL_ROOT/tools"
 ANDROID_HOME_DEFAULT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$LOCAL_ROOT/android-sdk}}"
 ANDROID_HOME="$ANDROID_HOME_DEFAULT"
 JDK_HOME="$LOCAL_ROOT/jdk-17/Contents/Home"
-TMP_DIR="$ROOT/.tmp/bootstrap-local-dev"
+TMP_DIR="$LOCAL_ROOT/tmp/bootstrap-local-dev"
 NODE_INDEX_URL="https://nodejs.org/dist/latest-v20.x"
 ANDROID_CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-mac-14742923_latest.zip"
 JDK_URL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/aarch64/jdk/hotspot/normal/eclipse"
@@ -15,6 +16,8 @@ FFMPEG_URL_X64="https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip"
 FFPROBE_URL_X64="https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
 FFMPEG_URL_ARM64="https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffmpeg.zip"
 FFPROBE_URL_ARM64="https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffprobe.zip"
+FLYCTL_INSTALL_SCRIPT_URL="https://fly.io/install.sh"
+FLYCTL_ROOT="$LOCAL_ROOT/flyctl"
 CODEX_RUNTIME_ROOT="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies"
 CODEX_PYTHON="$CODEX_RUNTIME_ROOT/python/bin/python3"
 
@@ -25,9 +28,11 @@ fi
 
 FFMPEG_URL="$FFMPEG_URL_X64"
 FFPROBE_URL="$FFPROBE_URL_X64"
+NODE_ARCHIVE_SUFFIX="darwin-x64.tar.xz"
 if [[ "$(uname -m)" == "arm64" ]]; then
   FFMPEG_URL="$FFMPEG_URL_ARM64"
   FFPROBE_URL="$FFPROBE_URL_ARM64"
+  NODE_ARCHIVE_SUFFIX="darwin-arm64.tar.xz"
 fi
 
 if [[ ! -x "$CODEX_PYTHON" ]]; then
@@ -35,7 +40,7 @@ if [[ ! -x "$CODEX_PYTHON" ]]; then
   exit 1
 fi
 
-mkdir -p "$BIN_DIR" "$ANDROID_HOME" "$TMP_DIR"
+mkdir -p "$BIN_DIR" "$ANDROID_HOME" "$TMP_DIR" "$LOCAL_TOOLS_DIR"
 
 download() {
   local url="$1"
@@ -44,17 +49,16 @@ download() {
 }
 
 if [[ ! -x "$BIN_DIR/node" || ! -x "$BIN_DIR/npm" ]]; then
-  NODE_ARCHIVE_NAME="$(curl -fsSL "$NODE_INDEX_URL/SHASUMS256.txt" | awk '/darwin-arm64\.tar\.xz$/ {print $2; exit}')"
+  NODE_ARCHIVE_NAME="$(curl -fsSL "$NODE_INDEX_URL/SHASUMS256.txt" | awk -v suffix="$NODE_ARCHIVE_SUFFIX" '$2 ~ suffix "$" {print $2; exit}')"
   if [[ -z "$NODE_ARCHIVE_NAME" ]]; then
     echo "Could not resolve latest Node 20 archive from $NODE_INDEX_URL"
     exit 1
   fi
   NODE_ARCHIVE="$TMP_DIR/$NODE_ARCHIVE_NAME"
-  NODE_EXTRACT_DIR="$TMP_DIR/node-dist"
-  rm -rf "$NODE_EXTRACT_DIR"
+  rm -rf "$LOCAL_TOOLS_DIR"/node-v20*
   download "$NODE_INDEX_URL/$NODE_ARCHIVE_NAME" "$NODE_ARCHIVE"
-  tar -xJf "$NODE_ARCHIVE" -C "$TMP_DIR"
-  NODE_ROOT="$(find "$TMP_DIR" -maxdepth 1 -type d -name 'node-v20*' | head -n 1)"
+  tar -xJf "$NODE_ARCHIVE" -C "$LOCAL_TOOLS_DIR"
+  NODE_ROOT="$(find "$LOCAL_TOOLS_DIR" -maxdepth 1 -type d -name 'node-v20*' | head -n 1)"
   if [[ -z "$NODE_ROOT" ]]; then
     echo "Failed to unpack Node distribution"
     exit 1
@@ -83,7 +87,7 @@ fi
 
 if [[ ! -x "$BIN_DIR/ffmpeg" ]]; then
   FFMPEG_ARCHIVE="$TMP_DIR/ffmpeg.zip"
-  FFMPEG_EXTRACT="$TMP_DIR/ffmpeg"
+  FFMPEG_EXTRACT="$LOCAL_TOOLS_DIR/ffmpeg"
   rm -rf "$FFMPEG_EXTRACT"
   mkdir -p "$FFMPEG_EXTRACT"
   download "$FFMPEG_URL" "$FFMPEG_ARCHIVE"
@@ -93,12 +97,19 @@ fi
 
 if [[ ! -x "$BIN_DIR/ffprobe" ]]; then
   FFPROBE_ARCHIVE="$TMP_DIR/ffprobe.zip"
-  FFPROBE_EXTRACT="$TMP_DIR/ffprobe"
+  FFPROBE_EXTRACT="$LOCAL_TOOLS_DIR/ffprobe"
   rm -rf "$FFPROBE_EXTRACT"
   mkdir -p "$FFPROBE_EXTRACT"
   download "$FFPROBE_URL" "$FFPROBE_ARCHIVE"
   unzip -q "$FFPROBE_ARCHIVE" -d "$FFPROBE_EXTRACT"
   ln -sf "$FFPROBE_EXTRACT/ffprobe" "$BIN_DIR/ffprobe"
+fi
+
+if [[ ! -x "$BIN_DIR/flyctl" ]]; then
+  mkdir -p "$FLYCTL_ROOT"
+  curl -fsSL "$FLYCTL_INSTALL_SCRIPT_URL" | env FLYCTL_INSTALL="$FLYCTL_ROOT" sh -s -- --non-interactive
+  ln -sf "$FLYCTL_ROOT/bin/flyctl" "$BIN_DIR/flyctl"
+  ln -sf "$FLYCTL_ROOT/bin/fly" "$BIN_DIR/fly"
 fi
 
 if [[ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]]; then

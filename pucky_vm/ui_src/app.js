@@ -1189,6 +1189,8 @@
   }
 
   const HOME_FEED_LIMIT = 100;
+  let browserAuthConfigPromise = null;
+  let clerkBrowserRuntimePromise = null;
 
   function feedApiBaseUrl() {
     if (state.links.apiBaseUrl) {
@@ -1211,8 +1213,117 @@
     return `/api/feed?${params.toString()}`;
   }
 
+  function browserPreviewApiTokenActive() {
+    return Boolean(resolveBrowserPreviewApiToken());
+  }
+
+  function loadRemoteScript(src, attributes = {}) {
+    return new Promise((resolve, reject) => {
+      const url = String(src || "").trim();
+      if (!url) {
+        reject(new Error("script_src_required"));
+        return;
+      }
+      const existing = Array.from(document.scripts || []).find(script => String(script.getAttribute("data-pucky-src") || "").trim() === url);
+      if (existing) {
+        if (existing.getAttribute("data-pucky-loaded") === "1") {
+          resolve();
+          return;
+        }
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = url;
+      script.async = true;
+      script.crossOrigin = "anonymous";
+      script.setAttribute("data-pucky-src", url);
+      Object.entries(attributes || {}).forEach(([key, value]) => {
+        script.setAttribute(key, String(value));
+      });
+      script.addEventListener("load", () => {
+        script.setAttribute("data-pucky-loaded", "1");
+        resolve();
+      }, { once: true });
+      script.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+      document.head.appendChild(script);
+    });
+  }
+
+  async function fetchBrowserAuthConfig() {
+    if (browserAuthConfigPromise) {
+      return browserAuthConfigPromise;
+    }
+    browserAuthConfigPromise = fetch("/api/auth/config", {
+      headers: { Accept: "application/json" },
+      cache: "no-store"
+    }).then(async response => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(String(payload && (payload.detail || payload.error) || `Auth config request failed (${response.status})`));
+      }
+      return payload && typeof payload === "object" ? payload : {};
+    }).catch(error => {
+      browserAuthConfigPromise = null;
+      return {
+        ok: false,
+        enabled: false,
+        auth_provider: "",
+        error: String(error && error.message || "auth_config_unavailable")
+      };
+    });
+    return browserAuthConfigPromise;
+  }
+
+  async function ensureBrowserClerkRuntime() {
+    if (clerkBrowserRuntimePromise) {
+      return clerkBrowserRuntimePromise;
+    }
+    clerkBrowserRuntimePromise = (async () => {
+      const config = await fetchBrowserAuthConfig();
+      if (!config || !config.enabled || String(config.auth_provider || "").trim().toLowerCase() !== "clerk") {
+        return null;
+      }
+      const frontendApiUrl = String(config.frontend_api_url || "").replace(/\/+$/, "");
+      const publishableKey = String(config.publishable_key || "").trim();
+      if (!frontendApiUrl || !publishableKey) {
+        return null;
+      }
+      if (!(window.Clerk && typeof window.Clerk.load === "function")) {
+        await loadRemoteScript(`${frontendApiUrl}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, {
+          "data-clerk-publishable-key": publishableKey
+        });
+      }
+      if (!(window.Clerk && typeof window.Clerk.load === "function")) {
+        return null;
+      }
+      await window.Clerk.load({
+        signInUrl: String(config.sign_in_url || "/sign-in"),
+        signUpUrl: String(config.sign_up_url || "/sign-up")
+      });
+      return window.Clerk;
+    })().catch(() => {
+      clerkBrowserRuntimePromise = null;
+      return null;
+    });
+    return clerkBrowserRuntimePromise;
+  }
+
+  async function resolveBrowserSessionApiToken() {
+    const clerk = await ensureBrowserClerkRuntime();
+    if (!clerk || !clerk.session || typeof clerk.session.getToken !== "function") {
+      return "";
+    }
+    try {
+      return String(await clerk.session.getToken() || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
   function maybeRedirectToSignInOnUnauthorized(response) {
-    if (!response || response.status !== 401 || state.links.apiToken) {
+    if (!response || response.status !== 401 || browserPreviewApiTokenActive()) {
       return;
     }
     if (window.location.pathname === "/sign-in") {
@@ -2092,7 +2203,7 @@
           await ensureLinksApiConfig();
           if (!state.links.apiToken) {
             state.links.available = false;
-            state.links.error = "Device provisioning missing pucky_api_token.";
+            state.links.error = "Sign in to Pucky to access connected apps.";
             linksDebugRecord("handoff_error", { stage: "portal_load", detail: state.links.error }, "route");
             return;
           }
@@ -2512,23 +2623,20 @@
     }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
-      state.links.apiToken = resolveBrowserPreviewApiToken();
+      state.links.apiToken = await resolveBrowserSessionApiToken();
       state.links.deviceId = resolveBrowserPreviewDeviceId();
       return;
     }
-    if (state.links.apiBaseUrl) {
-      return;
-    }
+    let nativeConfig = null;
     try {
-      const config = await requestNativeLinksConfig();
-      state.links.apiBaseUrl = String(config && config.api_base_url || "").replace(/\/$/, "");
-      state.links.apiToken = String(config && config.api_token || "");
+      nativeConfig = await requestNativeLinksConfig();
+      state.links.apiBaseUrl = String(nativeConfig && nativeConfig.api_base_url || "").replace(/\/$/, "");
       state.links.deviceId = "";
     } catch (_) {
-      state.links.apiBaseUrl = "";
-      state.links.apiToken = "";
+      state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
       state.links.deviceId = "";
     }
+    state.links.apiToken = await resolveBrowserSessionApiToken();
   }
 
   function resolveBrowserPreviewApiToken() {
@@ -10119,15 +10227,7 @@
   }
 
   async function performSessionSignOut() {
-    try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Accept: "application/json" }
-      });
-    } catch (_error) {
-      // Redirect even when the logout request fails so the auth gate stays reachable.
-    }
-    window.location.assign("/sign-in");
+    window.location.assign("/sign-in?action=sign-out");
   }
 
   function appearanceSettingsCard() {

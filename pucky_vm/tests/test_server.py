@@ -32,6 +32,7 @@ from pucky_vm.server import (
     reply_output_schema,
     reset_broker_for_tests,
 )
+from pucky_vm.tests.clerk_test_helpers import ClerkTestHarness
 
 
 class FakeSTT:
@@ -885,6 +886,7 @@ class ServerTests(unittest.TestCase):
         self.codex = FakeCodex()
         self.meeting_codex = MeetingToolCallingCodex()
         self.composio = FakeComposio()
+        self.clerk = ClerkTestHarness()
         self.service = PuckyVoiceService(
             make_config(),
             stt=self.stt,
@@ -892,6 +894,7 @@ class ServerTests(unittest.TestCase):
             codex=self.codex,
             meeting_codex=self.meeting_codex,
             composio=self.composio,
+            clerk_auth=self.clerk.client,
         )
         self.meeting_codex.attach_service(self.service)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
@@ -1048,6 +1051,107 @@ class ServerTests(unittest.TestCase):
                     self.get_json(path, headers=headers)
 
             self.assertEqual(caught.exception.code, 401, msg=path)
+
+    def test_strict_browser_auth_redirects_logged_out_bundle_reads_to_sign_in(self) -> None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+
+        sign_in_text = self.get_text("/sign-in")
+        self.assertIn("Pucky uses Clerk to authenticate your email", sign_in_text)
+        self.assertIn("Loading secure sign-in", sign_in_text)
+
+        opener = urllib.request.build_opener(NoRedirect)
+        for path in (
+            "/ui/pucky/latest/?route=inbox",
+            "/ui/pucky/latest/index.html?route=inbox",
+        ):
+            request = urllib.request.Request(self.base_url + path)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                opener.open(request, timeout=10)
+
+            self.assertEqual(caught.exception.code, 307)
+            self.assertEqual(
+                caught.exception.headers.get("Location"),
+                f"/sign-in?next={path}",
+            )
+
+    def test_auth_request_verify_session_logout_and_redirect_flow(self) -> None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        auth_config = self.get_json("/api/auth/config")
+        self.assertTrue(auth_config["ok"])
+        self.assertEqual(auth_config["schema"], "pucky.auth.config.v1")
+        self.assertEqual(auth_config["auth_provider"], "clerk")
+        self.assertTrue(auth_config["enabled"])
+        self.assertEqual(auth_config["sign_in_url"], "/sign-in")
+        self.assertEqual(auth_config["sign_up_url"], "/sign-up")
+
+        request = urllib.request.Request(
+            self.base_url + "/api/auth/request-code",
+            data=json.dumps({"email": "launch-user@example.com"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as request_code_error:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(request_code_error.exception.code, 410)
+        request_code_payload = json.loads(request_code_error.exception.read().decode("utf-8"))
+        self.assertEqual(request_code_payload["error"], "clerk_only_auth")
+        self.assertEqual(request_code_payload["auth_provider"], "clerk")
+
+        verify = urllib.request.Request(
+            self.base_url + "/api/auth/verify-code",
+            data=json.dumps({"email": "launch-user@example.com", "code": "123456"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as verify_error:
+            urllib.request.urlopen(verify, timeout=10)
+        self.assertEqual(verify_error.exception.code, 410)
+        verify_payload = json.loads(verify_error.exception.read().decode("utf-8"))
+        self.assertEqual(verify_payload["error"], "clerk_only_auth")
+
+        session_cookie = self.clerk.session_cookie(email="launch-user@example.com", origin=self.base_url)
+
+        session_payload = self.get_json("/api/auth/session", headers={"Cookie": session_cookie})
+        self.assertTrue(session_payload["signed_in"])
+        self.assertEqual(session_payload["auth_provider"], "clerk")
+        self.assertEqual(session_payload["email"], "launch-user@example.com")
+        self.assertTrue(session_payload["workspace_id"].startswith("ws_"))
+        self.assertTrue(session_payload["workspace_slug"])
+        self.assertTrue(session_payload["clerk_user_id"].startswith("user_"))
+        self.assertEqual(session_payload["landing_url"], self.base_url + "/ui/pucky/latest/?route=home")
+
+        opener = urllib.request.build_opener(NoRedirect)
+        for route in ("/sign-in", "/sign-up"):
+            sign_in_request = urllib.request.Request(
+                self.base_url + route,
+                headers={"Cookie": session_cookie},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                opener.open(sign_in_request, timeout=10)
+
+            self.assertEqual(caught.exception.code, 307)
+            self.assertEqual(caught.exception.headers.get("Location"), session_payload["landing_url"])
+
+        logout_request = urllib.request.Request(
+            self.base_url + "/api/auth/logout",
+            data=b"",
+            method="POST",
+            headers={"Cookie": session_cookie, "Accept": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as logout_error:
+            urllib.request.urlopen(logout_request, timeout=10)
+        self.assertEqual(logout_error.exception.code, 410)
+        logout_payload = json.loads(logout_error.exception.read().decode("utf-8"))
+        self.assertEqual(logout_payload["error"], "clerk_only_auth")
+        self.assertTrue(logout_payload["client_must_sign_out"])
 
     def test_ui_bundle_endpoints_serve_manifest_bundle_and_browser_app(self) -> None:
         manifest = self.get_json("/ui/pucky/latest/manifest.json")
@@ -1215,9 +1319,33 @@ class ServerTests(unittest.TestCase):
                 self.get_json(path)
             self.assertEqual(caught.exception.code, 401, msg=path)
 
-        token = self.issue_portal_token()
+        session_cookie = self.issue_browser_session_cookie("strict-links-reader@example.com")
+        token = self.issue_portal_token(headers={"Cookie": session_cookie})
         payload = self.get_json(f"/api/links/composio/my-apps?token={token}")
         self.assertTrue(payload["ok"])
+
+    def test_strict_composio_scope_rejects_default_browser_principal_and_requires_workspace_session(self) -> None:
+        self.service.config = replace(
+            self.service.config,
+            strict_browser_user_auth=True,
+            strict_composio_user_scoping=True,
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer browser-secret"})
+        self.assertEqual(caught.exception.code, 401)
+        payload = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertEqual(payload["error"], "workspace_auth_required")
+
+        session_cookie = self.issue_browser_session_cookie("workspace-user@example.com")
+        portal = self.get_json("/api/links/composio/portal-url?auth_mode=browser", headers={"Cookie": session_cookie})
+        self.assertTrue(portal["ok"])
+        self.assertTrue(str(portal["user_id"]).startswith("ws_"))
+        self.assertNotEqual(portal["user_id"], "ws_default")
+
+        my_apps = self.get_json("/api/links/composio/my-apps", headers={"Cookie": session_cookie})
+        self.assertTrue(my_apps["ok"])
+        self.assertEqual(my_apps["user_id"], portal["user_id"])
 
     def test_links_catalog_returns_cached_snapshot_headers_without_connected_overlay(self) -> None:
         token = self.issue_portal_token()
@@ -4455,8 +4583,14 @@ class ServerTests(unittest.TestCase):
         parsed = urllib.parse.urlsplit(portal_url)
         return urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
 
-    def issue_portal_token(self) -> str:
-        payload = self.get_json("/api/links/composio/portal-url", headers={"Authorization": "Bearer secret"})
+    def issue_browser_session_cookie(self, email: str = "workspace-user@example.com") -> str:
+        return self.clerk.session_cookie(email=email, origin=self.base_url)
+
+    def issue_portal_token(self, headers: dict[str, str] | None = None) -> str:
+        payload = self.get_json(
+            "/api/links/composio/portal-url",
+            headers=headers or {"Authorization": "Bearer secret"},
+        )
         return self.portal_token(payload["portal_url"])
 
     def test_text_turn_accepts_multipart_user_attachments_and_preserves_them_on_user_message(self) -> None:
@@ -4494,6 +4628,66 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([attachment["title"] for attachment in attachments], ["thread-compose-note.txt", "thread-compose-proof.png"])
         self.assertEqual(attachments[0]["kind"], "text")
         self.assertEqual(attachments[1]["kind"], "image")
+        self.assertEqual(attachments[0]["viewer"]["type"], "text")
+        self.assertEqual(attachments[1]["viewer"]["type"], "image_gallery")
+
+    def test_text_turn_new_thread_origin_is_returned_and_reusable_for_follow_up(self) -> None:
+        created = self.post_json(
+            "/api/turn/text",
+            {
+                "text": "Start a brand-new Inbox chat",
+                "turn_id": "thread-compose-new-1",
+                "thread_mode": "new",
+            },
+        )
+
+        created_thread_id = created["origin"]["thread_id"]
+        self.assertTrue(created_thread_id)
+        self.assertEqual(created["telemetry"]["requested_thread_mode"], "new")
+        self.assertEqual(created["telemetry"]["requested_thread_id"], "")
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "")
+
+        follow_up = self.post_json(
+            "/api/turn/text",
+            {
+                "text": "Continue the Inbox chat you just created",
+                "turn_id": "thread-compose-new-2",
+                "thread_mode": "existing",
+                "thread_id": created_thread_id,
+            },
+        )
+
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], created_thread_id)
+        self.assertEqual(follow_up["telemetry"]["requested_thread_mode"], "existing")
+        self.assertEqual(follow_up["telemetry"]["requested_thread_id"], created_thread_id)
+        self.assertEqual(follow_up["origin"]["thread_id"], created_thread_id)
+
+    def test_text_turn_multipart_new_thread_preserves_first_message_user_attachments(self) -> None:
+        note_bytes = b"THREAD-COMPOSE-UNIT first-message text attachment\n"
+        image_bytes = b"\x89PNG\r\n\x1a\nthread-compose-proof-first-message"
+
+        body = self.post_multipart(
+            "/api/turn/text",
+            fields={
+                "text": "Start a new thread from the Inbox composer.",
+                "turn_id": "thread-compose-new-multipart-1",
+                "thread_mode": "new",
+                "proof_reply_delay_ms": "6000",
+            },
+            files=[
+                ("files", "thread-compose-note.txt", "text/plain", note_bytes),
+                ("files", "thread-compose-proof.png", "image/png", image_bytes),
+            ],
+        )
+
+        self.assertEqual(self.codex.turn_requests[-1]["requested_thread_id"], "")
+        self.assertEqual(body["telemetry"]["requested_thread_mode"], "new")
+        self.assertEqual(body["telemetry"]["requested_thread_id"], "")
+        self.assertTrue(body["origin"]["thread_id"])
+        messages = body["transcript_messages"]
+        self.assertEqual(messages[0]["role"], "user")
+        attachments = messages[0]["attachments"]
+        self.assertEqual([attachment["title"] for attachment in attachments], ["thread-compose-note.txt", "thread-compose-proof.png"])
         self.assertEqual(attachments[0]["viewer"]["type"], "text")
         self.assertEqual(attachments[1]["viewer"]["type"], "image_gallery")
 

@@ -491,7 +491,7 @@ def test_hosted_workspace_routes_load_live_data_without_browser_unlock_state() -
     assert 'const payload = await workspaceApiRequest(workspaceQuery(collection, { date, includeArchived: Boolean(options.includeArchived) }));' in load_workspace
     assert 'bucket.items = Array.isArray(payload && payload.items) ? payload.items : [];' in load_workspace
     assert 'bucket.loaded = true;' in load_workspace
-    assert 'state.links.apiToken = resolveBrowserPreviewApiToken();' in ensure_links_api_config
+    assert 'state.links.apiToken = await resolveBrowserSessionApiToken();' in ensure_links_api_config
     assert 'state.links.deviceId = resolveBrowserPreviewDeviceId();' in ensure_links_api_config
     assert "Preview needs api_token" not in app
     assert "Unlock web preview" not in app
@@ -541,9 +541,8 @@ def test_account_settings_card_redirects_unauthorized_sessions_back_to_sign_in()
     assert 'detail: "End this signed-in browser session and return to the auth gate."' in auth_session_settings
     assert 'actionLabel: "Sign out"' in auth_session_settings
     assert "action: performSessionSignOut" in auth_session_settings
-    assert 'await fetch("/api/auth/logout", {' in perform_session_sign_out
-    assert 'window.location.assign("/sign-in");' in perform_session_sign_out
-    assert "if (!response || response.status !== 401 || state.links.apiToken) {" in maybe_redirect
+    assert 'window.location.assign("/sign-in?action=sign-out");' in perform_session_sign_out
+    assert "if (!response || response.status !== 401 || browserPreviewApiTokenActive()) {" in maybe_redirect
     assert 'window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);' in maybe_redirect
 
 
@@ -562,12 +561,26 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     assert 'browser_preview: true' in hydrate_links_session
 
 
-def test_bridge_connect_surfaces_missing_provisioning_token() -> None:
+def test_browser_session_auth_uses_clerk_session_tokens_when_preview_token_is_absent() -> None:
+    app = read("app.js")
+    fetch_browser_auth_config = function_block(app, "fetchBrowserAuthConfig")
+    ensure_browser_clerk_runtime = function_block(app, "ensureBrowserClerkRuntime")
+    resolve_browser_session_api_token = function_block(app, "resolveBrowserSessionApiToken")
+    ensure_links_api_config = function_block(app, "ensureLinksApiConfig")
+
+    assert 'fetch("/api/auth/config",' in fetch_browser_auth_config
+    assert '`${frontendApiUrl}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`' in ensure_browser_clerk_runtime
+    assert 'await window.Clerk.load({' in ensure_browser_clerk_runtime
+    assert 'return String(await clerk.session.getToken() || "").trim();' in resolve_browser_session_api_token
+    assert 'state.links.apiToken = await resolveBrowserSessionApiToken();' in ensure_links_api_config
+
+
+def test_bridge_connect_surfaces_missing_browser_session() -> None:
     app = read("app.js")
     hydrate_links_session = function_block(app, "hydrateLinksSession")
     links_debug_metrics = function_block(app, "linksDebugMetrics")
 
-    assert 'state.links.error = "Device provisioning missing pucky_api_token.";' in hydrate_links_session
+    assert 'state.links.error = "Sign in to Pucky to access connected apps.";' in hydrate_links_session
     assert 'api_token_present: Boolean(String(state.links.apiToken || "").trim())' in links_debug_metrics
     assert 'portal_token_present: Boolean(String(state.links.token || "").trim())' in links_debug_metrics
     assert 'inline_message: String(state.links.error || state.links.message || "")' in links_debug_metrics
@@ -619,7 +632,7 @@ def test_connect_native_config_waits_for_bridge_request_before_declaring_missing
     assert "if (previewApiBase && previewApiToken) {" in ensure_links_api_config
     assert "state.links.apiBaseUrl = previewApiBase;" in ensure_links_api_config
     assert "state.links.apiToken = previewApiToken;" in ensure_links_api_config
-    assert 'const config = await requestNativeLinksConfig();' in ensure_links_api_config
+    assert 'nativeConfig = await requestNativeLinksConfig();' in ensure_links_api_config
 
 
 def test_ui_surface_and_audio_probe_expose_browser_runtime_truth() -> None:

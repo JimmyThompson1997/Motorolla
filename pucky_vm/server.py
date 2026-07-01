@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import contextvars
 import hashlib
 import html
 import hmac
@@ -9,6 +11,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -18,11 +21,13 @@ from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .action_ledger import ActionLedger
+from .auth_store import AuthStore
 from .attachment_manifest import normalize_attachment
+from .clerk_auth import ClerkAuthClient
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
@@ -358,6 +363,27 @@ class ReplyEnvelope:
 
 
 @dataclass(frozen=True)
+class RequestIdentity:
+    kind: str = "anonymous"
+    user_id: str = ""
+    workspace_id: str = ""
+    workspace_slug: str = ""
+    email: str = ""
+    session_id: str = ""
+    clerk_user_id: str = ""
+    auth_via: str = ""
+    auth_provider: str = ""
+
+
+class _ScopedStoreProxy:
+    def __init__(self, resolver: Callable[[], object]) -> None:
+        self._resolver = resolver
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._resolver(), name)
+
+
+@dataclass(frozen=True)
 class Config:
     host: str
     port: int
@@ -381,6 +407,7 @@ class Config:
     codex_base_instructions: str | None = None
     action_ledger_path: str = ""
     workspace_db_path: str = ""
+    auth_db_path: str = ""
     turn_status_ttl_seconds: float = 900.0
     codex_home: str | None = None
     codex_sandbox: str = "danger-full-access"
@@ -401,6 +428,17 @@ class Config:
     self_phone_number: str = ""
     public_base_url: str | None = None
     pucky_web_ui_token: str = ""
+    clerk_publishable_key: str = ""
+    clerk_secret_key: str = ""
+    clerk_frontend_api_url: str = ""
+    clerk_api_url: str = "https://api.clerk.com"
+    clerk_api_version: str = "v1"
+    clerk_authorized_parties: tuple[str, ...] = ()
+    clerk_legacy_claim_email: str = "jimmythompson323@gmail.com"
+    clerk_legacy_claim_marker: str = "legacy_jimmy_root_workspace_v1"
+    clerk_legacy_app_user_id: str = "jimmythompson323"
+    clerk_legacy_workspace_id: str = "ws_jimmythompson323"
+    clerk_legacy_workspace_slug: str = "jimmythompson323"
     strict_browser_user_auth: bool = False
     strict_composio_user_scoping: bool = False
 
@@ -441,6 +479,10 @@ class Config:
                 "PUCKY_WORKSPACE_DB_PATH",
                 str((Path.cwd() / "pucky_workspace.sqlite3").resolve()),
             ),
+            auth_db_path=os.environ.get(
+                "PUCKY_AUTH_DB_PATH",
+                str((Path.cwd() / "pucky_auth.sqlite3").resolve()),
+            ),
             turn_status_ttl_seconds=float(os.environ.get("PUCKY_TURN_STATUS_TTL_SECONDS", "900")),
             codex_home=os.environ.get("CODEX_HOME") or None,
             codex_sandbox=os.environ.get("PUCKY_CODEX_SANDBOX", "danger-full-access"),
@@ -468,11 +510,57 @@ class Config:
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
             public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
+            clerk_publishable_key=(
+                os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+                or os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+            ),
+            clerk_secret_key=os.environ.get("CLERK_SECRET_KEY", "").strip(),
+            clerk_frontend_api_url=os.environ.get("CLERK_FRONTEND_API_URL", "").strip(),
+            clerk_api_url=os.environ.get("CLERK_API_URL", "https://api.clerk.com").strip() or "https://api.clerk.com",
+            clerk_api_version=os.environ.get("CLERK_API_VERSION", "v1").strip().strip("/") or "v1",
+            clerk_authorized_parties=tuple(
+                item
+                for item in (
+                    candidate.strip()
+                    for candidate in (
+                        os.environ.get("PUCKY_CLERK_AUTHORIZED_PARTIES", "")
+                        or os.environ.get("CLERK_AUTHORIZED_PARTIES", "")
+                    ).split(",")
+                )
+                if item
+            ),
+            clerk_legacy_claim_email=(
+                os.environ.get("PUCKY_CLERK_LEGACY_CLAIM_EMAIL", "jimmythompson323@gmail.com").strip().lower()
+                or "jimmythompson323@gmail.com"
+            ),
+            clerk_legacy_claim_marker=(
+                os.environ.get("PUCKY_CLERK_LEGACY_CLAIM_MARKER", "legacy_jimmy_root_workspace_v1").strip()
+                or "legacy_jimmy_root_workspace_v1"
+            ),
+            clerk_legacy_app_user_id=(
+                os.environ.get("PUCKY_CLERK_LEGACY_APP_USER_ID", "jimmythompson323").strip() or "jimmythompson323"
+            ),
+            clerk_legacy_workspace_id=(
+                os.environ.get("PUCKY_CLERK_LEGACY_WORKSPACE_ID", "ws_jimmythompson323").strip()
+                or "ws_jimmythompson323"
+            ),
+            clerk_legacy_workspace_slug=(
+                os.environ.get("PUCKY_CLERK_LEGACY_WORKSPACE_SLUG", "jimmythompson323").strip()
+                or "jimmythompson323"
+            ),
             strict_browser_user_auth=(
                 os.environ.get("PUCKY_STRICT_BROWSER_USER_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+                or bool(
+                    os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+                    or os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+                )
             ),
             strict_composio_user_scoping=(
                 os.environ.get("PUCKY_STRICT_COMPOSIO_USER_SCOPING", "").strip().lower() in {"1", "true", "yes", "on"}
+                or bool(
+                    os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+                    or os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+                )
             ),
         )
 
@@ -640,10 +728,11 @@ class PuckyVoiceService:
         codex: CodexProvider | None = None,
         meeting_codex: CodexProvider | None = None,
         composio: ComposioProvider | None = None,
+        clerk_auth: ClerkAuthClient | None = None,
     ) -> None:
         self.config = config
         ledger_path = config.action_ledger_path or str(Path(config.feed_db_path).with_suffix(".actions.sqlite3"))
-        self.action_ledger = ActionLedger(ledger_path)
+        self._default_action_ledger = ActionLedger(ledger_path)
         self.stt = stt or DeepgramSTT(config.deepgram_api_key)
         self.tts = tts or KokoroTTS(
             config.deepinfra_api_key,
@@ -653,9 +742,28 @@ class PuckyVoiceService:
         )
         self.codex = codex or self._build_codex_client(meeting=False)
         self.meeting_codex = meeting_codex or self._build_codex_client(meeting=True)
-        self.feed = FeedStore(config.feed_db_path)
+        self._default_feed = FeedStore(config.feed_db_path)
         workspace_path = config.workspace_db_path or str(Path(config.feed_db_path).with_name("pucky_workspace.sqlite3"))
-        self.workspace = WorkspaceStore(workspace_path)
+        self._default_workspace = WorkspaceStore(workspace_path)
+        self.auth = AuthStore(config.auth_db_path or str(Path(config.feed_db_path).with_name("pucky_auth.sqlite3")))
+        self.clerk_auth = clerk_auth or ClerkAuthClient(
+            publishable_key=config.clerk_publishable_key,
+            secret_key=config.clerk_secret_key,
+            frontend_api_url=config.clerk_frontend_api_url,
+            api_url=config.clerk_api_url,
+            api_version=config.clerk_api_version,
+        )
+        self._store_lock = threading.Lock()
+        self._feed_by_workspace: dict[str, FeedStore] = {}
+        self._workspace_by_workspace: dict[str, WorkspaceStore] = {}
+        self._action_ledger_by_workspace: dict[str, ActionLedger] = {}
+        self._request_identity_var: contextvars.ContextVar[RequestIdentity] = contextvars.ContextVar(
+            "pucky_request_identity",
+            default=RequestIdentity(),
+        )
+        self.feed = _ScopedStoreProxy(self._feed_store)
+        self.workspace = _ScopedStoreProxy(self._workspace_store)
+        self.action_ledger = _ScopedStoreProxy(self._action_ledger_store)
         self.composio = composio or ComposioClient(
             config.composio_api_key,
             config.composio_base_url,
@@ -670,13 +778,215 @@ class PuckyVoiceService:
         self._card_icon_lock = threading.Lock()
         self._card_icons_path = Path(self.config.feed_db_path).with_name("pucky_card_icons.json")
         self._meetings_lock = threading.Lock()
-        self._meetings_dir = Path(self.config.feed_db_path).with_name("pucky_meetings")
-        self._meetings_index_path = self._meetings_dir / "meetings.json"
         self._meeting_agent_state_lock = threading.Lock()
         self._meeting_agent_state_by_id: dict[str, dict[str, object]] = {}
         self._reminder_poll_lock = threading.Lock()
         self._reminder_stop_event = threading.Event()
         self._reminder_poll_thread: threading.Thread | None = None
+
+    @contextlib.contextmanager
+    def request_identity_context(self, identity: RequestIdentity | None):
+        token = self._request_identity_var.set(identity or RequestIdentity())
+        try:
+            yield
+        finally:
+            self._request_identity_var.reset(token)
+
+    def current_request_identity(self) -> RequestIdentity:
+        return self._request_identity_var.get()
+
+    def _current_workspace_key(self) -> str:
+        identity = self.current_request_identity()
+        return str(identity.workspace_id or "").strip() or "default"
+
+    def _workspace_root(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).resolve().parent
+        return Path(self.config.feed_db_path).resolve().parent / "pucky_workspaces" / workspace_key
+
+    def _workspace_store_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.workspace_db_path or str(Path(self.config.feed_db_path).with_name("pucky_workspace.sqlite3"))).resolve()
+        return self._workspace_root(workspace_key) / "workspace.sqlite3"
+
+    def _feed_store_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).resolve()
+        return self._workspace_root(workspace_key) / "feed.sqlite3"
+
+    def _action_ledger_path(self, workspace_key: str) -> Path:
+        if workspace_key == "default":
+            return Path(self.config.action_ledger_path or str(Path(self.config.feed_db_path).with_suffix(".actions.sqlite3"))).resolve()
+        return self._workspace_root(workspace_key) / "actions.sqlite3"
+
+    def _hydrate_self_contact_into_store(self, store: WorkspaceStore) -> None:
+        email = str(self.config.self_email or "").strip()
+        phone = str(self.config.self_phone_number or "").strip()
+        if not email and not phone:
+            store.ensure_self_contact()
+            return
+        contact = store.ensure_self_contact()
+        metadata = contact.get("metadata") if isinstance(contact.get("metadata"), dict) else {}
+        next_metadata = dict(metadata)
+        if email:
+            next_metadata["email"] = email
+        if phone:
+            next_metadata["phone"] = phone
+        next_metadata.pop("endpoints", None)
+        store.patch_record("contacts", SELF_CONTACT_ID, {"metadata": next_metadata})
+
+    def _feed_store(self) -> FeedStore:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_feed
+        with self._store_lock:
+            existing = self._feed_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = FeedStore(str(self._feed_store_path(workspace_key)))
+            self._feed_by_workspace[workspace_key] = store
+            return store
+
+    def _workspace_store(self) -> WorkspaceStore:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_workspace
+        with self._store_lock:
+            existing = self._workspace_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = WorkspaceStore(str(self._workspace_store_path(workspace_key)))
+            self._hydrate_self_contact_into_store(store)
+            self._workspace_by_workspace[workspace_key] = store
+            return store
+
+    def _action_ledger_store(self) -> ActionLedger:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return self._default_action_ledger
+        with self._store_lock:
+            existing = self._action_ledger_by_workspace.get(workspace_key)
+            if existing is not None:
+                return existing
+            store = ActionLedger(self._action_ledger_path(workspace_key))
+            self._action_ledger_by_workspace[workspace_key] = store
+            return store
+
+    @property
+    def _meetings_dir(self) -> Path:
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            return Path(self.config.feed_db_path).with_name("pucky_meetings")
+        return self._workspace_root(workspace_key) / "meetings"
+
+    @property
+    def _meetings_index_path(self) -> Path:
+        return self._meetings_dir / "meetings.json"
+
+    def clerk_browser_auth_config(self) -> dict[str, object]:
+        payload = self.clerk_auth.browser_config()
+        payload.update(
+            {
+                "schema": "pucky.auth.config.v1",
+                "ok": True,
+                "auth_provider": "clerk",
+                "sign_in_url": "/sign-in",
+                "sign_up_url": "/sign-up",
+            }
+        )
+        return payload
+
+    def resolve_browser_identity(self, headers: Mapping[str, str], *, base_url: str) -> RequestIdentity:
+        session = self.clerk_auth.authenticate_headers(
+            headers,
+            authorized_parties=self._clerk_authorized_parties(base_url),
+        )
+        if session is None:
+            return RequestIdentity()
+        binding = self._ensure_auth_binding(session)
+        return RequestIdentity(
+            kind="session",
+            user_id=str(binding.get("app_user_id") or ""),
+            workspace_id=str(binding.get("workspace_id") or ""),
+            workspace_slug=str(binding.get("workspace_slug") or ""),
+            email=str(binding.get("primary_email") or ""),
+            session_id=session.session_id,
+            clerk_user_id=session.clerk_user_id,
+            auth_via=session.auth_via,
+            auth_provider="clerk",
+        )
+
+    def _clerk_authorized_parties(self, base_url: str) -> list[str]:
+        configured = [str(item or "").strip() for item in self.config.clerk_authorized_parties if str(item or "").strip()]
+        if configured:
+            return configured
+        candidate = str(base_url or "").strip()
+        if not candidate:
+            return []
+        try:
+            parsed = urlsplit(candidate)
+        except Exception:
+            return []
+        if not parsed.scheme or not parsed.netloc:
+            return []
+        return [f"{parsed.scheme}://{parsed.netloc}"]
+
+    def _ensure_auth_binding(self, session) -> dict[str, str]:
+        primary_email = str(session.email or "").strip() or self.clerk_auth.fetch_primary_email(session.clerk_user_id)
+        binding = self.auth.ensure_binding(
+            clerk_user_id=session.clerk_user_id,
+            primary_email=primary_email,
+            legacy_claim_email=self.config.clerk_legacy_claim_email,
+            legacy_claim_marker=self.config.clerk_legacy_claim_marker,
+            legacy_app_user_id=self.config.clerk_legacy_app_user_id,
+            legacy_workspace_id=self.config.clerk_legacy_workspace_id,
+            legacy_workspace_slug=self.config.clerk_legacy_workspace_slug,
+        )
+        if binding.get("legacy_claim_marker") and not binding.get("legacy_workspace_migrated_at"):
+            self._migrate_legacy_default_workspace(str(binding.get("workspace_id") or ""))
+        return binding
+
+    def _migrate_legacy_default_workspace(self, workspace_id: str) -> None:
+        clean_workspace_id = str(workspace_id or "").strip()
+        if not clean_workspace_id or clean_workspace_id == "default":
+            return
+        source_root = Path(self.config.feed_db_path).resolve().parent
+        target_root = self._workspace_root(clean_workspace_id)
+        target_root.mkdir(parents=True, exist_ok=True)
+        self._copy_sqlite_database(
+            Path(self.config.feed_db_path).resolve(),
+            self._feed_store_path(clean_workspace_id),
+        )
+        self._copy_sqlite_database(
+            Path(self.config.workspace_db_path or str(Path(self.config.feed_db_path).with_name("pucky_workspace.sqlite3"))).resolve(),
+            self._workspace_store_path(clean_workspace_id),
+        )
+        self._copy_sqlite_database(
+            Path(self.config.action_ledger_path or str(Path(self.config.feed_db_path).with_suffix(".actions.sqlite3"))).resolve(),
+            self._action_ledger_path(clean_workspace_id),
+        )
+        source_meetings = source_root / "pucky_meetings"
+        if source_meetings.exists():
+            shutil.copytree(source_meetings, target_root / "meetings", dirs_exist_ok=True)
+        source_uploads = source_root / "pucky_uploaded_attachments"
+        if source_uploads.exists():
+            shutil.copytree(source_uploads, target_root / "uploaded_attachments", dirs_exist_ok=True)
+        self.auth.mark_legacy_workspace_migrated(clean_workspace_id)
+
+    def _copy_sqlite_database(self, source_path: Path, target_path: Path) -> None:
+        source = Path(source_path).resolve()
+        if not source.exists():
+            return
+        target = Path(target_path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        src_conn = sqlite3.connect(str(source), timeout=sqlite_retry_timeout_seconds())
+        dest_conn = sqlite3.connect(str(target), timeout=sqlite_retry_timeout_seconds())
+        try:
+            src_conn.backup(dest_conn)
+            dest_conn.commit()
+        finally:
+            dest_conn.close()
+            src_conn.close()
 
     def _build_codex_client(self, *, meeting: bool) -> CodexAppServerClient:
         role = "meeting" if meeting else "default"
@@ -1796,13 +2106,34 @@ class PuckyVoiceService:
             self._reminder_poll_lock.release()
 
     def composio_user_id(self) -> str:
+        identity = self.current_request_identity()
+        workspace_id = str(identity.workspace_id or "").strip()
+        if workspace_id and (identity.kind == "session" or self.config.strict_composio_user_scoping):
+            return f"ws_{workspace_id.removeprefix('ws_')}"
+        if self.config.strict_composio_user_scoping:
+            return ""
         return self.config.composio_default_user_id
+
+    def require_workspace_composio_user_id(self) -> str:
+        identity = self.current_request_identity()
+        workspace_id = str(identity.workspace_id or "").strip()
+        if workspace_id and workspace_id != "default":
+            return f"ws_{workspace_id.removeprefix('ws_')}"
+        raise ValueError("workspace_auth_required")
+
+    def resolved_composio_user_id(self, *, require_workspace: bool | None = None) -> str:
+        if require_workspace is None:
+            require_workspace = bool(self.config.strict_composio_user_scoping)
+        if require_workspace:
+            return self.require_workspace_composio_user_id()
+        return self.composio_user_id()
 
     def public_browser_reads_enabled(self) -> bool:
         return not bool(self.config.strict_browser_user_auth)
 
     def composio_default_user_read_enabled(self) -> bool:
-        return not bool(self.config.strict_composio_user_scoping)
+        identity = self.current_request_identity()
+        return not bool(self.config.strict_composio_user_scoping) and not str(identity.workspace_id or "").strip()
 
     def composio_auth_mode(self, value: str | None = None) -> str:
         candidate = str(value or self.config.composio_default_auth_mode or "webview").strip().lower()
@@ -1963,6 +2294,7 @@ class PuckyVoiceService:
             return {"ok": False, "error": "composio_not_configured"}
         try:
             apps = self._connected_apps_snapshot(force=True)
+            user_id = self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
         except Exception as exc:
             result = {"ok": False, "error": str(exc)}
         else:
@@ -1971,7 +2303,7 @@ class PuckyVoiceService:
                 "data": {
                     "apps": apps,
                     "count": len(apps),
-                    "user_id": self.composio_user_id(),
+                    "user_id": user_id,
                 },
             }
         self.record_action(
@@ -2129,7 +2461,10 @@ class PuckyVoiceService:
         return result
 
     def _connected_apps_snapshot(self, *, force: bool) -> list[dict[str, object]]:
-        payload = self.composio.list_connected_apps(self.composio_user_id(), force=force)
+        payload = self.composio.list_connected_apps(
+            self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping)),
+            force=force,
+        )
         accounts = [
             _compact_composio_app(item)
             for item in list(payload.get("connected_apps") or [])
@@ -2151,7 +2486,7 @@ class PuckyVoiceService:
             result = self.composio.execute_tool(
                 tool_slug=action_slug,
                 connected_account_id=connected_account_id,
-                user_id=self.composio_user_id(),
+                user_id=self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping)),
                 arguments=normalized_arguments,
             )
         except Exception as exc:
@@ -2300,7 +2635,10 @@ class PuckyVoiceService:
         }
 
     def _composio_runtime_context(self, *, include_inventory: bool) -> dict[str, object]:
-        user_id = self.composio_user_id()
+        try:
+            user_id = self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
+        except ValueError:
+            user_id = ""
         context: dict[str, object] = {
             "schema": "pucky.composio.runtime_context.v1",
             "configured": bool(self.composio.configured),
@@ -2321,7 +2659,7 @@ class PuckyVoiceService:
             "app_universe": [],
             "available_apps": [],
         }
-        if not self.composio.configured or not include_inventory:
+        if not self.composio.configured or not include_inventory or not user_id:
             return context
         try:
             connected_payload = self.composio.list_connected_apps(user_id, force=False)
@@ -2407,6 +2745,34 @@ class PuckyVoiceService:
                 }
                 for icon in self._load_card_icons().values()
             ],
+        }
+
+    def legacy_public_auth_disabled(self) -> dict[str, object]:
+        return {
+            "ok": False,
+            "schema": "pucky.auth.legacy_browser_contract_retired.v1",
+            "error": "clerk_only_auth",
+            "auth_provider": "clerk",
+        }
+
+    def workspace_landing_url(self, base_url: str, *, workspace_id: str = "") -> str:
+        prefix = str(base_url or "").rstrip("/")
+        path = "/ui/pucky/latest/?route=home"
+        return f"{prefix}{path}" if prefix else path
+
+    def auth_session_payload(self, identity: RequestIdentity, *, base_url: str) -> dict[str, object]:
+        active = bool(identity and identity.kind == "session" and identity.workspace_id)
+        return {
+            "ok": True,
+            "schema": "pucky.auth.session.v1",
+            "auth_provider": "clerk",
+            "signed_in": active,
+            "user_id": str(identity.user_id or "") if active else "",
+            "workspace_id": str(identity.workspace_id or "") if active else "",
+            "workspace_slug": str(identity.workspace_slug or "") if active else "",
+            "clerk_user_id": str(identity.clerk_user_id or "") if active else "",
+            "email": str(identity.email or "") if active else "",
+            "landing_url": self.workspace_landing_url(base_url, workspace_id=str(identity.workspace_id or "")) if active else "",
         }
 
     def _portal_token_secret(self) -> str:
@@ -2511,6 +2877,9 @@ class PuckyVoiceService:
         clean_token = str(token or "").strip()
         if clean_token:
             return self._resolve_links_portal_user(clean_token)
+        identity = self.current_request_identity()
+        if str(identity.workspace_id or "").strip():
+            return self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
         if allow_default_user:
             user_id = self.composio_user_id()
             if user_id:
@@ -2528,7 +2897,8 @@ class PuckyVoiceService:
     def links_portal_url(self, base_url: str, *, auth_mode: str | None = None) -> dict[str, object]:
         if not self.composio.configured:
             return {"ok": False, "error": "composio_not_configured"}
-        token = self._mint_links_portal_token(user_id=self.composio_user_id())
+        user_id = self.resolved_composio_user_id(require_workspace=bool(self.config.strict_composio_user_scoping))
+        token = self._mint_links_portal_token(user_id=user_id)
         if not token:
             return {"ok": False, "error": "connect_portal_token_unavailable"}
         mode = self.composio_auth_mode(auth_mode)
@@ -2540,7 +2910,7 @@ class PuckyVoiceService:
             "portal_url": url,
             "token": token,
             "auth_mode": mode,
-            "user_id": self.composio_user_id(),
+            "user_id": user_id,
         }
 
     def links_my_apps(self, token: str, *, allow_default_user: bool = False) -> dict[str, object]:
@@ -4853,7 +5223,11 @@ class PuckyVoiceService:
         telemetry["proof_reply_delay_elapsed_ms"] = _elapsed_ms(start)
 
     def _user_turn_upload_dir(self, turn_id: str) -> Path:
-        base = Path(self.config.feed_db_path).with_name("pucky_uploaded_attachments")
+        workspace_key = self._current_workspace_key()
+        if workspace_key == "default":
+            base = Path(self.config.feed_db_path).with_name("pucky_uploaded_attachments")
+        else:
+            base = self._workspace_root(workspace_key) / "uploaded_attachments"
         target = base / _normalize_turn_id(turn_id)
         target.mkdir(parents=True, exist_ok=True)
         return target

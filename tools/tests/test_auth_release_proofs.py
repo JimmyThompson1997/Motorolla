@@ -40,6 +40,7 @@ def test_live_auth_browser_proof_covers_matrix_api_assertions_and_cross_user_rep
     source = read_text(TOOLS_DIR / "proofs" / "auth" / "live_auth_browser_playwright.mjs")
 
     assert 'const RESULT_SCHEMA = "pucky.live_auth_browser_proof.v1";' in source
+    assert 'const HOME_TILE_ROUTES = ["inbox", "notes", "tasks", "contacts", "projects", "reminders", "settings"];' in source
     assert '"chromium-desktop"' in source
     assert '"webkit-desktop"' in source
     assert '"chromium-tablet"' in source
@@ -56,9 +57,22 @@ def test_live_auth_browser_proof_covers_matrix_api_assertions_and_cross_user_rep
     assert "/api/artifacts/" in source
     assert "seedWorkspaceRecords(" in source
     assert "pageApiMultipartJson(" in source
+    assert "fetchNoRedirect(" in source
+    assert "verifySignedOutDirectEntryRedirect(" in source
+    assert 'redirect: "manual"' in source
+    assert "verifyHomeTileLoads(" in source
+    assert "Live manifest commit" in source
+    assert "pucky-browser-state.js" in source
+    assert "pucky-browser-unlock.js" in source
+    assert "pucky-ui-state.js" in source
     assert "Stale owner session replay revived an authenticated workspace." in source
     assert "Wrong-host owner cookie replay exposed data." in source
     assert "User B saw User A workspace data while visiting the owner workspace URL directly." in source
+    assert "Home tile" in source
+    assert 'browserPreviewToken: envValue("PUCKY_AUTH_BROWSER_PREVIEW_TOKEN")' in source
+    assert 'browserPreviewToken: envValue("PUCKY_WEB_UI_TOKEN")' not in source
+    assert 'const settingsUrl = buildRouteUrl(landingUrl, "settings");' in source
+    assert 'await waitForRouteReady(page, "settings", timeoutMs);' in source
     assert "User B connection ids" not in source  # Keep browser proof focused on workspace/auth, not Composio execute logic.
     assert '"summary.json"' in source
     assert '"report.md"' in source
@@ -77,6 +91,8 @@ def test_live_auth_composio_proof_checks_portal_token_actions_and_foreign_denial
     assert "foreign_execute" in source
     assert "foreign_disconnect" in source
     assert "connectViaUi" in source
+    assert 'browserPreviewToken: envValue("PUCKY_AUTH_COMPOSIO_BROWSER_PREVIEW_TOKEN", "PUCKY_AUTH_BROWSER_PREVIEW_TOKEN")' in source
+    assert 'browserPreviewToken: envValue("PUCKY_WEB_UI_TOKEN")' not in source
     assert "waitForConnection(" in source
     assert "runVerificationCommand(" in source
     assert "PUCKY_COMPOSIO_REQUIRE_VERIFICATION_COMMAND" in source
@@ -87,10 +103,18 @@ def test_live_auth_composio_proof_checks_portal_token_actions_and_foreign_denial
 def test_android_ubc_auth_proof_captures_real_device_evidence_and_cross_user_attempts() -> None:
     source = read_text(TOOLS_DIR / "proofs" / "auth" / "phone_auth_ubc_real_proof.py")
     helper_source = read_text(TOOLS_DIR / "proofs" / "auth" / "phone_auth_ubc_browser.js")
+    doctor_source = read_text(TOOLS_DIR / "dev_env_doctor.py")
 
     assert 'RESULT_SCHEMA = "pucky.auth_android_ubc_real_proof.v1"' in source
     assert "adb" in source
     assert "logcat" in source
+    assert "--include-device-transport" in doctor_source
+    assert '"schema": "pucky.android_transport.v1"' in doctor_source
+    assert '"status": status' in doctor_source
+    assert "usb_ok" in doctor_source
+    assert "wireless_ok" in doctor_source
+    assert "android_transport" in source
+    assert "transport-preflight.json" in source
     assert "pm clear" in source
     assert "force-stop" in source
     assert "background_foreground" in source
@@ -129,6 +153,20 @@ def test_release_gauntlet_fails_closed_and_emits_single_verdict_file() -> None:
     assert 'write_json(args.bundle_dir / "verdict.json", summary["verdict"])' in source
     assert '"status": "pass"' in source
     assert '"status": "fail"' in source
+
+
+def test_live_auth_browser_bundle_contract_and_wrappers_replace_legacy_anonymous_release_entry() -> None:
+    auth_source = read_text(TOOLS_DIR / "proofs" / "auth" / "live_auth_browser_playwright.mjs")
+    dev_source = read_text(TOOLS_DIR / "dev.py")
+
+    assert "expectedBundleScripts(" in auth_source
+    assert "fetchRemoteManifest(" in auth_source
+    assert "fetchNoRedirect(" in auth_source
+    assert "verifyBundleFreshness(" in auth_source
+    assert '"missing_scripts"' in auth_source
+    assert '"unexpected_legacy_scripts"' in auth_source
+    assert '("tools/proofs/auth/live_auth_browser_playwright.mjs"' in dev_source
+    assert '"--skip-proofs"' in dev_source
 
 
 def test_auth_release_shared_supports_multipart_session_uploads_and_binary_fetches() -> None:

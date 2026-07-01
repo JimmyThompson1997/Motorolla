@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pucky Authentication</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #111827;
+        --muted: #6b7280;
+        --line: #d1d5db;
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --accent: #0f766e;
+        --accent-ink: #ecfeff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 34rem),
+          linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .shell {
+        width: min(100%, 460px);
+        background: var(--card);
+        border: 1px solid rgba(17, 24, 39, 0.08);
+        border-radius: 24px;
+        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.12);
+        padding: 28px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.05;
+      }
+      p {
+        margin: 0 0 18px;
+        color: var(--muted);
+      }
+      #authRoot {
+        min-height: 320px;
+      }
+      .status {
+        min-height: 24px;
+        margin-top: 14px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .status.error {
+        color: #b91c1c;
+      }
+      .status.ok {
+        color: #0f766e;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <h1 id="pageTitle">Secure sign in</h1>
+      <p id="pageIntro">Pucky uses Clerk to authenticate your email and open your workspace.</p>
+      <div id="authRoot" aria-live="polite">Loading secure sign-in…</div>
+      <div id="status" class="status" aria-live="polite"></div>
+    </main>
+    <script>
+      const authRoot = document.getElementById("authRoot");
+      const statusEl = document.getElementById("status");
+      const pageTitle = document.getElementById("pageTitle");
+      const pageIntro = document.getElementById("pageIntro");
+      const mode = window.location.pathname === "/sign-up" ? "sign-up" : "sign-in";
+      const params = new URLSearchParams(window.location.search);
+      const action = String(params.get("action") || "").trim().toLowerCase();
+      const requestedNext = String(params.get("next") || "").trim();
+      const nextUrl = requestedNext || "/ui/pucky/latest/?route=home";
+
+      if (mode === "sign-up") {
+        pageTitle.textContent = "Create your account";
+        pageIntro.textContent = "Create a Clerk account for Pucky and provision your workspace.";
+      }
+
+      function status(message, kind = "") {
+        statusEl.textContent = String(message || "");
+        statusEl.className = kind ? `status ${kind}` : "status";
+      }
+
+      async function fetchConfig() {
+        const response = await fetch("/api/auth/config", {
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(String(payload.error || payload.detail || "Could not load auth configuration."));
+        }
+        return payload;
+      }
+
+      function redirectToNext() {
+        window.location.assign(nextUrl);
+      }
+
+      function redirectToSignedOut() {
+        window.location.assign("/sign-in");
+      }
+
+      function loadScript(src, attributes = {}) {
+        return new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = src;
+          script.async = true;
+          script.crossOrigin = "anonymous";
+          for (const [key, value] of Object.entries(attributes)) {
+            script.setAttribute(key, String(value));
+          }
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+          document.head.appendChild(script);
+        });
+      }
+
+      async function loadClerkBundles(config) {
+        const frontendApiUrl = String(config.frontend_api_url || "").replace(/\/+$/, "");
+        const publishableKey = String(config.publishable_key || "").trim();
+        if (!frontendApiUrl || !publishableKey) {
+          throw new Error("Clerk is not configured yet.");
+        }
+        await loadScript(`${frontendApiUrl}/npm/@clerk/ui@1/dist/ui.browser.js`);
+        await loadScript(`${frontendApiUrl}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, {
+          "data-clerk-publishable-key": publishableKey
+        });
+      }
+
+      async function mountAuth() {
+        const config = await fetchConfig();
+        if (!config || !config.enabled) {
+          authRoot.textContent = "Clerk is not configured for this environment yet.";
+          status("Add the Clerk publishable and secret keys, then reload this page.", "error");
+          return;
+        }
+        await loadClerkBundles(config);
+        await window.Clerk.load({
+          ui: { ClerkUI: window.__internal_ClerkUICtor },
+          signInUrl: "/sign-in",
+          signUpUrl: "/sign-up",
+        });
+        window.Clerk.addListener(({ session }) => {
+          if (session) {
+            redirectToNext();
+          }
+        });
+        if (action === "sign-out" || action === "sign_out" || action === "logout") {
+          authRoot.textContent = "Signing you out…";
+          if (window.Clerk.isSignedIn) {
+            await window.Clerk.signOut({ redirectUrl: "/sign-in" });
+            return;
+          }
+          redirectToSignedOut();
+          return;
+        }
+        if (window.Clerk.isSignedIn) {
+          redirectToNext();
+          return;
+        }
+        authRoot.textContent = "";
+        const appearance = {
+          variables: {
+            colorPrimary: "#0f766e",
+            colorText: "#111827",
+            colorBackground: "#ffffff",
+            colorInputBackground: "#ffffff",
+            colorInputText: "#111827",
+            borderRadius: "16px",
+            fontFamily: "Avenir Next, Segoe UI, sans-serif",
+          }
+        };
+        if (mode === "sign-up") {
+          window.Clerk.mountSignUp(authRoot, {
+            signInUrl: "/sign-in",
+            appearance,
+          });
+          status("Use email OTP to create your Pucky account.", "ok");
+          return;
+        }
+        window.Clerk.mountSignIn(authRoot, {
+          signUpUrl: "/sign-up",
+          appearance,
+        });
+        status("Use email OTP to sign in with Clerk.", "ok");
+      }
+
+      mountAuth().catch(error => {
+        authRoot.textContent = "Could not load secure sign-in.";
+        status(String(error && error.message || "Authentication setup failed."), "error");
+      });
+    </script>
+  </body>
+</html>

@@ -21,8 +21,10 @@ const RUN_PREFIX = `THREAD-COMPOSE-${Date.now().toString(36).toUpperCase()}`;
 const MOBILE_VIEWPORT = { width: 430, height: 932 };
 
 const scenarios = [
+  { key: "header_compose", token: `${RUN_PREFIX}-HEADER-COMPOSE` },
   { key: "closed_lane_draft", token: `${RUN_PREFIX}-DRAFT-ONLY`, attachment_queued: THREAD_COMPOSE_NOTE },
-  { key: "open_lane_smoke", token: `${RUN_PREFIX}-SMOKE-1`, expected: `ACK ${RUN_PREFIX}-SMOKE-1` },
+  { key: "new_chat_smoke", token: `${RUN_PREFIX}-NEW-1`, expected: `ACK ${RUN_PREFIX}-NEW-1` },
+  { key: "continuation_smoke", token: `${RUN_PREFIX}-SMOKE-1`, expected: `ACK ${RUN_PREFIX}-SMOKE-1` },
   { key: "blocked_second_send", token: `${RUN_PREFIX}-BLOCK-1`, blocked_second_send: true, proof_reply_delay_ms: 6000, request_count_before_release: 1 },
   { key: "text_attachment", token: `${RUN_PREFIX}-TEXT-ATTACH`, expected: `TEXT-ATTACH-ACK ${RUN_PREFIX}`, attachment_queued: THREAD_COMPOSE_NOTE },
   { key: "binary_attachment", token: `${RUN_PREFIX}-IMAGE-ATTACH`, expected: `IMAGE-ATTACH-ACK ${RUN_PREFIX}`, attachment_queued: THREAD_COMPOSE_IMAGE },
@@ -233,6 +235,19 @@ async function clickCardTranscript(page, target) {
   await page.waitForTimeout(250);
 }
 
+async function openHeaderCompose(page) {
+  await page.getByRole("button", { name: /compose new chat/i }).first().click();
+  await page.waitForFunction(
+    () => {
+      const detail = document.getElementById("detail");
+      return Boolean(detail && detail.getAttribute("aria-hidden") === "false" && detail.querySelector(".thread-composer"));
+    },
+    undefined,
+    { timeout: 10000 },
+  );
+  await page.waitForTimeout(250);
+}
+
 async function closeDetail(page) {
   const back = page.locator("#detail .light-back-button, #detail .detail-back").first();
   if (!await back.count()) {
@@ -255,6 +270,21 @@ async function openPendingTranscript(page) {
     },
     undefined,
     { timeout: 10000 },
+  );
+}
+
+async function waitForThreadDetailThreadId(page, threadId, timeoutMs) {
+  await page.waitForFunction(
+    expectedThreadId => {
+      const detail = document.getElementById("detail");
+      return Boolean(
+        detail
+          && detail.getAttribute("aria-hidden") === "false"
+          && String(detail.getAttribute("data-detail-thread-id") || "").trim() === String(expectedThreadId || "").trim(),
+      );
+    },
+    threadId,
+    { timeout: timeoutMs },
   );
 }
 
@@ -293,6 +323,17 @@ async function queueComposerFiles(page, filePaths) {
 
 async function clickSend(page) {
   await page.locator("#detail .thread-composer-send").first().click();
+}
+
+async function waitForComposerStatusText(page, text, timeoutMs) {
+  await page.waitForFunction(
+    (expected) => {
+      const status = document.querySelector("#detail .thread-composer-status");
+      return String(status?.textContent || "").toLowerCase().includes(String(expected || "").toLowerCase());
+    },
+    text,
+    { timeout: timeoutMs },
+  );
 }
 
 async function waitForPendingFeedStatus(page, expectedText, token, timeoutMs) {
@@ -358,8 +399,9 @@ function latestVideoPath(reportDir) {
   return files.length ? path.join(videoDir, files[files.length - 1]) : "";
 }
 
-async function runClosedLaneScenario(page, target, files, scenario, config, summary) {
-  await clickCardTranscript(page, target);
+async function runClosedLaneScenario(page, files, scenario, config, summary) {
+  await openHeaderCompose(page);
+  summary.header_compose = await composerSnapshot(page);
   await fillComposerText(page, scenario.token);
   await saveScreenshot(page, config.reportDir, "01-closed-lane-composer-idle");
   await queueComposerFiles(page, [files.notePath]);
@@ -373,12 +415,12 @@ async function runClosedLaneScenario(page, target, files, scenario, config, summ
   await closeDetail(page);
 }
 
-async function runOpenLaneScenario(page, target, files, config, summary, networkEvents) {
-  await clickCardTranscript(page, target);
+async function runOpenLaneScenario(page, files, config, summary, networkEvents) {
+  await openHeaderCompose(page);
   await saveScreenshot(page, config.reportDir, "03-open-lane-composer-idle");
 
-  const smoke = scenarios.find(item => item.key === "open_lane_smoke");
-  assert(smoke, "Smoke scenario is missing.");
+  const newChat = scenarios.find(item => item.key === "new_chat_smoke");
+  assert(newChat, "New-chat smoke scenario is missing.");
   await page.evaluate(() => {
     window.PuckyComposerProofReplyDelayMs = 3500;
   });
@@ -386,35 +428,72 @@ async function runOpenLaneScenario(page, target, files, config, summary, network
     response => response.request().method() === "POST" && /\/api\/turn\/text(?:$|[?#])/.test(response.url()),
     { timeout: config.timeoutMs * 2 },
   );
-  await fillComposerText(page, `${smoke.token}. Reply with exactly ${smoke.expected}.`);
+  await fillComposerText(page, `${newChat.token}. Reply with exactly ${newChat.expected}.`);
   await clickSend(page);
+  await waitForComposerStatusText(page, "waiting on a reply", config.timeoutMs);
   await closeDetail(page);
-  await waitForPendingFeedStatus(page, "Sending", smoke.token, config.timeoutMs);
+  await waitForPendingFeedStatus(page, "Sending", newChat.token, config.timeoutMs);
   summary.sending_label = "Sending";
   summary.thinking_label = "Thinking...";
-  summary.open_lane_smoke = {
+  summary.new_chat_smoke = {
     sending: await pendingFeedState(page),
   };
   await saveScreenshot(page, config.reportDir, "04-sending-feed");
-  await waitForPendingFeedStatus(page, "Thinking", smoke.token, config.timeoutMs);
-  summary.open_lane_smoke.thinking = await pendingFeedState(page);
+  await waitForPendingFeedStatus(page, "Thinking", newChat.token, config.timeoutMs);
+  summary.new_chat_smoke.thinking = await pendingFeedState(page);
   await saveScreenshot(page, config.reportDir, "05-thinking-feed");
   await openPendingTranscript(page);
   await waitForBubbleText(page, "Thinking...", config.timeoutMs);
   await saveScreenshot(page, config.reportDir, "06-thinking-detail");
   const smokeResponse = await smokeReplyPromise;
   const smokePayload = await smokeResponse.json();
-  await waitForBubbleText(page, smoke.expected, config.timeoutMs);
-  summary.open_lane_smoke.final = await composerSnapshot(page);
-  summary.open_lane_smoke.turn_response = {
+  const createdThreadId = String(smokePayload?.origin?.thread_id || smokePayload?.card?.origin?.thread_id || "").trim();
+  assert(createdThreadId, "New chat did not return an origin thread id.");
+  await waitForBubbleText(page, newChat.expected, config.timeoutMs);
+  await waitForThreadDetailThreadId(page, createdThreadId, config.timeoutMs);
+  summary.new_chat_smoke.final = await composerSnapshot(page);
+  summary.new_chat_smoke.turn_response = {
     turn_id: String(smokePayload?.turn_id || ""),
     requested_thread_id: String(smokePayload?.telemetry?.requested_thread_id || ""),
-    origin_thread_id: String(smokePayload?.origin?.thread_id || smokePayload?.card?.origin?.thread_id || ""),
+    origin_thread_id: createdThreadId,
   };
+  summary.new_thread_created = Boolean(
+    summary.new_chat_smoke.turn_response.origin_thread_id
+      && !summary.new_chat_smoke.turn_response.requested_thread_id
+  );
+  assert(
+    summary.new_chat_smoke.final.thread_id === createdThreadId,
+    `New-chat detail did not transition onto the created thread. Expected ${createdThreadId}, saw ${summary.new_chat_smoke.final.thread_id || "<blank>"}.`,
+  );
   await saveScreenshot(page, config.reportDir, "07-final-reply");
   await page.evaluate(() => {
     window.PuckyComposerProofReplyDelayMs = 0;
   });
+
+  const continuation = scenarios.find(item => item.key === "continuation_smoke");
+  assert(continuation, "Continuation smoke scenario is missing.");
+  const continuationReplyPromise = page.waitForResponse(
+    response => response.request().method() === "POST" && /\/api\/turn\/text(?:$|[?#])/.test(response.url()) && response.request().postData()?.includes(continuation.token),
+    { timeout: config.timeoutMs * 2 },
+  );
+  await fillComposerText(page, `${continuation.token}. Reply with exactly ${continuation.expected}.`);
+  await clickSend(page);
+  const continuationPayload = await (await continuationReplyPromise).json();
+  await waitForBubbleText(page, continuation.expected, config.timeoutMs);
+  summary.continuation_smoke = await composerSnapshot(page);
+  summary.continuation_smoke.turn_response = {
+    turn_id: String(continuationPayload?.turn_id || ""),
+    requested_thread_id: String(continuationPayload?.telemetry?.requested_thread_id || ""),
+    origin_thread_id: String(continuationPayload?.origin?.thread_id || continuationPayload?.card?.origin?.thread_id || ""),
+  };
+  summary.existing_thread_reused = Boolean(
+    summary.continuation_smoke.turn_response.requested_thread_id === createdThreadId
+      && summary.continuation_smoke.turn_response.origin_thread_id === createdThreadId
+  );
+  assert(
+    summary.continuation_smoke.turn_response.requested_thread_id === createdThreadId,
+    `Continuation send did not reuse the created thread. Expected ${createdThreadId}, saw ${summary.continuation_smoke.turn_response.requested_thread_id || "<blank>"}.`,
+  );
 
   const blocked = scenarios.find(item => item.key === "blocked_second_send");
   assert(blocked, "Blocked-second-send scenario is missing.");
@@ -528,7 +607,7 @@ async function runOpenLaneScenario(page, target, files, config, summary, network
   const preBackSnapshot = await composerSnapshot(page);
   await saveScreenshot(page, config.reportDir, "13-draft-before-back");
   await closeDetail(page);
-  await clickCardTranscript(page, target);
+  await clickCardTranscript(page, { threadId: createdThreadId, cardId: "", sessionId: "" });
   const postBackSnapshot = await composerSnapshot(page);
   assert(postBackSnapshot.composer_text.includes(draftReturn.token), "Unsent draft text did not survive leaving and returning to the thread.");
   assert(postBackSnapshot.chips.includes(THREAD_COMPOSE_NOTE), "Queued file chip did not survive leaving and returning to the thread.");
@@ -595,9 +674,8 @@ async function main() {
       const pageUrl = withQuery(config.pageUrl, { api_token: "" });
       await openInbox(page, pageUrl, { previewToken: isLocalUrl(pageUrl) ? "" : config.previewToken, timeoutMs: config.timeoutMs });
       await saveScreenshot(page, config.reportDir, "00-route-top");
-      const target = await findThreadTarget(page);
       const closedSummary = {};
-      await runClosedLaneScenario(page, target, fixtureFiles, scenarios[0], config, closedSummary);
+      await runClosedLaneScenario(page, fixtureFiles, scenarios[1], config, closedSummary);
       return { closedSummary };
     });
     summary.closed_lane = closedLane.closedSummary;
@@ -609,9 +687,8 @@ async function main() {
         assert(String(config.apiToken || "").trim(), "Open-lane proof requires --api-token or PUCKY_API_TOKEN on hosted runs.");
       }
       await openInbox(page, pageUrl, { previewToken: config.previewToken || config.apiToken, timeoutMs: config.timeoutMs });
-      const target = await findThreadTarget(page);
       const openSummary = {};
-      await runOpenLaneScenario(page, target, fixtureFiles, config, openSummary, network.events);
+      await runOpenLaneScenario(page, fixtureFiles, config, openSummary, network.events);
       return { openSummary };
     });
     Object.assign(summary, openLane.openSummary);

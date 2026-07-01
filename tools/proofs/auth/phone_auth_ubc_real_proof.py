@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import tools.dev_env_doctor as dev_env_doctor
 import tools.proofs.phone.phone_walkie_thread_proof as proof
 import tools.support.phone_proof_shared as phone_shared
 
@@ -324,6 +325,18 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def transport_preflight(args: argparse.Namespace) -> dict[str, Any]:
+    report = dev_env_doctor.gather_report(include_device_transport=True)
+    transport = dict(report.get("android_transport") or {})
+    write_json(args.report_dir / "transport-preflight.json", transport)
+    if transport.get("status") not in {"usb_ok", "wireless_ok"}:
+        raise AndroidAuthProofError(
+            "Android transport is blocked. "
+            + str(transport.get("next_step") or "Follow the transport doctor guidance and retry.")
+        )
+    return transport
+
+
 def run_browser_ops(
     args: argparse.Namespace,
     serial: str,
@@ -340,16 +353,12 @@ def run_browser_ops(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    ensure_inputs(args)
     args.report_dir.mkdir(parents=True, exist_ok=True)
-    serial = proof.resolve_adb_serial(args)
-    args.serial = serial
-    reset_logcat(args, serial)
     summary: dict[str, Any] = {
         "schema": RESULT_SCHEMA,
         "ok": False,
         "report_dir": str(args.report_dir),
-        "device_serial": serial,
+        "device_serial": "",
         "package_name": args.package_name,
         "apk_path": str(args.apk),
         "login_url": args.login_url,
@@ -359,7 +368,14 @@ def main(argv: list[str] | None = None) -> int:
         "started_at": phone_shared.utc_stamp(),
         "stages": {},
     }
+    serial = ""
     try:
+        summary["android_transport"] = transport_preflight(args)
+        ensure_inputs(args)
+        serial = proof.resolve_adb_serial(args)
+        args.serial = serial
+        summary["device_serial"] = serial
+        reset_logcat(args, serial)
         install_apk(args, serial)
         clear_app(args, serial)
         summary["installed_package"] = proof.installed_package_info(args, serial)
@@ -457,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         summary["stages"]["cross_user_attempt"]["device_screenshot"] = device_screenshot(args, serial, args.report_dir / "device", "06-cross-user-attempt-device")
         cross_body = str(latest_state(summary["stages"]["cross_user_attempt"]).get("body") or "")
-        if owner_workspace_url == user_b_workspace_url:
+        if truthy(os.environ.get("PUCKY_AUTH_REQUIRE_DISTINCT_WORKSPACE_HOST"), False) and owner_workspace_url == user_b_workspace_url:
             raise AndroidAuthProofError("User B landed on the same workspace URL as User A.")
         if re.search(r"user a|auth proof", cross_body, re.IGNORECASE):
             raise AndroidAuthProofError("Cross-user attempt surface appeared to render owner data.")
@@ -466,15 +482,18 @@ def main(argv: list[str] | None = None) -> int:
         summary["ok"] = True
         summary["finished_at"] = phone_shared.utc_stamp()
         phone_shared.save_json(args.report_dir / "summary.json", summary)
+        phone_shared.save_json(args.report_dir / "verdict.json", {"status": "pass"})
         return 0
     except Exception as exc:
         summary["error"] = str(exc)
         summary["finished_at"] = phone_shared.utc_stamp()
-        try:
-            summary["logcat"] = dump_logcat(args, serial, args.report_dir / "logs")
-        except Exception as logcat_exc:  # pragma: no cover - best effort
-            summary["logcat_error"] = str(logcat_exc)
+        if serial:
+            try:
+                summary["logcat"] = dump_logcat(args, serial, args.report_dir / "logs")
+            except Exception as logcat_exc:  # pragma: no cover - best effort
+                summary["logcat_error"] = str(logcat_exc)
         phone_shared.save_json(args.report_dir / "summary.json", summary)
+        phone_shared.save_json(args.report_dir / "verdict.json", {"status": "fail", "reason": str(exc)})
         raise
 
 

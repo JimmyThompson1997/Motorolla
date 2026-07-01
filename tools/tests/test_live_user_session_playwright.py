@@ -135,14 +135,11 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert "ensure_cover_playwright_shims()" in source
     assert 'for package_name in ("playwright-core", "playwright"):' in source
     assert 'tools_node_modules = ROOT / "tools" / "node_modules"' in source
-    assert 'for browser_name in ("chromium", "webkit"):' in source
-    assert "for attempt in range(1, 4):" in source
     assert 'append_refresh_param(' in source
     assert '"_pucky_refresh"' in source
-    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&reset_nav=1"' in source
-    assert '"https://pucky.fly.dev/ui/pucky/latest/?theme=light&route=inbox&reset_nav=1"' in source
-    assert 'live_root / "inbox-audio-light" / browser_name / run_name' in source
-    assert 'live_root / "light-native-ports" / browser_name / run_name' in source
+    assert '"proof-live-web": "Run the auth-aware hosted web proof against the current base URL with real sign-in, route loads, tile clicks, and bundle freshness checks."' in source
+    assert 'tools/proofs/auth/live_auth_browser_playwright.mjs' in source
+    assert 'str((ROOT / ".tmp" / "proof-live-web" / "auth-browser").resolve())' in source
     assert "cover_universal_feed_tiles_playwright.mjs" in source
     assert 'proof-local-contacts-search-browser' in source
     assert 'proof-live-contacts-search-browser' in source
@@ -156,6 +153,7 @@ def test_tools_dev_runs_inbox_focused_local_and_live_entrypoints() -> None:
     assert 'proof-local-thread-compose-browser' in source
     assert 'proof-live-thread-compose-browser' in source
     assert 'proof-live-thread-compose-emulator' in source
+    assert "live ADB/WebView evidence" in source or "chooser-open evidence" in source or "chooser-return evidence" in source
 
 
 def test_live_browser_stack_keeps_inbox_width_and_calendar_container_acceptance_contracts() -> None:

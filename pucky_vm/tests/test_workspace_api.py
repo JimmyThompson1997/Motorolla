@@ -11,6 +11,7 @@ from dataclasses import replace
 import pytest
 
 from pucky_vm.server import Config, PuckyVoiceService, make_handler
+from pucky_vm.tests.clerk_test_helpers import ClerkTestHarness
 
 
 BROWSER_TEST_TOKEN = "browser-test-token"
@@ -31,6 +32,40 @@ class FakeCodex:
 
     def start(self) -> None:
         return None
+
+    def send_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        output_schema: dict[str, object] | None = None,
+        developer_instructions: str | None = None,
+        **_kwargs,
+    ):
+        return type(
+            "FakeTurnResult",
+            (),
+            {
+                "reply_text": json.dumps(
+                    {
+                        "reply_text": f"Echo: {text}",
+                        "card_title": "Workspace Echo",
+                        "card_icon": "mail",
+                        "html": {
+                            "title": "Workspace Echo",
+                            "content": "<!doctype html><title>Workspace Echo</title><p>Echo</p>",
+                        },
+                    }
+                ),
+                "used_thread_id": str(thread_id or "thread-1"),
+                "requested_thread_id": str(thread_id or ""),
+                "thread_mode": "existing" if thread_id else "new",
+                "reused_existing_thread": bool(thread_id),
+                "fallback_reason": "",
+            },
+        )()
 
     def runtime_call(self, method: str, params: dict[str, object] | None = None, *, timeout: float | None = None) -> dict[str, object]:
         return {"method": method, "params": params or {}}
@@ -73,6 +108,7 @@ def config(tmp_path: Path) -> Config:
         feed_db_path=str(tmp_path / "feed.sqlite3"),
         workspace_db_path=str(tmp_path / "workspace.sqlite3"),
         action_ledger_path=str(tmp_path / "actions.sqlite3"),
+        connect_portal_secret="test-connect-secret",
     )
 
 
@@ -82,7 +118,22 @@ def start_server(
     strict_browser_user_auth: bool = False,
     strict_composio_user_scoping: bool = False,
 ) -> tuple[ThreadingHTTPServer, str]:
+    server, base_url, _service = start_server_with_service(
+        tmp_path,
+        strict_browser_user_auth=strict_browser_user_auth,
+        strict_composio_user_scoping=strict_composio_user_scoping,
+    )
+    return server, base_url
+
+
+def start_server_with_service(
+    tmp_path: Path,
+    *,
+    strict_browser_user_auth: bool = False,
+    strict_composio_user_scoping: bool = False,
+) -> tuple[ThreadingHTTPServer, str, PuckyVoiceService]:
     base_config = config(tmp_path)
+    clerk = ClerkTestHarness()
     service = PuckyVoiceService(
         replace(
             base_config,
@@ -94,11 +145,13 @@ def start_server(
         codex=FakeCodex(),
         meeting_codex=FakeCodex(),
         composio=FakeComposio(),
+        clerk_auth=clerk.client,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    return server, f"http://127.0.0.1:{server.server_address[1]}"
+    setattr(service, "_test_clerk_harness", clerk)
+    return server, f"http://127.0.0.1:{server.server_address[1]}", service
 
 
 def request_json(
@@ -107,6 +160,7 @@ def request_json(
     *,
     method: str = "GET",
     token: str | None = BROWSER_TEST_TOKEN,
+    cookie: str | None = None,
     body: dict[str, object] | None = None,
 ) -> dict[str, object]:
     data = None if body is None else json.dumps(body).encode("utf-8")
@@ -115,9 +169,55 @@ def request_json(
         headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if cookie:
+        headers["Cookie"] = cookie
     req = urllib.request.Request(base_url + path, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def request_json_response(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    token: str | None = BROWSER_TEST_TOKEN,
+    cookie: str | None = None,
+    body: dict[str, object] | None = None,
+) -> tuple[dict[str, object], object]:
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if cookie:
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(base_url + path, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8")), response.headers
+
+
+def request_bytes(
+    base_url: str,
+    path: str,
+    *,
+    token: str | None = BROWSER_TEST_TOKEN,
+    cookie: str | None = None,
+) -> tuple[int, bytes]:
+    headers = {"Accept": "*/*"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if cookie:
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(base_url + path, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return int(response.status), response.read()
+
+
+def issue_browser_session_cookie(service: PuckyVoiceService, *, base_url: str, email: str) -> str:
+    clerk = getattr(service, "_test_clerk_harness")
+    return str(clerk.session_cookie(email=email, origin=base_url))
 
 
 def test_workspace_api_allows_unauthenticated_reads_but_keeps_writes_protected(tmp_path: Path) -> None:
@@ -152,6 +252,114 @@ def test_workspace_api_rejects_unauthenticated_reads_in_strict_browser_auth_mode
             raise AssertionError("unauthenticated strict-mode read succeeded")
         browser_notes = request_json(base_url, "/api/workspace/notes", token=BROWSER_TEST_TOKEN, method="GET")
         assert browser_notes["count"] >= 1
+    finally:
+        server.shutdown()
+
+
+def test_workspace_api_session_auth_isolates_users_and_artifacts(tmp_path: Path) -> None:
+    server, base_url, service = start_server_with_service(
+        tmp_path,
+        strict_browser_user_auth=True,
+        strict_composio_user_scoping=True,
+    )
+    try:
+        service.composio.configured = True
+        try:
+            request_json(base_url, "/api/workspace/notes", token="", method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("strict workspace read unexpectedly succeeded without auth")
+
+        try:
+            request_json(base_url, "/api/links/composio/portal-url?auth_mode=browser", token=BROWSER_TEST_TOKEN, method="GET")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("strict composio scope unexpectedly allowed a default browser principal")
+
+        cookie_a = issue_browser_session_cookie(service, base_url=base_url, email="user-a@example.com")
+        cookie_b = issue_browser_session_cookie(service, base_url=base_url, email="user-b@example.com")
+
+        verify_a = request_json(base_url, "/api/auth/session", token="", cookie=cookie_a)
+        verify_b = request_json(base_url, "/api/auth/session", token="", cookie=cookie_b)
+        assert verify_a["workspace_id"] != verify_b["workspace_id"]
+
+        assert verify_a["signed_in"] is True
+        assert verify_b["signed_in"] is True
+        assert verify_a["workspace_id"] != verify_b["workspace_id"]
+        assert verify_a["auth_provider"] == "clerk"
+        assert verify_b["auth_provider"] == "clerk"
+
+        created_note = request_json(
+            base_url,
+            "/api/workspace/notes",
+            method="POST",
+            token="",
+            cookie=cookie_a,
+            body={"id": "user-a-note", "title": "User A Note", "html": "<!doctype html><h1>User A</h1>"},
+        )
+        assert created_note["id"] == "user-a-note"
+
+        turn = request_json(
+            base_url,
+            "/api/turn/text",
+            method="POST",
+            token="",
+            cookie=cookie_a,
+            body={"text": "Create a quick card", "turn_id": "user-a-turn"},
+        )
+        assert turn["card_id"].startswith("pucky_card_")
+
+        with service.request_identity_context(service.resolve_browser_identity({"Cookie": cookie_a}, base_url=base_url)):
+            artifacts = list(service.feed.list_media_artifacts(limit=10) or [])
+            artifact_id = str(next((item.get("artifact_id") for item in artifacts if str(item.get("content_base64") or "").strip()), "") or "")
+        assert artifact_id
+
+        owner_note = request_json(base_url, "/api/workspace/notes/user-a-note", token="", cookie=cookie_a)
+        assert owner_note["title"] == "User A Note"
+
+        user_b_notes = request_json(base_url, "/api/workspace/notes", token="", cookie=cookie_b)
+        assert all(str(item.get("id") or "") != "user-a-note" for item in list(user_b_notes.get("items") or []))
+        try:
+            request_json(base_url, "/api/workspace/notes/user-a-note", token="", cookie=cookie_b)
+        except urllib.error.HTTPError as exc:
+            assert exc.code in {401, 403, 404}
+        else:
+            raise AssertionError("User B fetched User A note")
+
+        status, body = request_bytes(base_url, f"/api/artifacts/{artifact_id}", token="", cookie=cookie_a)
+        assert status == 200
+        assert body
+        try:
+            request_bytes(base_url, f"/api/artifacts/{artifact_id}", token="", cookie=cookie_b)
+        except urllib.error.HTTPError as exc:
+            assert exc.code in {401, 403, 404}
+        else:
+            raise AssertionError("User B fetched User A artifact")
+
+        portal_a = request_json(base_url, "/api/links/composio/portal-url?auth_mode=browser", token="", cookie=cookie_a)
+        portal_b = request_json(base_url, "/api/links/composio/portal-url?auth_mode=browser", token="", cookie=cookie_b)
+        assert portal_a["user_id"].startswith("ws_")
+        assert portal_b["user_id"].startswith("ws_")
+        assert portal_a["user_id"] != portal_b["user_id"]
+
+        try:
+            request_json_response(base_url, "/api/auth/logout", method="POST", token="", cookie=cookie_a, body={})
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 410
+            payload = json.loads(exc.read().decode("utf-8"))
+            assert payload["error"] == "clerk_only_auth"
+            assert payload["client_must_sign_out"] is True
+        else:
+            raise AssertionError("legacy logout unexpectedly succeeded")
+
+        try:
+            request_json(base_url, "/api/workspace/notes/user-a-note", token="", cookie="")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("anonymous session still reached workspace data")
     finally:
         server.shutdown()
 

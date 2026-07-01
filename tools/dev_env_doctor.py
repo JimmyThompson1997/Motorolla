@@ -36,6 +36,37 @@ def _command_version(command: list[str], *, timeout: int = 10) -> tuple[bool, st
     return result.returncode == 0, output
 
 
+def _run_command(command: list[str], *, timeout: int = 10, extra_env: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    env = dict(os.environ)
+    binary = Path(command[0]) if command else None
+    if binary is not None and binary.parent.exists():
+        env["PATH"] = str(binary.parent) + os.pathsep + env.get("PATH", "")
+    if extra_env:
+        env.update({key: str(value) for key, value in extra_env.items()})
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False, env=env)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(exc),
+            "output": str(exc),
+            "command": list(command),
+        }
+    stdout = str(result.stdout or "")
+    stderr = str(result.stderr or "")
+    output = stdout.strip() or stderr.strip() or f"exit {result.returncode}"
+    return {
+        "ok": result.returncode == 0,
+        "returncode": int(result.returncode),
+        "stdout": stdout,
+        "stderr": stderr,
+        "output": output,
+        "command": list(command),
+    }
+
+
 def _check_version(path: Optional[Path], command: list[str]) -> tuple[bool, str]:
     if path is None:
         return False, "not found"
@@ -75,6 +106,146 @@ def _android_packages_check(android_home: Path, system_image: str) -> tuple[bool
     return True, "required SDK packages installed"
 
 
+def _parse_adb_devices(output: str) -> list[dict[str, str]]:
+    devices: list[dict[str, str]] = []
+    for raw_line in str(output or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("list of devices attached"):
+            continue
+        if line.startswith("* ") or line.startswith("adb server"):
+            continue
+        columns = line.split()
+        if len(columns) < 2:
+            continue
+        serial = str(columns[0] or "").strip()
+        state = str(columns[1] or "").strip()
+        extras = " ".join(columns[2:]).strip()
+        if serial.startswith("emulator-"):
+            transport = "emulator"
+        else:
+            transport = "wireless" if ":" in serial else "usb" if serial else "unknown"
+        if "usb:" in extras:
+            transport = "usb"
+        devices.append(
+            {
+                "serial": serial,
+                "state": state,
+                "transport": transport,
+                "details": extras,
+                "raw": line,
+            }
+        )
+    return devices
+
+
+def _profiler_hints(output: str) -> dict[str, bool]:
+    lower = str(output or "").lower()
+    return {
+        "android_visible": "android" in lower,
+        "motorola_visible": "motorola" in lower,
+        "razr_visible": "razr" in lower,
+        "usb_visible": "usb" in lower,
+    }
+
+
+def _transport_next_step(*, devices: list[dict[str, str]], profiler_output: str) -> str:
+    if any(item["state"] == "device" and item["transport"] == "usb" for item in devices):
+        return "usb_ready"
+    if any(item["state"] == "device" and item["transport"] == "wireless" for item in devices):
+        return "wireless_ready"
+    if any(item["state"] in {"unauthorized", "authorizing"} for item in devices):
+        return "unlock_and_accept_debugging"
+    if any(item["state"] in {"offline", "recovery"} for item in devices):
+        return "revoke_and_reauthorize_debugging"
+    hints = _profiler_hints(profiler_output)
+    if hints["android_visible"] or hints["motorola_visible"] or hints["razr_visible"]:
+        return "switch_usb_to_file_transfer"
+    return "swap_cable_or_port_then_try_wireless_debugging"
+
+
+def android_transport_report(*, environment: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    env = environment or os.environ
+    system = dev_env_support.host_system()
+    adb = dev_env_support.default_adb(environment=env, system=system)
+    adb_exists = adb.exists()
+    adb_version = _run_command([str(adb), "version"], timeout=10) if adb_exists else {
+        "ok": False,
+        "returncode": -1,
+        "stdout": "",
+        "stderr": "adb not found",
+        "output": "adb not found",
+        "command": [str(adb), "version"],
+    }
+    server_status = _run_command([str(adb), "server-status"], timeout=10) if adb_exists else {
+        "ok": False,
+        "returncode": -1,
+        "stdout": "",
+        "stderr": "adb not found",
+        "output": "adb not found",
+        "command": [str(adb), "server-status"],
+    }
+    adb_devices = _run_command([str(adb), "devices", "-l"], timeout=15) if adb_exists else {
+        "ok": False,
+        "returncode": -1,
+        "stdout": "",
+        "stderr": "adb not found",
+        "output": "adb not found",
+        "command": [str(adb), "devices", "-l"],
+    }
+    adb_devices_libusb_1 = _run_command([str(adb), "devices", "-l"], timeout=15, extra_env={"ADB_LIBUSB": "1"}) if adb_exists else {
+        "ok": False,
+        "returncode": -1,
+        "stdout": "",
+        "stderr": "adb not found",
+        "output": "adb not found",
+        "command": [str(adb), "devices", "-l"],
+    }
+    adb_devices_libusb_0 = _run_command([str(adb), "devices", "-l"], timeout=15, extra_env={"ADB_LIBUSB": "0"}) if adb_exists else {
+        "ok": False,
+        "returncode": -1,
+        "stdout": "",
+        "stderr": "adb not found",
+        "output": "adb not found",
+        "command": [str(adb), "devices", "-l"],
+    }
+    profiler = (
+        _run_command(["system_profiler", "SPUSBDataType"], timeout=30)
+        if system == "Darwin"
+        else {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": "system_profiler unavailable",
+            "output": "system_profiler unavailable",
+            "command": ["system_profiler", "SPUSBDataType"],
+        }
+    )
+    devices = _parse_adb_devices(adb_devices.get("stdout", "") or adb_devices.get("output", ""))
+    usb_ok = any(item["state"] == "device" and item["transport"] == "usb" for item in devices)
+    wireless_ok = any(item["state"] == "device" and item["transport"] == "wireless" for item in devices)
+    if usb_ok:
+        status = "usb_ok"
+    elif wireless_ok:
+        status = "wireless_ok"
+    else:
+        status = "blocked"
+    return {
+        "schema": "pucky.android_transport.v1",
+        "status": status,
+        "usb_ok": usb_ok,
+        "wireless_ok": wireless_ok,
+        "adb_path": str(adb),
+        "devices": devices,
+        "next_step": _transport_next_step(devices=devices, profiler_output=str(profiler.get("stdout", "") or profiler.get("output", ""))),
+        "adb_version": adb_version,
+        "adb_server_status": server_status,
+        "adb_devices": adb_devices,
+        "adb_devices_libusb_1": adb_devices_libusb_1,
+        "adb_devices_libusb_0": adb_devices_libusb_0,
+        "system_profiler_usb": profiler,
+    }
+
+
 def _gradle_wrapper_check(root: Path, *, system: Optional[str] = None) -> tuple[bool, str]:
     wrapper = dev_env_support.gradle_wrapper_path(root, system=system)
     jar_path = root / "pucky-apk" / "gradle" / "wrapper" / "gradle-wrapper.jar"
@@ -93,7 +264,7 @@ def emulator_suite_report() -> dict[str, Any]:
     return suite.doctor(args)
 
 
-def gather_report(*, root: Path = ROOT, include_emulator: bool = False) -> dict[str, Any]:
+def gather_report(*, root: Path = ROOT, include_emulator: bool = False, include_device_transport: bool = False) -> dict[str, Any]:
     system = dev_env_support.host_system()
     machine = dev_env_support.host_machine()
     env = os.environ
@@ -125,6 +296,10 @@ def gather_report(*, root: Path = ROOT, include_emulator: bool = False) -> dict[
     ffmpeg = dev_env_support.default_ffmpeg(environment=env)
     ffmpeg_ok, ffmpeg_detail = _check_version(ffmpeg, [str(ffmpeg), "-version"] if ffmpeg else [])
     checks.append(_check("ffmpeg", ffmpeg_ok, ffmpeg_detail.splitlines()[0] if ffmpeg_ok else (ffmpeg_detail or "ffmpeg not found")))
+
+    flyctl = dev_env_support.default_flyctl(environment=env)
+    flyctl_ok, flyctl_detail = _check_version(flyctl, [str(flyctl), "version"] if flyctl else [])
+    checks.append(_check("flyctl", flyctl_ok, flyctl_detail if flyctl else "flyctl not found"))
 
     java_home = dev_env_support.default_java_home(environment=env, system=system)
     java_bin = java_home / "bin" / ("java.exe" if system == "Windows" else "java")
@@ -175,12 +350,15 @@ def gather_report(*, root: Path = ROOT, include_emulator: bool = False) -> dict[
         except Exception as exc:
             checks.append(_check("emulator_suite_doctor", False, exc))
 
-    return {
+    report = {
         "schema": SCHEMA,
         "ok": all(item["ok"] for item in checks),
         "host": {"system": system, "machine": machine},
         "checks": checks,
     }
+    if include_device_transport:
+        report["android_transport"] = android_transport_report(environment=env)
+    return report
 
 
 def print_human(report: dict[str, Any]) -> None:
@@ -195,9 +373,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Check whether this machine is ready for local Pucky development.")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--include-emulator", action="store_true")
+    parser.add_argument("--include-device-transport", action="store_true")
     args = parser.parse_args(argv)
 
-    report = gather_report(include_emulator=args.include_emulator)
+    report = gather_report(include_emulator=args.include_emulator, include_device_transport=args.include_device_transport)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

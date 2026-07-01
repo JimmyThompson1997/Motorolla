@@ -225,7 +225,14 @@ export async function waitForWorkspaceReady(page, {
     }
     if (readySelector) {
       const ready = await page.locator(readySelector).first().isVisible({ timeout: 250 }).catch(() => false);
-      if (ready && (!loginOrigin || currentOrigin !== loginOrigin)) {
+      const pathname = (() => {
+        try {
+          return new URL(currentUrl).pathname;
+        } catch (_error) {
+          return "";
+        }
+      })();
+      if (ready && (!loginOrigin || currentOrigin !== loginOrigin || pathname !== "/sign-in")) {
         return { url: currentUrl, readyBy: "selector" };
       }
     }

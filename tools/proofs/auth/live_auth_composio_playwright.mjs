@@ -91,7 +91,7 @@ function parseArgs(argv) {
   const config = {
     baseUrl: String(DEFAULT_BASE_URL || "").replace(/\/+$/, ""),
     loginUrl: String(DEFAULT_LOGIN_URL || "").trim(),
-    browserPreviewToken: envValue("PUCKY_WEB_UI_TOKEN"),
+    browserPreviewToken: envValue("PUCKY_AUTH_COMPOSIO_BROWSER_PREVIEW_TOKEN", "PUCKY_AUTH_BROWSER_PREVIEW_TOKEN"),
     workspaceHostPattern: envValue("PUCKY_AUTH_WORKSPACE_HOST_PATTERN"),
     appSlug: envValue("PUCKY_COMPOSIO_APP_SLUG", "PUCKY_AUTH_COMPOSIO_APP_SLUG") || "gmail",
     timeoutMs: Math.max(15000, Number(process.env.PUCKY_COMPOSIO_TIMEOUT_MS || "60000") || 60000),
