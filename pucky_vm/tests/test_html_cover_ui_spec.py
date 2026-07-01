@@ -264,6 +264,11 @@ def test_sign_in_shell_preserves_redirect_target_for_clerk_flows() -> None:
     assert 'signUpFallbackRedirectUrl: nextUrl,' in sign_in_html
     assert 'signUpForceRedirectUrl: nextUrl,' in sign_in_html
     assert 'withSignUp: true,' in sign_in_html
+    assert 'id="legacyForms"' not in sign_in_html
+    assert 'id="signInForm"' not in sign_in_html
+    assert 'id="verifyForm"' not in sign_in_html
+    assert 'request-code' not in sign_in_html
+    assert 'verify-code' not in sign_in_html
 
 
 def test_render_feed_only_uses_modern_home_shell_paths() -> None:

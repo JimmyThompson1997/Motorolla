@@ -101,35 +101,14 @@
   <body>
     <main class="shell">
       <h1 id="pageTitle">Sign in</h1>
-      <p id="pageIntro">Use your email to get a one-time code and open your workspace.</p>
-      <div id="authRoot" class="hidden"></div>
-      <div id="legacyForms">
-        <form id="signInForm">
-          <label for="email">Email</label>
-          <input id="email" name="email" type="email" autocomplete="email" required />
-          <button id="requestButton" type="submit">Continue</button>
-        </form>
-        <form id="verifyForm" class="hidden">
-          <label for="code">Verification code</label>
-          <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required />
-          <button id="verifyButton" type="submit">Verify code</button>
-          <button id="resendButton" type="button" class="secondary">Send code</button>
-        </form>
-      </div>
+      <p id="pageIntro">Use Clerk email verification to open your Pucky workspace.</p>
+      <div id="authRoot"></div>
       <div id="status" class="status" aria-live="polite"></div>
     </main>
     <script>
       const pageTitle = document.getElementById("pageTitle");
       const pageIntro = document.getElementById("pageIntro");
       const authRoot = document.getElementById("authRoot");
-      const legacyForms = document.getElementById("legacyForms");
-      const signInForm = document.getElementById("signInForm");
-      const verifyForm = document.getElementById("verifyForm");
-      const requestButton = document.getElementById("requestButton");
-      const verifyButton = document.getElementById("verifyButton");
-      const resendButton = document.getElementById("resendButton");
-      const emailInput = document.getElementById("email");
-      const codeInput = document.getElementById("code");
       const statusEl = document.getElementById("status");
       const search = new URLSearchParams(window.location.search || "");
       const nextUrl = String(search.get("next") || "/ui/pucky/latest/?route=home");
@@ -175,54 +154,6 @@
         });
       }
 
-      async function postJson(path, body) {
-        const response = await fetch(path, {
-          method: "POST",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify(body || {}),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(String(payload.detail || payload.error || `Request failed (${response.status})`));
-        }
-        return payload;
-      }
-
-      async function requestCode() {
-        const email = String(emailInput.value || "").trim();
-        requestButton.disabled = true;
-        try {
-          await postJson("/api/auth/request-code", { email });
-          signInForm.classList.add("hidden");
-          verifyForm.classList.remove("hidden");
-          codeInput.focus();
-          status(`Code sent to ${email}.`, "ok");
-        } catch (error) {
-          status(String(error && error.message || "Could not send code."), "error");
-        } finally {
-          requestButton.disabled = false;
-        }
-      }
-
-      async function verifyCode() {
-        const email = String(emailInput.value || "").trim();
-        const code = String(codeInput.value || "").trim();
-        verifyButton.disabled = true;
-        try {
-          const payload = await postJson("/api/auth/verify-code", {
-            email,
-            code,
-            next: nextUrl,
-          });
-          status("Signed in. Opening workspace…", "ok");
-          window.location.assign(String(payload.landing_url || payload.workspace_url || nextUrl));
-        } catch (error) {
-          status(String(error && error.message || "Could not verify code."), "error");
-        } finally {
-          verifyButton.disabled = false;
-        }
-      }
-
       async function fetchAuthConfig() {
         try {
           const response = await fetch("/api/auth/config", {
@@ -261,8 +192,6 @@
         pageIntro.textContent = signUpMode
           ? "Create your Pucky account and provision your workspace."
           : "Use Clerk email verification to open your Pucky workspace.";
-        legacyForms.classList.add("hidden");
-        authRoot.classList.remove("hidden");
         status("Loading secure sign-in…");
         await loadClerkBundles(config);
         await window.Clerk.load({
@@ -320,28 +249,13 @@
             await mountClerkUi(config);
           } catch (error) {
             authRoot.textContent = "Clerk could not load for this environment.";
-            authRoot.classList.remove("hidden");
-            legacyForms.classList.add("hidden");
             status(String(error && error.message || "Could not load Clerk."), "error");
           }
           return;
         }
-        legacyForms.classList.remove("hidden");
-        authRoot.classList.add("hidden");
-        status("");
+        authRoot.textContent = "Clerk auth is not configured for this environment.";
+        status("Clerk auth is not configured for this environment.", "error");
       }
-
-      signInForm.addEventListener("submit", event => {
-        event.preventDefault();
-        requestCode();
-      });
-      verifyForm.addEventListener("submit", event => {
-        event.preventDefault();
-        verifyCode();
-      });
-      resendButton.addEventListener("click", () => {
-        requestCode();
-      });
 
       boot();
     </script>

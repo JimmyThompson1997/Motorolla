@@ -1509,6 +1509,19 @@ class ServerTests(unittest.TestCase):
                 f"/sign-in?next={path}",
             )
 
+    def test_strict_browser_auth_serves_ui_shell_when_clerk_browser_auth_is_enabled(self) -> None:
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        self.service.clerk_auth.publishable_key = "pk_test_pucky"
+        self.service.clerk_auth._frontend_api_url = "https://clerk.example.com"
+
+        for path in (
+            "/ui/pucky/latest/?route=inbox",
+            "/ui/pucky/latest/index.html?route=inbox",
+        ):
+            with urllib.request.urlopen(self.base_url + path, timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("text/html", response.headers.get("Content-Type", ""))
+
     def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
         request = urllib.request.Request(self.base_url + "/favicon.ico")
         with urllib.request.urlopen(request, timeout=10) as response:
