@@ -91,8 +91,9 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             if path == "/healthz":
                 self._json(HTTPStatus.OK, service.health())
                 return
-            if path == "/sign-in":
-                if identity.kind == "session" and identity.workspace_id:
+            if path in {"/sign-in", "/sign-up"}:
+                logout_action = parse_qs(parsed.query).get("action", [""])[0].strip().lower() in {"sign-out", "sign_out", "logout"}
+                if identity.kind == "session" and identity.workspace_id and not logout_action:
                     self._redirect(service.workspace_landing_url(self._request_base_url(), workspace_id=identity.workspace_id))
                     return
                 self._file(
@@ -100,6 +101,9 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     "text/html; charset=utf-8",
                     headers=self._ui_asset_headers("index.html"),
                 )
+                return
+            if path == "/api/auth/config":
+                self._json(HTTPStatus.OK, service.clerk_browser_auth_config())
                 return
             if path == "/api/auth/session":
                 self._json(HTTPStatus.OK, service.auth_session_payload(identity, base_url=self._request_base_url()))
@@ -534,6 +538,9 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             parsed = urlsplit(self.path)
             path = parsed.path
             if path == "/api/auth/request-code":
+                if service.clerk_auth.browser_auth_enabled:
+                    self._json(HTTPStatus.GONE, service.legacy_public_auth_disabled())
+                    return
                 try:
                     payload = self._read_json_payload(64 * 1024)
                     result = service.request_auth_code(str(payload.get("email") or ""))
@@ -545,6 +552,9 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._json(HTTPStatus.OK, clean)
                 return
             if path == "/api/auth/verify-code":
+                if service.clerk_auth.browser_auth_enabled:
+                    self._json(HTTPStatus.GONE, service.legacy_public_auth_disabled())
+                    return
                 try:
                     payload = self._read_json_payload(64 * 1024)
                     result = service.verify_auth_code(
@@ -562,6 +572,15 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 self._json(HTTPStatus.OK, body, headers=headers)
                 return
             if path == "/api/auth/logout":
+                if service.clerk_auth.browser_auth_enabled:
+                    self._json(
+                        HTTPStatus.GONE,
+                        {
+                            **service.legacy_public_auth_disabled(),
+                            "client_must_sign_out": True,
+                        },
+                    )
+                    return
                 revoked = self._clear_session()
                 self._json(
                     HTTPStatus.OK,
@@ -1158,7 +1177,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 return RequestIdentity(kind="operator", user_id="operator", workspace_id="default", auth_via="bearer")
             if is_any_bearer_authorized((service.config.pucky_web_ui_token,), auth_header):
                 return RequestIdentity(kind="browser_token", user_id="browser", workspace_id="default", auth_via="bearer")
-            session = service.resolve_auth_session(self._session_cookie_value())
+            session = service.resolve_browser_identity(self.headers, base_url=self._request_base_url())
             if session.kind == "session":
                 return session
             return RequestIdentity()

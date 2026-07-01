@@ -11,6 +11,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -18,15 +19,17 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.message import EmailMessage
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .action_ledger import ActionLedger
 from .auth_store import AuthStore, normalize_email
 from .attachment_manifest import normalize_attachment
+from .clerk_auth import ClerkAuthClient
 from .codex_app_server import CodexAppServerClient, CodexTurnResult, command_from_env
 from .composio import DEFAULT_COMPOSIO_BASE_URL, ComposioClient
 from .feed_store import FeedStore
@@ -373,9 +376,12 @@ class RequestIdentity:
     kind: str = "anonymous"
     user_id: str = ""
     workspace_id: str = ""
+    workspace_slug: str = ""
     email: str = ""
     session_id: str = ""
+    clerk_user_id: str = ""
     auth_via: str = ""
+    auth_provider: str = ""
 
 
 class _ScopedStoreProxy:
@@ -431,6 +437,17 @@ class Config:
     self_phone_number: str = ""
     public_base_url: str | None = None
     pucky_web_ui_token: str = ""
+    clerk_publishable_key: str = ""
+    clerk_secret_key: str = ""
+    clerk_frontend_api_url: str = ""
+    clerk_api_url: str = "https://api.clerk.com"
+    clerk_api_version: str = "v1"
+    clerk_authorized_parties: tuple[str, ...] = ()
+    clerk_legacy_claim_email: str = "jimmythompson323@gmail.com"
+    clerk_legacy_claim_marker: str = "legacy_jimmy_root_workspace_v1"
+    clerk_legacy_app_user_id: str = "jimmythompson323"
+    clerk_legacy_workspace_id: str = "ws_jimmythompson323"
+    clerk_legacy_workspace_slug: str = "jimmythompson323"
     strict_browser_user_auth: bool = False
     strict_composio_user_scoping: bool = False
     auth_session_cookie_name: str = "pucky_session"
@@ -506,11 +523,57 @@ class Config:
             self_email=os.environ.get("PUCKY_SELF_EMAIL", "").strip(),
             self_phone_number=os.environ.get("PUCKY_SELF_PHONE_NUMBER", "").strip(),
             public_base_url=os.environ.get("PUCKY_PUBLIC_BASE_URL") or None,
+            clerk_publishable_key=(
+                os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+                or os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+            ),
+            clerk_secret_key=os.environ.get("CLERK_SECRET_KEY", "").strip(),
+            clerk_frontend_api_url=os.environ.get("CLERK_FRONTEND_API_URL", "").strip(),
+            clerk_api_url=os.environ.get("CLERK_API_URL", "https://api.clerk.com").strip() or "https://api.clerk.com",
+            clerk_api_version=os.environ.get("CLERK_API_VERSION", "v1").strip().strip("/") or "v1",
+            clerk_authorized_parties=tuple(
+                item
+                for item in (
+                    candidate.strip()
+                    for candidate in (
+                        os.environ.get("PUCKY_CLERK_AUTHORIZED_PARTIES", "")
+                        or os.environ.get("CLERK_AUTHORIZED_PARTIES", "")
+                    ).split(",")
+                )
+                if item
+            ),
+            clerk_legacy_claim_email=(
+                os.environ.get("PUCKY_CLERK_LEGACY_CLAIM_EMAIL", "jimmythompson323@gmail.com").strip().lower()
+                or "jimmythompson323@gmail.com"
+            ),
+            clerk_legacy_claim_marker=(
+                os.environ.get("PUCKY_CLERK_LEGACY_CLAIM_MARKER", "legacy_jimmy_root_workspace_v1").strip()
+                or "legacy_jimmy_root_workspace_v1"
+            ),
+            clerk_legacy_app_user_id=(
+                os.environ.get("PUCKY_CLERK_LEGACY_APP_USER_ID", "jimmythompson323").strip() or "jimmythompson323"
+            ),
+            clerk_legacy_workspace_id=(
+                os.environ.get("PUCKY_CLERK_LEGACY_WORKSPACE_ID", "ws_jimmythompson323").strip()
+                or "ws_jimmythompson323"
+            ),
+            clerk_legacy_workspace_slug=(
+                os.environ.get("PUCKY_CLERK_LEGACY_WORKSPACE_SLUG", "jimmythompson323").strip()
+                or "jimmythompson323"
+            ),
             strict_browser_user_auth=(
                 os.environ.get("PUCKY_STRICT_BROWSER_USER_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+                or bool(
+                    os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+                    or os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+                )
             ),
             strict_composio_user_scoping=(
                 os.environ.get("PUCKY_STRICT_COMPOSIO_USER_SCOPING", "").strip().lower() in {"1", "true", "yes", "on"}
+                or bool(
+                    os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+                    or os.environ.get("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+                )
             ),
             auth_session_cookie_name=os.environ.get("PUCKY_AUTH_SESSION_COOKIE_NAME", "pucky_session").strip() or "pucky_session",
             auth_otp_ttl_seconds=max(60, int(os.environ.get("PUCKY_AUTH_OTP_TTL_SECONDS", str(15 * 60)))),
@@ -686,6 +749,7 @@ class PuckyVoiceService:
         codex: CodexProvider | None = None,
         meeting_codex: CodexProvider | None = None,
         composio: ComposioProvider | None = None,
+        clerk_auth: ClerkAuthClient | None = None,
     ) -> None:
         self.config = config
         ledger_path = config.action_ledger_path or str(Path(config.feed_db_path).with_suffix(".actions.sqlite3"))
@@ -710,6 +774,13 @@ class PuckyVoiceService:
             config.auth_db_path or str(Path(config.feed_db_path).with_name("pucky_auth.sqlite3")),
             otp_ttl_seconds=config.auth_otp_ttl_seconds,
             session_ttl_seconds=config.auth_session_ttl_seconds,
+        )
+        self.clerk_auth = clerk_auth or ClerkAuthClient(
+            publishable_key=config.clerk_publishable_key,
+            secret_key=config.clerk_secret_key,
+            frontend_api_url=config.clerk_frontend_api_url,
+            api_url=config.clerk_api_url,
+            api_version=config.clerk_api_version,
         )
         self._store_lock = threading.Lock()
         self._feed_by_workspace: dict[str, FeedStore] = {}
@@ -741,6 +812,121 @@ class PuckyVoiceService:
         self._reminder_poll_lock = threading.Lock()
         self._reminder_stop_event = threading.Event()
         self._reminder_poll_thread: threading.Thread | None = None
+
+    def clerk_browser_auth_config(self) -> dict[str, object]:
+        payload = self.clerk_auth.browser_config()
+        payload.update(
+            {
+                "schema": "pucky.auth.config.v1",
+                "ok": True,
+                "auth_provider": "clerk",
+                "sign_in_url": "/sign-in",
+                "sign_up_url": "/sign-up",
+            }
+        )
+        return payload
+
+    def resolve_browser_identity(self, headers: Mapping[str, str], *, base_url: str) -> RequestIdentity:
+        if self.clerk_auth.browser_auth_enabled:
+            session = self.clerk_auth.authenticate_headers(
+                headers,
+                authorized_parties=self._clerk_authorized_parties(base_url),
+            )
+            if session is None:
+                return RequestIdentity()
+            binding = self._ensure_auth_binding(session)
+            return RequestIdentity(
+                kind="session",
+                user_id=str(binding.get("app_user_id") or ""),
+                workspace_id=str(binding.get("workspace_id") or ""),
+                workspace_slug=str(binding.get("workspace_slug") or ""),
+                email=str(binding.get("primary_email") or ""),
+                session_id=session.session_id,
+                clerk_user_id=session.clerk_user_id,
+                auth_via=session.auth_via,
+                auth_provider="clerk",
+            )
+        return self.resolve_auth_session(self._legacy_session_cookie_from_headers(headers))
+
+    def _clerk_authorized_parties(self, base_url: str) -> list[str]:
+        configured = [str(item or "").strip() for item in self.config.clerk_authorized_parties if str(item or "").strip()]
+        if configured:
+            return configured
+        candidate = str(base_url or "").strip()
+        if not candidate:
+            return []
+        try:
+            parsed = urlsplit(candidate)
+        except Exception:
+            return []
+        if not parsed.scheme or not parsed.netloc:
+            return []
+        return [f"{parsed.scheme}://{parsed.netloc}"]
+
+    def _ensure_auth_binding(self, session) -> dict[str, str]:
+        primary_email = str(session.email or "").strip() or self.clerk_auth.fetch_primary_email(session.clerk_user_id)
+        binding = self.auth.ensure_binding(
+            clerk_user_id=session.clerk_user_id,
+            primary_email=primary_email,
+            legacy_claim_email=self.config.clerk_legacy_claim_email,
+            legacy_claim_marker=self.config.clerk_legacy_claim_marker,
+            legacy_app_user_id=self.config.clerk_legacy_app_user_id,
+            legacy_workspace_id=self.config.clerk_legacy_workspace_id,
+            legacy_workspace_slug=self.config.clerk_legacy_workspace_slug,
+        )
+        if binding.get("legacy_claim_marker") and not binding.get("legacy_workspace_migrated_at"):
+            self._migrate_legacy_default_workspace(str(binding.get("workspace_id") or ""))
+        return binding
+
+    def _migrate_legacy_default_workspace(self, workspace_id: str) -> None:
+        clean_workspace_id = str(workspace_id or "").strip()
+        if not clean_workspace_id or clean_workspace_id == "default":
+            return
+        source_root = Path(self.config.feed_db_path).resolve().parent
+        target_root = self._workspace_root(clean_workspace_id)
+        target_root.mkdir(parents=True, exist_ok=True)
+        self._copy_sqlite_database(
+            Path(self.config.feed_db_path).resolve(),
+            self._feed_store_path(clean_workspace_id),
+        )
+        self._copy_sqlite_database(
+            Path(self.config.workspace_db_path or str(Path(self.config.feed_db_path).with_name("pucky_workspace.sqlite3"))).resolve(),
+            self._workspace_store_path(clean_workspace_id),
+        )
+        self._copy_sqlite_database(
+            Path(self.config.action_ledger_path or str(Path(self.config.feed_db_path).with_suffix(".actions.sqlite3"))).resolve(),
+            self._action_ledger_path(clean_workspace_id),
+        )
+        source_meetings = source_root / "pucky_meetings"
+        if source_meetings.exists():
+            shutil.copytree(source_meetings, target_root / "meetings", dirs_exist_ok=True)
+        source_uploads = source_root / "pucky_uploaded_attachments"
+        if source_uploads.exists():
+            shutil.copytree(source_uploads, target_root / "uploaded_attachments", dirs_exist_ok=True)
+        self.auth.mark_legacy_workspace_migrated(clean_workspace_id)
+
+    def _copy_sqlite_database(self, source_path: Path, target_path: Path) -> None:
+        source = Path(source_path).resolve()
+        if not source.exists():
+            return
+        target = Path(target_path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        src_conn = sqlite3.connect(str(source), timeout=sqlite_retry_timeout_seconds())
+        dest_conn = sqlite3.connect(str(target), timeout=sqlite_retry_timeout_seconds())
+        try:
+            src_conn.backup(dest_conn)
+            dest_conn.commit()
+        finally:
+            dest_conn.close()
+            src_conn.close()
+
+    def _legacy_session_cookie_from_headers(self, headers: Mapping[str, str]) -> str:
+        cookie_header = str(headers.get("Cookie") or headers.get("cookie") or "").strip()
+        if not cookie_header:
+            return ""
+        cookies = SimpleCookie(cookie_header)
+        morsel = cookies.get(self.config.auth_session_cookie_name)
+        return str(morsel.value or "").strip() if morsel else ""
 
     def _build_codex_client(self, *, meeting: bool) -> CodexAppServerClient:
         role = "meeting" if meeting else "default"
@@ -2757,7 +2943,7 @@ class PuckyVoiceService:
         if workspace_id and (identity.kind == "session" or self.config.strict_composio_user_scoping):
             return f"ws_{workspace_id.removeprefix('ws_')}"
         if self.config.strict_composio_user_scoping:
-            return "ws_default"
+            return ""
         return self.config.composio_default_user_id
 
     def require_workspace_composio_user_id(self) -> str:
@@ -3465,10 +3651,19 @@ class PuckyVoiceService:
             email=str(session["email"]),
             session_id=str(session["session_id"]),
             auth_via="cookie",
+            auth_provider="pucky_local_otp",
         )
 
     def revoke_auth_session(self, token: str) -> bool:
         return self.auth.revoke_session(token)
+
+    def legacy_public_auth_disabled(self) -> dict[str, object]:
+        return {
+            "ok": False,
+            "schema": "pucky.auth.legacy_browser_contract_retired.v1",
+            "error": "clerk_only_auth",
+            "auth_provider": "clerk",
+        }
 
     def workspace_landing_url(self, base_url: str, *, workspace_id: str = "") -> str:
         prefix = str(base_url or "").rstrip("/")
@@ -3480,9 +3675,12 @@ class PuckyVoiceService:
         return {
             "ok": True,
             "schema": "pucky.auth.session.v1",
+            "auth_provider": str(identity.auth_provider or ("clerk" if self.clerk_auth.browser_auth_enabled else "pucky_local_otp")),
             "signed_in": active,
             "user_id": str(identity.user_id or "") if active else "",
             "workspace_id": str(identity.workspace_id or "") if active else "",
+            "workspace_slug": str(identity.workspace_slug or "") if active else "",
+            "clerk_user_id": str(identity.clerk_user_id or "") if active else "",
             "email": str(identity.email or "") if active else "",
             "landing_url": self.workspace_landing_url(base_url, workspace_id=str(identity.workspace_id or "")) if active else "",
         }

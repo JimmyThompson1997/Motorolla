@@ -29,7 +29,7 @@
         padding: 24px;
       }
       .shell {
-        width: min(100%, 420px);
+        width: min(100%, 440px);
         background: var(--card);
         border: 1px solid rgba(17, 24, 39, 0.08);
         border-radius: 24px;
@@ -93,26 +93,36 @@
       .status.ok {
         color: #0f766e;
       }
+      #authRoot {
+        min-height: 180px;
+      }
     </style>
   </head>
   <body>
     <main class="shell">
-      <h1>Sign in</h1>
-      <p>Use your email to get a one-time code and open your workspace.</p>
-      <form id="signInForm">
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="email" required />
-        <button id="requestButton" type="submit">Continue</button>
-      </form>
-      <form id="verifyForm" class="hidden">
-        <label for="code">Verification code</label>
-        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required />
-        <button id="verifyButton" type="submit">Verify code</button>
-        <button id="resendButton" type="button" class="secondary">Send code</button>
-      </form>
+      <h1 id="pageTitle">Sign in</h1>
+      <p id="pageIntro">Use your email to get a one-time code and open your workspace.</p>
+      <div id="authRoot" class="hidden"></div>
+      <div id="legacyForms">
+        <form id="signInForm">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" required />
+          <button id="requestButton" type="submit">Continue</button>
+        </form>
+        <form id="verifyForm" class="hidden">
+          <label for="code">Verification code</label>
+          <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required />
+          <button id="verifyButton" type="submit">Verify code</button>
+          <button id="resendButton" type="button" class="secondary">Send code</button>
+        </form>
+      </div>
       <div id="status" class="status" aria-live="polite"></div>
     </main>
     <script>
+      const pageTitle = document.getElementById("pageTitle");
+      const pageIntro = document.getElementById("pageIntro");
+      const authRoot = document.getElementById("authRoot");
+      const legacyForms = document.getElementById("legacyForms");
       const signInForm = document.getElementById("signInForm");
       const verifyForm = document.getElementById("verifyForm");
       const requestButton = document.getElementById("requestButton");
@@ -121,10 +131,48 @@
       const emailInput = document.getElementById("email");
       const codeInput = document.getElementById("code");
       const statusEl = document.getElementById("status");
+      const search = new URLSearchParams(window.location.search || "");
+      const nextUrl = String(search.get("next") || "/ui/pucky/latest/?route=home");
+      const signUpMode = window.location.pathname === "/sign-up";
+      const logoutAction = String(search.get("action") || "").trim().toLowerCase();
 
       function status(message, kind = "") {
         statusEl.textContent = String(message || "");
         statusEl.className = kind ? `status ${kind}` : "status";
+      }
+
+      function loadScript(src, attributes = {}) {
+        return new Promise((resolve, reject) => {
+          const url = String(src || "").trim();
+          if (!url) {
+            reject(new Error("script_src_required"));
+            return;
+          }
+          const existing = Array.from(document.scripts || []).find(script => String(script.getAttribute("data-pucky-src") || "").trim() === url);
+          if (existing) {
+            if (existing.getAttribute("data-pucky-loaded") === "1") {
+              resolve();
+              return;
+            }
+            existing.addEventListener("load", () => resolve(), { once: true });
+            existing.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = url;
+          script.async = true;
+          script.crossOrigin = "anonymous";
+          script.setAttribute("data-pucky-src", url);
+          Object.entries(attributes || {}).forEach(([key, value]) => {
+            script.setAttribute(key, String(value));
+          });
+          script.addEventListener("load", () => {
+            script.setAttribute("data-pucky-loaded", "1");
+            resolve();
+          }, { once: true });
+          script.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+          document.head.appendChild(script);
+        });
       }
 
       async function postJson(path, body) {
@@ -164,15 +212,114 @@
           const payload = await postJson("/api/auth/verify-code", {
             email,
             code,
-            next: new URLSearchParams(window.location.search).get("next") || "",
+            next: nextUrl,
           });
           status("Signed in. Opening workspace…", "ok");
-          window.location.assign(String(payload.landing_url || payload.workspace_url || "/ui/pucky/latest/?route=home"));
+          window.location.assign(String(payload.landing_url || payload.workspace_url || nextUrl));
         } catch (error) {
           status(String(error && error.message || "Could not verify code."), "error");
         } finally {
           verifyButton.disabled = false;
         }
+      }
+
+      async function fetchAuthConfig() {
+        try {
+          const response = await fetch("/api/auth/config", {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(String(payload.detail || payload.error || `Config failed (${response.status})`));
+          }
+          return payload && typeof payload === "object" ? payload : {};
+        } catch (error) {
+          return {
+            ok: false,
+            enabled: false,
+            auth_provider: "",
+            error: String(error && error.message || "auth_config_unavailable"),
+          };
+        }
+      }
+
+      async function loadClerkBundles(config) {
+        const frontendApiUrl = String(config.frontend_api_url || "").replace(/\/+$/, "");
+        const publishableKey = String(config.publishable_key || "").trim();
+        if (!frontendApiUrl || !publishableKey) {
+          throw new Error("clerk_config_missing");
+        }
+        await loadScript(`${frontendApiUrl}/npm/@clerk/ui@1/dist/ui.browser.js`);
+        await loadScript(`${frontendApiUrl}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, {
+          "data-clerk-publishable-key": publishableKey,
+        });
+      }
+
+      async function mountClerkUi(config) {
+        pageTitle.textContent = signUpMode ? "Create account" : "Sign in";
+        pageIntro.textContent = signUpMode
+          ? "Create your Pucky account and provision your workspace."
+          : "Use Clerk email verification to open your Pucky workspace.";
+        legacyForms.classList.add("hidden");
+        authRoot.classList.remove("hidden");
+        status("Loading secure sign-in…");
+        await loadClerkBundles(config);
+        await window.Clerk.load({
+          ui: { ClerkUI: window.__internal_ClerkUICtor },
+          signInUrl: String(config.sign_in_url || "/sign-in"),
+          signUpUrl: String(config.sign_up_url || "/sign-up"),
+        });
+        window.Clerk.addListener(({ session }) => {
+          if (session) {
+            window.location.assign(nextUrl);
+          }
+        });
+        if (logoutAction === "sign-out" || logoutAction === "sign_out" || logoutAction === "logout") {
+          if (window.Clerk.isSignedIn) {
+            await window.Clerk.signOut({ redirectUrl: "/sign-in" });
+          } else {
+            status("Signed out.", "ok");
+          }
+          return;
+        }
+        if (window.Clerk.isSignedIn) {
+          window.location.assign(nextUrl);
+          return;
+        }
+        if (signUpMode) {
+          window.Clerk.mountSignUp(authRoot, {
+            signInUrl: String(config.sign_in_url || "/sign-in"),
+          });
+          status("Create your account with email verification.", "ok");
+          return;
+        }
+        window.Clerk.mountSignIn(authRoot, {
+          signUpUrl: String(config.sign_up_url || "/sign-up"),
+        });
+        status("Use email OTP to sign in with Clerk.", "ok");
+      }
+
+      async function boot() {
+        if (signUpMode) {
+          pageTitle.textContent = "Create account";
+          pageIntro.textContent = "Create your Pucky account and provision your workspace.";
+        }
+        const config = await fetchAuthConfig();
+        if (config && config.enabled && String(config.auth_provider || "").trim().toLowerCase() === "clerk") {
+          try {
+            await mountClerkUi(config);
+          } catch (error) {
+            authRoot.textContent = "Clerk could not load for this environment.";
+            authRoot.classList.remove("hidden");
+            legacyForms.classList.add("hidden");
+            status(String(error && error.message || "Could not load Clerk."), "error");
+          }
+          return;
+        }
+        legacyForms.classList.remove("hidden");
+        authRoot.classList.add("hidden");
+        status("");
       }
 
       signInForm.addEventListener("submit", event => {
@@ -186,6 +333,8 @@
       resendButton.addEventListener("click", () => {
         requestCode();
       });
+
+      boot();
     </script>
   </body>
 </html>

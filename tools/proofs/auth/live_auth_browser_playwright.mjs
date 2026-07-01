@@ -125,7 +125,7 @@ function parseArgs(argv) {
   const config = {
     baseUrl: String(DEFAULT_BASE_URL || "").replace(/\/+$/, ""),
     loginUrl: String(DEFAULT_LOGIN_URL || "").trim(),
-    browserPreviewToken: envValue("PUCKY_WEB_UI_TOKEN"),
+    browserPreviewToken: envValue("PUCKY_AUTH_BROWSER_PREVIEW_TOKEN"),
     artifactCommand: envValue("PUCKY_AUTH_ARTIFACT_COMMAND"),
     workspaceHostPattern: envValue("PUCKY_AUTH_WORKSPACE_HOST_PATTERN"),
     composioDetailsSlug: envValue("PUCKY_AUTH_COMPOSIO_DETAILS_SLUG", "PUCKY_COMPOSIO_APP_SLUG") || "gmail",

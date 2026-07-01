@@ -159,6 +159,8 @@
   });
   const APP_BADGE_STALE_MS = 15000;
   let nativeProtectedAuthorization = "";
+  let browserAuthConfigPromise = null;
+  let clerkBrowserRuntimePromise = null;
   const LINKS_AUTH_SCHEME_LABELS = {
     OAUTH2: "OAuth",
     API_KEY: "API key",
@@ -2001,6 +2003,111 @@
     return btoa(binary);
   }
 
+  function loadRemoteScript(src, attributes = {}) {
+    return new Promise((resolve, reject) => {
+      const url = String(src || "").trim();
+      if (!url) {
+        reject(new Error("script_src_required"));
+        return;
+      }
+      const existing = Array.from(document.scripts || []).find(script => String(script.getAttribute("data-pucky-src") || "").trim() === url);
+      if (existing) {
+        if (existing.getAttribute("data-pucky-loaded") === "1") {
+          resolve();
+          return;
+        }
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = url;
+      script.async = true;
+      script.crossOrigin = "anonymous";
+      script.setAttribute("data-pucky-src", url);
+      Object.entries(attributes || {}).forEach(([key, value]) => {
+        script.setAttribute(key, String(value));
+      });
+      script.addEventListener("load", () => {
+        script.setAttribute("data-pucky-loaded", "1");
+        resolve();
+      }, { once: true });
+      script.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+      document.head.appendChild(script);
+    });
+  }
+
+  async function fetchBrowserAuthConfig() {
+    if (browserAuthConfigPromise) {
+      return browserAuthConfigPromise;
+    }
+    browserAuthConfigPromise = fetch("/api/auth/config", {
+      headers: { Accept: "application/json" },
+      cache: "no-store"
+    }).then(async response => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(String(payload && (payload.detail || payload.error) || `Auth config request failed (${response.status})`));
+      }
+      return payload && typeof payload === "object" ? payload : {};
+    }).catch(error => {
+      browserAuthConfigPromise = null;
+      return {
+        ok: false,
+        enabled: false,
+        auth_provider: "",
+        error: String(error && error.message || "auth_config_unavailable")
+      };
+    });
+    return browserAuthConfigPromise;
+  }
+
+  async function ensureBrowserClerkRuntime() {
+    if (clerkBrowserRuntimePromise) {
+      return clerkBrowserRuntimePromise;
+    }
+    clerkBrowserRuntimePromise = (async () => {
+      const config = await fetchBrowserAuthConfig();
+      if (!config || !config.enabled || String(config.auth_provider || "").trim().toLowerCase() !== "clerk") {
+        return null;
+      }
+      const frontendApiUrl = String(config.frontend_api_url || "").replace(/\/+$/, "");
+      const publishableKey = String(config.publishable_key || "").trim();
+      if (!frontendApiUrl || !publishableKey) {
+        return null;
+      }
+      if (!(window.Clerk && typeof window.Clerk.load === "function")) {
+        await loadRemoteScript(`${frontendApiUrl}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, {
+          "data-clerk-publishable-key": publishableKey
+        });
+      }
+      if (!(window.Clerk && typeof window.Clerk.load === "function")) {
+        return null;
+      }
+      await window.Clerk.load({
+        signInUrl: String(config.sign_in_url || "/sign-in"),
+        signUpUrl: String(config.sign_up_url || "/sign-up")
+      });
+      return window.Clerk;
+    })().catch(() => {
+      clerkBrowserRuntimePromise = null;
+      return null;
+    });
+    return clerkBrowserRuntimePromise;
+  }
+
+  async function resolveBrowserSessionApiToken() {
+    const clerk = await ensureBrowserClerkRuntime();
+    if (!clerk || !clerk.session || typeof clerk.session.getToken !== "function") {
+      return "";
+    }
+    try {
+      return String(await clerk.session.getToken() || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
   const HOME_FEED_LIMIT = 100;
 
   function feedApiBaseUrl() {
@@ -2022,10 +2129,10 @@
   }
 
   function maybeRedirectToSignInOnUnauthorized(response) {
-    if (!response || response.status !== 401 || state.links.apiToken) {
+    if (!response || response.status !== 401 || resolveHostedBrowserApiToken()) {
       return;
     }
-    if (window.location.pathname === "/sign-in") {
+    if (window.location.pathname === "/sign-in" || window.location.pathname === "/sign-up") {
       return;
     }
     window.location.assign(`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
@@ -2048,6 +2155,7 @@
     }
     try {
       const response = await fetch(`${feedApiBaseUrl()}${path}`, init);
+      maybeRedirectToSignInOnUnauthorized(response);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(String(payload && (payload.detail || payload.error) || `Feed request failed (${response.status})`));
@@ -2077,6 +2185,7 @@
     }
     try {
       const response = await fetch(`${linksApiBaseUrl()}${path}`, init);
+      maybeRedirectToSignInOnUnauthorized(response);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(String(payload && (payload.detail || payload.error) || `Workspace request failed (${response.status})`));
@@ -4169,11 +4278,28 @@
   }
 
   async function ensureLinksApiConfig() {
+    const previewApiBase = String(
+      window.location && /^https?:$/i.test(window.location.protocol || "")
+        ? (window.location.origin || "")
+        : ""
+    ).replace(/\/$/, "");
+    const previewApiToken = resolveHostedBrowserApiToken();
+    if (previewApiBase && previewApiToken) {
+      state.links.apiBaseUrl = previewApiBase;
+      state.links.apiToken = previewApiToken;
+      state.links.deviceId = resolveHostedBrowserDeviceId();
+      return;
+    }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
-      refreshHostedBrowserAuthState();
+      state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+      state.links.apiToken = await resolveBrowserSessionApiToken();
+      state.links.deviceId = resolveHostedBrowserDeviceId();
       return;
     }
     if (state.links.apiBaseUrl && state.links.apiToken) {
+      return;
+    }
+    if (state.links.apiBaseUrl && nativeProtectedAuthorization) {
       return;
     }
     try {
@@ -4181,20 +4307,31 @@
       if (state.links.apiBaseUrl && state.links.apiToken) {
         return;
       }
+      if (state.links.apiBaseUrl && nativeProtectedAuthorization) {
+        return;
+      }
     } catch (_) {
-      // Fall back to the bounded native-config read below.
+      // Fall through to bounded config reads below.
+    }
+    try {
+      const config = await requestNativeLinksConfig();
+      const apiBaseOverride = explicitHostedBrowserApiBaseUrlOverride();
+      state.links.apiBaseUrl = apiBaseOverride || String(config && config.api_base_url || "").replace(/\/$/, "");
+      state.links.deviceId = "";
+    } catch (_) {
+      state.links.apiBaseUrl = String(state.links.apiBaseUrl || window.location.origin || DEFAULT_LINKS_API_BASE || "").replace(/\/$/, "");
+      state.links.deviceId = "";
+    }
+    state.links.apiToken = await resolveBrowserSessionApiToken();
+    if (state.links.apiToken) {
+      return;
     }
     try {
       const config = await requestNativeLinksConfig({ requireApiToken: true });
-      const apiBaseOverride = explicitHostedBrowserApiBaseUrlOverride();
       const apiTokenOverride = explicitHostedBrowserApiTokenOverride();
-      state.links.apiBaseUrl = apiBaseOverride || String(config && config.api_base_url || "").replace(/\/$/, "");
       state.links.apiToken = apiTokenOverride || String(config && config.api_token || "");
-      state.links.deviceId = "";
     } catch (_) {
-      state.links.apiBaseUrl = "";
       state.links.apiToken = "";
-      state.links.deviceId = "";
     }
   }
 

@@ -74,6 +74,8 @@ def test_live_auth_browser_proof_covers_matrix_api_assertions_and_cross_user_rep
     assert "User B connection ids" not in source  # Keep browser proof focused on workspace/auth, not Composio execute logic.
     assert '"summary.json"' in source
     assert '"report.md"' in source
+    assert 'envValue("PUCKY_AUTH_BROWSER_PREVIEW_TOKEN")' in source
+    assert 'envValue("PUCKY_WEB_UI_TOKEN")' not in source
 
 
 def test_live_auth_composio_proof_checks_portal_token_actions_and_foreign_denial() -> None:
@@ -94,6 +96,8 @@ def test_live_auth_composio_proof_checks_portal_token_actions_and_foreign_denial
     assert "PUCKY_COMPOSIO_REQUIRE_VERIFICATION_COMMAND" in source
     assert '"summary.json"' in source
     assert '"report.md"' in source
+    assert 'envValue("PUCKY_AUTH_COMPOSIO_BROWSER_PREVIEW_TOKEN", "PUCKY_AUTH_BROWSER_PREVIEW_TOKEN")' in source
+    assert 'envValue("PUCKY_WEB_UI_TOKEN")' not in source
 
 
 def test_android_ubc_auth_proof_captures_real_device_evidence_and_cross_user_attempts() -> None:
