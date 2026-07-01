@@ -290,12 +290,21 @@
         if (signUpMode) {
           window.Clerk.mountSignUp(authRoot, {
             signInUrl: String(config.sign_in_url || "/sign-in"),
+            fallbackRedirectUrl: nextUrl,
+            forceRedirectUrl: nextUrl,
+            signInFallbackRedirectUrl: nextUrl,
+            signInForceRedirectUrl: nextUrl,
           });
           status("Create your account with email verification.", "ok");
           return;
         }
         window.Clerk.mountSignIn(authRoot, {
           signUpUrl: String(config.sign_up_url || "/sign-up"),
+          fallbackRedirectUrl: nextUrl,
+          forceRedirectUrl: nextUrl,
+          signUpFallbackRedirectUrl: nextUrl,
+          signUpForceRedirectUrl: nextUrl,
+          withSignUp: true,
         });
         status("Use email OTP to sign in with Clerk.", "ok");
       }

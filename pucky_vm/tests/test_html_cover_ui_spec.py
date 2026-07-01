@@ -254,6 +254,18 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     assert 'url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");' in route_sync
 
 
+def test_sign_in_shell_preserves_redirect_target_for_clerk_flows() -> None:
+    sign_in_html = read("sign_in.html")
+
+    assert 'fallbackRedirectUrl: nextUrl,' in sign_in_html
+    assert 'forceRedirectUrl: nextUrl,' in sign_in_html
+    assert 'signInFallbackRedirectUrl: nextUrl,' in sign_in_html
+    assert 'signInForceRedirectUrl: nextUrl,' in sign_in_html
+    assert 'signUpFallbackRedirectUrl: nextUrl,' in sign_in_html
+    assert 'signUpForceRedirectUrl: nextUrl,' in sign_in_html
+    assert 'withSignUp: true,' in sign_in_html
+
+
 def test_render_feed_only_uses_modern_home_shell_paths() -> None:
     app = read("app.js")
     render_feed = function_block(app, "renderFeed")
