@@ -392,13 +392,23 @@ function resolveArtifactId(seed) {
   return `pucky_card_${seed.uploadTurnId}:attachment:1:original`;
 }
 
-function turnPayloadHasUsageLimit(payload) {
+function turnPayloadAllowsArtifactFallback(result) {
+  const status = Number(result?.status || 0);
+  if (status === 401 || status === 403) {
+    return false;
+  }
+  const payload = result?.payload && typeof result.payload === "object" ? result.payload : {};
   const error = String(payload?.error || "").trim();
-  const detail = String(payload?.detail || "").trim();
-  return error === "turn_failed" && (detail.includes("usageLimitExceeded") || detail.toLowerCase().includes("usage limit"));
+  const detail = String(payload?.detail || "").trim().toLowerCase();
+  return (
+    error === "turn_failed"
+    || detail.includes("usage limit")
+    || detail.includes("usagelimitexceeded")
+    || detail.includes("invalid_json_schema")
+  );
 }
 
-function resolveArtifactViaCommand(config, ownerEmail, seed) {
+function resolveArtifactViaCommand(config, ownerEmail, seed, ownerWorkspaceId = "") {
   const commandTemplate = String(config.artifactCommand || "").trim();
   if (!commandTemplate) {
     return null;
@@ -410,6 +420,7 @@ function resolveArtifactViaCommand(config, ownerEmail, seed) {
     file_name: seed.uploadFileName,
     text: seed.uploadText,
     turn_id: seed.uploadTurnId,
+    workspace_id: ownerWorkspaceId,
   });
   const shell = process.env.SHELL || "/bin/zsh";
   const completed = spawnSync(shell, ["-lc", command], {
@@ -501,7 +512,7 @@ function buildSeed(runId, laneLabel) {
   };
 }
 
-async function seedWorkspaceRecords(page, baseUrl, seed, config, ownerEmail) {
+async function seedWorkspaceRecords(page, baseUrl, seed, config, ownerEmail, ownerWorkspaceId = "") {
   const ownerSummary = [];
   const contactBody = {
     id: seed.contactId,
@@ -575,8 +586,8 @@ async function seedWorkspaceRecords(page, baseUrl, seed, config, ownerEmail) {
     ],
   });
   ownerSummary.push({ apiPath: "/api/turn/text", status: upload.status, ok: upload.ok });
-  if (!upload.ok && turnPayloadHasUsageLimit(upload.payload)) {
-    const fallback = resolveArtifactViaCommand(config, ownerEmail, seed);
+  if (!upload.ok && turnPayloadAllowsArtifactFallback(upload)) {
+    const fallback = resolveArtifactViaCommand(config, ownerEmail, seed, ownerWorkspaceId);
     if (fallback) {
       ownerSummary.push({
         apiPath: "/api/turn/text",
@@ -766,6 +777,9 @@ async function performOtpLoginWithArtifacts(page, userConfig, config, screenshot
   });
   const landingScreenshot = await saveScreenshot(page, screenshotDir, `${screenshotPrefix}-workspace-landing`);
   const landingState = await readRouteSnapshot(page);
+  const authSession = await pageApiJson(page, `${config.baseUrl}/api/auth/session`);
+  assert(authSession.ok, `Authenticated session fetch failed after login: ${JSON.stringify(authSession.payload)}`);
+  assert(authSession.payload?.signed_in, `Authenticated session was not active after login: ${JSON.stringify(authSession.payload)}`);
   return {
     steps,
     signedOutScreenshot,
@@ -773,6 +787,7 @@ async function performOtpLoginWithArtifacts(page, userConfig, config, screenshot
     landingScreenshot,
     landing,
     landingState,
+    authSession: authSession.payload,
   };
 }
 
@@ -1158,7 +1173,14 @@ async function main() {
         let ownerPreLogoutState = null;
         if (matrixEntry.primaryIsolationLane) {
           seed = buildSeed(config.runId, matrixEntry.label);
-          const seeded = await seedWorkspaceRecords(page, config.baseUrl, seed, config, config.userA.email);
+          const seeded = await seedWorkspaceRecords(
+            page,
+            config.baseUrl,
+            seed,
+            config,
+            config.userA.email,
+            String(loginResult.authSession?.workspace_id || "").trim(),
+          );
           artifactId = seeded.artifactId;
           lane.user_a.seed = { ...seeded, seed };
           lane.user_a.owner_api_checks = await verifyOwnerApiAssertions(page, config.baseUrl, seed, artifactId, config.composioDetailsSlug);
