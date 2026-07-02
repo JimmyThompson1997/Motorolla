@@ -132,6 +132,8 @@ export async function waitForOtpInput(page, timeoutMs = 20000) {
   return firstVisibleLocator(page, [
     'input[autocomplete="one-time-code"]',
     'input[inputmode="numeric"]',
+    'input[type="tel"]',
+    'input[maxlength="1"]',
     'input[name*="code" i]',
     'input[id*="code" i]',
     'input[placeholder*="code" i]',
@@ -144,7 +146,9 @@ export async function fillOtpCode(page, code, timeoutMs = 20000) {
     throw new Error("OTP code is required");
   }
   const { locator } = await waitForOtpInput(page, timeoutMs);
-  const allInputs = page.locator('input[autocomplete="one-time-code"], input[inputmode="numeric"], input[name*="code" i], input[id*="code" i]');
+  const allInputs = page.locator(
+    'input[autocomplete="one-time-code"], input[inputmode="numeric"], input[type="tel"], input[maxlength="1"], input[name*="code" i], input[id*="code" i]'
+  );
   const count = await allInputs.count().catch(() => 0);
   if (count >= clean.length && count > 1) {
     const chars = clean.split("");

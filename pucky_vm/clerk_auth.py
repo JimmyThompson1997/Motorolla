@@ -145,7 +145,7 @@ class ClerkAuthClient:
 
     @property
     def server_auth_enabled(self) -> bool:
-        return bool(self.secret_key or self._jwks_fetcher)
+        return bool(self.secret_key or self._jwks_fetcher or self.frontend_api_url)
 
     @property
     def frontend_api_url(self) -> str:
@@ -304,8 +304,24 @@ class ClerkAuthClient:
             if isinstance(payload, dict):
                 return payload
             raise ValueError("jwk_remote_invalid")
+        public_errors: list[Exception] = []
+        frontend_api_url = self.frontend_api_url
+        if frontend_api_url:
+            request = urllib.request.Request(
+                f"{frontend_api_url}/.well-known/jwks.json",
+                headers={"Accept": "application/json"},
+                method="GET",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("jwk_remote_invalid")
+                return payload
+            except Exception as exc:
+                public_errors.append(exc)
         if not self.secret_key:
-            raise ValueError("clerk_secret_key_missing")
+            raise ValueError("jwk_failed_to_load") from (public_errors[-1] if public_errors else None)
         request = urllib.request.Request(
             f"{self.api_url}/{self.api_version}/jwks",
             headers={
