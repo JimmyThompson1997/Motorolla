@@ -832,20 +832,23 @@ class PuckyVoiceService:
                 headers,
                 authorized_parties=self._clerk_authorized_parties(base_url),
             )
-            if session is None:
-                return RequestIdentity()
-            binding = self._ensure_auth_binding(session)
-            return RequestIdentity(
-                kind="session",
-                user_id=str(binding.get("app_user_id") or ""),
-                workspace_id=str(binding.get("workspace_id") or ""),
-                workspace_slug=str(binding.get("workspace_slug") or ""),
-                email=str(binding.get("primary_email") or ""),
-                session_id=session.session_id,
-                clerk_user_id=session.clerk_user_id,
-                auth_via=session.auth_via,
-                auth_provider="clerk",
-            )
+            if session is not None:
+                binding = self._ensure_auth_binding(session)
+                return RequestIdentity(
+                    kind="session",
+                    user_id=str(binding.get("app_user_id") or ""),
+                    workspace_id=str(binding.get("workspace_id") or ""),
+                    workspace_slug=str(binding.get("workspace_slug") or ""),
+                    email=str(binding.get("primary_email") or ""),
+                    session_id=session.session_id,
+                    clerk_user_id=session.clerk_user_id,
+                    auth_via=session.auth_via,
+                    auth_provider="clerk",
+                )
+            bridged = self.resolve_auth_session(self._legacy_session_cookie_from_headers(headers))
+            if bridged.kind == "session" and str(bridged.auth_provider or "").strip().lower() == "clerk":
+                return bridged
+            return RequestIdentity()
         return self.resolve_auth_session(self._legacy_session_cookie_from_headers(headers))
 
     def _clerk_authorized_parties(self, base_url: str) -> list[str]:
@@ -3624,6 +3627,7 @@ class PuckyVoiceService:
             user_id=str(identity["user_id"]),
             workspace_id=str(identity["workspace_id"]),
             email=str(identity["email"]),
+            auth_provider="pucky_local_otp",
         )
         landing_url = self.workspace_landing_url(base_url, workspace_id=str(identity["workspace_id"]))
         return {
@@ -3644,18 +3648,35 @@ class PuckyVoiceService:
         session = self.auth.resolve_session(token)
         if session is None:
             return RequestIdentity()
+        auth_provider = str(session.get("auth_provider") or "").strip() or (
+            "clerk" if self.clerk_auth.browser_auth_enabled else "pucky_local_otp"
+        )
         return RequestIdentity(
             kind="session",
             user_id=str(session["user_id"]),
             workspace_id=str(session["workspace_id"]),
             email=str(session["email"]),
             session_id=str(session["session_id"]),
+            clerk_user_id=str(session.get("clerk_user_id") or ""),
             auth_via="cookie",
-            auth_provider="pucky_local_otp",
+            auth_provider=auth_provider,
         )
 
     def revoke_auth_session(self, token: str) -> bool:
         return self.auth.revoke_session(token)
+
+    def bridge_clerk_browser_session(self, identity: RequestIdentity) -> dict[str, str]:
+        if identity.kind != "session" or not identity.user_id or not identity.workspace_id:
+            raise ValueError("workspace_auth_required")
+        if str(identity.auth_provider or "").strip().lower() != "clerk":
+            raise ValueError("clerk_session_required")
+        return self.auth.create_session(
+            user_id=str(identity.user_id),
+            workspace_id=str(identity.workspace_id),
+            email=str(identity.email or ""),
+            auth_provider="clerk",
+            clerk_user_id=str(identity.clerk_user_id or ""),
+        )
 
     def legacy_public_auth_disabled(self) -> dict[str, object]:
         return {

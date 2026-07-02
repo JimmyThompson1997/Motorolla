@@ -172,10 +172,20 @@ class AuthStore:
         finally:
             conn.close()
 
-    def create_session(self, *, user_id: str, workspace_id: str, email: str) -> dict[str, str]:
+    def create_session(
+        self,
+        *,
+        user_id: str,
+        workspace_id: str,
+        email: str,
+        auth_provider: str = "pucky_local_otp",
+        clerk_user_id: str = "",
+    ) -> dict[str, str]:
         clean_user_id = str(user_id or "").strip()
         clean_workspace_id = str(workspace_id or "").strip()
         clean_email = normalize_email(email)
+        clean_auth_provider = str(auth_provider or "").strip() or "pucky_local_otp"
+        clean_clerk_user_id = str(clerk_user_id or "").strip()
         if not clean_user_id or not clean_workspace_id:
             raise ValueError("session_identity_required")
         session_id = f"ses_{uuid.uuid4().hex[:16]}"
@@ -188,8 +198,9 @@ class AuthStore:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    session_id, user_id, workspace_id, email, secret_hash, created_at, expires_at, revoked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, '')
+                    session_id, user_id, workspace_id, email, secret_hash, auth_provider,
+                    clerk_user_id, created_at, expires_at, revoked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')
                 """,
                 (
                     session_id,
@@ -197,6 +208,8 @@ class AuthStore:
                     clean_workspace_id,
                     clean_email,
                     _hash_text(secret),
+                    clean_auth_provider,
+                    clean_clerk_user_id,
                     _utc_stamp(now),
                     _utc_stamp(expires_at),
                 ),
@@ -210,6 +223,8 @@ class AuthStore:
             "user_id": clean_user_id,
             "workspace_id": clean_workspace_id,
             "email": clean_email,
+            "auth_provider": clean_auth_provider,
+            "clerk_user_id": clean_clerk_user_id,
             "expires_at": _utc_stamp(expires_at),
         }
 
@@ -222,7 +237,8 @@ class AuthStore:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
-                SELECT session_id, user_id, workspace_id, email, secret_hash, expires_at, revoked_at
+                SELECT session_id, user_id, workspace_id, email, secret_hash, auth_provider,
+                       clerk_user_id, expires_at, revoked_at
                 FROM sessions
                 WHERE session_id = ?
                 LIMIT 1
@@ -244,6 +260,8 @@ class AuthStore:
             "user_id": str(row["user_id"] or ""),
             "workspace_id": str(row["workspace_id"] or ""),
             "email": str(row["email"] or ""),
+            "auth_provider": str(row["auth_provider"] or ""),
+            "clerk_user_id": str(row["clerk_user_id"] or ""),
             "expires_at": str(row["expires_at"] or ""),
         }
 
@@ -510,6 +528,18 @@ class AuthStore:
                     )
                     """
                 )
+                self._ensure_column(
+                    conn,
+                    "sessions",
+                    "auth_provider",
+                    "TEXT NOT NULL DEFAULT 'pucky_local_otp'",
+                )
+                self._ensure_column(
+                    conn,
+                    "sessions",
+                    "clerk_user_id",
+                    "TEXT NOT NULL DEFAULT ''",
+                )
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS auth_bindings (
@@ -555,6 +585,17 @@ class AuthStore:
             "created_at": str(row["created_at"] or ""),
             "updated_at": str(row["updated_at"] or ""),
         }
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        table_name = str(table or "").strip()
+        column_name = str(column or "").strip()
+        if not table_name or not column_name:
+            return
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {str(row[1] or "").strip() for row in rows if len(row) > 1}
+        if column_name in existing:
+            return
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(

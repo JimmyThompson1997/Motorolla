@@ -1509,18 +1509,92 @@ class ServerTests(unittest.TestCase):
                 f"/sign-in?next={path}",
             )
 
-    def test_strict_browser_auth_serves_ui_shell_when_clerk_browser_auth_is_enabled(self) -> None:
+    def test_clerk_session_bridge_sets_cookie_and_unblocks_strict_ui_shell_reads(self) -> None:
         self.service.config = replace(self.service.config, strict_browser_user_auth=True)
         self.service.clerk_auth.publishable_key = "pk_test_pucky"
         self.service.clerk_auth._frontend_api_url = "https://clerk.example.com"
+        original_resolver = self.service.resolve_browser_identity
+
+        def resolve_browser_identity(headers, *, base_url):
+            authorization = str(headers.get("Authorization") or headers.get("authorization") or "").strip()
+            if authorization.lower().startswith("bearer clerk-bridge-token"):
+                return server_module.RequestIdentity(
+                    kind="session",
+                    user_id="usr_bridge",
+                    workspace_id="ws_bridge",
+                    workspace_slug="bridge",
+                    email="bridge@example.com",
+                    session_id="clerk_sess_123",
+                    clerk_user_id="user_123",
+                    auth_via="bearer",
+                    auth_provider="clerk",
+                )
+            return original_resolver(headers, base_url=base_url)
+
+        with mock.patch.object(self.service, "resolve_browser_identity", side_effect=resolve_browser_identity):
+            request = urllib.request.Request(
+                self.base_url + "/api/auth/session/bridge",
+                data=b"{}",
+                method="POST",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer clerk-bridge-token",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                headers = dict(response.headers.items())
+                payload = json.loads(response.read().decode("utf-8"))
+
+        self.assertTrue(payload["signed_in"])
+        self.assertEqual(payload["auth_provider"], "clerk")
+        self.assertEqual(payload["clerk_user_id"], "user_123")
+        set_cookie = headers.get("Set-Cookie", "")
+        self.assertIn("pucky_session=", set_cookie)
+        session_cookie = set_cookie.split(";", 1)[0]
 
         for path in (
             "/ui/pucky/latest/?route=inbox",
             "/ui/pucky/latest/index.html?route=inbox",
         ):
-            with urllib.request.urlopen(self.base_url + path, timeout=10) as response:
+            request = urllib.request.Request(self.base_url + path, headers={"Cookie": session_cookie})
+            with urllib.request.urlopen(request, timeout=10) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn("text/html", response.headers.get("Content-Type", ""))
+
+        session_payload = self.get_json("/api/auth/session", headers={"Cookie": session_cookie})
+        self.assertTrue(session_payload["signed_in"])
+        self.assertEqual(session_payload["auth_provider"], "clerk")
+        self.assertEqual(session_payload["clerk_user_id"], "user_123")
+
+    def test_clerk_logout_clears_bridge_cookie(self) -> None:
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        self.service.clerk_auth.publishable_key = "pk_test_pucky"
+        self.service.clerk_auth._frontend_api_url = "https://clerk.example.com"
+        session = self.service.auth.create_session(
+            user_id="usr_bridge",
+            workspace_id="ws_bridge",
+            email="bridge@example.com",
+            auth_provider="clerk",
+            clerk_user_id="user_123",
+        )
+        session_cookie = f"pucky_session={session['token']}"
+
+        request = urllib.request.Request(
+            self.base_url + "/api/auth/logout",
+            data=b"{}",
+            method="POST",
+            headers={"Cookie": session_cookie, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            headers = dict(response.headers.items())
+            payload = json.loads(response.read().decode("utf-8"))
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["revoked"])
+        self.assertTrue(payload["client_must_sign_out"])
+        self.assertEqual(payload["auth_provider"], "clerk")
+        self.assertIn("Max-Age=0", headers.get("Set-Cookie", ""))
 
     def test_favicon_request_is_quiet_for_browser_sessions(self) -> None:
         request = urllib.request.Request(self.base_url + "/favicon.ico")

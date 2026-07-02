@@ -77,9 +77,6 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        def _ui_shell_requires_server_auth_redirect(self) -> bool:
-            return bool(service.config.strict_browser_user_auth) and not bool(service.clerk_auth.browser_auth_enabled)
-
         def do_GET(self) -> None:
             identity = self._request_identity()
             service._request_identity_var.set(identity)
@@ -508,7 +505,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path == "/ui/pucky/latest" or path == "/ui/pucky/latest/":
-                if self._ui_shell_requires_server_auth_redirect() and not self._is_user_data_authorized():
+                if service.config.strict_browser_user_auth and not self._is_user_data_authorized():
                     next_path = quote(self.path, safe="/?=&")
                     self._redirect(f"/sign-in?next={next_path}")
                     return
@@ -526,7 +523,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 relative = unquote(path.removeprefix("/ui/pucky/latest/")).lstrip("/")
                 if (
                     relative == "index.html"
-                    and self._ui_shell_requires_server_auth_redirect()
+                    and service.config.strict_browser_user_auth
                     and not self._is_user_data_authorized()
                 ):
                     next_path = quote(self.path, safe="/?=&")
@@ -574,20 +571,47 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 headers = {"Set-Cookie": self._session_cookie_header(session_token)}
                 self._json(HTTPStatus.OK, body, headers=headers)
                 return
-            if path == "/api/auth/logout":
-                if service.clerk_auth.browser_auth_enabled:
+            if path == "/api/auth/session/bridge":
+                if not service.clerk_auth.browser_auth_enabled:
                     self._json(
-                        HTTPStatus.GONE,
+                        HTTPStatus.BAD_REQUEST,
                         {
-                            **service.legacy_public_auth_disabled(),
-                            "client_must_sign_out": True,
+                            "ok": False,
+                            "schema": "pucky.auth.clerk_bridge.v1",
+                            "error": "clerk_auth_not_configured",
                         },
                     )
                     return
-                revoked = self._clear_session()
+                identity = self._request_identity()
+                try:
+                    session = service.bridge_clerk_browser_session(identity)
+                except ValueError as exc:
+                    self._json(
+                        HTTPStatus.UNAUTHORIZED,
+                        {
+                            "ok": False,
+                            "schema": "pucky.auth.clerk_bridge.v1",
+                            "error": str(exc),
+                        },
+                    )
+                    return
+                bridged_identity = service.resolve_auth_session(str(session.get("token") or ""))
+                body = service.auth_session_payload(bridged_identity, base_url=self._request_base_url())
+                body.update({"schema": "pucky.auth.clerk_bridge.v1"})
                 self._json(
                     HTTPStatus.OK,
-                    {"ok": True, "schema": "pucky.auth.logout.v1", "revoked": revoked},
+                    body,
+                    headers={"Set-Cookie": self._session_cookie_header(str(session.get("token") or ""))},
+                )
+                return
+            if path == "/api/auth/logout":
+                revoked = self._clear_session()
+                payload = {"ok": True, "schema": "pucky.auth.logout.v1", "revoked": revoked}
+                if service.clerk_auth.browser_auth_enabled:
+                    payload.update({"auth_provider": "clerk", "client_must_sign_out": True})
+                self._json(
+                    HTTPStatus.OK,
+                    payload,
                     headers={"Set-Cookie": self._session_cookie_clear_header()},
                 )
                 return

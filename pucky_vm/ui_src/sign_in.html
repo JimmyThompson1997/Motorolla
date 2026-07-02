@@ -114,6 +114,8 @@
       const nextUrl = String(search.get("next") || "/ui/pucky/latest/?route=home");
       const signUpMode = window.location.pathname === "/sign-up";
       const logoutAction = String(search.get("action") || "").trim().toLowerCase();
+      let bridgePromise = null;
+      let redirectPromise = null;
 
       function status(message, kind = "") {
         statusEl.textContent = String(message || "");
@@ -187,6 +189,71 @@
         });
       }
 
+      async function clearBridgeSession() {
+        try {
+          await fetch("/api/auth/logout", {
+            method: "POST",
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+        } catch (_) {
+          // Best effort only.
+        }
+      }
+
+      async function bridgeBrowserSession() {
+        if (bridgePromise) {
+          return bridgePromise;
+        }
+        bridgePromise = (async () => {
+          const session = window.Clerk && window.Clerk.session;
+          if (!session || typeof session.getToken !== "function") {
+            throw new Error("clerk_session_unavailable");
+          }
+          const token = String(await session.getToken() || "").trim();
+          if (!token) {
+            throw new Error("clerk_session_token_missing");
+          }
+          const response = await fetch("/api/auth/session/bridge", {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            cache: "no-store",
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(String(payload.detail || payload.error || `Bridge failed (${response.status})`));
+          }
+          return payload;
+        })();
+        try {
+          return await bridgePromise;
+        } catch (error) {
+          bridgePromise = null;
+          throw error;
+        }
+      }
+
+      async function bridgeAndRedirect() {
+        if (redirectPromise) {
+          return redirectPromise;
+        }
+        redirectPromise = (async () => {
+          status("Opening your workspace…");
+          await bridgeBrowserSession();
+          status("Signed in. Opening workspace…", "ok");
+          window.location.assign(nextUrl);
+        })();
+        try {
+          return await redirectPromise;
+        } catch (error) {
+          redirectPromise = null;
+          throw error;
+        }
+      }
+
       async function mountClerkUi(config) {
         pageTitle.textContent = signUpMode ? "Create account" : "Sign in";
         pageIntro.textContent = signUpMode
@@ -201,10 +268,14 @@
         });
         window.Clerk.addListener(({ session }) => {
           if (session) {
-            window.location.assign(nextUrl);
+            void bridgeAndRedirect().catch(error => {
+              status(String(error && error.message || "Could not open your workspace."), "error");
+            });
           }
         });
         if (logoutAction === "sign-out" || logoutAction === "sign_out" || logoutAction === "logout") {
+          status("Signing out…");
+          await clearBridgeSession();
           if (window.Clerk.isSignedIn) {
             await window.Clerk.signOut({ redirectUrl: "/sign-in" });
           } else {
@@ -213,7 +284,7 @@
           return;
         }
         if (window.Clerk.isSignedIn) {
-          window.location.assign(nextUrl);
+          await bridgeAndRedirect();
           return;
         }
         if (signUpMode) {

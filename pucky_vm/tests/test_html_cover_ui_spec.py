@@ -269,6 +269,8 @@ def test_sign_in_shell_preserves_redirect_target_for_clerk_flows() -> None:
     assert 'id="verifyForm"' not in sign_in_html
     assert 'request-code' not in sign_in_html
     assert 'verify-code' not in sign_in_html
+    assert '/api/auth/session/bridge' in sign_in_html
+    assert '/api/auth/logout' in sign_in_html
 
 
 def test_render_feed_only_uses_modern_home_shell_paths() -> None:
