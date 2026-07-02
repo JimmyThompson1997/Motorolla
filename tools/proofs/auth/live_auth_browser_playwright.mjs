@@ -981,7 +981,16 @@ async function runIsolationChecks(browser, matrixEntry, config, laneDir, ownerWo
   await ownerPage.goto(refreshedUrl, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
   await waitForRouteReady(ownerPage, "notes", config.timeoutMs);
   const afterRefresh = await readRouteSnapshot(ownerPage);
-  assert(afterRefresh.bodySnippet.includes(seed.noteTitle), "User A note did not persist after refresh.");
+  const persistedNote = await pageFetchMeta(
+    ownerPage,
+    `${config.baseUrl}/api/workspace/notes/${encodeURIComponent(seed.noteId)}`,
+    { expectJson: true },
+  );
+  assert(persistedNote.ok, `User A note fetch failed after refresh: ${persistedNote.status}`);
+  assert(
+    String(persistedNote.json?.title || "").trim() === seed.noteTitle,
+    `User A note did not persist after refresh: ${JSON.stringify(persistedNote.json || {})}`,
+  );
   const reloginState = await ownerBrowser.storageState();
   const logoutResult = await logout(ownerPage, ownerLogin.landing.url, config.loginUrl, config.logoutLabels, config.timeoutMs);
   const logoutScreenshot = await saveScreenshot(ownerPage, path.join(laneDir, "owner"), "owner-logout-result");
