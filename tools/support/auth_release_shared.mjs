@@ -190,6 +190,9 @@ export async function performOtpLogin(page, { loginUrl, email, otpCode, timeoutM
   }
   await waitForOtpInput(page, timeoutMs);
   steps.push({ action: "otp_ready" });
+  // Clerk can render the factor screen before the verification challenge is ready.
+  await page.waitForTimeout(2500);
+  steps.push({ action: "otp_delivery_wait", ms: 2500 });
   const otpMode = await fillOtpCode(page, otpCode, timeoutMs);
   steps.push({ action: "fill_otp", mode: otpMode });
   const verifyLabel = await maybeClickOneOf(page, [
