@@ -4336,20 +4336,20 @@
   }
 
   async function protectedApiAuthorizationHeaders(options = {}) {
+    if (state.links.apiToken) {
+      return { Authorization: `Bearer ${state.links.apiToken}` };
+    }
+    if (nativeProtectedAuthorization) {
+      return { Authorization: nativeProtectedAuthorization };
+    }
     const method = String(options.method || "GET").toUpperCase();
     const needsAuthorization = Boolean(options.authorized) || method !== "GET";
     if (!needsAuthorization) {
       return {};
     }
-    if (state.links.apiToken) {
-      return { Authorization: `Bearer ${state.links.apiToken}` };
-    }
     if (!(window.PuckyAndroid && typeof window.PuckyAndroid.postMessage === "function")) {
       refreshHostedBrowserAuthState();
       return state.links.apiToken ? { Authorization: `Bearer ${state.links.apiToken}` } : {};
-    }
-    if (nativeProtectedAuthorization) {
-      return { Authorization: nativeProtectedAuthorization };
     }
     try {
       const payload = await Pucky.request({ command: "pucky.authorization.get", args: {} });

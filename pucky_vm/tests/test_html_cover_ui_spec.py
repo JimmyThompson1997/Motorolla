@@ -1023,6 +1023,8 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     ui_state = read("pucky-ui-state.js")
 
     initial_links = function_block(app, "initialLinksState")
+    protected_api_headers = function_block(app, "protectedApiAuthorizationHeaders")
+    feed_api_request = function_block(app, "feedApiRequest")
     explicit_hosted_browser_api_base = function_block(app, "explicitHostedBrowserApiBaseUrlOverride")
     explicit_hosted_browser_api_token = function_block(app, "explicitHostedBrowserApiTokenOverride")
     resolve_hosted_browser_api_base = function_block(app, "resolveHostedBrowserApiBaseUrl")
@@ -1046,6 +1048,9 @@ def test_browser_preview_requests_reuse_saved_browser_state_token() -> None:
     assert 'if (uiState && typeof uiState.resolveBrowserApiToken === "function") {' in resolve_hosted_browser_api_token
     assert 'return String(uiState.resolveBrowserApiToken() || "").trim();' in resolve_hosted_browser_api_token
     assert 'return String(new URLSearchParams(window.location.search || "").get("api_token") || "").trim();' in resolve_hosted_browser_api_token
+    assert 'if (state.links.apiToken) {' in protected_api_headers
+    assert 'return { Authorization: `Bearer ${state.links.apiToken}` };' in protected_api_headers
+    assert 'Object.assign(init.headers, await protectedApiAuthorizationHeaders({ method, authorized: options.authorized === true }));' in feed_api_request
     assert 'const uiState = window.PUCKY_UI_STATE && typeof window.PUCKY_UI_STATE === "object"' in resolve_hosted_browser_device
     assert 'return String(uiState.resolveBrowserDeviceId({ deviceStateKey: BROWSER_DEVICE_STATE_KEY }) || "").trim();' in resolve_hosted_browser_device
     assert 'browser_preview: true' in hydrate_links_session
