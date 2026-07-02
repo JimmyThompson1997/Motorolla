@@ -1509,6 +1509,41 @@ class ServerTests(unittest.TestCase):
                 f"/sign-in?next={path}",
             )
 
+    def test_strict_browser_auth_allows_preview_token_query_for_ui_shell_reads(self) -> None:
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+
+        for path in (
+            "/ui/pucky/latest/?route=inbox&api_token=browser-secret",
+            "/ui/pucky/latest/index.html?route=inbox&api_token=browser-secret",
+            "/ui/pucky/latest/index.html?route=inbox&api_token=secret",
+        ):
+            request = urllib.request.Request(self.base_url + path)
+            with urllib.request.urlopen(request, timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("text/html", response.headers.get("Content-Type", ""))
+
+    def test_strict_browser_auth_rejects_invalid_preview_token_query_for_ui_shell_reads(self) -> None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        self.service.config = replace(self.service.config, strict_browser_user_auth=True)
+        opener = urllib.request.build_opener(NoRedirect)
+
+        for path in (
+            "/ui/pucky/latest/?route=inbox&api_token=not-real",
+            "/ui/pucky/latest/index.html?route=inbox&api_token=not-real",
+        ):
+            request = urllib.request.Request(self.base_url + path)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                opener.open(request, timeout=10)
+
+            self.assertEqual(caught.exception.code, 307)
+            self.assertEqual(
+                caught.exception.headers.get("Location"),
+                f"/sign-in?next={path}",
+            )
+
     def test_clerk_session_bridge_sets_cookie_and_unblocks_strict_ui_shell_reads(self) -> None:
         self.service.config = replace(self.service.config, strict_browser_user_auth=True)
         self.service.clerk_auth.publishable_key = "pk_test_pucky"

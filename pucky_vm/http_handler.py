@@ -505,7 +505,11 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                 )
                 return
             if path == "/ui/pucky/latest" or path == "/ui/pucky/latest/":
-                if service.config.strict_browser_user_auth and not self._is_user_data_authorized():
+                if (
+                    service.config.strict_browser_user_auth
+                    and not self._is_user_data_authorized()
+                    and not self._ui_shell_preview_authorized(parsed)
+                ):
                     next_path = quote(self.path, safe="/?=&")
                     self._redirect(f"/sign-in?next={next_path}")
                     return
@@ -525,6 +529,7 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
                     relative == "index.html"
                     and service.config.strict_browser_user_auth
                     and not self._is_user_data_authorized()
+                    and not self._ui_shell_preview_authorized(parsed)
                 ):
                     next_path = quote(self.path, safe="/?=&")
                     self._redirect(f"/sign-in?next={next_path}")
@@ -1008,6 +1013,15 @@ def make_handler(service: "PuckyVoiceService", *, broker: Any, allowed_content_t
             if not suffix:
                 return []
             return [unquote(part).strip() for part in suffix.split("/") if part.strip()]
+
+        def _ui_shell_preview_authorized(self, parsed) -> bool:
+            token = str(parse_qs(parsed.query).get("api_token", [""])[0] or "").strip()
+            if not token:
+                return False
+            return token in {
+                str(service.config.pucky_web_ui_token or "").strip(),
+                str(service.config.pucky_api_token or "").strip(),
+            }
 
         def _public_browser_workspace_patch_result(
             self,
