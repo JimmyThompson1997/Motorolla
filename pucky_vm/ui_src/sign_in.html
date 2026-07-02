@@ -114,6 +114,9 @@
       const nextUrl = String(search.get("next") || "/ui/pucky/latest/?route=home");
       const signUpMode = window.location.pathname === "/sign-up";
       const logoutAction = String(search.get("action") || "").trim().toLowerCase();
+      const signInPageUrl = authPageUrl("/sign-in");
+      const signUpPageUrl = authPageUrl("/sign-up");
+      const authReturnUrl = signUpMode ? signUpPageUrl : signInPageUrl;
       let bridgePromise = null;
       let redirectPromise = null;
 
@@ -154,6 +157,16 @@
           script.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
           document.head.appendChild(script);
         });
+      }
+
+      function authPageUrl(pathname) {
+        const target = new URL(window.location.href);
+        target.pathname = String(pathname || window.location.pathname || "/sign-in");
+        target.hash = "";
+        target.searchParams.set("next", nextUrl);
+        target.searchParams.delete("action");
+        target.searchParams.set("clerk_return", "1");
+        return `${target.pathname}${target.search}`;
       }
 
       async function fetchAuthConfig() {
@@ -263,8 +276,8 @@
         await loadClerkBundles(config);
         await window.Clerk.load({
           ui: { ClerkUI: window.__internal_ClerkUICtor },
-          signInUrl: String(config.sign_in_url || "/sign-in"),
-          signUpUrl: String(config.sign_up_url || "/sign-up"),
+          signInUrl: signInPageUrl,
+          signUpUrl: signUpPageUrl,
         });
         window.Clerk.addListener(({ session }) => {
           if (session) {
@@ -289,21 +302,21 @@
         }
         if (signUpMode) {
           window.Clerk.mountSignUp(authRoot, {
-            signInUrl: String(config.sign_in_url || "/sign-in"),
-            fallbackRedirectUrl: nextUrl,
-            forceRedirectUrl: nextUrl,
-            signInFallbackRedirectUrl: nextUrl,
-            signInForceRedirectUrl: nextUrl,
+            signInUrl: signInPageUrl,
+            fallbackRedirectUrl: authReturnUrl,
+            forceRedirectUrl: authReturnUrl,
+            signInFallbackRedirectUrl: signInPageUrl,
+            signInForceRedirectUrl: signInPageUrl,
           });
           status("Create your account with email verification.", "ok");
           return;
         }
         window.Clerk.mountSignIn(authRoot, {
-          signUpUrl: String(config.sign_up_url || "/sign-up"),
-          fallbackRedirectUrl: nextUrl,
-          forceRedirectUrl: nextUrl,
-          signUpFallbackRedirectUrl: nextUrl,
-          signUpForceRedirectUrl: nextUrl,
+          signUpUrl: signUpPageUrl,
+          fallbackRedirectUrl: authReturnUrl,
+          forceRedirectUrl: authReturnUrl,
+          signUpFallbackRedirectUrl: signUpPageUrl,
+          signUpForceRedirectUrl: signUpPageUrl,
           withSignUp: true,
         });
         status("Use email OTP to sign in with Clerk.", "ok");

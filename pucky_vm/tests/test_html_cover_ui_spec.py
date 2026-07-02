@@ -254,15 +254,23 @@ def test_route_aliases_collapse_legacy_entry_points() -> None:
     assert 'url.searchParams.set("route", normalizeHomeShellRoute(route) || "home");' in route_sync
 
 
-def test_sign_in_shell_preserves_redirect_target_for_clerk_flows() -> None:
+def test_sign_in_shell_returns_to_auth_page_before_entering_workspace() -> None:
     sign_in_html = read("sign_in.html")
 
-    assert 'fallbackRedirectUrl: nextUrl,' in sign_in_html
-    assert 'forceRedirectUrl: nextUrl,' in sign_in_html
-    assert 'signInFallbackRedirectUrl: nextUrl,' in sign_in_html
-    assert 'signInForceRedirectUrl: nextUrl,' in sign_in_html
-    assert 'signUpFallbackRedirectUrl: nextUrl,' in sign_in_html
-    assert 'signUpForceRedirectUrl: nextUrl,' in sign_in_html
+    assert "function authPageUrl(pathname) {" in sign_in_html
+    assert 'target.searchParams.set("next", nextUrl);' in sign_in_html
+    assert 'target.searchParams.set("clerk_return", "1");' in sign_in_html
+    assert "const signInPageUrl = authPageUrl(\"/sign-in\");" in sign_in_html
+    assert "const signUpPageUrl = authPageUrl(\"/sign-up\");" in sign_in_html
+    assert "const authReturnUrl = signUpMode ? signUpPageUrl : signInPageUrl;" in sign_in_html
+    assert 'fallbackRedirectUrl: authReturnUrl,' in sign_in_html
+    assert 'forceRedirectUrl: authReturnUrl,' in sign_in_html
+    assert 'signInFallbackRedirectUrl: signInPageUrl,' in sign_in_html
+    assert 'signInForceRedirectUrl: signInPageUrl,' in sign_in_html
+    assert 'signUpFallbackRedirectUrl: signUpPageUrl,' in sign_in_html
+    assert 'signUpForceRedirectUrl: signUpPageUrl,' in sign_in_html
+    assert 'fallbackRedirectUrl: nextUrl,' not in sign_in_html
+    assert 'forceRedirectUrl: nextUrl,' not in sign_in_html
     assert 'withSignUp: true,' in sign_in_html
     assert 'id="legacyForms"' not in sign_in_html
     assert 'id="signInForm"' not in sign_in_html
